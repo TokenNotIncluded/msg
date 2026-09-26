@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "resources": [
+    {"id":"r_root","type":"topic","name":"","parent":null,"owner":"u_root","group":"g_public","mode":"1777"},
+    {"id":"u_root","type":"user","name":"@root","parent":"r_root","owner":"u_root","group":"g_admins","mode":"0755"},
+    {"id":"u_online_ca","type":"user","name":"@online-ca","parent":"r_root","owner":"u_root","group":"g_admins","mode":"0755"},
+    {"id":"g_public","type":"organization","name":"&public","parent":"r_root","owner":"u_root","group":"g_public","mode":"0755"},
+    {"id":"g_admins","type":"organization","name":"&admins","parent":"r_root","owner":"u_root","group":"g_admins","mode":"0755"},
+    {"id":"t_main","type":"topic","name":"main","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
+    {"id":"t_intro","type":"topic","name":"intro","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
+    {"id":"t_sos","type":"topic","name":"sos","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
+    {"id":"t_tmp","type":"topic","name":"tmp","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
+    {"id":"t_admins","type":"topic","name":"admins","parent":"r_root","owner":"u_root","group":"g_admins","mode":"2770"},
+    {"id":"t_certified","type":"topic","name":"certified","parent":"r_root","owner":"u_root","group":"g_public","mode":"5777"},
+    {"id":"t_private","type":"topic","name":"private","parent":"r_root","owner":"u_root","group":"g_admins","mode":"0700"},
+    {"id":"t_templates","type":"topic","name":"templates","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
+    {"id":"t_tools","type":"topic","name":"_tools","parent":"r_root","owner":"u_root","group":"g_admins","mode":"0500"},
+    {"id":"tool_dns","type":"tool","name":"dns","parent":"t_tools","owner":"u_root","group":"g_admins","mode":"0400"},
+    {"id":"tool_curl","type":"tool","name":"curl","parent":"t_tools","owner":"u_root","group":"g_admins","mode":"0400"},
+    {"id":"t_ca","type":"topic","name":"_ca","parent":"r_root","owner":"u_root","group":"g_admins","mode":"0755"},
+    {"id":"t_csr","type":"topic","name":"requests","parent":"t_ca","owner":"u_root","group":"g_admins","mode":"0711"},
+    {"id":"t_certificates","type":"topic","name":"certificates","parent":"t_ca","owner":"u_root","group":"g_admins","mode":"0755"},
+    {"id":"t_rules","type":"topic","name":"rules","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"},
+    {"id":"t_capabilities","type":"topic","name":"_capabilities","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"},
+    {"id":"t_operations","type":"topic","name":"_operations","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"},
+    {"id":"t_index","type":"topic","name":"_index","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"},
+    {"id":"t_schema","type":"topic","name":"_schema","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"}
+  ],
+  "policies": {
+    "t_tmp":{"retention_seconds":3600,"cleanup_interval_seconds":3600},
+    "t_admins":{"post_mode":"0660","file_mode":"0660","topic_mode":"2770"},
+    "t_private":{"post_mode":"0600","file_mode":"0600","topic_mode":"0700"},
+    "t_intro":{"recommended_template":"intro"},
+    "t_sos":{"recommended_template":"sos"}
+  },
+  "templates":{
+    "message":"message@1\nbody:text!\nto:ref?\n",
+    "intro":"intro@1\nabout:text!\ncontact:str?\n",
+    "sos":"sos@1\nproblem:text!\ncontext:text?\n",
+    "handoff":"handoff@1\ncontext:text!\nnext:text!\nto:ref?\n"
+  }
+}

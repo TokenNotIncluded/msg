@@ -1,0 +1,128 @@
+"""Single owner/group/mode/credential/certificate authorization path."""
+from __future__ import annotations
+from msg.constants import ROOT_SUBJECT,TOOLS_SPACE
+from msg.core.errors import Failure,require
+from msg.core.models import ResourceRef
+from msg.security.policy import allows,grant_covers,scope_contains,CERTGATE
+
+_WRITE_CHECKS={'write','create','remove','chmod','chgrp','chown','manage','certgate','purge','tool_use'}
+_OVERRIDE={'read':'resource.read_override','list':'resource.read_override','traverse':'resource.read_override',
+           'write':'resource.write_override','chmod':'resource.chmod_override','chgrp':'resource.chgrp_override',
+           'chown':'resource.chown','purge':'resource.purge','tool_use':'tool.use'}
+
+
+class AuthorizationService:
+    def __init__(self,registry,certificates):
+        self.registry,self.certificates=registry,certificates
+
+    async def grants(self,principal,session):
+        grants=[]
+        for cid in principal.certificates:
+            certificate=await self.certificates.validate(cid,session)
+            require(certificate.key_id==principal.credential_id and certificate.subject_id==principal.actor,
+                    'certificate_subject_mismatch')
+            grants.extend(certificate.grants)
+        return tuple(grants)
+
+    async def has(self,principal,capability,operation,resource,session):
+        if principal.method=='local' and principal.subject==ROOT_SUBJECT:
+            return True
+        if not any([await grant_covers(g,capability,operation,resource,session) for g in principal.ceiling]):
+            return False
+        return any([await grant_covers(g,capability,operation,resource,session)
+                    for g in await self.grants(principal,session)])
+
+    async def _ceiling(self,principal,operation,resource,session):
+        if principal.method=='anonymous':
+            return
+        allowed=any([operation in g.operations and await scope_contains(g.scope,resource,session)
+                     for g in principal.ceiling])
+        if not allowed and operation in {'discovery.get@1','discovery.raw@1','job.get@1',
+                'transfer.open@1','transfer.part_get@1','transfer.status@1','transfer.seal@1','transfer.cancel@1'}:
+            output=session.setting('tool_output:'+resource)
+            if output and output['subject']==principal.subject:
+                allowed=await self.has(principal,'tool.use',operation,output['tool_id'],session)
+        require(allowed,'credential_ceiling')
+        if principal.actor!=principal.subject:
+            delegated=[]
+            for cid in principal.certificates:
+                cert=await self.certificates.validate(cid,session)
+                if cert.kind=='delegation':
+                    for source in cert.authority_sources:
+                        fact=await self.certificates.validate_authority(source,cert,session)
+                        if fact['grantor']==principal.subject:
+                            delegated.extend(cert.grants)
+            require(any([operation in g.operations and await scope_contains(g.scope,resource,session)
+                         for g in delegated]),'delegation_scope')
+
+    async def ordinary(self,principal,operation,resource,session):
+        if principal.method in {'anonymous','local'}:
+            return True
+        from msg.security.capabilities import BASE_FAMILIES
+        return any([g.capability in BASE_FAMILIES and operation in g.operations and
+                    await scope_contains(g.scope,resource,session) for g in principal.ceiling])
+
+    async def require_base(self,principal,operation,resource,session):
+        await self._ceiling(principal,operation,resource,session)
+        require(await self.ordinary(principal,operation,resource,session),'credential_ceiling')
+
+    async def require(self,context,request,checks,session):
+        principal=context.principal
+        if principal.subject==ROOT_SUBJECT or principal.actor==ROOT_SUBJECT:
+            require(context.entry=='local_admin' and principal.method=='local','local_only')
+        memberships={m.organization_id for m in await session.memberships(principal.subject)} if principal.subject else set()
+        for check in checks:
+            resource=await session.resource(check.resource_id)
+            operation=check.operation
+            await self._ceiling(principal,operation,resource.id,session)
+            chain=(*await session.ancestors(resource.id),resource)
+            # tool.use only reveals its scoped tool and the ancestors needed to reach it.
+            tool_access=resource.type=='tool' and await self.has(principal,'tool.use',operation,resource.id,session)
+            if resource.type=='tool':
+                require(tool_access,'tool_certificate_required')
+            for ancestor in chain[:-1]:
+                readable=allows(ancestor,principal.subject,memberships,'traverse')
+                override=await self.has(principal,'resource.read_override',operation,ancestor.id,session)
+                minimal_tool=tool_access and ancestor.id==TOOLS_SPACE
+                require(readable or override or minimal_tool,'permission_denied')
+                require(ancestor.state=='active','ancestor_inactive')
+            if check.check in _WRITE_CHECKS:
+                require(principal.subject is not None,'authentication_required')
+                for ancestor in chain:
+                    if ancestor.mode&CERTGATE:
+                        require(await self.has(principal,'resource.certified_write',operation,resource.id,session),
+                                'certificate_gate')
+            if resource.type=='tool':
+                require(tool_access,'tool_certificate_required')
+                require(check.check in {'read','tool_use'},'tool_read_only')
+                continue
+            if resource.type=='csr' and check.check=='read' and principal.subject!=resource.owner:
+                csr=await session.csr(resource.id)
+                require(csr.requested_issuer==principal.subject and await self.has(principal,'cert.issue',operation,resource.id,session),
+                        'permission_denied')
+                continue
+            if check.check=='certgate':
+                allowed=await self.has(principal,'resource.certified_write',operation,resource.id,session)
+            elif check.check in {'chmod','chgrp'}:
+                allowed=principal.subject==resource.owner
+            elif check.check=='manage':
+                allowed=principal.subject==resource.owner
+            elif check.check=='create':
+                allowed=allows(resource,principal.subject,memberships,'write') and allows(resource,principal.subject,memberships,'traverse')
+            elif check.check=='remove':
+                allowed=allows(resource,principal.subject,memberships,'write') and allows(resource,principal.subject,memberships,'traverse')
+            elif check.check in {'chown','purge','tool_use'}:
+                allowed=False
+            else:
+                allowed=allows(resource,principal.subject,memberships,check.check)
+            ordinary=await self.ordinary(principal,operation,resource.id,session)
+            if not ordinary and check.check=='read':
+                output=session.setting('tool_output:'+resource.id)
+                ordinary=bool(output and output['subject']==principal.subject and
+                    await self.has(principal,'tool.use',operation,output['tool_id'],session))
+            allowed=allowed and ordinary
+            capability=_OVERRIDE.get(check.check)
+            if not allowed and capability is not None:
+                allowed=await self.has(principal,capability,operation,resource.id,session)
+            require(allowed,'permission_denied')
+        return tuple(ResourceRef(id=c) for c in principal.certificates)

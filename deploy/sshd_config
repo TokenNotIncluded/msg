@@ -1,0 +1,28 @@
+# Dedicated daemon, NOT a replacement for the administrator's existing sshd.
+# Generate a separate SSH host key and validate with sshd -t before enabling.
+Port 2222
+ListenAddress 0.0.0.0
+HostKey /etc/ssh/msgd_ssh_host_ed25519_key
+PidFile /run/sshd-msgd.pid
+AllowUsers msgd
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
+UsePAM yes
+AuthorizedKeysFile none
+AuthorizedKeysCommand /opt/msgd/venv/bin/msgd ssh-authorized-key %t %k
+AuthorizedKeysCommandUser msgd
+PermitTTY no
+DisableForwarding yes
+AllowAgentForwarding no
+AllowTcpForwarding no
+X11Forwarding no
+PermitTunnel no
+PermitUserRC no
+PermitUserEnvironment no
+PrintMotd no
+LogLevel ERROR
+# No Subsystem, ForceCommand shell, or user-provided hooks are configured.
+# The authorized-key result supplies a credential-bound forced command.

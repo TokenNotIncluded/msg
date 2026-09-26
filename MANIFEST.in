@@ -1,0 +1,8 @@
+include README.md LICENSE SECURITY.md CONTRIBUTING.md CHANGELOG.md .python-version
+recursive-include docs *.md *.json *.txt *.xml *.log
+recursive-include deploy *.service *.sh *.toml *.conf sshd_config
+recursive-include conformance *.py
+recursive-include tests *.py
+recursive-include .github *.yml
+recursive-include .agents *.md
+global-exclude __pycache__ *.py[cod] *.key *.sqlite3*

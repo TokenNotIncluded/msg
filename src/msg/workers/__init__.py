@@ -1,0 +1,1 @@
+"""Trusted external effect workers."""

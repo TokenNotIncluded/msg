@@ -1,178 +1,94 @@
+"""A non-executable, immutable template DSL."""
 from __future__ import annotations
-
-import json
 import re
 from dataclasses import dataclass
-from typing import Literal
-
-from .models import Json, ModelValidationError, freeze_json
-
-type FieldType = Literal["str", "text", "int", "bool", "enum", "ref", "file"]
-
-_HEADER_RE = re.compile(r"^(?P<name>[A-Za-z][A-Za-z0-9_.-]*)@(?P<version>[1-9][0-9]*)$")
-_FIELD_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]*$")
+from msg.core.codec import canonical,freeze_json,loads,decode
+from msg.core.errors import Failure,require
+from msg.core.models import FieldSpec,ResourceRef
 
 
-class TemplateSyntaxError(ValueError):
-    pass
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class FieldSpec:
-    name: str
-    type: FieldType
-    required: bool
-    default: Json | None
-    has_default: bool
-    choices: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True,slots=True)
 class TemplateDefinition:
     name: str
     version: int
-    fields: tuple[FieldSpec, ...]
+    fields: tuple[FieldSpec,...]
 
 
-def _parse_type(raw: str) -> tuple[FieldType, tuple[str, ...]]:
-    if raw.startswith("enum(") and raw.endswith(")"):
-        values = tuple(part.strip() for part in raw[5:-1].split(","))
-        if not values or any(not value for value in values) or len(set(values)) != len(values):
-            raise TemplateSyntaxError("invalid_enum")
-        return "enum", values
-    if raw not in {"str", "text", "int", "bool", "ref", "file"}:
-        raise TemplateSyntaxError(f"unknown_field_type:{raw}")
-    return raw, ()
+TemplateSyntaxError=Failure
 
 
-def _parse_default(raw: str, field_type: FieldType, choices: tuple[str, ...]) -> Json:
-    if field_type in {"str", "text", "ref", "file", "enum"}:
-        value: Json = raw
-    elif field_type == "int":
-        try:
-            value = int(raw)
-        except ValueError as exc:
-            raise TemplateSyntaxError("invalid_int_default") from exc
-    elif field_type == "bool":
-        if raw not in {"true", "false"}:
-            raise TemplateSyntaxError("invalid_bool_default")
-        value = raw == "true"
-    else:
-        raise AssertionError(field_type)
-    if field_type == "enum" and value not in choices:
-        raise TemplateSyntaxError("enum_default_not_in_choices")
-    try:
-        return freeze_json(value)
-    except ModelValidationError as exc:
-        raise TemplateSyntaxError(str(exc)) from exc
-
-
-def parse_template(source: str) -> TemplateDefinition:
-    lines = [
-        line.strip()
-        for line in source.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        if line.strip() and not line.lstrip().startswith("#")
-    ]
-    if not lines:
-        raise TemplateSyntaxError("empty_template")
-
-    match = _HEADER_RE.fullmatch(lines[0])
-    if match is None:
-        raise TemplateSyntaxError("invalid_header")
-
-    seen: set[str] = set()
-    fields: list[FieldSpec] = []
-
-    for line in lines[1:]:
-        if ":" not in line:
-            raise TemplateSyntaxError("missing_field_type")
-        name, tail = line.split(":", 1)
-        if not _FIELD_NAME_RE.fullmatch(name):
-            raise TemplateSyntaxError(f"invalid_field_name:{name}")
-        if name in seen:
-            raise TemplateSyntaxError(f"duplicate_field:{name}")
-        seen.add(name)
-
-        required = False
-        has_default = False
-        default: Json | None = None
-
-        if tail.endswith("!"):
-            required = True
-            tail = tail[:-1]
-        elif tail.endswith("?"):
-            tail = tail[:-1]
-
-        if "=" in tail:
-            if required:
-                raise TemplateSyntaxError("required_field_has_default")
-            type_text, raw_default = tail.split("=", 1)
-            if not raw_default:
-                raise TemplateSyntaxError("empty_default")
-            has_default = True
+def _check(spec,value):
+    if value is None and not spec.required:
+        return None
+    if spec.type in {'str','text','enum'}:
+        require(type(value) is str,'template_type_error',spec.name)
+    elif spec.type=='int':
+        require(type(value) is int,'template_type_error',spec.name)
+    elif spec.type=='bool':
+        require(type(value) is bool,'template_type_error',spec.name)
+    elif spec.type in {'ref','file'}:
+        if not isinstance(value,str):
+            decode(ResourceRef,value)
         else:
-            type_text = tail
-            raw_default = ""
-
-        field_type, choices = _parse_type(type_text)
-        if has_default:
-            default = _parse_default(raw_default, field_type, choices)
-
-        fields.append(
-            FieldSpec(
-                name=name,
-                type=field_type,
-                required=required,
-                default=default,
-                has_default=has_default,
-                choices=choices,
-            )
-        )
-
-    return TemplateDefinition(
-        name=match.group("name"),
-        version=int(match.group("version")),
-        fields=tuple(fields),
-    )
+            require(bool(re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}',value)),'template_reference_error',spec.name)
+    if spec.type=='enum':
+        require(value in spec.choices,'template_enum_error',spec.name)
+    return freeze_json(value)
 
 
-def normalize_values(
-    template: TemplateDefinition,
-    values: dict[str, object],
-) -> dict[str, Json]:
-    specs = {field.name: field for field in template.fields}
-    unknown = set(values) - set(specs)
-    if unknown:
-        raise TemplateSyntaxError(f"unknown_field:{sorted(unknown)[0]}")
+def parse_template(source):
+    require(type(source) is str,'invalid_template')
+    lines=[s.strip() for s in source.splitlines() if s.strip() and not s.lstrip().startswith('#')]
+    require(bool(lines),'empty_template')
+    header=re.fullmatch(r'([A-Za-z][\w.-]*)@([1-9][0-9]*)',lines[0])
+    require(header is not None,'invalid_template_header')
+    result=[]
+    names=set()
+    for line in lines[1:]:
+        match=re.fullmatch(r'([A-Za-z][\w.-]*):([a-z]+(?:\([^)]*\))?)([!?]?)(?:=(.*))?',line)
+        require(match is not None,'invalid_template_field')
+        name,type_name,marker,default=match.groups()
+        require(name not in names,'duplicate_field',name)
+        names.add(name)
+        choices=()
+        if type_name.startswith('enum('):
+            choices=tuple(x.strip() for x in type_name[5:-1].split(','))
+            require(all(choices) and len(choices)==len(set(choices)),'invalid_enum',name)
+            type_name='enum'
+        require(type_name in {'str','text','int','bool','enum','ref','file'},'unknown_field_type',name)
+        require(marker!='!' or default is None,'required_field_has_default',name)
+        spec=FieldSpec(name=name,type=type_name,required=marker=='!',choices=choices)
+        if default is not None:
+            try:
+                value=loads(default)
+            except Failure:
+                require(type_name in {'str','text','enum','ref','file'},'invalid_default',name)
+                value=default
+            value=_check(spec,value)
+            spec=FieldSpec(name=name,type=type_name,required=False,choices=choices,default_json=canonical(value))
+        result.append(spec)
+    return TemplateDefinition(name=header[1],version=int(header[2]),fields=tuple(result))
 
-    normalized: dict[str, Json] = {}
+
+def normalize_values(template,values):
+    require(isinstance(values,dict) or hasattr(values,'items'),'invalid_template_values')
+    names={s.name for s in template.fields}
+    require(set(values)<=names,'unknown_template_field')
+    result={}
     for spec in template.fields:
         if spec.name in values:
-            value = freeze_json(values[spec.name])
-        elif spec.has_default:
-            value = spec.default
-        elif spec.required:
-            raise TemplateSyntaxError(f"missing_required:{spec.name}")
+            result[spec.name]=_check(spec,values[spec.name])
+        elif spec.default_json is not None:
+            result[spec.name]=loads(spec.default_json)
         else:
-            continue
-
-        if spec.type == "int" and (not isinstance(value, int) or isinstance(value, bool)):
-            raise TemplateSyntaxError(f"type_error:{spec.name}")
-        if spec.type == "bool" and not isinstance(value, bool):
-            raise TemplateSyntaxError(f"type_error:{spec.name}")
-        if spec.type in {"str", "text", "ref", "file", "enum"} and not isinstance(value, str):
-            raise TemplateSyntaxError(f"type_error:{spec.name}")
-        if spec.type == "enum" and value not in spec.choices:
-            raise TemplateSyntaxError(f"enum_value:{spec.name}")
-        normalized[spec.name] = value
-    return normalized
+            require(not spec.required,'missing_required',spec.name)
+    return result
 
 
-def canonical_values_json(values: dict[str, Json]) -> bytes:
-    return json.dumps(
-        values,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        allow_nan=False,
-    ).encode("utf-8")
+def canonical_values_json(values):
+    return canonical(values)
+
+
+def render_values(values):
+    return '\n\n'.join(f'**{name}**\n\n{value if isinstance(value,str) else canonical(value).decode()}'
+                         for name,value in values.items())+'\n'
