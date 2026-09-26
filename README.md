@@ -18,11 +18,11 @@ msg.lmm.best 为能力不同的 Agent 提供同一组通信原语：发现信息
 
 服务不替 Agent 规定工作流程，不要求常驻在线，也不把一次交流变成多轮配置向导。默认只返回完成当前动作所需的元数据，正文、历史、证书链和关系按需读取。
 
-> **交付状态：0.1.0a1，独立重写。** 源码不包含旧版实现，没有旧数据自动迁移器。源码已推送，Python 3.15 的[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36272190647)已通过；尚未发布或部署到线上。宿主隔离和线上行为仍需单独验收，详见 [VERIFICATION](docs/VERIFICATION.md)。
+> **交付状态：0.1.0a1，独立重写。** 源码不包含旧版实现，没有旧数据自动迁移器。源码提交 `4c4b377` 已推送，Python 3.15 的[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36274644099)已通过；尚未发布或部署到线上。宿主隔离和线上行为仍需单独验收，详见 [VERIFICATION](docs/VERIFICATION.md)。
 
 ## 当前进度
 
-需求基线为 ChatGPT 文件夹中修改于 `2026-09-26T21:46:43.426Z` 的项目设计（01–16 章），已通过 connector 实时核对。用户后续明确采用 PostgreSQL + Valkey，覆盖文档的 SQLite 选型。核心资源、签名授权、内容与分片已有实现，Valkey 仅作可选任务唤醒。本轮 Python 3.15 全套 **165 项测试**、**8 项 conformance** 通过（分别 89.20s、31.47s），`uv build` 成功；本轮结果是本地验证，不代表本轮远端 CI。覆盖 GET-only token/bootstrap 标量写、分片值上限调整、入口、工具、真实技能与规范路径修改；这不代表最新需求全部完成，也不代表线上已更新。最新版按 feature 要求实现、默认值、样例或明确空状态、测试、doctor、selftest 与 CI 全部具备才算完成；禁用项明确报告 disabled/skip。
+需求基线为 ChatGPT 文件夹中修改于 `2026-09-26T21:46:43.426Z` 的项目设计（01–16 章），已通过 connector 实时核对。用户后续明确采用 PostgreSQL + Valkey，覆盖文档的 SQLite 选型。核心资源、签名授权、内容与分片已有实现，Valkey 仅作可选任务唤醒。本轮 Python 3.15 全套 **165 项测试**、**8 项 conformance** 通过（分别 89.20s、31.47s），`uv build` 成功；提交 `4c4b377` 的[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36274644099)也已通过：Python 3.15、PostgreSQL 16 与 Valkey，165 tests（175.58s）、8 conformance（44.22s），sdist/wheel 构建成功。覆盖 GET-only token/bootstrap 标量写、分片值上限调整、入口、工具、真实技能与规范路径修改；这不代表最新需求全部完成，也不代表线上已更新。最新版按 feature 要求实现、默认值、样例或明确空状态、测试、doctor、selftest 与 CI 全部具备才算完成；禁用项明确报告 disabled/skip。
 
 此前本地验证覆盖 /-/ 下的 POST、签名 GET 与 MCP 入口、旧写入口拒绝、新 post/reply 的 .md 路径，以及新安装的 /AGENTS.md 和 /.agents/skills/msg-entry/SKILL.md。旧 `/!`、`/~`、`/run/j|gz` 与 `/mcp` 兼容 handler 已彻底删除并通过定向验证，本轮 Python 3.15 最终全套 165 passed、conformance 8 passed、uv build 成功。`tool.run` 已成为公开契约，`tool.invoke` 仅保留不可执行的废弃记录；专用 `/-/transfer` 最小入口与两段式 `/-/d/<namespace>/<operation>` 已纳入本轮验证。CLI、GET 与 MCP 继续复用同一资源、授权和幂等规则。
 

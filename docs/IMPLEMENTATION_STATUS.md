@@ -2,14 +2,14 @@
 
 2026-09-27 对照[权威需求文档](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)核对当前源码。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T21:46:43.426Z`、正文为 01–16 章。PostgreSQL + Valkey 是用户后续明确决定，覆盖文档的 SQLite 选型；其余需求继续有效。`provenance.json` 是旧重写来源记录，不能证明已覆盖最新需求；仓库没有该记录所指的完整设计快照。
 
-**当前是已有核心实现、正在补齐新需求的版本，不是完整需求交付，也未部署线上。** 下表“源码已有”只说明存在实现；本地通过范围见 [VERIFICATION](VERIFICATION.md)，真实宿主与完整功能验收仍须分别完成。
+**当前是已有核心实现、正在补齐新需求的版本，不是完整需求交付，也未部署线上。** 下表“源码已有”只说明存在实现；本地与 CI 通过范围见 [VERIFICATION](VERIFICATION.md)，真实宿主与完整功能验收仍须分别完成。
 
-本轮路由清理、工具契约更名、分片与字典入口对齐后，Python 3.15 本地全套为 **165 passed**（89.20s），conformance 为 **8 passed**（31.47s），`uv build` 再次成功。此前定向检查已包含其中，不额外累加。这是本地结果，不代表本轮远端 CI 或逐 feature 完成。阶段 1 仍有明确缺口，下表只列已实现或实际通过的范围。验收重点是一次原子操作在各入口的资源、授权、幂等与错误一致，以及 /-/ 外无副作用，不以增加接口数量代替能力交付。
+本轮路由清理、工具契约更名、分片与字典入口对齐后，Python 3.15 本地全套为 **165 passed**（89.20s），conformance 为 **8 passed**（31.47s），`uv build` 再次成功。此前定向检查已包含其中，不额外累加。提交 `4c4b377` 的[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36274644099)已通过：Python 3.15、PostgreSQL 16 与 Valkey，165 passed（175.58s）、8 conformance passed（44.22s），sdist/wheel 构建成功。这不代表逐 feature 完成或线上部署。阶段 1 仍有明确缺口，下表只列已实现或实际通过的范围。验收重点是一次原子操作在各入口的资源、授权、幂等与错误一致，以及 /-/ 外无副作用，不以增加接口数量代替能力交付。
 
 | 范围 | 当前源码与边界 | 下一步 |
 | --- | --- | --- |
 | 资源、修订、关系、签名、证书、权限、幂等、审计 | core/、security/ 与插件已有实现；注册表统一操作 | 补齐新能力的同一授权契约和逐 feature 验收 |
-| PostgreSQL、Valkey | PostgreSQL 保存权威元数据与持久任务；Valkey 可选唤醒；本地测试及提交 `c417b9e` 的远端 CI 通过 | 部署备份恢复演练、旧数据迁移方案；无旧库自动迁移器 |
+| PostgreSQL、Valkey | PostgreSQL 保存权威元数据与持久任务；Valkey 可选唤醒；本地测试及提交 `4c4b377` 的远端 CI 通过 | 部署备份恢复演练、旧数据迁移方案；无旧库自动迁移器 |
 | 内容、回复、模板、引用、ACK、归档 | plugins/content.py、discussion.py 已有基本流程 | 独立线程读取、最新操作名与完整 patch/rollback 契约需补齐 |
 | 自托管与临时身份 | 注册、临时 token、轮换、升级、签名密钥与委托已存在 | 临时 token 不等于服务器加密持钥的 custodial identity；托管密钥库与代签来源未实现 |
 | 组 | 已有创建、成员增删、admin 管理 | open/approval/invite/managed 与 owner/maintainer/member 完整生命周期未实现 |

@@ -21,9 +21,9 @@
 
 仓库目前没有 `docs/verification/`、JUnit 汇总、构建日志或 package-smoke 文件；以上为本轮命令结果记录，不提供不存在的证据链接。早期“Python 3.13、101 + 5 用例、SQLite”的验收属于旧实现，不能作为本轮 PostgreSQL/Valkey 证据，也不能与本轮结果合并。
 
-## 2026-09-27 ChatGPT 文件夹最新版需求对齐（本地）
+## 2026-09-27 ChatGPT 文件夹最新版需求对齐（本地与 CI）
 
-重新从 Google Drive 的 `ChatGPT` 文件夹读取《msg.lmm.best｜项目设计》，本批依据其 2026-09-26T21:46:43.426Z 的 01–16 章版本。以下改动仍在本地工作区，不能引用上表旧提交的远端 CI 作为本批通过证据。
+重新从 Google Drive 的 `ChatGPT` 文件夹读取《msg.lmm.best｜项目设计》，本批依据其 2026-09-26T21:46:43.426Z 的 01–16 章版本。本批已提交为 `4c4b377`；本批[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36274644099)结果为 success，不再引用上表旧提交的 CI 作为本批证据。
 
 | 实际命令 | 本批结果 |
 | --- | --- |
@@ -31,6 +31,8 @@
 | `uv run --no-project --python 3.15 --with-editable . --with pytest --with pytest-asyncio --with tiktoken pytest conformance -q` | 8 passed in 31.47s |
 | `uv build` | 0.1.0a1 sdist 与 wheel 构建成功 |
 | `python3.15 -m compileall -q src`、`git diff --check` | 通过 |
+
+提交 `4c4b377` 的远端环境为 Python 3.15、PostgreSQL 16 与 Valkey：测试 **165 passed in 175.58s**，conformance **8 passed in 44.22s**，sdist 与 wheel 构建成功。该结果证明本次提交的 CI 通过，不表示已发布、已部署或全部需求完成。
 
 新增覆盖：旧 `/!`、`/~`、`/run/j|gz` 与 `/mcp` 执行别名移除；协议结构段拒绝编码别名和点段；非 `/-/` 的固定读取入口要求注册操作为 read。真实 `git-upload-pack` POST 返回 PACK，前后 refs 和关键业务表不变，`git-receive-pack` 被拒绝。`tool.run` 替代 `tool.invoke`，旧短码只保留 deprecated tombstone；`/-/transfer` 是复用六个现有 Transfer 操作的完整 OperationRequest 最小入口，`/-/d/<namespace>/<operation>` 增加分级详情。以上不证明完整 LFS、原始字节流入口或全部第 15 章 feature 验收。
 
