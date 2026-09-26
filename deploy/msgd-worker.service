@@ -15,7 +15,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/msgd
-InaccessiblePaths=/etc/msgd/root
+InaccessiblePaths=/var/lib/msgd-root /etc/msgd/root
 LimitCORE=0
 # Do not block user namespaces needed by bubblewrap. Isolation remains mandatory
 # inside the runner; an unavailable sandbox fails closed rather than falling back.

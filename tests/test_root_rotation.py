@@ -13,6 +13,8 @@ async def test_root_rotation_retires_old_chain_and_requires_explicit_online_ca_a
     next_key=Ed25519Signer.generate()
     pin='new-root-long-passphrase'
     journal=prepare(app,next_key,pin,old_signer=root,operator='isolated-test-console')
+    assert journal['new_trust']['certificate']['issuance']['max_child_ca_depth']==3
+    assert journal['online_csr']['issuance']['max_child_ca_depth']==0
     assert journal_path(app).exists()
     assert next_key.private_bytes() not in journal_path(app).read_bytes()
     outcome=await complete(app,journal,pin=pin)
@@ -27,7 +29,7 @@ async def test_root_rotation_retires_old_chain_and_requires_explicit_online_ca_a
         assert renewal.error.code=='issuer_not_ready'
         await _approve_csr(fresh,outcome['online_ca_request'],next_key,expected_digest=None,operator='isolated-test-console')
         renewal=await call(fresh,'identity.certificate_renew',{},key=key,subject=uid)
-        assert renewal.status=='ok',wire(renewal)
+        assert renewal.error.code=='renewal_source_required',wire(renewal)
         assert fresh.certificates.root_public_key==next_key.public_key
         envelope=loads((app.settings.config_dir/'root'/'key.json').read_bytes())
         assert open_private_key(envelope,pin)==next_key.private_bytes()

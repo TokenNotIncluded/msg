@@ -35,12 +35,13 @@ def durable_write(path: Path, data: bytes, mode: int = 0o600):
 
 
 class GitContentStore:
-    def __init__(self,path: Path):
+    def __init__(self,path: Path, *, binary_dir: Path | None = None,
+                 staging_dir: Path | None = None):
         self.path=Path(path)
         self.repo=self.path/'private.git'
         self.index=self.path/'index'
-        self.binary=self.path/'binary'
-        self.staging=self.path/'staging'
+        self.binary=Path(binary_dir) if binary_dir is not None else self.path/'binary'
+        self.staging=Path(staging_dir) if staging_dir is not None else self.path/'staging'
         for p in (self.path,self.index,self.binary,self.staging):
             p.mkdir(parents=True,exist_ok=True)
         if not self.repo.exists():
@@ -177,7 +178,7 @@ class GitContentStore:
             return False
 
     async def commit_revision(self,topic_id,revision):
-        """Create and protect one resource revision before the SQLite pointer commits."""
+        """Create and protect one resource revision before the PostgreSQL pointer commits."""
         entry=self._entry(revision.content)
         def commit():
             manifest=self._run('hash-object','-w','--stdin',input=canonical(revision))

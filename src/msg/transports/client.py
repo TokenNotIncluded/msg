@@ -116,7 +116,8 @@ class GraphQLTransport(HTTPTransport):
         kind = 'query' if effect=='read' else 'mutation'
         payload = {'query':kind+' MsgOperation($packet: JSON!) { call(packet: $packet) }',
                    'variables':{'packet':wire(request)}}
-        result = await self._json('POST','/-/graphql',body=payload)
+        endpoint = '/_read/graphql' if effect=='read' else '/-/graphql'
+        result = await self._json('POST',endpoint,body=payload)
         if result.get('errors'):
             raise Failure(result['errors'][0].get('extensions',{}).get('code','graphql_error'))
         require(isinstance(result.get('data',{}).get('call'),dict),'invalid_graphql_result')

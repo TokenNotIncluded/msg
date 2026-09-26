@@ -1,6 +1,6 @@
 # 实现范围与需求差异
 
-2026-09-27 对照[权威需求文档](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)核对当前源码。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T21:46:43.426Z`、正文为 01–16 章。PostgreSQL + Valkey 是用户后续明确决定，覆盖文档的 SQLite 选型；其余需求继续有效。`provenance.json` 是旧重写来源记录，不能证明已覆盖最新需求；仓库没有该记录所指的完整设计快照。
+2026-09-27 对照[权威需求文档](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)核对当前源码。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T22:19:27.354Z`、正文为 01–15 章。最新版已将 PostgreSQL 写入长期主数据库基线；Valkey 保留用户明确决定的可选唤醒用途，不保存唯一业务事实。`provenance.json` 是旧重写来源记录，不能证明已覆盖最新需求；仓库没有该记录所指的完整设计快照。
 
 **当前是已有核心实现、正在补齐新需求的版本，不是完整需求交付，也未部署线上。** 下表“源码已有”只说明存在实现；本地与 CI 通过范围见 [VERIFICATION](VERIFICATION.md)，真实宿主与完整功能验收仍须分别完成。
 
@@ -21,8 +21,8 @@
 | 分享与个人空间 | 现有 mode/证书授权不能代替 ShareGrant | ShareGrant/ShareLink、private Notes/Todos 及本人到期提醒未实现 |
 | Inbox/Outbox、关注、邮件 | communication 插件、邮箱验证、communication.send 邮件任务存在 | reply/mention/system 全来源投递及完整邮件事件投影未完成；无真实 SMTP/TLS 验收 |
 | Webhook | 未见 endpoint/subscription/delivery 完整实现 | 默认关闭、当前授权过滤、签名、重试、uncertain 及只走 /-/ 的管理入口 |
-| Git、LFS | 原生公开 Git 读取、受限 SSH push 与 hook 存在 | 普通仓库及 LFS 路径、全部子路径禁止 push/上传/管理 handler，永久只读已确定，写入只能直接走 `/-/` 注册操作；无完整 LFS，标准客户端发现写地址及兼容性待真实验收 |
-| 网页托管 | hosting.create/deploy/activate 与独立 origin 实现存在 | 与“同域、不新增子域名”要求冲突；缺 web.preview 与完整 patch→preview→deploy→rollback 验收 |
+| Git、LFS | 原生公开 Git 读取、受限 SSH push 与 hook 存在 | 普通仓库及 LFS 路径、全部子路径禁止 push/上传/管理 handler，永久只读已确定，写入只能直接走 `/-/` 注册操作；无完整 LFS；`/-/git/<repo-id>` push_url 与 read_url 输出待实现及真实验收 |
+| 网页托管 | hosting.create/deploy/activate 与独立 origin 实现存在；HTML 的 GET/HEAD/304 已加 CSP sandbox，允许脚本但禁止 allow-same-origin | 同域路由、web.preview 与完整 patch→preview→deploy→rollback 验收仍缺 |
 | 工具、SSH、RSS、密钥库 | 有受控工具 worker、受限命令与 Git hook、RSS、客户端加密密钥库 | 第 13 章规范调用名为 `tool.run`，已完成公开契约更名，`tool.invoke` 仅保留不可执行 tombstone；完整 GET 标量工具参数仍须验收；`/tools/` 及子路径只读发现，参数或方法也不能触发执行。ToolSpec 的名称/说明、版本/摘要、输入输出/并发上限及大输入输出 Transfer 引用须逐项验收。真实 bubblewrap、sshd 与公网/重定向验收未做；SubHub 未定义的接口不声称兼容 |
 | TUI | CLI 存在，未见 msg tui 命令 | 待公共契约稳定后实现；不直连数据库，不新增 /login |
 | 初始化、doctor/selftest | 默认资源、隔离诊断与恢复已有实现 | BootstrapManifest 缺逐 feature 的默认值、sample、doctor_check、selftest_case 完整映射；不能宣称全部功能验收 |
@@ -31,12 +31,31 @@
 
 最新第 15 章按 feature 验收：实现、确定默认值、样例或明确 empty/disabled/deny、单元/集成测试、doctor、selftest 可观察结果、CI 缺一不可。BootstrapManifest 与测试须共用 feature_id、enabled_by_default、default_config、sample_resource、doctor_check、selftest_case。通过某批测试不能替代整项完成；插件 disabled 应明确 reported disabled/skip，不能伪报 pass。doctor 不改生产状态，selftest 在隔离范围执行并清理，测试 root 也不能关闭 local_only。
 
-用户覆盖 SQLite 的存储选型不取消存储契约验收：实际 PostgreSQL 后端仍须验证事务、并发、恢复与内容引用一致性，不能据选型变更免除要求。当前没有以本批路由或工具更名宣布这些 feature 完成。
+最新 PostgreSQL 选型仍要求 FakeMetadataStore 与实际后端运行同一 MetadataStore/MetadataSession 契约：实际 PostgreSQL 后端仍须验证事务、并发、恢复与内容引用一致性，不能据选型变更免除要求。当前没有以本批路由或工具更名宣布这些 feature 完成。
 
 ## 保留的产品决定与边界
 
-云文档第 16 章仍待消歧：Todo.tags/搜索 tags、Store/订单等商业字段、Git/LFS 客户端如何发现 `/-/` 写地址及兼容性、同域托管隔离、表示后缀与浏览/下载计数。默认保持免费、无个人配额、无全站标签平台、无钱包或信誉风控；不要把未决定的字段补成收费功能。读取不伪造 ACK，也不改变业务状态。
+最新版已删除旧第 16 章待决清单：tags、永久免费的商业边界、Git push URL、托管 CSP sandbox、稳定 ID 投影和 telemetry 均已作出决定，不能继续标为产品待定。tags 只作元数据，不参与授权；商业付费机制明确禁止；Git 写地址为 `/-/git/<repo-id>`；托管 HTML 强制 sandbox，脚本最多 allow-scripts，禁止 allow-same-origin；GET-only 投影为 `/_r/<resource_id>/json|meta|raw|history|rev/<revision_id>`；浏览/下载统计只能异步 telemetry，不改变 Resource、Revision、generation、已读或 ACK。上述新增能力仍待实现和验证。
 
 根私钥仅本机管理，当前内部测试不等于真实物理控制台验收。recover 用于可信根材料恢复，rotation --resume 用于轮换日志恢复；任意初始化损坏自动补全并非已验证能力。审计摘要链依赖可信检查点，不能阻止完整写盘权限者重算历史；purge 不抹去已导出的副本。
 
 实施顺序、依赖和可验收出口见 [ITERATION_PLAN](ITERATION_PLAN.md)。
+
+## 22:19 修订新增实施缺口
+
+- CA：链推导 L1/L2/L3，Root 下最多三级 CA；子深度上限 2/1/0，Leaf 无签发权。三级硬限代码已加入，仍须等待本轮全套与完整链验收。Basic Online CA 为 L1、深度 0，固定最小 issue_grants，禁止 ca_only、system.*、resource.purge、tool.net.private、group.manage_override。
+- 目录：根私有状态 `/var/lib/msgd-root/`（root:root 0700，私钥 0600）；公开根证书可复制到 `/etc/msgd/trust/root.crt`。持久状态 `/var/lib/msgd/` 下区分 git/content、git/repos、blobs/sha256、transfers/staging；可重建缓存 `/var/cache/msgd/`，易失运行状态 `/run/msgd/`。需迁移与权限验收，不自动搬动现有根材料。
+- 存储：msgd 不触碰 PostgreSQL 物理数据目录；内容引用只保存 backend + stable key/content_ref，不以宿主绝对路径作业务字段，不扫描 Git/CAS 推断授权状态。
+- doctor/selftest：doctor 检查 CA 链、key_id、issuer、scope、issue_grants、TTL、深度、撤销与在线 CA 白名单；selftest 仅在 `/_test/<run_id>/` 使用独立 Test Root 构造 L1→L2→L3→Leaf，不能读取/解锁真实根。必须验证逐项收缩、撤销级联、Leaf 无签发权与 L4 拒绝。既有 165 项测试不证明这些新增验收已完成。
+
+## 当前开发批次与 22:19 读取扩展
+
+当前开发批次已加入新安装数据布局、备份 v3、CA 三级硬限和 `/_r/` 稳定 ID 投影；Basic Online CA 白名单、自动签发审计以及正式读取别名/GraphQL 分离已有本批代码，完整自检与最终回归仍在推进。最终全套尚未完成，此前提交的测试/CI 数字仅为历史证据，不证明本批完成。新安装默认值不等于存量根材料、目录或归档已自动迁移。
+
+最新读取目标是 `/_read/`，`/_r/` 是永久短别名；`/_search=/_s`、`/_index=/_i` 同样要求直接命中同一 handler，内容、授权、缓存、错误和 cursor 完全等价且不重定向。只读 GraphQL 为 `/_read/graphql`（短别名 `/_r/graphql`）且仅 query；`/-/graphql` 仅 mutation。结构化读取统一 ReadQuery，并限制深度、节点数、响应大小、查询成本、集合页大小和超时。这些新增目标尚未完整实现，已有 `/_r/` 定向验证不能替代验收。
+
+PageCursor 与 ReadCursor 使用 `/_read/c/<opaque_cursor>`，SyncCursor 使用 `/_read/s/<opaque_cursor>`，均有 `/_r/` 短形式。服务器直接返回 continuation，cursor 签名/MAC、有限期且每次重新授权；PageCursor 固定查询和 snapshot，ReadCursor 固定 Revision、按 Markdown 块分段并支持上下文展开。Bookmark 只由显式写保存，与已读/ACK/telemetry 分离。三类 cursor 与 Bookmark 尚待实现验收。
+
+OnlineIssuer 规则化自动签发还须覆盖持钥基础证书、明确 owner 子范围委托及同权/收缩续签；超出有效 authority_source、治理权或 CA 资格保持 pending 交上级审核。审计须含 actor、subject、issuer、authority_source、request/csr、policy/version、automatic=true 与 grant 摘要；不得用主观评分自动授权。独立 Test Root selftest 须覆盖这些正反例。
+
+最新复核：已完整重读唯一 ChatGPT 文件夹文档的 01–15 章（`2026-09-26T22:19:27.354Z`）。工作区已有读取长短别名、GraphQL 分离和自动签发审计；post/topic/repo 标签与 `/_search=/_s`、`/_index/by-tag=/_i/by-tag` 已实现并定向测试。todo、其他稳定索引、完整 ReadQuery、三类 cursor、Bookmark 未实现。独立临时数据库 selftest 不能替代最新 `/_test/<run_id>/` 三级 CA/OnlineIssuer 全矩阵。下一轮按 [风险与依赖路线](ITERATION_PLAN.md) 推进。

@@ -11,6 +11,14 @@ from msg.core.errors import require
 from msg.core.models import MailConfig, ServerConfig, TransportLimits
 
 
+def root_private_dir(config_dir: Path) -> Path:
+    """Root material is outside the network service configuration tree."""
+    directory = Path(config_dir)
+    if directory == Path('/etc/msgd'):
+        return Path('/var/lib/msgd-root')
+    return directory.parent / (directory.name + '-root')
+
+
 @dataclass(frozen=True,slots=True)
 class Settings:
     server: ServerConfig
@@ -38,11 +46,15 @@ class Settings:
 
     @property
     def service_keys(self):
-        return self.config_dir/'service'
+        return self.server.service_keys_dir
+
+    @property
+    def root_private_dir(self):
+        return root_private_dir(self.config_dir)
 
     @property
     def repositories_dir(self):
-        return self.server.content_dir.parent/'repositories'
+        return self.server.repositories_dir
 
 
 def load_settings(config_dir=Path('/etc/msgd')):
@@ -65,7 +77,8 @@ def load_settings(config_dir=Path('/etc/msgd')):
     for key,default in (('temporary_ttl',3600),('transfer_ttl',86400)):
         require(type(server.get(key,default)) is int and server.get(key,default)>0,'invalid_ttl')
     store=data.get('storage',{})
-    require(set(store)<={'postgres_dsn','valkey_url','content','staging'},'unknown_storage_configuration')
+    require(set(store)<={'postgres_dsn','valkey_url','content','repositories','blobs','staging','service_keys'},
+            'unknown_storage_configuration')
     postgres_dsn=store.get('postgres_dsn')
     require(isinstance(postgres_dsn,str) and bool(postgres_dsn.strip()) and not any(ord(c)<32 for c in postgres_dsn),
             'invalid_postgres_dsn')
@@ -89,8 +102,22 @@ def load_settings(config_dir=Path('/etc/msgd')):
                     not cache_url.fragment,'invalid_valkey_url')
         except ValueError:
             require(False,'invalid_valkey_url')
-    require(all(isinstance(store.get(key,default),str) and Path(store.get(key,default)).is_absolute()
-                for key,default in (('content','/var/lib/msgd/content'),('staging','/var/lib/msgd/staging'))),
+    content_dir=Path(store.get('content','/var/lib/msgd/git/content'))
+    # Existing installations with an explicit old content path keep their old
+    # sibling repository and embedded blob locations until an operator migrates.
+    modern_layout=content_dir.name=='content' and content_dir.parent.name=='git'
+    repository_default=(content_dir.parent/'repos' if modern_layout else
+                        content_dir.parent/'repositories')
+    blob_default=(content_dir.parent.parent/'blobs'/'sha256' if modern_layout else
+                  content_dir/'binary')
+    service_keys_default=(config_dir/'service' if (config_dir/'service').exists() and
+                          not modern_layout else
+                          (content_dir.parent.parent if modern_layout else content_dir.parent)/'service')
+    require(all(isinstance(store.get(key,str(default)),str) and
+                Path(store.get(key,str(default))).is_absolute()
+                for key,default in (('content',content_dir),('repositories',repository_default),
+                                    ('blobs',blob_default),('staging',Path('/var/lib/msgd/transfers/staging')),
+                                    ('service_keys',service_keys_default))),
             'storage_paths_must_be_absolute')
     limits=data.get('limits',{})
     require(set(limits)<={'request_bytes','response_bytes','path_bytes','part_bytes'},'unknown_limit')
@@ -124,8 +151,11 @@ def load_settings(config_dir=Path('/etc/msgd')):
     require(public_web is None or urlsplit(public_web).netloc!=url.netloc,'hosting_origin_must_differ')
     return Settings(server=ServerConfig(config_dir=config_dir,
         postgres_dsn=postgres_dsn,valkey_url=valkey_url,
-        content_dir=Path(store.get('content','/var/lib/msgd/content')),
-        staging_dir=Path(store.get('staging','/var/lib/msgd/staging')),plugins=plugins,
+        content_dir=content_dir,
+        repositories_dir=Path(store.get('repositories',repository_default)),
+        blob_dir=Path(store.get('blobs',blob_default)),
+        staging_dir=Path(store.get('staging','/var/lib/msgd/transfers/staging')),plugins=plugins,
+        service_keys_dir=Path(store.get('service_keys',service_keys_default)),
         limits=TransportLimits(max_request_bytes=limits.get('request_bytes',1048576),
             max_response_bytes=limits.get('response_bytes',1048576),max_path_bytes=limits.get('path_bytes',8192),
             encodings=frozenset({'j','gz'})),mail=mail),service_url=service,listen=server.get('listen','127.0.0.1'),
@@ -150,8 +180,11 @@ port = 8042
 [storage]
 postgres_dsn = {json.dumps(postgres_dsn)}
 {f'valkey_url = {json.dumps(valkey_url)}' if valkey_url is not None else '# valkey_url = "redis://127.0.0.1:6379/0"'}
-content = {json.dumps(str(data_dir/"content"))}
-staging = {json.dumps(str(data_dir/"staging"))}
+content = {json.dumps(str(data_dir/"git"/"content"))}
+repositories = {json.dumps(str(data_dir/"git"/"repos"))}
+blobs = {json.dumps(str(data_dir/"blobs"/"sha256"))}
+staging = {json.dumps(str(data_dir/"transfers"/"staging"))}
+service_keys = {json.dumps(str(data_dir/"service"))}
 
 [limits]
 request_bytes = 1048576

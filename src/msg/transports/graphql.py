@@ -1,8 +1,10 @@
 """GraphQL is a thin adapter over OperationExecutor, never another business API."""
 from __future__ import annotations
+
 import inspect
-from msg.core.codec import wire,freeze_json,canonical
-from msg.core.errors import Failure,require
+
+from msg.core.codec import freeze_json, wire
+from msg.core.errors import Failure, require
 from msg.core.executor import result_wire
 from msg.transports.packet import decode_packet
 
@@ -40,13 +42,18 @@ class GraphQLAdapter:
         self.schema=graphql.GraphQLSchema(query=graphql.GraphQLObjectType('Query',queries),
                                          mutation=graphql.GraphQLObjectType('Mutation',mutations))
 
-    async def handle(self,body):
+    async def handle(self,body, *, operation_kind=None):
         require(isinstance(body,dict) and set(body)<={'query','variables','operationName'},'invalid_graphql_request')
         require(isinstance(body.get('query'),str) and len(body['query'])<=65536,'invalid_graphql_query')
         require(body.get('variables') is None or isinstance(body['variables'],dict),'invalid_graphql_variables')
+        require(operation_kind in {None,'query','mutation'},'invalid_graphql_operation')
         g=self.graphql
         try:
             document=g.parse(body['query'],max_tokens=10000)
+            operation=g.get_operation_ast(document,body.get('operationName'))
+            require(operation is not None,'graphql_operation_required')
+            if operation_kind is not None:
+                require(operation.operation.value==operation_kind,'graphql_effect_mismatch')
             errors=g.validate(self.schema,document,max_errors=20)
             if errors:
                 return {'errors':[{'message':'graphql_validation_error','extensions':{'code':'graphql_validation_error'}}]}

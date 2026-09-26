@@ -116,6 +116,10 @@ def hosting_app(service):
             headers={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
                 'Cross-Origin-Resource-Policy':'same-origin','ETag':'"'+blob.digest+'"',
                 'Content-Length':str(blob.size),'Cache-Control':'public, max-age=0, must-revalidate'}
+            if blob.media_type.split(';',1)[0].strip().lower()=='text/html':
+                # Hosted HTML must never inherit the service origin, including
+                # on HEAD and conditional responses.
+                headers['Content-Security-Policy']="sandbox allow-scripts; default-src 'none'"
             if request.headers.get('if-none-match')==headers['ETag']:return Response(status_code=304,headers=headers)
             if request.method=='HEAD':return Response(media_type=blob.media_type,headers=headers)
             return StreamingResponse(service.contents.read(blob),media_type=blob.media_type,headers=headers)

@@ -5,6 +5,7 @@ from msg.constants import *
 from msg.core.codec import canonical,wire,decode,loads,digest,b64
 from msg.core.errors import Failure,require
 from msg.core.models import Resource,ResourceRef,HandlerOutput,Credential
+from msg.core.tags import normalize_tag
 from msg.core.requests import request_for
 from msg.core.template_dsl import render_values
 from msg.plugins.common import *
@@ -104,6 +105,8 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
         return {k:meta[k] for k in fields}
     defaults=('id','type','name','revision','generation','path','content','items','keys','certificates',
               'relations','raw_url','transfer_operation','kind','local_only','list_operation')
+    if resource.tags:
+        defaults=(*defaults,'tags')
     return {k:meta[k] for k in defaults if k in meta}
 
 
@@ -142,10 +145,13 @@ def install(app):
             return HandlerOutput(data={'not_modified':True,'digest':version})
         return HandlerOutput(data=data)
 
-    listing={'parent':IDENTIFIER,'type':STRING,'author':IDENTIFIER,'query':STRING,'state':{'enum':['active','archived','purged']},
+    listing={'parent':IDENTIFIER,'type':STRING,'author':IDENTIFIER,'query':STRING,'tag':STRING,
+             'state':{'enum':['active','archived','purged']},
              'sort':{'enum':['id','time','name']},'direction':{'enum':['asc','desc']},'limit':{'type':'integer','minimum':1,'maximum':200},'cursor':STRING,'fields':fields}
     async def list_items(ctx,request,tx):
         a=dict(request.arguments)
+        if a.get('tag') is not None:
+            a['tag']=normalize_tag(a['tag'])
         parent=await resolve(tx,a['parent']) if a.get('parent') else None
         if parent==TOOLS_SPACE:
             return HandlerOutput(data={'items':await filtered_tools(app,ctx,request,tx)})
@@ -171,6 +177,9 @@ def install(app):
             text=a['query'].replace('\\','\\\\').replace('%','\\%').replace('_','\\_')
             filters.append("(r.name LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM projections p WHERE p.resource_id=r.id AND p.text LIKE ? ESCAPE '\\'))")
             parameters.extend(['%'+text+'%','%'+text+'%'])
+        if a.get('tag'):
+            filters.append('EXISTS (SELECT 1 FROM resource_tags rt WHERE rt.resource_id=r.id AND rt.tag=?)')
+            parameters.append(a['tag'])
         values=[]
         last_position=position
         more=False

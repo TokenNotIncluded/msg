@@ -5,6 +5,7 @@ from msg.constants import ROOT_SPACE,ROOT_SUBJECT
 from msg.core.codec import canonical,decode,loads,wire,unb64,digest
 from msg.core.errors import Failure,require
 from msg.core.models import HandlerOutput,ResourceRef,Relation,EffectJob,BlobRef
+from msg.core.tags import normalize_tags
 from msg.core.template_dsl import parse_template,normalize_values
 from msg.plugins.common import *
 from msg.plugins.schemas import *
@@ -129,6 +130,24 @@ def install(app):
     async def post_create(ctx,request,tx):
         resource,meta=await create_post(app,ctx,request,tx,parent=await resolve(tx,request.arguments['parent']))
         return output_for(resource,**meta)
+
+    @op('content.tags_set',obj({'id':IDENTIFIER,'tags':{'type':'array','items':STRING,
+        'maxItems':16}},('id','tags')))
+    async def tags_set(ctx,request,tx):
+        resource=await tx.resource(await resolve(tx,request.arguments['id']))
+        check='manage' if resource.type in {'topic','repo'} else 'write'
+        await check_access(app,ctx,request,tx,resource.id,check)
+        require(app.registry.resource_type(resource.type,resource.type_version).taggable,
+                'resource_not_taggable')
+        require(resource.state=='active','resource_inactive')
+        await assert_generation(request,resource)
+        tags=normalize_tags(request.arguments['tags'])
+        if tags==resource.tags:
+            return output_for(resource,tags=tags)
+        updated=replace(resource,tags=tags,generation=resource.generation+1,
+                        modified_at=ctx.now,modified_by=ctx.principal.actor)
+        await tx.replace(updated,resource.generation)
+        return output_for(updated,tags=tags)
 
     @op('content.post_edit',obj({'id':IDENTIFIER,'expected_revision':IDENTIFIER,'body':STRING,
         'template':post_fields['template'],'values':{'type':'object'},'source':REF,'content_created_at':STRING,'revision_id':IDENTIFIER,'content_signature':SIGNATURE},

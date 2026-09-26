@@ -66,7 +66,9 @@ class Application:
                     if self.settings.server.valkey_url else None)
             self.metadata=PostgresMetadataStore(self.settings.server.postgres_dsn,signal=signal)
         if self.contents is None:
-            self.contents=GitContentStore(self.settings.server.content_dir)
+            self.contents=GitContentStore(self.settings.server.content_dir,
+                                          binary_dir=self.settings.server.blob_dir,
+                                          staging_dir=self.settings.server.staging_dir)
 
     async def load(self):
         require(self.settings.trust_file.is_file(),'root_not_initialized')

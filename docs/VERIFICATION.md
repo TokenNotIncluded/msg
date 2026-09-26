@@ -1,5 +1,9 @@
 # 本地与 CI 验收记录
 
+## 2026-09-27 ChatGPT 文档对齐批次
+
+权威需求为 Google Drive `ChatGPT` 文件夹中的《msg.lmm.best｜项目设计》，本轮读取修订时间 `2026-09-26T22:19:27.354Z`，覆盖 01–15 章。当前工作树在 Python 3.15、PostgreSQL 测试环境下 `uv run python -m pytest -q` 为 **197 passed**；新增 CA、标签、只读入口等定向复跑 **29 passed**；修复只读 GraphQL 客户端入口后 `uv run python -m pytest -q conformance` 为 **8 passed**；`sh -n deploy/prepare-service.sh`、`git diff --check` 和 `uv build` 通过。测试通过只证明被覆盖的本地代码行为，不代表第 15 章所有 feature 已完成，也不代表线上部署。完整独立 Test Root CA selftest、ReadQuery/cursor、todo、Git 标准 push URL 与同域托管等仍待实现。
+
 ## 2026-09-27 存储迁移与协议入口迭代
 
 本轮本地验证使用 Python 3.15.0rc2、隔离 PostgreSQL 18 与临时 Valkey 9；没有替换生产数据库，也没有发布或线上验收结果。[远端 CI 运行](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36272190647)在提交 `c417b9e` 上通过，使用 PostgreSQL 16 与 Valkey 服务容器。

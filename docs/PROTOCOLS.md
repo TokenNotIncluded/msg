@@ -1,8 +1,8 @@
 # 传输与线协议
 
-本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15、16 章。本轮读取到的文档为 01–16 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
+本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
-需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T21:46:43.426Z`、正文为 01–16 章。PostgreSQL + Valkey 是用户后续明确决定，覆盖文档的 SQLite 选型；其余需求继续有效。
+需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T22:19:27.354Z`、正文为 01–15 章。最新版已将 PostgreSQL 写入长期主数据库基线；Valkey 保留用户明确决定的可选唤醒用途，不保存唯一业务事实。
 
 ## 本批已验证与剩余差距
 
@@ -44,11 +44,11 @@ GET  /-/transfer                         只读发现
 | `/-/transfer` | 统一分片入口 |
 | `msg mcp` | 客户端自动签名的 MCP stdio |
 
-除 `/-/` 外，全部公开 HTTP 路径只读。任何方法、query、HEAD、内容协商、预览或重定向都不能修改业务状态；读正文不能暗中 ACK、关注、发帖、签发或执行工具。只读操作位于 `/-/` 也不因此可写；字典、schema、帮助与状态查询始终只读。路由须在业务分派前按精确路径段识别 `/-/`，拒绝歧义编码、点段与方法覆盖。普通路径只绑定只读 handler；未注册协议返回 404，不保留兼容执行 handler，不重定向或内部转发到执行入口。HEAD、OPTIONS 不执行操作；原生 Git 的 `git-upload-pack` POST 属于读取，其方法不代表写入许可。
+除 `/-/` 外，全部公开 HTTP 路径在业务语义上永久只读。Git fetch/LFS download 可使用 POST，但不得业务写入。任何方法、query、HEAD、内容协商、预览或重定向都不能修改业务状态；读正文不能暗中 ACK、关注、发帖、签发或执行工具。只读操作位于 `/-/` 也不因此可写；字典、schema、帮助与状态查询始终只读。路由须在业务分派前按精确路径段识别 `/-/`，拒绝歧义编码、点段与方法覆盖。普通路径只绑定只读 handler；未注册协议返回 404，不保留兼容执行 handler，不重定向或内部转发到执行入口。HEAD、OPTIONS 不执行操作；原生 Git 的 `git-upload-pack` POST 属于读取，其方法不代表写入许可。
 
 2026-09-27 已重新读取上述最新文档第 9 章。旧 `/!`、`/~`、`/run/j|gz` 与 `/mcp` 兼容 handler 已彻底删除并完成定向验证；本轮 Python 3.15 最终全套 165 passed、conformance 8 passed、uv build 成功。
 
-普通 Git/LFS 仓库路径及子路径永久只读；Git/LFS 写入只能直接走 `/-/` 注册操作并统一授权。标准客户端发现写地址及兼容性仍待验证，不保留普通路径写 handler、代理改写、写入重定向或额外子域名。
+普通 Git/LFS 仓库路径及子路径永久只读；Git/LFS 写入只能直接走 `/-/` 注册操作并统一授权。最新写地址已确定为 `/-/git/<repo-id>`，仓库元数据须返回 read_url/push_url；该入口及客户端兼容性仍待实现验收，不保留普通路径写 handler、代理改写、写入重定向或额外子域名。
 
 工具规范调用名是 `tool.run`，经 `/-/p/tool.run` 或 `/-/g` 已登记短码执行；`/tools/` 及全部子路径只展示当前凭据允许发现的 ToolSpec，任何参数或方法都不能触发执行。ToolSpec 须声明 tool_id、名称、说明、版本/摘要、输入输出 schema、能力、网络策略、超时、输入输出/并发上限和 executor_key；实际执行及大输入输出的 Transfer 引用仍须验收。公开契约已更名为 `tool.run`；`tool.invoke` 仅保留不可执行的 tombstone（废弃记录），旧短码不改义、不复用。完整 GET 标量工具参数及上述逐项工具验收不能仅凭更名视为完成。
 
@@ -80,13 +80,13 @@ JSON 拒绝重复键、非有限数和未声明字段。`core/codec.py` 规定 U
 
 目录采用文件夹语义，帖子与回复输出 `/<topic>/<post-id>.md`；稳定 Resource ID 不随改名或移动改变。旧无 `.md` 地址仅作只读迁移；搜索、RSS、分享、Inbox/Outbox 应返回规范路径。模板 DSL 原件不能仅加 `.md` 后缀冒充 Markdown。
 
-资源默认、JSON、meta、raw、history、固定 Revision、HEAD、附件、搜索与 ID 入口共用当前授权。ETag、游标和内容 digest 不是访问凭据。`/raw` 二进制返回真实字节；受限环境通过 transfer 流式读取，不整文件编码为大页面。表示投影最终扩展名与派生浏览/下载计数在需求第 16 章仍待确定，不以本批路由迁移擅自决定。
+资源默认、JSON、meta、raw、history、固定 Revision、HEAD、附件、搜索与 ID 入口共用当前授权。ETag、游标和内容 digest 不是访问凭据。`/raw` 二进制返回真实字节；受限环境通过 transfer 流式读取，不整文件编码为大页面。最新版已确定 canonical path 优先通过 Accept/fields 选择表示，GET-only 使用 `/_read/<resource_id>/json`、`meta`、`raw`、`history`、`rev/<revision_id>`，`/_r/...` 是永久短别名。当前开发批次已加入 `/_r/` 稳定投影并做定向验证，但正式命名空间和 GraphQL 分离已加入代码，完整等价性与读取契约仍待最终验收，不能视为本批最终全套通过。浏览/下载量仅作为可近似、可重复的异步 telemetry，不改 Resource、Revision、generation、已读或 ACK，不作授权/计费依据。
 
 首页为精简导航；`/AGENTS.md` 是唯一全站规则入口，技能位于 `/.agents/skills/<name>/SKILL.md`。项目可有局部 AGENTS.md/技能目录，沿资源祖先链发现；不再建立 `/rules` 或 `/.agents/AGENTS.md`。规则和技能不授予操作权限，也不能放宽平台安全边界。
 
 ## GraphQL 与 MCP
 
-GraphQL query 只读，mutation 映射已注册写操作，共用同一请求认证和执行器。当前通用字段：
+最新版目标要求 `/_read/graphql`（短别名 `/_r/graphql`）只接受 query，`/-/graphql` 只接受 mutation；路由层拒绝混用，共用 Registry、schema、Authorizer 与 Projection。当前开发代码已加入正式/短别名读取入口与 GraphQL query/mutation 分离，仍待本批最终全套验证；这不等于统一 ReadQuery 已实现。当前通用字段：
 
 ```graphql
 mutation MsgOperation($packet: JSON!) {
@@ -158,3 +158,23 @@ token 和 bootstrap claim 出现在路径中就是持有者凭据。HTTPS 不能
 | 普通路径、HEAD、query、redirect | /-/ 外无业务变更；HEAD/OPTIONS 无副作用；不接受认证 query 或通过跳转写入 |
 | 泄漏与缓存 | token/claim 不进入日志、错误、事件、审计、字典、回执或 Location；响应 no-store/no-referrer |
 | 秘密首次响应丢失 | 不重复创建身份/轮换，不落盘明文；明确验证一次展示与恢复边界，不用空成功掩盖 |
+
+最新 22:19 修订的 CA、目录、tags、稳定投影、telemetry、Git push URL 与托管 sandbox 是新的验收范围；上文 165 项测试仅证明此前已实现契约，不代表这些新范围完成。
+
+## 22:19 读取契约目标与当前边界
+
+`/_read/` 是正式只读机器命名空间，`/_r/` 是永久短别名，两者应直接命中同一 handler，不经过 301/302，也不另建 Resource 树或授权边界。完整文档/schema 默认展示长形式，compact/GET-only 可返回短形式。`/_search=/_s`、`/_index=/_i` 同样要求内容、权限、cursor、缓存语义和错误码完全等价且不重定向；目前这些别名与统一契约仍是待实现验收目标。tag 索引规范路径为 `/_index/by-tag/<tag>`，短形式 `/_i/by-tag/<tag>`；tags 不参与授权。
+
+普通路径、机器读取路径、只读 GraphQL、CLI 和 MCP 的结构化读取应统一编译成 ReadQuery，至少含 root、select、filter、sort、first、after、expand、projection。关系与集合逐对象授权、强制分页，并受 max_depth、max_nodes、max_response_bytes、query_cost、max_collection_page_size 和 timeout 限制。该统一查询层尚未完整实现，不能以已有 discovery 操作替代全部验收。
+
+三类阅读指针的目标彼此独立：
+
+- PageCursor 用于集合遍历，服务端返回可直接 GET 的 `/_read/c/<opaque_cursor>` 或 `/_r/c/...`。cursor 绑定 query_digest、排序、snapshot boundary、last key、projection/fields 和有效期，避免新插入数据打乱一轮遍历。
+- ReadCursor 同样使用 `/c/`，绑定固定 ResourceRef 和 Revision，按 Markdown 块切分，超限单块才按字节范围继续；可返回 prev、next、expand_before、expand_after/around。继续旧 cursor 不能切到新 Revision。
+- SyncCursor 使用独立 `/_read/s/<opaque_cursor>` 或 `/_r/s/...`，只追踪变化，窗口过期返回 resync_required，不能当列表翻页游标。
+
+所有 cursor 都须为服务端签名/MAC 的 opaque token，每次读取重新认证和授权，客户端不计算 page/offset/下一条 ID，也不依赖 token 内部结构。现有分页与 sync 功能不能证明这套稳定 continuation、snapshot、块分段、撤权和过期契约已完成。
+
+Bookmark 是显式持久业务状态，只有用户主动写操作才能将 resource_id、revision_id、anchor 保存到 `/@user/bookmarks/`；它与 cursor 分离，不等于 ACK。ReadCursor 不标记已读，telemetry 不产生 ACK。Bookmark 与上述完整 cursor 功能仍待实现验收。
+
+本批新增稳定投影仍处开发验证阶段；本文件保留的 165 tests/8 conformance 属此前提交证据，最终测试数字须以本批实际结果更新，不能用定向通过推断完整读取协议或最新版需求完成。

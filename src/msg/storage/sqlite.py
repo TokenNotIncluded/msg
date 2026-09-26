@@ -33,6 +33,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_root ON resources((1)) WHERE parent IS NUL
 CREATE INDEX IF NOT EXISTS resources_parent ON resources(parent,id);
 CREATE INDEX IF NOT EXISTS resources_time ON resources(created_at,id);
 CREATE INDEX IF NOT EXISTS resources_owner ON resources(owner,id);
+CREATE TABLE IF NOT EXISTS resource_tags (
+ resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+ tag TEXT NOT NULL, PRIMARY KEY(tag,resource_id));
+CREATE INDEX IF NOT EXISTS resource_tags_resource ON resource_tags(resource_id);
 CREATE TABLE IF NOT EXISTS revisions (
  id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id),
  created_at TEXT NOT NULL, body TEXT NOT NULL);
@@ -164,6 +168,8 @@ class SqliteSession:
             resource.id, resource.type, resource.name, resource.parent, resource.owner,
             resource.group, resource.mode, resource.generation, resource.revision,
             resource.state, data['created_at'], data['modified_at'], canonical(resource).decode()), write=True)
+        for tag in resource.tags:
+            self.execute("INSERT INTO resource_tags VALUES (?,?)", (resource.id,tag), write=True)
 
     async def replace(self, resource, expected_generation):
         self.check(True)
@@ -186,6 +192,10 @@ class SqliteSession:
              resource.generation, resource.revision, resource.state, data['modified_at'],
              canonical(resource).decode(), resource.id, expected_generation), write=True).rowcount
         require(changed == 1, "generation_conflict")
+        if resource.tags != old.tags:
+            self.execute("DELETE FROM resource_tags WHERE resource_id=?", (resource.id,), write=True)
+            for tag in resource.tags:
+                self.execute("INSERT INTO resource_tags VALUES (?,?)", (resource.id,tag), write=True)
 
     async def append_revision(self, revision):
         self.check(True)

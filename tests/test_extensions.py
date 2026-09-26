@@ -62,6 +62,13 @@ async def test_hosting_publish_is_explicit_versioned_and_other_origin(installed)
         result=await http.get('/@site-owner/w/')
         assert result.status_code==200 and result.content==b'<h1>Published explicitly</h1>'
         assert 'set-cookie' not in result.headers
+        assert 'sandbox' in result.headers['content-security-policy']
+        assert 'allow-same-origin' not in result.headers['content-security-policy']
+        head=await http.head('/@site-owner/w/')
+        assert head.headers['content-security-policy']==result.headers['content-security-policy']
+        cached=await http.get('/@site-owner/w/',headers={'If-None-Match':result.headers['etag']})
+        assert cached.status_code==304
+        assert cached.headers['content-security-policy']==result.headers['content-security-policy']
         denied=await http.get('/@site-owner/w/../../root',headers={'Host':'testserver'})
         assert denied.status_code==403
     source=await call(app,'discovery.get',{'id':private_file.resources[0].id})
@@ -81,7 +88,7 @@ async def test_native_git_storage_and_public_invariant(installed,tmp_path):
     rid=created.resources[0].id
     store=NativeGitStore(app)
     assert store.path(rid).is_dir()
-    assert store.path(rid).is_relative_to(app.settings.server.content_dir.parent/'repositories')
+    assert store.path(rid).is_relative_to(app.settings.server.repositories_dir)
     assert not store.path(rid).is_relative_to(app.contents.path)
     denied=await call(app,'content.chmod',{'id':rid,'mode':'0700'},key=key,subject=uid,
         expected=((rid,created.data['generation']),))

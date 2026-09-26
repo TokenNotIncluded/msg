@@ -32,15 +32,18 @@ async def backup(app,destination):
             # Holding the write reservation makes the DB snapshot and the referenced
             # content trees consistent. Git/CAS writes always precede SQL pointers.
             await asyncio.to_thread(app.metadata.backup,directory/'metadata.dump')
-            await asyncio.to_thread(shutil.copytree,app.settings.server.content_dir,directory/'content')
-            native=app.settings.server.content_dir.parent/'repositories'
-            if native.exists():await asyncio.to_thread(shutil.copytree,native,directory/'repositories')
+            for source,name in ((app.settings.server.content_dir,'content'),
+                                (app.settings.server.repositories_dir,'repositories'),
+                                (app.settings.server.blob_dir,'blobs'),
+                                (app.settings.server.staging_dir,'staging')):
+                if source.exists():
+                    await asyncio.to_thread(shutil.copytree,source,directory/name)
             await asyncio.to_thread(shutil.copytree,app.settings.service_keys,directory/'service')
             shutil.copy2(app.settings.trust_file,directory/'root-public.json')
             # Credentials from mail.toml are deliberately not embedded. Restore
             # reenables SMTP only after the operator supplies its own configuration.
         files={str(path.relative_to(directory)):_hash(path) for path in directory.rglob('*') if path.is_file()}
-        manifest={'format':'msg-data-backup-v2','service_url':app.settings.service_url,'files':files,
+        manifest={'format':'msg-data-backup-v3','service_url':app.settings.service_url,'files':files,
                   'root_private_key_included':False,'mail_credentials_included':False}
         (directory/'manifest.json').write_bytes(canonical(manifest))
         partial=directory/'archive.zip'
@@ -66,7 +69,7 @@ def restore(source,config_dir,data_dir,*,postgres_dsn='service=msgd'):
             names=archive.namelist()
             require(len(names)==len(set(names)) and 'manifest.json' in names,'invalid_backup')
             manifest=loads(archive.read('manifest.json'))
-            require(manifest.get('format')=='msg-data-backup-v2' and manifest.get('root_private_key_included') is False,'invalid_backup')
+            require(manifest.get('format')=='msg-data-backup-v3' and manifest.get('root_private_key_included') is False,'invalid_backup')
             require(set(names)==set(manifest['files'])|{'manifest.json'},'backup_file_mismatch')
             for info in archive.infolist():
                 name=info.filename
@@ -91,9 +94,14 @@ def restore(source,config_dir,data_dir,*,postgres_dsn='service=msgd'):
                         '--dbname',safe_dsn,str(directory/'metadata.dump')],
                        env=env,check=True,capture_output=True)
         data_dir.mkdir(mode=0o700)
-        for name in ('content','repositories'):
-            if (directory/name).exists():shutil.move(str(directory/name),data_dir/name)
         settings=write_example(config_dir,data_dir,manifest['service_url'],postgres_dsn=postgres_dsn)
+        for name,target in (('content',settings.server.content_dir),
+                            ('repositories',settings.server.repositories_dir),
+                            ('blobs',settings.server.blob_dir),
+                            ('staging',settings.server.staging_dir)):
+            if (directory/name).exists():
+                target.parent.mkdir(parents=True,exist_ok=True)
+                shutil.move(str(directory/name),target)
         settings.service_keys.parent.mkdir(parents=True,exist_ok=True)
         shutil.move(str(directory/'service'),settings.service_keys)
         os.chmod(settings.service_keys,0o700)

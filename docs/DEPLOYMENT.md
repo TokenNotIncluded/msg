@@ -13,8 +13,11 @@
 postgres_dsn = "service=msgd"
 # 可选：只用于唤醒与缓存，不保存唯一业务状态
 valkey_url = "redis://127.0.0.1:6379/0"
-content = "/var/lib/msgd/content"
-staging = "/var/lib/msgd/staging"
+content = "/var/lib/msgd/git/content"
+repositories = "/var/lib/msgd/git/repos"
+blobs = "/var/lib/msgd/blobs/sha256"
+staging = "/var/lib/msgd/transfers/staging"
+service_keys = "/var/lib/msgd/service"
 ```
 
 `postgres_dsn` 必填；示例使用 libpq 的 service 名称，连接主机、数据库名和凭据应放在仅服务账号可读的 service 文件或 libpq 环境配置中。`server.toml` 由 root 持有、msgd 组可读（0640），仍应优先避免在其中放密码。如使用 URL，也支持 `postgresql://` 或 `postgres://`。`valkey_url` 可省略；Valkey 客户端接受 `redis://`、`rediss://` 与 `unix://`。不要将 PostgreSQL 或 Valkey 直接暴露到公网。
@@ -50,7 +53,7 @@ sudo systemctl enable --now msgd.service msgd-worker.service
 sudo /opt/msgd/venv/bin/msgd doctor
 ```
 
-数据目录由 msgd 持有；配置目录由 root 持有。`root/` root:root 0700，根加密私钥 0600；`service/` root:msgd 0750，在线与回执私钥 root:msgd 0640。trust 公共材料只允许管理员修改。**不要递归 chown 整个 /etc/msgd 给服务账号。**
+持久数据位于 `/var/lib/msgd/`，可重建缓存位于 `/var/cache/msgd/`，运行时文件位于 `/run/msgd/`；这些目录不能互换，未 seal 的分片必须保留在持久暂存中。配置目录 `/etc/msgd/` 只放服务配置与公开信任材料。根 CA 私有状态位于 `/var/lib/msgd-root/`，root:root 0700，根加密私钥 0600；`/var/lib/msgd/service/` 为 root:msgd 0750，在线与回执私钥 root:msgd 0640。trust 公共材料只允许管理员修改。**不要递归 chown `/etc/msgd/` 或 `/var/lib/msgd-root/` 给服务账号。** 旧安装的根材料若仍在 `/etc/msgd/root/`，需明确迁移与复核，不能靠目录名推断已经完成。
 
 systemd 配置不预设禁止 worker 使用 user namespace 的系统调用；bubblewrap 需要宿主允许其隔离机制。执行失败应排查宿主配置，不能删除 worker 的隔离要求作为修复。
 
@@ -58,7 +61,7 @@ HTTP 默认监听 127.0.0.1:8042。反向代理 Host 必须与 service_url 匹�
 
 ## 可选扩展
 
-静态托管在 server.toml 中设置不同主机名的 public_web_origin，使用 `msgd hosting` 监听独立入口。身份站点与用户网页不能同源。没有启用该来源时不得把 hosting 路由混入 API 站点。
+当前源码的静态托管仍使用独立 origin，与最新版需求的同域托管和强制 HTML `Content-Security-Policy: sandbox` 契约不一致。该扩展在改造并完成浏览器隔离、preview→deploy→rollback 和 `@root` 示例验收前不得当作需求已完成或直接开放生产流量。
 
 邮件默认关闭。复制 mail.example.toml 到 `/etc/msgd/mail.toml` 后填写真实 TLS SMTP参数。认证凭据使用独立 0640 文件引用，不放入根目录、不提交仓库。worker发送失败不回滚业务；未知 DATA 结果由管理员或上层投递策略处理。
 
@@ -73,12 +76,18 @@ msgd backup /secure-backup/service.zip
 msgd --config-dir /new/etc/msgd restore /secure-backup/service.zip --data-dir /new/var/lib/msgd
 ```
 
-`msgd backup` 生成的归档需包含 PostgreSQL dump、与其一致的内容文件、公开仓库、公共信任及服务密钥，**不含根私钥**；不能把旧 SQLite 文件当作可恢复的数据库。恢复命令默认使用 libpq 的 `service=msgd`，该 service 必须指向新建的空目标数据库；目标配置目录与数据目录也必须不存在。先在隔离环境核验归档和恢复结果，再切换服务流量。Valkey 的短期数据无需备份。备份是敏感文件，保存为 0600 并在外部加密。根材料单独从本机控制台执行 `msgd root backup PATH`，恢复时核验现有信任锚。
+`msgd backup` 的 v3 归档包含 PostgreSQL dump、内部文本 Git、公开仓库、Blob/CAS、可恢复暂存、公共信任及服务密钥，**不含根私钥**；旧 SQLite 文件或 v2 归档不能直接按 v3 恢复。恢复命令默认使用 libpq 的 `service=msgd`，该 service 必须指向新建的空目标数据库；目标配置目录与数据目录也必须不存在。先在隔离环境核验归档和恢复结果，再切换服务流量。Valkey 的短期数据无需备份。备份是敏感文件，保存为 0600 并在外部加密。根材料单独从本机控制台执行 `msgd root backup PATH`，恢复时核验现有信任锚。
 
 改 PIN 使用 `msgd root change-pin`，不改变公钥。轮换使用 `msgd root rotate`，根遗失则显式 `--lost-key`，中断恢复用 `--resume`。轮换前停止服务和 worker，完成后重新签发基础在线 CA、复核权限、重启，通知客户端更新信任 / 重新申请授权。普通账号可以 `msg cert renew` 获取新的基础证书；特殊授权与下级 CA 仍需重新审核。
 
 ## 上线验收
 
-执行 tests 与 conformance，确认 Python 3.15、GraphQL、MCP、CLI分片一致性；用真实 sshd 完成登录、拒绝 shell、拒绝转发、Git push撤销测试；用真实bubblewrap验证worker看不到 `/etc/msgd/root`、服务数据与凭据；验证公网目标、私网拒绝和重定向检查；用隔离 SMTP 测试 TLS、禁用状态、连接重试和 uncertain。
+执行 tests 与 conformance，确认 Python 3.15、GraphQL、MCP、CLI分片一致性；用真实 sshd 完成登录、拒绝 shell、拒绝转发、Git push撤销测试；用真实 bubblewrap 验证 worker 看不到 `/var/lib/msgd-root/`、服务数据与凭据；验证公网目标、私网拒绝和重定向检查；用隔离 SMTP 测试 TLS、禁用状态、连接重试和 uncertain。
 
 只有所有适用项在真实部署通过，才能判断是否允许生产流量。本地 Python 3.15 测试不能代替部署环境的运行入口检查。
+
+## 本轮改造状态
+
+需求已通过 ChatGPT 文件夹实时核对为 `2026-09-26T22:19:27.354Z`、01–15 章。当前开发批次已加入新安装数据布局、备份 v3、CA 三级硬限和 `/_r/` 稳定 ID 投影；Basic Online CA 白名单与相关检查仍在推进。最终全套尚未完成，此前提交的测试/CI 数字仅为历史证据，不证明本批完成。新安装默认值不等于存量根材料、目录或归档已自动迁移。
+
+新生产根目录固定 `/var/lib/msgd-root`；测试的自定义 config/root 目录只是隔离夹具，不能据此改变生产默认边界。doctor 必须只读检查根与在线 CA 的链、issuer、key_id、scope、issue_grants、TTL、深度、撤销和禁止能力。selftest 仅在 `/_test/<run_id>/` 使用独立 Test Root，不读取、解锁或签署真实 Root；OnlineIssuer 自动签发、收缩与拒绝/待审行为还须完整验收。不得把本批定向测试记成最终全套或宿主部署验收。

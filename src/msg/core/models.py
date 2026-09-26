@@ -56,6 +56,7 @@ class Resource:
     created_by: ResourceId
     modified_at: datetime
     modified_by: ResourceId
+    tags: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -310,6 +311,7 @@ class ResourceTypeSpec:
     content_schema: ResourceRef | None
     operations: frozenset[str]
     relations: frozenset[str]
+    taggable: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -485,7 +487,10 @@ class ServerConfig:
     postgres_dsn: str = field(repr=False)
     valkey_url: str | None = field(repr=False)
     content_dir: Path
+    repositories_dir: Path
+    blob_dir: Path
     staging_dir: Path
+    service_keys_dir: Path
     plugins: tuple[str, ...]
     limits: TransportLimits
     mail: MailConfig | None = None

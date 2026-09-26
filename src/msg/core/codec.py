@@ -230,9 +230,12 @@ def validate_record(obj):
             else:
                 require(type(value) is int and value >= 1, "invalid_version", f.name)
     if type(obj).__name__ == "Resource":
+        from msg.core.tags import normalize_tags
+
         require(type(obj.mode) is int and 0 <= obj.mode <= 0o7777, "invalid_mode")
         require(obj.state in {"active", "archived", "purged"}, "invalid_state")
         require(obj.parent != obj.id, "parent_cycle")
+        require(obj.tags == normalize_tags(obj.tags), "invalid_tags")
     if type(obj).__name__ == "Relation" and obj.excerpt is not None:
         require(len(obj.excerpt) == 2 and all(type(n) is int for n in obj.excerpt)
                 and 0 <= obj.excerpt[0] <= obj.excerpt[1], "invalid_byte_range")

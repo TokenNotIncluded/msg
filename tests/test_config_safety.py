@@ -21,6 +21,6 @@ def test_reject_ambiguous_or_invalid_server_configuration(tmp_path,line):
 
 def test_example_quotes_filesystem_paths_and_unknown_plugin_keys_are_rejected(tmp_path):
     settings=write_example(tmp_path/'config',tmp_path/'with"quote')
-    assert settings.server.content_dir==tmp_path/'with"quote'/'content'
+    assert settings.server.content_dir==tmp_path/'with"quote'/'git'/'content'
     with (tmp_path/'config'/'server.toml').open('a') as f:f.write('\n[plugins]\nload_arbitrary_code=true\n')
     with pytest.raises(Failure):load_settings(tmp_path/'config')

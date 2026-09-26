@@ -17,7 +17,7 @@ from msg.core.models import (
 from msg.plugins.common import registration,resolve,operation_id,check_access,new_id,create_resource,output_for
 from msg.plugins.schemas import *
 from msg.security.crypto import key_id,subject_id,verify
-from msg.security.certificates import sign_certificate,csr_body,verify_csr
+from msg.security.certificates import ONLINE_ISSUABLE_CAPABILITIES,sign_certificate,csr_body,verify_csr
 from msg.security.policy import scope_subset,constraints_subset
 
 
@@ -51,19 +51,42 @@ async def certificate_resource(tx,cert,now):
         created_at=now,created_by=cert.issuer_id,modified_at=now,modified_by=cert.issuer_id))
 
 
-async def issue_online(app,tx,subject,key,ctx, *, grants=None,kind='identity',sources=(),depth=0):
+async def issue_online(app,tx,subject,key,ctx,request, *, grants=None,kind='identity',sources=(),depth=0,
+                       ttl=None,authority_source=None):
     issuer=await app.online_issuer(tx)
     now=ctx.now
+    lifetime=app.settings.base_certificate_ttl if ttl is None else ttl
+    require(0<lifetime<=issuer.issuance.max_cert_ttl_seconds,'certificate_ttl_escalation')
+    if kind=='delegation':
+        require(bool(sources),'authority_source_required')
+        for source in sources:
+            fact=tx.setting('delegation:'+source.id)
+            require(fact is not None and parse_time(fact['expires_at'])>now,'authority_source_expired')
+            lifetime=min(lifetime,(parse_time(fact['expires_at'])-now).total_seconds())
     cert=Certificate(resource_id=new_id('cert'),serial=new_id('serial'),subject_id=subject,key_id=key,
         issuer_id=ONLINE_CA,parent_certificate_id=issuer.resource_id,authority_sources=tuple(sources),kind=kind,
         grants=tuple(app.base_grants() if grants is None else grants),not_before=now,
-        expires_at=min(now+timedelta(seconds=app.settings.base_certificate_ttl),issuer.expires_at),
+        expires_at=min(now+timedelta(seconds=lifetime),issuer.expires_at),
         target_service=app.settings.service_url,delegation_depth=depth,issuance=None,
         signature=Signature(key_id=app.online_signer.key_id,algorithm='ed25519',value=b''))
     cert=sign_certificate(cert,app.online_signer)
     await certificate_resource(tx,cert,now)
     await app.certificates.validate(cert.resource_id,tx,certificate=cert)
     await tx.register_certificate(cert,None,0)
+    source=authority_source or ({'kind':'delegation','id':sources[0].id,'revision':sources[0].revision}
+                                if sources else {'kind':'possession_proof','key_id':key,
+                                                'request_id':request.request_id})
+    authority=(tuple(sources) if sources else
+               (ResourceRef(id=source['certificate_id']),) if source.get('certificate_id') else
+               (ResourceRef(id=subject),))
+    event=Event(id=new_id('audit'),type='cert.auto.issue',time=now,request_id=request.request_id,
+                actor=ctx.principal.actor,subject=subject,resources=(ResourceRef(id=cert.resource_id),),
+                data={'automatic':True,'policy_version':1,'issuer':ONLINE_CA,
+                      'issuer_certificate_id':issuer.resource_id,'signing_key_id':app.online_signer.key_id,
+                      'certificate_id':cert.resource_id,'authority_source':source,
+                      'grant_digest':digest(cert.grants)})
+    await tx.append_audit(AuditEvent(event=event,authority=authority,before_digest=None,
+        after_digest=digest(cert),previous_digest=None,entry_digest='',result='issued'))
     return cert
 
 
@@ -95,15 +118,44 @@ def install(app):
         credential=Credential(id=key_id(public),subject_id=user.id,kind='signing_key',verifier=public,
             ceiling=app.primary_ceiling(),not_before=ctx.now,expires_at=None,revoked_at=None)
         await tx.save_credential(credential,0)
-        cert=await issue_online(app,tx,user.id,credential.id,ctx)
+        cert=await issue_online(app,tx,user.id,credential.id,ctx,request)
         return HandlerOutput(resources=(ResourceRef(id=user.id),),data={'subject_id':user.id,'key_id':credential.id,
             'certificate_id':cert.resource_id,'handle':request.arguments['handle']})
 
-    @op('identity.certificate_renew',obj(),signature=True)
+    @op('identity.certificate_renew',obj({'grants':GRANTS,'ttl':{'type':'integer','minimum':1}}),signature=True)
     async def certificate_renew(ctx,request,tx):
         subject=await controlled_owner(app,ctx,request,tx)
         require(subject.kind=='registered','registered_identity_required')
-        cert=await issue_online(app,tx,subject.resource_id,ctx.principal.credential_id,ctx)
+        await app.online_issuer(tx)
+        candidates=[]
+        for (raw,) in tx.execute('SELECT body FROM certificates WHERE subject=?',(subject.resource_id,)):
+            source=decode(Certificate,loads(raw))
+            if source.kind!='identity' or source.key_id!=ctx.principal.credential_id:
+                continue
+            try:
+                await app.certificates.validate(source.resource_id,tx)
+            except Failure as exc:
+                if exc.code in {'certificate_revoked','certificate_expired','certificate_key_revoked',
+                                'credential_revoked','authority_source_inactive','authority_source_changed',
+                                'authority_source_expired','authority_source_lost'}:
+                    continue
+                raise
+            candidates.append(source)
+        require(bool(candidates),'renewal_source_required')
+        candidates.sort(key=lambda source:(source.not_before,source.resource_id))
+        source=candidates[0]
+        grants=tuple(decode(CapabilityGrant,g) for g in request.arguments['grants']) if 'grants' in request.arguments else source.grants
+        ttl=request.arguments.get('ttl',int((source.expires_at-source.not_before).total_seconds()))
+        require(ttl<=(source.expires_at-source.not_before).total_seconds(),'renewal_ttl_exceeded')
+        for grant in grants:
+            await app.certificates.validate_grant(grant,tx)
+            require(any([g.capability==grant.capability and g.version==grant.version and
+                        grant.operations<=g.operations and await scope_subset(grant.scope,g.scope,tx) and
+                        constraints_subset(grant.constraints,g.constraints) for g in source.grants]),
+                    'renewal_scope_exceeded')
+        cert=await issue_online(app,tx,subject.resource_id,ctx.principal.credential_id,ctx,request,
+                                grants=grants,ttl=ttl,
+                                authority_source={'kind':'certificate','certificate_id':source.resource_id})
         return HandlerOutput(data={'subject_id':subject.resource_id,'certificate_id':cert.resource_id,
                                    'expires_at':wire(cert.expires_at)})
 
@@ -152,7 +204,7 @@ def install(app):
         credential=Credential(id=key_id(public),subject_id=subject.resource_id,kind='signing_key',verifier=public,
             ceiling=app.primary_ceiling(),not_before=ctx.now,expires_at=None,revoked_at=None)
         await tx.save_credential(credential,subject.auth_version+1)
-        certificate=await issue_online(app,tx,subject.resource_id,credential.id,ctx)
+        certificate=await issue_online(app,tx,subject.resource_id,credential.id,ctx,request)
         return HandlerOutput(resources=(ResourceRef(id=subject.resource_id),),data={'subject_id':subject.resource_id,
             'key_id':credential.id,'certificate_id':certificate.resource_id,'handle':a['handle']})
 
@@ -170,7 +222,9 @@ def install(app):
             ceiling=ceiling,not_before=ctx.now,expires_at=None,revoked_at=None)
         await tx.save_credential(credential,subject.auth_version)
         await tx.update_identity(replace(subject,auth_version=subject.auth_version+1),subject.auth_version)
-        cert=await issue_online(app,tx,subject.resource_id,credential.id,ctx)
+        cert=await issue_online(app,tx,subject.resource_id,credential.id,ctx,request,
+                                grants=tuple(g for g in ceiling
+                                             if g.capability in ONLINE_ISSUABLE_CAPABILITIES))
         return HandlerOutput(data={'key_id':credential.id,'certificate_id':cert.resource_id})
 
     @op('identity.key_revoke',obj({'key_id':IDENTIFIER},('key_id',)),signature=True)
@@ -362,7 +416,7 @@ def install(app):
         resource=await create_resource(app,ctx,request,tx,parent=ctx.principal.subject,type='delegation',
             name=new_id('delegation'),body=canonical(fact),media_type='application/json',mode=0o600)
         tx.set_setting('delegation:'+resource.id,fact)
-        cert=await issue_online(app,tx,grantee,key.id,ctx,grants=grants,kind='delegation',
+        cert=await issue_online(app,tx,grantee,key.id,ctx,request,grants=grants,kind='delegation',
                                sources=(ResourceRef(id=resource.id,revision=resource.revision),),depth=a.get('depth',0))
         return HandlerOutput(resources=(ResourceRef(id=resource.id,revision=resource.revision),),
                              data={'certificate_id':cert.resource_id,'grantee':grantee})
@@ -440,10 +494,11 @@ def install(app):
             ceiling=app.primary_ceiling(),not_before=ctx.now,expires_at=None,revoked_at=None)
         await tx.save_credential(credential,subject.auth_version)
         await tx.update_identity(replace(subject,auth_version=subject.auth_version+1),subject.auth_version)
-        cert=await issue_online(app,tx,target,credential.id,ctx)
+        cert=await issue_online(app,tx,target,credential.id,ctx,request)
         return HandlerOutput(resources=(ResourceRef(id=target),),data={'key_id':credential.id,'certificate_id':cert.resource_id})
 
     all_types=('topic','post','template','file','attachment','tool','user','organization','certificate','csr','delegation','repo','website','keystore','skill')
     types=[ResourceTypeSpec(name=name,version=1,container=name in {'topic','user','organization','repo','website'},
-        content_schema=None,operations=frozenset(),relations=frozenset({'reply_to','thread_root','quote','repost','attachment','template'})) for name in all_types]
+        content_schema=None,operations=frozenset(),relations=frozenset({'reply_to','thread_root','quote','repost','attachment','template'}),
+        taggable=name in {'post','topic','repo'}) for name in all_types]
     finish(types)

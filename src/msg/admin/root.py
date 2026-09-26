@@ -29,13 +29,16 @@ from msg.plugins.identity import certificate_resource
 
 
 def root_envelope(config_dir):
-    return Path(config_dir)/'root'/'key.json'
+    from msg.config import root_private_dir
+    current=root_private_dir(Path(config_dir))/'key.json'
+    legacy=Path(config_dir)/'root'/'key.json'
+    return legacy if legacy.is_file() and not current.exists() else current
 
 
 async def _provision(app,pin):
     """Initialize only an empty installation; partial state requires explicit recovery."""
     settings=app.settings
-    protected=settings.config_dir/'root'
+    protected=settings.root_private_dir
     marker=settings.config_dir/'initialization.pending'
     require(not root_envelope(settings.config_dir).exists() and not settings.trust_file.exists() and
             not marker.exists(),'initialization_requires_recovery')
@@ -65,7 +68,7 @@ async def _provision(app,pin):
         key_id=root.key_id,issuer_id=ROOT_SUBJECT,parent_certificate_id=None,authority_sources=(),kind='ca',
         grants=root_grants,not_before=now,expires_at=now+timedelta(days=3650),target_service=settings.service_url,
         delegation_depth=8,issuance=IssuancePolicy(issue_grants=root_grants,max_cert_ttl_seconds=31536000,
-            max_child_ca_depth=8,max_delegation_depth=8),signature=Signature(key_id=root.key_id,algorithm='ed25519',value=b''))
+            max_child_ca_depth=3,max_delegation_depth=8),signature=Signature(key_id=root.key_id,algorithm='ed25519',value=b''))
     root_certificate=sign_certificate(root_certificate,root)
     online_use=grant_for(app.registry.capability('cert.issue'))
     csr=CertificateRequest(resource_id=new_id('csr'),applicant=ONLINE_CA,subject_id=ONLINE_CA,

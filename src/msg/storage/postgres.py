@@ -36,6 +36,10 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_root ON resources((1)) WHERE parent IS NUL
 CREATE INDEX IF NOT EXISTS resources_parent ON resources(parent,id);
 CREATE INDEX IF NOT EXISTS resources_time ON resources(created_at,id);
 CREATE INDEX IF NOT EXISTS resources_owner ON resources(owner,id);
+CREATE TABLE IF NOT EXISTS resource_tags (
+ resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+ tag TEXT NOT NULL, PRIMARY KEY(tag,resource_id));
+CREATE INDEX IF NOT EXISTS resource_tags_resource ON resource_tags(resource_id);
 CREATE TABLE IF NOT EXISTS revisions (
  id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id),
  created_at TEXT NOT NULL, body TEXT NOT NULL);

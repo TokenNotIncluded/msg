@@ -1,6 +1,6 @@
 # 架构与提交边界
 
-本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T21:46:43.426Z`、正文为 01–16 章。PostgreSQL + Valkey 是用户后续明确决定，覆盖文档的 SQLite 选型；其余需求继续有效。
+本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T22:19:27.354Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 
 ## 有限资源模型
 
@@ -43,3 +43,13 @@ HTTP 协议操作只从 `/-/` 分流。旧 `/!`、`/~`、`/run/j|gz` 与 `/mcp` 
 第 13 章规定工具调用名为 `tool.run`；`/tools/` 只发现凭据允许的工具，路径本身绝不执行。公开契约已迁移为 `tool.run`，`tool.invoke` 仅保留不可执行 tombstone，短码不改义复用。`/-/transfer` 已提供六种分片操作的完整 OperationRequest POST 与只读 GET 发现；两段式 `/-/d/<namespace>/<operation>` 已实现。上述本地验证不代表完整工具/Git LFS/托管身份、逐 feature 验收或本轮远端 CI。
 
 最新第 15 章按 feature 要求实现、默认值、样例或明确空/禁用/拒绝状态、测试、doctor、selftest 与 CI 全部具备。插件 disabled 必须如实报告 disabled/skip；doctor 只读，selftest 隔离清理，root 测试也不关闭 local_only。第 11 章还要求 Files/LFS/Transfer 共用 BlobStore、下载流式或范围读取，禁止无鉴权 CAS 直链和把明确二进制直接写入普通 Git 对象；这些均须单独验收。
+
+## 当前目录与读取契约改造
+
+当前开发批次已加入新安装数据布局、备份 v3、CA 三级硬限和 `/_r/` 稳定 ID 投影；Basic Online CA 白名单、自动签发审计以及正式读取别名/GraphQL 分离已有本批代码，完整自检与最终回归仍在推进。最终全套尚未完成，此前提交的测试/CI 数字仅为历史证据，不证明本批完成。新安装默认值不等于存量根材料、目录或归档已自动迁移。
+
+新安装内部文本历史为 `/var/lib/msgd/git/content`，公开仓库为 `git/repos`，CAS 为 `blobs/sha256`，可恢复分片为 `transfers/staging`，服务密钥为 `/var/lib/msgd/service`。根私有状态独立 `/var/lib/msgd-root`，公开信任可在 `/etc/msgd/trust`；`/var/cache/msgd` 可删除重建，`/run/msgd` 仅易失运行状态。备份 v3 覆盖服务持久目录，根私钥仍单独本机备份。
+
+最新读取目标是 `/_read/`，`/_r/` 是永久短别名；`/_search=/_s`、`/_index=/_i` 同样要求直接命中同一 handler，内容、授权、缓存、错误和 cursor 完全等价且不重定向。只读 GraphQL 为 `/_read/graphql`（短别名 `/_r/graphql`）且仅 query；`/-/graphql` 仅 mutation。结构化读取统一 ReadQuery，并限制深度、节点数、响应大小、查询成本、集合页大小和超时。这些新增目标尚未完整实现，已有 `/_r/` 定向验证不能替代验收。
+
+PageCursor 与 ReadCursor 使用 `/_read/c/<opaque_cursor>`，SyncCursor 使用 `/_read/s/<opaque_cursor>`，均有 `/_r/` 短形式。服务器直接返回 continuation，cursor 签名/MAC、有限期且每次重新授权；PageCursor 固定查询和 snapshot，ReadCursor 固定 Revision、按 Markdown 块分段并支持上下文展开。Bookmark 只由显式写保存，与已读/ACK/telemetry 分离。三类 cursor 与 Bookmark 尚待实现验收。

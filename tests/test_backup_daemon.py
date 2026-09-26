@@ -13,6 +13,7 @@ async def test_consistent_backup_restores_content_but_never_root_private_key(ins
     app,_=installed
     key,uid,_=await register(app,'backup-agent')
     posted=await call(app,'content.post_create',{'parent':'/main','body':'survives recovery'},key=key,subject=uid)
+    binary=await app.contents.put_bytes(b'\x00\xffbackup', 'application/octet-stream')
     result=await backup(app,tmp_path/'data-backup.zip')
     assert result['root_private_key_included'] is False
     with zipfile.ZipFile(tmp_path/'data-backup.zip') as z:
@@ -22,6 +23,7 @@ async def test_consistent_backup_restores_content_but_never_root_private_key(ins
     await restored.load()
     read=await call(restored,'discovery.get',{'id':posted.resources[0].id})
     assert read.status=='ok' and read.data['content']=='survives recovery',wire(read)
+    assert await restored.contents.read_bytes(binary)==b'\x00\xffbackup'
     assert not (tmp_path/'restored-etc'/'root').exists()
     await restored.close()
 

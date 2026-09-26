@@ -27,7 +27,7 @@ CHANGE=obj({'ref':{'type':'string','pattern':'^refs/(heads|tags)/[^\\s]+$'},'old
 class NativeGitStore:
     def __init__(self,app):
         self.app=app
-        self.root=app.settings.server.content_dir.parent/'repositories'
+        self.root=app.settings.server.repositories_dir
         self.env={'PATH':os.environ.get('PATH','/usr/bin:/bin'),'LANG':'C.UTF-8','HOME':'/nonexistent',
             'GIT_CONFIG_NOSYSTEM':'1','GIT_CONFIG_GLOBAL':'/dev/null','GIT_TERMINAL_PROMPT':'0',
             'GIT_COMMITTER_NAME':'msg','GIT_COMMITTER_EMAIL':'msg@localhost'}

@@ -118,9 +118,12 @@ async def _doctor(config_dir,clock):
             try:
                 online=tx.setting('online_ca_certificate')
                 require(online is not None,'issuer_not_ready')
-                await validator.validate(online,tx)
+                online_certificate=await validator.validate(online,tx)
+                from msg.security.crypto import Ed25519Signer
+                online_key=Ed25519Signer.from_bytes((settings.service_keys/'online.key').read_bytes())
+                require(online_certificate.key_id==online_key.key_id,'issuer_key_mismatch')
                 success('online_ca')
-            except Failure as exc:failed('online_ca',exc.code)
+            except (Failure,OSError,ValueError) as exc:failed('online_ca',getattr(exc,'code','issuer_key_missing'))
             drift=[]
             for expected in manifest()['resources']:
                 try:
@@ -156,8 +159,14 @@ async def _doctor(config_dir,clock):
     if settings.server.staging_dir.exists():
         disk=shutil.disk_usage(settings.server.staging_dir)
         success('capacity',free_bytes=disk.free)
-    protected=path/'root'
+    from msg.admin.root import root_envelope
+    protected=root_envelope(path).parent
+    if protected==path/'root':
+        warnings.append({'code':'legacy_root_storage','effect':'migrate_to_var_lib_msgd_root'})
     try:
+        require(not ((path/'root'/'key.json').exists() and
+                     (settings.root_private_dir/'key.json').exists()),
+                'duplicate_root_material')
         mode=stat.S_IMODE(protected.stat().st_mode)
         require(mode==0o700 and protected.stat().st_uid==0,'unsafe_root_permissions')
         secret=protected/'key.json'
@@ -213,6 +222,43 @@ async def selftest():
                 return await _approve_csr(app,result.data['csr_id'],root,expected_digest=result.data['request_digest'],operator='isolated-selftest')
             alice,ua=await register('alice');bob,ub=await register('bob')
             post=await call('content.post_create',{'parent':'/tmp','body':'retained source bytes\r\n'},alice,ua,request_id='same-write')
+            # OnlineIssuer exercises only the independent temporary Test Root
+            # created above. No production trust material or signer is opened.
+            async with app.metadata.transaction(write=False) as tx:
+                identity_cert=next(decode(Certificate,loads(raw)) for (raw,) in
+                    tx.execute('SELECT body FROM certificates WHERE subject=?',(ua,))
+                    if decode(Certificate,loads(raw)).kind=='identity')
+                issued_audits=[loads(raw) for (raw,) in tx.execute('SELECT body FROM audit ORDER BY seq')
+                               if loads(raw)['event']['type']=='cert.auto.issue']
+            registration_audit=next((entry for entry in issued_audits if
+                entry['event']['data']['certificate_id']==identity_cert.resource_id),None)
+            checks['online_registration']=bool(registration_audit and
+                registration_audit['event']['data']['automatic'] is True and
+                registration_audit['event']['data']['authority_source']['key_id']==alice.key_id)
+            ordinary=grant_for(app.registry.capability('discovery.basic'),
+                scope=Scope(resource_id=post.resources[0].id),operations=('discovery.get@1',))
+            delegated=await call('identity.delegate',{'grantee':ub,'key_id':bob.key_id,
+                'grants':wire((ordinary,)),'ttl':600},alice,ua,request_id='online-selftest-delegation')
+            require(delegated.status=='ok','selftest_online_delegation_failed')
+            async with app.metadata.transaction(write=False) as tx:
+                audit_rows=[loads(raw) for (raw,) in tx.execute('SELECT body FROM audit ORDER BY seq')]
+            delegation_audit=next((entry for entry in audit_rows if
+                entry['event']['type']=='cert.auto.issue' and delegated.status=='ok' and
+                entry['event']['data']['certificate_id']==delegated.data['certificate_id']),None)
+            checks['online_delegation']=bool(delegation_audit and
+                delegation_audit['event']['data']['authority_source']['id']==delegated.resources[0].id and
+                delegation_audit['event']['data']['grant_digest']==digest((ordinary,)))
+            renewed=await call('identity.certificate_renew',{},alice,ua)
+            overlong=await call('identity.certificate_renew',{'ttl':31536000},alice,ua)
+            checks['online_renewal']=(renewed.status=='ok' and overlong.error is not None and
+                overlong.error.code=='renewal_ttl_exceeded')
+            revoked_source=await call('identity.delegation_revoke',{'id':delegated.resources[0].id},alice,ua)
+            async with app.metadata.transaction(write=False) as tx:
+                derived=await app.certificates.validate(identity_cert.resource_id,tx)
+                delegation_invalid=False
+                try:await app.certificates.validate(delegated.data['certificate_id'],tx)
+                except Failure as exc:delegation_invalid=exc.code=='authority_source_inactive'
+            checks['online_source_revocation']=revoked_source.status=='ok' and derived.kind=='identity' and delegation_invalid
             repeat=await call('content.post_create',{'parent':'/tmp','body':'retained source bytes\r\n'},alice,ua,request_id='same-write')
             checks['idempotency']=repeat.replayed and repeat.resources==post.resources
             rejected=await call('content.archive',{'id':post.resources[0].id},bob,ub,

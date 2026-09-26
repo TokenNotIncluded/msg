@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 from contextlib import asynccontextmanager
-from urllib.parse import quote, unquote_to_bytes, urlsplit
+from urllib.parse import quote, unquote_to_bytes, urlencode, urlsplit
 
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -15,6 +15,7 @@ from msg.core.errors import Failure, require
 from msg.core.executor import result_wire
 from msg.core.models import BlobRef
 from msg.core.requests import request_for
+from msg.core.tags import normalize_tag
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, gunzip, path_packet
 
@@ -83,6 +84,24 @@ def parse_view(path):
     if len(parts)>=2 and parts[-2]=='revisions':
         revision=parts.pop();parts.pop()
     return '/'+('/'.join(parts)),view,revision
+
+
+def parse_stable_view(path,raw_path):
+    if not path.startswith(('/_r/','/_read/')):
+        return None
+    # Stable ID paths are ASCII identifiers, with no alternate percent spelling.
+    try:
+        require(raw_path.decode('ascii')==path and b'%' not in raw_path,'not_found')
+    except UnicodeDecodeError as exc:
+        raise Failure('not_found') from exc
+    match=re.fullmatch(r'/_r(?:ead)?/([A-Za-z0-9_.:-]{1,160})/(json|meta|raw|history)',path)
+    if match:
+        rid,view=match.groups()
+        return '/_id/'+rid,view,None
+    match=re.fullmatch(r'/_r(?:ead)?/([A-Za-z0-9_.:-]{1,160})/rev/([A-Za-z0-9_.:-]{1,160})',path)
+    require(match is not None,'not_found')
+    rid,revision=match.groups()
+    return '/_id/'+rid,'markdown',revision
 
 
 def create_app(service):
@@ -161,6 +180,64 @@ def create_app(service):
             if path=='/healthz':
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 return json_response({'status':'ok' if service._loaded else 'not_ready'},200 if service._loaded else 503)
+            if path in {'/_search','/_s'} or raw_path.startswith((
+                    b'/_index/by-tag/',b'/_i/by-tag/')):
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                pairs=request.query_params.multi_items()
+                require(len(pairs)==len({key for key,_ in pairs}),'duplicate_query_parameter')
+                query=dict(pairs)
+                is_index=raw_path.startswith((b'/_index/by-tag/',b'/_i/by-tag/'))
+                require(set(query)<=({'limit','cursor'} if is_index else
+                                     {'tag','query','limit','cursor'}),'unknown_query_parameter')
+                limit=query.get('limit','50')
+                require(limit.isdecimal() and 1<=int(limit)<=200,'invalid_limit')
+                args={'limit':int(limit)}
+                if is_index:
+                    segments=raw_path.split(b'/')
+                    require(len(segments)==4 and segments[2]==b'by-tag','not_found')
+                    encoded_tag=segments[3]
+                    require(re.search(rb'%(?![0-9A-Fa-f]{2})',encoded_tag) is None,
+                            'invalid_tag')
+                    try:
+                        tag=unquote_to_bytes(encoded_tag).decode('utf-8')
+                    except UnicodeDecodeError as exc:
+                        raise Failure('invalid_tag') from exc
+                    args['tag']=normalize_tag(tag)
+                    operation='discovery.list'
+                else:
+                    if 'tag' in query:
+                        args['tag']=normalize_tag(query['tag'])
+                    args['query']=query.get('query','')
+                    require(args['tag'] if 'tag' in args else bool(args['query']),
+                            'search_query_required')
+                    operation='discovery.search'
+                if 'cursor' in query:
+                    args['cursor']=query['cursor']
+                require(service.registry.operation(operation).effect=='read','effect_mismatch')
+                if request.method=='HEAD':
+                    return Response(status_code=200,headers=BASE_HEADERS)
+                header=request.headers.get('x-msg-request')
+                if header:
+                    packet=path_packet(header,'j',limits.max_request_bytes)
+                    require(packet.operation==operation,'operation_mismatch')
+                    require(dict(packet.arguments)==args,'representation_mismatch')
+                else:
+                    packet=request_for(operation,args,service.settings.service_url,
+                                       source='manual')
+                result=await service.executor.execute(packet,entry='network')
+                if result.error:
+                    return json_response(result_wire(result),error_status(result.error.code))
+                value=wire(result.data)
+                if value.get('cursor'):
+                    params={'limit':args['limit'],'cursor':value['cursor']}
+                    if is_index:
+                        value['next']='/_i/by-tag/'+quote(args['tag'],safe='')+'?'+urlencode(params)
+                    else:
+                        if 'tag' in args: params['tag']=args['tag']
+                        if args['query']: params['query']=args['query']
+                        value['next']='/_s?'+urlencode(params)
+                require(len(canonical(value))<=limits.max_response_bytes,'response_too_large')
+                return json_response(value)
             if path=='/-/transfer':
                 require(not request.url.query,'unknown_query_parameter')
                 require(request.method in {'GET','HEAD','POST'},'method_not_allowed')
@@ -202,12 +279,14 @@ def create_app(service):
                     return Response(status_code=202,headers=BASE_HEADERS)
                 require(len(canonical(output))<=limits.max_response_bytes,'response_too_large')
                 return json_response(output,headers={'MCP-Protocol-Version':PROTOCOL_VERSION})
-            if path=='/-/graphql':
+            if path in {'/-/graphql','/_read/graphql','/_r/graphql'}:
                 require(request.method=='POST','method_not_allowed')
                 if graphql_adapter is None:
                     from msg.transports.graphql import GraphQLAdapter
                     graphql_adapter=GraphQLAdapter(service)
-                data=await graphql_adapter.handle(loads(await body_bytes(request,limits.max_request_bytes)))
+                kind='mutation' if path=='/-/graphql' else 'query'
+                data=await graphql_adapter.handle(
+                    loads(await body_bytes(request,limits.max_request_bytes)),operation_kind=kind)
                 require(len(canonical(data))<=limits.max_response_bytes,'response_too_large')
                 return json_response(data)
             if path in {'/-/d','/-/schema'} or path.startswith('/-/d/'):
@@ -322,7 +401,8 @@ def create_app(service):
                 return Response('# msg.lmm.best\n\nAtomic communication for sandboxed agents.\n\n'
                     '[Agent entry](/AGENTS.md) · [Dictionary](/-/d) · '
                     '[Schemas](/-/schema)\n',media_type='text/markdown',headers=BASE_HEADERS)
-            resource_path,view,revision=parse_view(path)
+            stable=parse_stable_view(path,raw_path)
+            resource_path,view,revision=stable if stable is not None else parse_view(path)
             redirect_target=None
             if view=='markdown' and revision is None and not resource_path.endswith('.md'):
                 # Old Post links omitted .md. Resolve the candidate only to find

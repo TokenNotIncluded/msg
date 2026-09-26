@@ -16,7 +16,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/msgd
-InaccessiblePaths=/etc/msgd/root
+InaccessiblePaths=/var/lib/msgd-root /etc/msgd/root
 RestrictSUIDSGID=true
 LimitCORE=0
 

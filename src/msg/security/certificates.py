@@ -4,12 +4,21 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 
-from msg.constants import ROOT_SPACE,ROOT_SUBJECT
+from msg.constants import ROOT_SPACE,ROOT_SUBJECT,ONLINE_CA
 from msg.core.codec import canonical,wire,digest
 from msg.core.errors import Failure,require
 from msg.core.models import Certificate,Signature
 from msg.security.crypto import key_id,verify
 from msg.security.policy import constraints_subset,scope_subset,grant_covers
+
+
+# Keep this list explicit. Adding a new ordinary capability must not silently
+# enlarge the permanent online issuer's signing authority.
+ONLINE_ISSUABLE_CAPABILITIES=frozenset({
+    'identity.basic','resource.basic','discussion.basic','communication.basic',
+    'discovery.basic','transfer.basic','group.basic','cert.request','git.basic',
+    'hosting.basic','keystore.basic','batch.basic',
+})
 
 
 def certificate_body(certificate):
@@ -99,11 +108,33 @@ class CertificateValidator:
                      for g in parent.grants]),'issuer_cannot_issue')
         for grant in cert.grants:
             require(await self.allowed_issuance(grant,parent.issuance,session),'issuance_scope_exceeded')
+        if cert.subject_id==ONLINE_CA:
+            require(parent.resource_id==self.root_certificate.resource_id and cert.kind=='ca' and
+                    cert.issuance is not None and cert.issuance.max_child_ca_depth==0 and
+                    len(cert.grants)==1 and cert.grants[0].capability=='cert.issue' and
+                    'cert.publish@1' in cert.grants[0].operations,
+                    'online_ca_policy_exceeded')
+            require(all(grant.capability in ONLINE_ISSUABLE_CAPABILITIES and
+                        not self.registry.capability(grant.capability,grant.version).ca_only
+                        for grant in cert.issuance.issue_grants),'online_ca_policy_exceeded')
+        if parent.subject_id==ONLINE_CA:
+            require(cert.kind in {'identity','delegation'} and
+                    (cert.kind!='delegation' or bool(cert.authority_sources)) and
+                    all(grant.capability in ONLINE_ISSUABLE_CAPABILITIES for grant in cert.grants),
+                    'online_ca_policy_exceeded')
         if cert.kind=='ca':
             require(cert.issuance is not None and parent.issuance.max_child_ca_depth>0,'ca_depth_exceeded')
             require(any([await grant_covers(g,'cert.ca.issue','cert.publish@1',issue_resource,session)
                          for g in parent.grants]),'issuer_cannot_issue_ca')
             require(cert.issuance.max_child_ca_depth<parent.issuance.max_child_ca_depth,'ca_depth_exceeded')
+            # The signed policy on an old trust anchor may allow more levels.
+            # Count the validated parent chain so an L4 CA remains impossible.
+            level=1
+            ancestor=parent
+            while ancestor.resource_id!=self.root_certificate.resource_id:
+                level+=1
+                ancestor=await session.certificate(ancestor.parent_certificate_id)
+            require(level<=3 and 0<=cert.issuance.max_child_ca_depth<=3-level,'ca_depth_exceeded')
             require(cert.issuance.max_cert_ttl_seconds<=parent.issuance.max_cert_ttl_seconds and
                     cert.issuance.max_delegation_depth<=parent.issuance.max_delegation_depth,'issuance_policy_escalation')
             for grant in cert.issuance.issue_grants:
@@ -129,7 +160,7 @@ class CertificateValidator:
             target=await session.resource(grant.scope.resource_id)
             require(target.owner==fact['grantor'],'authority_source_lost')
         allowed=tuple(decode(CapabilityGrant,g) for g in fact['grants'])
-        for grant in cert.grants:
+        for grant in (*cert.grants, *(cert.issuance.issue_grants if cert.issuance else ())):
             require(any([g.capability==grant.capability and g.version==grant.version and
                          grant.operations<=g.operations and await scope_subset(grant.scope,g.scope,session)
                          and constraints_subset(grant.constraints,g.constraints) for g in allowed]),

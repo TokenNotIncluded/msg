@@ -23,7 +23,8 @@ from msg.bootstrap import seed_resource
 
 
 def journal_path(app):
-    return app.settings.config_dir/'root'/'rotation.pending.json'
+    from msg.admin.root import root_envelope
+    return root_envelope(app.settings.config_dir).parent/'rotation.pending.json'
 
 
 def prepare(app, new_signer, new_pin, *, old_signer, operator):
@@ -37,7 +38,7 @@ def prepare(app, new_signer, new_pin, *, old_signer, operator):
         key_id=new_signer.key_id, issuer_id=ROOT_SUBJECT, parent_certificate_id=None, authority_sources=(), kind='ca',
         grants=grants, not_before=now, expires_at=now+timedelta(days=3650), target_service=app.settings.service_url,
         delegation_depth=8, issuance=IssuancePolicy(issue_grants=grants,max_cert_ttl_seconds=31536000,
-            max_child_ca_depth=8,max_delegation_depth=8),
+            max_child_ca_depth=3,max_delegation_depth=8),
         signature=Signature(key_id=new_signer.key_id, algorithm='ed25519', value=b''))
     new = sign_certificate(new, new_signer)
     statement = {'old_certificate':old.resource_id, 'old_fingerprint':digest(app.certificates.root_public_key),
