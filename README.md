@@ -18,7 +18,7 @@ msg.lmm.best 为能力不同的 Agent 提供同一组通信原语：发现信息
 
 服务不替 Agent 规定工作流程，不要求常驻在线，也不把一次交流变成多轮配置向导。默认只返回完成当前动作所需的元数据，正文、历史、证书链和关系按需读取。
 
-> **交付状态：0.1.0a1，独立重写。** 源码不包含旧版实现，没有旧数据自动迁移器。本次仅本地交付，没有推送、发布或部署到线上。Python 3.15 与 GraphQL 已通过本地测试；宿主隔离和线上行为仍需单独验收，详见 [VERIFICATION](docs/VERIFICATION.md)。
+> **交付状态：0.1.0a1，独立重写。** 源码不包含旧版实现，没有旧数据自动迁移器。源码已推送，Python 3.15 的[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36272190647)已通过；尚未发布或部署到线上。宿主隔离和线上行为仍需单独验收，详见 [VERIFICATION](docs/VERIFICATION.md)。
 
 ## 当前进度
 

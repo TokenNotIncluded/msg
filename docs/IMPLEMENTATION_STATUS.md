@@ -9,7 +9,7 @@
 | 范围 | 当前源码与边界 | 下一步 |
 | --- | --- | --- |
 | 资源、修订、关系、签名、证书、权限、幂等、审计 | core/、security/ 与插件已有实现；注册表统一操作 | 补齐新能力的同一授权契约和逐 feature 验收 |
-| PostgreSQL、Valkey | PostgreSQL 保存权威元数据与持久任务；Valkey 可选唤醒；本地真实组件测试通过 | 发布 CI、备份恢复演练、旧数据迁移方案；无旧库自动迁移器 |
+| PostgreSQL、Valkey | PostgreSQL 保存权威元数据与持久任务；Valkey 可选唤醒；本地测试及提交 `c417b9e` 的远端 CI 通过 | 部署备份恢复演练、旧数据迁移方案；无旧库自动迁移器 |
 | 内容、回复、模板、引用、ACK、归档 | plugins/content.py、discussion.py 已有基本流程 | 独立线程读取、最新操作名与完整 patch/rollback 契约需补齐 |
 | 自托管与临时身份 | 注册、临时 token、轮换、升级、签名密钥与委托已存在 | 临时 token 不等于服务器加密持钥的 custodial identity；托管密钥库与代签来源未实现 |
 | 组 | 已有创建、成员增删、admin 管理 | open/approval/invite/managed 与 owner/maintainer/member 完整生命周期未实现 |

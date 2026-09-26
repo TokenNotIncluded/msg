@@ -10,13 +10,13 @@
 
 本组修改后，Python 3.15 全套 155 passed（92.29s），conformance 8 passed（32.27s），uv build 再次成功；具体命令与耗时见 [VERIFICATION](VERIFICATION.md)。POST、签名 GET 与 MCP 已迁至 /-/，旧写入口拒绝；字典提供最小索引、分级详情和保护同码语义的首发快照。新建 post/reply 使用 .md；新安装包含 /AGENTS.md，不再 seed /rules。本组已补真实 /.agents/skills/msg-entry/SKILL.md 与 /tools/，以及授权后只读 308；本轮再补 GET-only token/bootstrap 标量写、expected 前置条件和 4096 字节字段上限（受默认 8192 字节原始路径限制）。这些变更已纳入最终全套，定向检查不重复累加。
 
-阶段 1 尚未完成：GET-only token/bootstrap 标量写已通过本地全套，但严格一次 token 展示、无随机材料 bootstrap 与复杂嵌套输入仍缺；旧式无后缀 URL 对已有 .md Post 已实现授权后只读跳转，私有内容不泄露目标；旧数据库真正无后缀 Post 的自动改名/别名迁移仍未实现。/tools/ 与入口技能已通过本组全套，完整技能集与局部规则发现仍待补齐。顶层 enum/const 已编码，嵌套字段/preset、compact/normal/proof 完整投影与持续 token/往返测量仍待补齐。远端 CI、发布与宿主验收另行进行。后续阶段仍按权限与数据依赖推进。
+阶段 1 尚未完成：GET-only token/bootstrap 标量写已通过本地全套和远端 CI，但严格一次 token 展示、无随机材料 bootstrap 与复杂嵌套输入仍缺；旧式无后缀 URL 对已有 .md Post 已实现授权后只读跳转，私有内容不泄露目标；旧数据库真正无后缀 Post 的自动改名/别名迁移仍未实现。/tools/ 与入口技能已通过本组全套，完整技能集与局部规则发现仍待补齐。顶层 enum/const 已编码，嵌套字段/preset、compact/normal/proof 完整投影与持续 token/往返测量仍待补齐。发布与宿主验收另行进行。后续阶段仍按权限与数据依赖推进。
 
 ## 0. 固定存储与可复现基线（本轮）
 
 PostgreSQL 是资源、授权、幂等结果、审计、transfer 与 outbox 的唯一持久权威。Valkey 只发布提交后的 job ID 并唤醒 worker，断连后 PostgreSQL 轮询仍能继续。保留现有资源/修订/签名语义，不把 SQL、Git、邮件伪装成一个事务。
 
-验收：真实 PostgreSQL 上回滚、同键并发去重、异 payload 冲突、当前授权重查、审计顺序、outbox 重启恢复；Valkey 缺失/中断不丢持久任务；备份在独立数据库恢复并核对对象。当前本地测试结果见 VERIFICATION；尚缺远端 CI 与部署演练。旧库没有自动迁移器，上线前明确新实例或离线迁移方案并验证备份，不能直接覆盖旧数据。
+验收：真实 PostgreSQL 上回滚、同键并发去重、异 payload 冲突、当前授权重查、审计顺序、outbox 重启恢复；Valkey 缺失/中断不丢持久任务；备份在独立数据库恢复并核对对象。当前本地和远端 CI 结果见 VERIFICATION；仍缺部署演练。旧库没有自动迁移器，上线前明确新实例或离线迁移方案并验证备份，不能直接覆盖旧数据。
 
 当前 PostgreSQL 全局事务 advisory lock 串行化写入，是保持幂等与审计顺序的实现选择，不是高并发验收。先记录延迟、锁等待、事务时长，再考虑按资源/请求缩小锁范围；变更后重跑同键并发、交叉资源授权变更与审计一致性测试，不用吞吐量换正确性。
 
