@@ -1,14 +1,16 @@
 """Certificate-scoped tool discovery and durable explicit invocation."""
 from __future__ import annotations
+
 from dataclasses import replace
-from msg.constants import TOOLS_SPACE,ROOT_SUBJECT
-from msg.core.codec import canonical,decode,digest,wire,loads
-from msg.core.errors import Failure,require
-from msg.core.models import ToolSpec,NetworkPolicy,ResourceRef,EffectJob,HandlerOutput
-from msg.plugins.common import resolve,check_access,new_id,operation_id
+
+from msg.constants import TOOLS_SPACE
+from msg.core.codec import decode, digest, loads, wire
+from msg.core.errors import Failure, require
+from msg.core.models import EffectJob, HandlerOutput, NetworkPolicy, ResourceRef, ToolSpec
+from msg.plugins.common import check_access, new_id, operation_id, resolve
 from msg.plugins.communication import event_id
-from msg.plugins.schemas import obj,STRING,IDENTIFIER,REF,BYTES
-from msg.security.network import intersect_policy,validate_url,normalized_host,validate_addresses
+from msg.plugins.schemas import BYTES, IDENTIFIER, REF, obj
+from msg.security.network import intersect_policy, normalized_host, validate_addresses, validate_url
 from msg.security.policy import grant_covers
 
 DNS_INPUT=obj({'name':{'type':'string','minLength':1,'maxLength':253},'type':{'enum':['A','AAAA','TXT','MX','NS','CNAME','SRV']}},('name','type'))
@@ -27,6 +29,24 @@ def descriptor(name):
             'methods':['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS'],
             'allow_private':True,'timeout_ms':30000,'max_response_bytes':16777216,'max_redirects':5},
         'default_targets':'public','description':'Structured DNS query' if name=='dns' else 'Bounded HTTP(S) request; not a shell'}
+
+
+async def resolve_tool_for_invoke(tx,value):
+    if isinstance(value,str) and (value=='/_tools' or value.startswith('/_tools/')):
+        raise Failure('legacy_tool_path_read_only')
+    if isinstance(value,str) and (value=='/tools' or value.startswith('/tools/')):
+        try:
+            return await resolve(tx,value)
+        except Failure as exc:
+            if exc.code!='not_found':
+                raise
+            # Old databases retain their original path. The canonical invocation
+            # spelling still resolves to the same stable IDs and capability checks.
+            directory=await tx.resource(TOOLS_SPACE)
+            if directory.name!='_tools':
+                raise
+            return await tx.resolve('/_tools'+value[len('/tools'):])
+    return await resolve(tx,value)
 
 
 async def read_tool(app,tx,rid,revision=None):
@@ -92,7 +112,7 @@ def register(app,op):
 
     @op('tool.invoke',obj({'id':IDENTIFIER,'revision':IDENTIFIER,'arguments':{'type':'object'}},('id','arguments')),effect='external')
     async def invoke(ctx,request,tx):
-        rid=await resolve(tx,request.arguments['id'])
+        rid=await resolve_tool_for_invoke(tx,request.arguments['id'])
         await check_access(app,ctx,request,tx,rid,'tool_use')
         tool=await read_tool(app,tx,rid,request.arguments.get('revision'))
         args=request.arguments['arguments']

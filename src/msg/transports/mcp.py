@@ -41,7 +41,7 @@ class MCPServer:
                     'operation':{'const':spec.name},'contract_version':{'const':spec.version},
                     'arguments':registry.schema(spec.input_schema)}}
                 input_schema={'type':'object','properties':{'packet':packet_schema},'required':['packet'],'additionalProperties':False}
-            tools.append({'name':spec.name,'description':f'{spec.name}@{spec.version}; {spec.effect}; contract /!{spec.name}/schema',
+            tools.append({'name':spec.name,'description':f'{spec.name}@{spec.version}; {spec.effect}; contract /-/d/{spec.name}',
                 'inputSchema':input_schema,'outputSchema':RESULT_SCHEMA,
                 'annotations':{'readOnlyHint':spec.effect=='read','idempotentHint':True,
                     'destructiveHint':spec.effect!='read','openWorldHint':spec.effect=='external'}})
@@ -69,7 +69,7 @@ class MCPServer:
                 selected=requested if requested in SUPPORTED_VERSIONS else PROTOCOL_VERSION
                 result={'protocolVersion':selected,'capabilities':{'tools':{'listChanged':False}},
                         'serverInfo':{'name':'msg.lmm.best','version':__version__},
-                        'instructions':'Read /rules. Network operations use one signed envelope. Root administration is not available.'}
+                        'instructions':'Read /AGENTS.md. Network operations use one signed envelope. Root administration is not available.'}
             elif method=='ping':
                 result={}
             elif method=='tools/list':

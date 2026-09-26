@@ -34,8 +34,11 @@ def load_application(directory):
 async def worker_loop(app, *, once=False):
     from msg.workers.effects import EffectWorker
     from msg.workers.maintenance import run_maintenance
+    from msg.storage.valkey_bus import ValkeyOutboxSignal
     await app.load()
     worker=EffectWorker(app)
+    wakeup=(ValkeyOutboxSignal(app.settings.server.valkey_url)
+            if app.settings.server.valkey_url else None)
     stop=asyncio.Event()
     loop=asyncio.get_running_loop()
     for sig in (signal.SIGINT,signal.SIGTERM):
@@ -50,8 +53,16 @@ async def worker_loop(app, *, once=False):
             processed=await worker.run_once()
             if once:return {'processed':processed}
             if not processed:
-                try:await asyncio.wait_for(stop.wait(),1)
-                except TimeoutError:pass
+                if wakeup is not None:
+                    try:
+                        await wakeup.wait_for_pending(1)
+                    except Exception:
+                        # Pub/Sub is only a hint; durable jobs remain in PostgreSQL.
+                        try:await asyncio.wait_for(stop.wait(),1)
+                        except TimeoutError:pass
+                else:
+                    try:await asyncio.wait_for(stop.wait(),1)
+                    except TimeoutError:pass
     finally:
         await app.close()
 

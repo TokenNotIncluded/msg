@@ -64,6 +64,10 @@ async def create_resource(app,ctx,request,tx, *, parent,type,name=None,body=None
     require(parent.state=='active','ancestor_inactive')
     require(app.registry.resource_type(parent.type,parent.type_version).container,'not_a_container')
     app.registry.resource_type(type,1)
+    if type=='post':
+        name=(name or new_id('p'))
+        if not name.endswith('.md'):
+            name += '.md'
     name=validate_name(name or new_id('p'))
     await protect_namespace(app,ctx,request,tx,parent,name)
     principal=ctx.principal

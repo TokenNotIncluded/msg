@@ -2,9 +2,22 @@
 
 ## 前置条件
 
-服务器目标是 Linux、Python 3.15、Git、SQLite 支持。SSH 扩展需要 OpenSSH，网络工具 worker 需要 bubblewrap。普通客户端不需要运行系统服务，但必须能保存自己的私钥；不能安装软件的 Agent 使用 HTTP / 纯路径协议。
+服务器目标是 Linux、Python 3.15、Git、PostgreSQL。Valkey 用于可选的短期信号与缓存；服务必须在不连接 Valkey 时仍能从 PostgreSQL 恢复待处理工作。SSH 扩展需要 OpenSSH，网络工具 worker 需要 bubblewrap。普通客户端不需要运行系统服务，但必须能保存自己的私钥；不能安装软件的 Agent 使用 HTTP / 纯路径协议。
 
 先在新数据目录验收，不要将新服务直接指向旧版数据库。没有自动迁移器。生产前阅读 SECURITY.md 和 VERIFICATION.md。
+
+先创建专用 PostgreSQL 数据库与最小权限账号，再配置 `/etc/msgd/server.toml`：
+
+```toml
+[storage]
+postgres_dsn = "service=msgd"
+# 可选：只用于唤醒与缓存，不保存唯一业务状态
+valkey_url = "redis://127.0.0.1:6379/0"
+content = "/var/lib/msgd/content"
+staging = "/var/lib/msgd/staging"
+```
+
+`postgres_dsn` 必填；示例使用 libpq 的 service 名称，连接主机、数据库名和凭据应放在仅服务账号可读的 service 文件或 libpq 环境配置中。`server.toml` 由 root 持有、msgd 组可读（0640），仍应优先避免在其中放密码。如使用 URL，也支持 `postgresql://` 或 `postgres://`。`valkey_url` 可省略；Valkey 客户端接受 `redis://`、`rediss://` 与 `unix://`。不要将 PostgreSQL 或 Valkey 直接暴露到公网。
 
 ## 安装代码
 
@@ -54,11 +67,13 @@ SSH 使用专用端口和单独 sshd 配置 deploy/sshd_config，不能覆盖现
 ## 备份、恢复与根轮换
 
 ```bash
+# 备份归档中包含 PostgreSQL dump 与内容文件。
 msgd backup /secure-backup/service.zip
+# 在隔离的新实例预先创建空 PostgreSQL 数据库，并让 libpq 的 service=msgd 指向它。
 msgd --config-dir /new/etc/msgd restore /secure-backup/service.zip --data-dir /new/var/lib/msgd
 ```
 
-服务备份含数据库、所需内容、公开仓库、公共信任及服务密钥，**不含根私钥**。备份是敏感文件，保存为0600并在外部加密。根材料单独从本机控制台执行 `msgd root backup PATH`，恢复时核验现有信任锚。
+`msgd backup` 生成的归档需包含 PostgreSQL dump、与其一致的内容文件、公开仓库、公共信任及服务密钥，**不含根私钥**；不能把旧 SQLite 文件当作可恢复的数据库。恢复命令默认使用 libpq 的 `service=msgd`，该 service 必须指向新建的空目标数据库；目标配置目录与数据目录也必须不存在。先在隔离环境核验归档和恢复结果，再切换服务流量。Valkey 的短期数据无需备份。备份是敏感文件，保存为 0600 并在外部加密。根材料单独从本机控制台执行 `msgd root backup PATH`，恢复时核验现有信任锚。
 
 改 PIN 使用 `msgd root change-pin`，不改变公钥。轮换使用 `msgd root rotate`，根遗失则显式 `--lost-key`，中断恢复用 `--resume`。轮换前停止服务和 worker，完成后重新签发基础在线 CA、复核权限、重启，通知客户端更新信任 / 重新申请授权。普通账号可以 `msg cert renew` 获取新的基础证书；特殊授权与下级 CA 仍需重新审核。
 
@@ -66,4 +81,4 @@ msgd --config-dir /new/etc/msgd restore /secure-backup/service.zip --data-dir /n
 
 执行 tests 与 conformance，确认 Python 3.15、GraphQL、MCP、CLI分片一致性；用真实 sshd 完成登录、拒绝 shell、拒绝转发、Git push撤销测试；用真实bubblewrap验证worker看不到 `/etc/msgd/root`、服务数据与凭据；验证公网目标、私网拒绝和重定向检查；用隔离 SMTP 测试 TLS、禁用状态、连接重试和 uncertain。
 
-只有所有适用项在真实部署通过，才能判断是否允许生产流量。不得依据本地 3.13 测试自动取消 Python 3.15 运行入口检查。
+只有所有适用项在真实部署通过，才能判断是否允许生产流量。本地 Python 3.15 测试不能代替部署环境的运行入口检查。

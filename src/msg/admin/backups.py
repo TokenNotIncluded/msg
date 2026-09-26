@@ -5,9 +5,11 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
-import sqlite3
 import tempfile
 import zipfile
+import psycopg
+from psycopg.conninfo import conninfo_to_dict,make_conninfo
+import subprocess
 from msg.core.codec import canonical,loads
 from msg.core.errors import Failure,require
 from msg.config import load_settings,write_example
@@ -29,7 +31,7 @@ async def backup(app,destination):
         async with app.metadata.transaction(write=True) as tx:
             # Holding the write reservation makes the DB snapshot and the referenced
             # content trees consistent. Git/CAS writes always precede SQL pointers.
-            await asyncio.to_thread(app.metadata.backup,directory/'metadata.sqlite3')
+            await asyncio.to_thread(app.metadata.backup,directory/'metadata.dump')
             await asyncio.to_thread(shutil.copytree,app.settings.server.content_dir,directory/'content')
             native=app.settings.server.content_dir.parent/'repositories'
             if native.exists():await asyncio.to_thread(shutil.copytree,native,directory/'repositories')
@@ -38,7 +40,7 @@ async def backup(app,destination):
             # Credentials from mail.toml are deliberately not embedded. Restore
             # reenables SMTP only after the operator supplies its own configuration.
         files={str(path.relative_to(directory)):_hash(path) for path in directory.rglob('*') if path.is_file()}
-        manifest={'format':'msg-data-backup-v1','service_url':app.settings.service_url,'files':files,
+        manifest={'format':'msg-data-backup-v2','service_url':app.settings.service_url,'files':files,
                   'root_private_key_included':False,'mail_credentials_included':False}
         (directory/'manifest.json').write_bytes(canonical(manifest))
         partial=directory/'archive.zip'
@@ -52,8 +54,8 @@ async def backup(app,destination):
             'root_private_key_included':False}
 
 
-def restore(source,config_dir,data_dir):
-    """Restore only into new locations; never overwrite a live installation."""
+def restore(source,config_dir,data_dir,*,postgres_dsn='service=msgd'):
+    """Restore only into new locations and an empty PostgreSQL database."""
     config_dir,data_dir=Path(config_dir),Path(data_dir)
     require(not config_dir.exists() and not data_dir.exists(),'restore_target_exists')
     config_dir.parent.mkdir(parents=True,exist_ok=True)
@@ -64,7 +66,7 @@ def restore(source,config_dir,data_dir):
             names=archive.namelist()
             require(len(names)==len(set(names)) and 'manifest.json' in names,'invalid_backup')
             manifest=loads(archive.read('manifest.json'))
-            require(manifest.get('format')=='msg-data-backup-v1' and manifest.get('root_private_key_included') is False,'invalid_backup')
+            require(manifest.get('format')=='msg-data-backup-v2' and manifest.get('root_private_key_included') is False,'invalid_backup')
             require(set(names)==set(manifest['files'])|{'manifest.json'},'backup_file_mismatch')
             for info in archive.infolist():
                 name=info.filename
@@ -76,13 +78,22 @@ def restore(source,config_dir,data_dir):
                     shutil.copyfileobj(incoming,output,length=65536)
                 os.chmod(target,0o600)
                 if name!='manifest.json':require(_hash(target)==manifest['files'][name],'backup_digest_mismatch')
-        connection=sqlite3.connect((directory/'metadata.sqlite3').resolve().as_uri()+'?mode=ro',uri=True)
-        try:require(connection.execute('PRAGMA integrity_check').fetchone()[0]=='ok','backup_database_corrupt')
-        finally:connection.close()
+        fields=conninfo_to_dict(postgres_dsn)
+        password=fields.pop('password',None)
+        env=os.environ.copy()
+        if password is not None:env['PGPASSWORD']=password
+        safe_dsn=make_conninfo(**fields)
+        with psycopg.connect(postgres_dsn) as connection:
+            require(connection.execute(
+                "SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() LIMIT 1"
+            ).fetchone() is None,'restore_database_not_empty')
+        subprocess.run(['pg_restore','--single-transaction','--exit-on-error','--no-owner','--no-acl',
+                        '--dbname',safe_dsn,str(directory/'metadata.dump')],
+                       env=env,check=True,capture_output=True)
         data_dir.mkdir(mode=0o700)
-        for name in ('metadata.sqlite3','content','repositories'):
+        for name in ('content','repositories'):
             if (directory/name).exists():shutil.move(str(directory/name),data_dir/name)
-        settings=write_example(config_dir,data_dir,manifest['service_url'])
+        settings=write_example(config_dir,data_dir,manifest['service_url'],postgres_dsn=postgres_dsn)
         settings.service_keys.parent.mkdir(parents=True,exist_ok=True)
         shutil.move(str(directory/'service'),settings.service_keys)
         os.chmod(settings.service_keys,0o700)

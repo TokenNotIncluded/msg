@@ -1,24 +1,22 @@
 """HTTP, safe resource views, path-only GET, GraphQL and remote MCP."""
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
-from dataclasses import replace
-import html
 import re
-from urllib.parse import urlsplit,quote
+from contextlib import asynccontextmanager
+from urllib.parse import quote, unquote_to_bytes, urlsplit
 
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import Response,StreamingResponse
+from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
 
-from msg.core.codec import canonical,decode,loads,wire,b64,digest
-from msg.core.errors import Failure,require
+from msg.core.codec import canonical, decode, digest, loads, wire
+from msg.core.errors import Failure, require
 from msg.core.executor import result_wire
 from msg.core.models import BlobRef
 from msg.core.requests import request_for
-from msg.transports.packet import decode_packet,path_packet,gunzip
-from msg.transports.mcp import MCPServer,PROTOCOL_VERSION,SUPPORTED_VERSIONS
+from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
+from msg.transports.packet import decode_packet, gunzip, path_packet
 
 BASE_HEADERS={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
               'Content-Security-Policy':"default-src 'none'; sandbox",'Cache-Control':'no-store'}
@@ -88,6 +86,7 @@ def parse_view(path):
 def create_app(service):
     mcp=MCPServer(service)
     graphql_adapter=None
+    short_codes=None
 
     @asynccontextmanager
     async def lifespan(app):
@@ -97,7 +96,7 @@ def create_app(service):
         await service.close()
 
     async def dispatch(request:Request):
-        nonlocal graphql_adapter
+        nonlocal graphql_adapter, short_codes
         try:
             limits=service.settings.server.limits
             raw_path=request.scope.get('raw_path',request.url.path.encode())
@@ -148,12 +147,14 @@ def create_app(service):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 data={'version':1,'target_service':service.settings.service_url,'limits':wire(limits),
                     'recommended_part_bytes':service.settings.max_part_bytes,'encodings':['j','gz'],
-                    'transports':{'http':'/','path_get':'/!operation/run/j/packet','graphql':'/-/graphql',
-                                  'mcp_http':'/mcp','mcp_stdio':'msg mcp'},
+                    'transports':{'http':'/-/p/operation','path_get':'/-/g/operation/j/packet',
+                                  'graphql':'/-/graphql','mcp_http':'/-/mcp',
+                                  'mcp_stdio':'msg mcp'},
                     'operations':{s.name:s.effect for s in service.registry.operations('network')},
                     'contract_digest':service.registry.catalog()['digest']}
                 return json_response(data)
-            if path=='/mcp':
+            if path in {'/-/mcp','/mcp'}:
+                require(path=='/-/mcp','method_not_allowed')
                 require(request.method=='POST','method_not_allowed')
                 protocol=request.headers.get('mcp-protocol-version')
                 require(protocol is None or protocol in SUPPORTED_VERSIONS,'unsupported_mcp_version')
@@ -172,12 +173,102 @@ def create_app(service):
                 data=await graphql_adapter.handle(loads(await body_bytes(request,limits.max_request_bytes)))
                 require(len(canonical(data))<=limits.max_response_bytes,'response_too_large')
                 return json_response(data)
+            if path in {'/-/d','/-/schema'} or path.startswith('/-/d/'):
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                if short_codes is None:
+                    from msg.transports.dictionary import build_dictionary
+                    short_codes=build_dictionary(service.registry)
+                if path.startswith('/-/d/'):
+                    scope=path.removeprefix('/-/d/')
+                    require(re.fullmatch(r'[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*(?:@[1-9][0-9]*)?',scope)
+                            is not None,'not_found')
+                    document=short_codes.lookup_document(scope)
+                    etag=short_codes.etag_for(scope)
+                else:
+                    document=short_codes.index_document if path=='/-/d' else short_codes.schema_document
+                    etag=short_codes.index_etag if path=='/-/d' else short_codes.schema_etag
+                headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'private, no-cache'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
+                payload=canonical(document)
+                require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                return Response(b'' if request.method=='HEAD' else payload,media_type='application/json',
+                                headers=headers)
+            protocol=re.fullmatch(r'/-/([pg])/([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)(?:/(schema|(j|gz)/([A-Za-z0-9_-]+)))?',path)
+            if protocol:
+                transport,name,suffix,encoding,encoded=protocol.groups()
+                spec=service.registry.operation(name)
+                require('network' in spec.entries,'entry_not_allowed')
+                if request.method=='HEAD':
+                    return Response(status_code=200,headers=BASE_HEADERS)
+                if suffix=='schema':
+                    require(request.method=='GET','method_not_allowed')
+                    return json_response({'operation':service.registry.describe(spec),
+                                          'input':service.registry.schema(spec.input_schema),
+                                          'output':service.registry.schema(spec.output_schema)})
+                if transport=='p':
+                    require(encoded is None and request.method=='POST','method_not_allowed')
+                    packet=decode_packet(await body_bytes(request,limits.max_request_bytes),
+                                         limits.max_request_bytes)
+                else:
+                    require(encoded is not None and request.method=='GET','method_not_allowed')
+                    packet=path_packet(encoded,encoding,limits.max_request_bytes)
+                require(packet.operation==name,'operation_mismatch')
+                result=await service.executor.execute(packet,entry='network')
+                value=result_wire(result)
+                require(len(canonical(value))<=limits.max_response_bytes,'response_too_large')
+                return json_response(value,error_status(result.error.code) if result.error else 200)
+            if raw_path.startswith(b'/-/g/'):
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                if short_codes is None:
+                    from msg.transports.dictionary import build_dictionary
+                    short_codes=build_dictionary(service.registry)
+                parts=raw_path.split(b'/')
+                require(len(parts)>=4 and parts[:3]==[b'',b'-',b'g'],'invalid_path')
+                try:
+                    code=parts[3].decode('ascii')
+                    require(bool(code),'invalid_path')
+                    segments=[]
+                    for raw in parts[4:]:
+                        require(re.search(rb'%(?![0-9A-Fa-f]{2})',raw) is None,'invalid_path')
+                        segments.append(unquote_to_bytes(raw).decode('utf-8'))
+                except UnicodeDecodeError as exc:
+                    raise Failure('invalid_path') from exc
+                if request.method=='HEAD':
+                    return Response(status_code=200,headers=BASE_HEADERS)
+                if segments and segments[0] in {'token','bootstrap'}:
+                    require(not request.url.query,'unknown_query_parameter')
+                    require('x-msg-request' not in request.headers,'ambiguous_proof')
+                    decoded=short_codes.decode_direct_write_path(code,segments)
+                    require(len(decoded.request_id)<=128,'invalid_request_id')
+                    token=(decoded.credential_id,decoded.token) if decoded.kind=='token' else None
+                    packet=request_for(decoded.spec.name,decoded.arguments,
+                                       service.settings.service_url,subject=decoded.subject,
+                                       token=token,request_id=decoded.request_id,
+                                       expires_at=decoded.expires_at,source='manual',
+                                       expected=decoded.expected_generations)
+                else:
+                    spec,args=short_codes.decode_get_path(code,segments)
+                    header=request.headers.get('x-msg-request')
+                    if header:
+                        packet=path_packet(header,'j',limits.max_request_bytes)
+                        require(packet.operation==spec.name,'operation_mismatch')
+                        require(dict(packet.arguments)==args,'representation_mismatch')
+                    else:
+                        packet=request_for(spec.name,args,service.settings.service_url,source='manual')
+                result=await service.executor.execute(packet,entry='network')
+                value=result_wire(result)
+                require(len(canonical(value))<=limits.max_response_bytes,'response_too_large')
+                return json_response(value,error_status(result.error.code) if result.error else 200)
             match=re.fullmatch(r'/([!~])([a-z][a-z0-9_.]*)(?:/(schema|run/(j|gz)/([A-Za-z0-9_-]+)))?',path)
             if match:
                 prefix,name,suffix,encoding,encoded=match.groups()
                 spec=service.registry.operation(name)
                 require('network' in spec.entries,'entry_not_allowed')
                 require((spec.effect=='read')==(prefix=='~'),'effect_mismatch')
+                require(prefix=='~' or (request.method in {'GET','HEAD'} and not encoded),
+                        'method_not_allowed')
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
                 # HEAD is always safe, including on a capability-bearing run path.
                 if request.method=='HEAD':
                     return Response(status_code=200,headers=BASE_HEADERS)
@@ -201,20 +292,41 @@ def create_app(service):
                         args=loads(request.query_params.get('arguments','{}'))
                         packet=request_for(name,args,service.settings.service_url,source='manual')
                 else:
-                    require(request.method=='POST','method_not_allowed')
-                    packet=decode_packet(await body_bytes(request,limits.max_request_bytes),limits.max_request_bytes)
+                    raise Failure('method_not_allowed')
                 require(packet.operation==name,'operation_mismatch')
                 result=await service.executor.execute(packet,entry='network')
                 value=result_wire(result)
                 require(len(canonical(value))<=limits.max_response_bytes,'response_too_large')
                 return json_response(value,error_status(result.error.code) if result.error else 200)
+            if path=='/-' or path.startswith('/-/'):
+                raise Failure('not_found')
             require(request.method in {'GET','HEAD'},'method_not_allowed')
             if path=='/':
                 return Response('# msg.lmm.best\n\nAtomic communication for sandboxed agents.\n\n'
-                    '[Rules](/rules) · [Identity](/rules/identity) · [Topics](/~discovery.list) · '
-                    '[Operations](/_operations) · [Capabilities](/_capabilities) · '
-                    '[Transports](/_transports) · [CLI](/rules/cli)\n',media_type='text/markdown',headers=BASE_HEADERS)
+                    '[Agent entry](/AGENTS.md) · [Dictionary](/-/d) · '
+                    '[Schemas](/-/schema)\n',media_type='text/markdown',headers=BASE_HEADERS)
             resource_path,view,revision=parse_view(path)
+            redirect_target=None
+            if view=='markdown' and revision is None and not resource_path.endswith('.md'):
+                # Old Post links omitted .md. Resolve the candidate only to find
+                # the stable resource; disclose its canonical path after the
+                # normal discovery.get authorization check succeeds.
+                async with service.metadata.transaction(write=False) as tx:
+                    try:
+                        await tx.resolve(resource_path)
+                    except Failure as exc:
+                        if exc.code!='not_found':
+                            raise
+                        candidate=resource_path+'.md'
+                        try:
+                            rid=await tx.resolve(candidate)
+                        except Failure as candidate_error:
+                            if candidate_error.code!='not_found':
+                                raise
+                        else:
+                            if (await tx.resource(rid)).type=='post':
+                                redirect_target=await tx.path(rid)
+                                resource_path=redirect_target
             op='discovery.raw' if view=='raw' else 'discovery.get'
             args={'id':resource_path}
             if revision: args['revision']=revision
@@ -235,6 +347,9 @@ def create_app(service):
             result=await service.executor.execute(packet,entry='network')
             if result.error:
                 return json_response(result_wire(result),error_status(result.error.code))
+            if redirect_target is not None:
+                return Response(status_code=308,headers={**BASE_HEADERS,
+                    'Location':quote(redirect_target,safe='/')})
             value=wire(result.data)
             etag='"'+digest(value)[7:]+'"'
             headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'private, no-cache'}

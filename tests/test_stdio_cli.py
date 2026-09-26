@@ -47,11 +47,12 @@ async def test_local_stdio_signs_tools_and_never_exposes_root(installed,tmp_path
 
 
 @pytest.mark.asyncio
-async def test_real_cli_process_and_stdio_over_loopback(tmp_path):
+async def test_real_cli_process_and_stdio_over_loopback(tmp_path,pg_dsn):
     sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
     sock.setblocking(False)
     url=f'http://127.0.0.1:{port}'
-    app=Application(write_example(tmp_path/'server-etc',tmp_path/'server-data',url))
+    app=Application(write_example(tmp_path/'server-etc',tmp_path/'server-data',url,
+                                  postgres_dsn=pg_dsn))
     csr,root=await _provision(app,'a-long-test-passphrase')
     await _approve_csr(app,csr,root,expected_digest=None,operator='test')
     server=uvicorn.Server(uvicorn.Config(create_app(app),log_level='critical',access_log=False))

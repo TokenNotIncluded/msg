@@ -10,7 +10,7 @@ done
 from pathlib import Path
 from msg.config import load_settings
 s=load_settings()
-assert s.server.database_file==Path('/var/lib/msgd/metadata.sqlite3'), 'Review non-default storage before changing ownership'
+assert s.server.postgres_dsn, 'PostgreSQL DSN must be configured'
 assert s.server.content_dir==Path('/var/lib/msgd/content')
 assert s.server.staging_dir==Path('/var/lib/msgd/staging')
 PY
@@ -28,8 +28,8 @@ find /etc/msgd/service -type f -exec chmod 0640 {} +
 chown -R root:root /etc/msgd/trust
 chmod 0755 /etc/msgd/trust
 find /etc/msgd/trust -type f -exec chmod 0644 {} +
-chown root:root /etc/msgd/server.toml
-chmod 0644 /etc/msgd/server.toml
+chown root:msgd /etc/msgd/server.toml
+chmod 0640 /etc/msgd/server.toml
 chown -R msgd:msgd /var/lib/msgd
 chmod 0750 /var/lib/msgd
 install -d -m 0700 -o msgd -g msgd /var/lib/msgd/staging

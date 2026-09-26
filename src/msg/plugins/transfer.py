@@ -27,7 +27,7 @@ def negotiate(app,request):
     packet.update(operation='transfer.part_put',request_id='r'*64,payload_digest='sha256:'+'0'*64,
         arguments={'transfer_id':'tr_'+'0'*32,'offset':2**63-1,'data':'','digest':'sha256:'+'0'*64})
     overhead=len(canonical(packet))+48
-    path_prefix=len('/!transfer.part_put/run/j/')
+    path_prefix=len('/-/g/transfer.part_put/j/')
     path_budget=(path_bytes-path_prefix)*3//4-overhead
     request_budget=request_bytes-overhead
     response_budget=response_bytes-1024

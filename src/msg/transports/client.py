@@ -80,8 +80,8 @@ class HTTPTransport:
         return effect
 
     async def call(self, request):
-        effect = await self._effect(request.operation)
-        path = ('/~' if effect=='read' else '/!') + request.operation
+        await self._effect(request.operation)
+        path = '/-/p/' + request.operation
         # Signed reads use POST to a query endpoint: read/write is the operation's
         # declared effect, not inferred from whether HTTP has a request body.
         value = await self._json('POST',path,body=wire(request))
@@ -96,13 +96,13 @@ class PathGETTransport(HTTPTransport):
     name = 'path_get'
 
     async def call(self, request):
-        effect = await self._effect(request.operation)
+        await self._effect(request.operation)
         raw = canonical(request)
         encoded, encoding = b64(raw), 'j'
         compressed = b64(gzip.compress(raw,mtime=0))
         if len(compressed)+1<len(encoded):
             encoded, encoding = compressed,'gz'
-        path = ('/~' if effect=='read' else '/!')+request.operation+'/run/'+encoding+'/'+encoded
+        path = '/-/g/'+request.operation+'/'+encoding+'/'+encoded
         limits = await self.discover()
         require(len(path.encode())<=limits.max_path_bytes,'path_too_large')
         return decode_result(await self._json('GET',path))
@@ -129,7 +129,7 @@ class MCPHTTPTransport(HTTPTransport):
     async def call(self, request):
         await self._effect(request.operation)
         from msg.transports.mcp import PROTOCOL_VERSION
-        value = await self._json('POST','/mcp',body={'jsonrpc':'2.0','id':request.request_id,
+        value = await self._json('POST','/-/mcp',body={'jsonrpc':'2.0','id':request.request_id,
             'method':'tools/call','params':{'name':request.operation,'arguments':{'packet':wire(request)}}},
             headers={'Accept':'application/json, text/event-stream','MCP-Protocol-Version':PROTOCOL_VERSION})
         if 'error' in value:

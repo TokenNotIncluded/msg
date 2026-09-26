@@ -1,14 +1,14 @@
 """Server configuration and client configuration have separate roots."""
 from __future__ import annotations
 
-import tomllib
 import json
+import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from msg.core.errors import require
-from msg.core.models import ServerConfig,TransportLimits,MailConfig
+from msg.core.models import MailConfig, ServerConfig, TransportLimits
 
 
 @dataclass(frozen=True,slots=True)
@@ -65,8 +65,33 @@ def load_settings(config_dir=Path('/etc/msgd')):
     for key,default in (('temporary_ttl',3600),('transfer_ttl',86400)):
         require(type(server.get(key,default)) is int and server.get(key,default)>0,'invalid_ttl')
     store=data.get('storage',{})
-    require(set(store)<={'database','content','staging'},'unknown_storage_configuration')
-    require(all(isinstance(v,str) and Path(v).is_absolute() for v in store.values()),'storage_paths_must_be_absolute')
+    require(set(store)<={'postgres_dsn','valkey_url','content','staging'},'unknown_storage_configuration')
+    postgres_dsn=store.get('postgres_dsn')
+    require(isinstance(postgres_dsn,str) and bool(postgres_dsn.strip()) and not any(ord(c)<32 for c in postgres_dsn),
+            'invalid_postgres_dsn')
+    # libpq service files keep credentials outside the world-readable server.toml.
+    if postgres_dsn.startswith(('postgresql://','postgres://')):
+        try:
+            pg_url=urlsplit(postgres_dsn)
+            require(bool(pg_url.hostname) and not pg_url.fragment,'invalid_postgres_dsn')
+        except ValueError:
+            require(False,'invalid_postgres_dsn')
+    else:
+        require(postgres_dsn.startswith('service=') and len(postgres_dsn.split())==1 and
+                len(postgres_dsn)>len('service='),'invalid_postgres_dsn')
+    valkey_url=store.get('valkey_url')
+    if valkey_url is not None:
+        require(isinstance(valkey_url,str),'invalid_valkey_url')
+        try:
+            cache_url=urlsplit(valkey_url)
+            require(cache_url.scheme in {'redis','rediss','unix'} and
+                    (bool(cache_url.hostname) if cache_url.scheme!='unix' else bool(cache_url.path)) and
+                    not cache_url.fragment,'invalid_valkey_url')
+        except ValueError:
+            require(False,'invalid_valkey_url')
+    require(all(isinstance(store.get(key,default),str) and Path(store.get(key,default)).is_absolute()
+                for key,default in (('content','/var/lib/msgd/content'),('staging','/var/lib/msgd/staging'))),
+            'storage_paths_must_be_absolute')
     limits=data.get('limits',{})
     require(set(limits)<={'request_bytes','response_bytes','path_bytes','part_bytes'},'unknown_limit')
     for value in limits.values():
@@ -98,7 +123,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
         require(hosted.scheme in {'https','http'} and hosted.hostname and not hosted.username and not hosted.password and not hosted.path and not hosted.query and not hosted.fragment,'invalid_hosting_origin')
     require(public_web is None or urlsplit(public_web).netloc!=url.netloc,'hosting_origin_must_differ')
     return Settings(server=ServerConfig(config_dir=config_dir,
-        database_file=Path(store.get('database','/var/lib/msgd/metadata.sqlite3')),
+        postgres_dsn=postgres_dsn,valkey_url=valkey_url,
         content_dir=Path(store.get('content','/var/lib/msgd/content')),
         staging_dir=Path(store.get('staging','/var/lib/msgd/staging')),plugins=plugins,
         limits=TransportLimits(max_request_bytes=limits.get('request_bytes',1048576),
@@ -111,7 +136,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
         tool_methods=tuple(tools.get('methods',('GET','HEAD'))),tool_ports=tuple(tools.get('ports',(80,443))))
 
 
-def write_example(config_dir,data_dir,service_url='https://msg.lmm.best'):
+def write_example(config_dir,data_dir,service_url='https://msg.lmm.best',*,postgres_dsn='service=msgd',valkey_url=None):
     """Local install helper: writes no private key or default PIN."""
     config_dir,data_dir=Path(config_dir),Path(data_dir)
     config_dir.mkdir(parents=True,exist_ok=True)
@@ -123,7 +148,8 @@ listen = "127.0.0.1"
 port = 8042
 
 [storage]
-database = {json.dumps(str(data_dir/"metadata.sqlite3"))}
+postgres_dsn = {json.dumps(postgres_dsn)}
+{f'valkey_url = {json.dumps(valkey_url)}' if valkey_url is not None else '# valkey_url = "redis://127.0.0.1:6379/0"'}
 content = {json.dumps(str(data_dir/"content"))}
 staging = {json.dumps(str(data_dir/"staging"))}
 

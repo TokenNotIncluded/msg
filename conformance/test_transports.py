@@ -31,10 +31,10 @@ def test_release_dependencies_are_available():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mode',['http','path_get','graphql','mcp_http','cli','mcp_stdio'])
-async def test_transfer_conformance_for_every_transport(mode,tmp_path):
+async def test_transfer_conformance_for_every_transport(mode,tmp_path,pg_dsn):
     sock=socket.socket();sock.bind(('127.0.0.1',0));sock.setblocking(False)
     url='http://127.0.0.1:'+str(sock.getsockname()[1])
-    app=Application(write_example(tmp_path/'etc',tmp_path/'data',url))
+    app=Application(write_example(tmp_path/'etc',tmp_path/'data',url,postgres_dsn=pg_dsn))
     csr,root=await _provision(app,'conformance-test-passphrase')
     await _approve_csr(app,csr,root,expected_digest=None,operator='conformance-fixture')
     server=uvicorn.Server(uvicorn.Config(create_app(app),log_level='critical',access_log=False,ws='none'))

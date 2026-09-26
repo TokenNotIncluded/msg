@@ -100,7 +100,7 @@ class OperationExecutor:
                         await session.save_result(principal.subject,request.payload_digest,result)
             # Only after the enclosing transaction commits may success reach the adapter.
             result=replace(result,prefer_cli=request.source!='msg',
-                           cli_url='/rules/cli' if request.source!='msg' else None)
+                           cli_url='/AGENTS.md' if request.source!='msg' else None)
             if self.response_hook is not None:
                 result=await self.response_hook(request,result)
             return result
@@ -136,7 +136,7 @@ class OperationExecutor:
                 context=ExecutionContext(request_id=request.request_id,principal=principal,entry=entry,now=self.clock(),deadline_monotonic=time.monotonic()+30)
                 await self.authorizer.require(context,request,tuple(AccessRequirement(resource_id=ref.id,
                     operation=f'{spec.name}@{spec.version}',check='read') for ref in previous.resources),tx)
-                return replace(previous,replayed=True,prefer_cli=request.source!='msg',cli_url='/rules/cli' if request.source!='msg' else None)
+                return replace(previous,replayed=True,prefer_cli=request.source!='msg',cli_url='/AGENTS.md' if request.source!='msg' else None)
             tx.execute('INSERT OR IGNORE INTO batches VALUES (?,?,?)',(principal.subject,request.request_id,request.payload_digest),write=True)
         results=[];resources=[]
         for child in children:
@@ -151,14 +151,14 @@ class OperationExecutor:
                 context=ExecutionContext(request_id=request.request_id,principal=current,entry=entry,now=self.clock(),deadline_monotonic=time.monotonic()+30)
                 await self.authorizer.require(context,request,tuple(AccessRequirement(resource_id=ref.id,
                     operation=f'{spec.name}@{spec.version}',check='read') for ref in previous.resources),tx)
-                return replace(previous,replayed=True,prefer_cli=request.source!='msg',cli_url='/rules/cli' if request.source!='msg' else None)
+                return replace(previous,replayed=True,prefer_cli=request.source!='msg',cli_url='/AGENTS.md' if request.source!='msg' else None)
             result=OperationResult(request_id=request.request_id,operation=spec.name,status='ok',actor=principal.actor,
                 subject=principal.subject,resources=tuple(dict.fromkeys(resources)),data={'results':results,'atomic':False},committed_at=self.clock())
             result=replace(result,receipt=self.receipt_signer.sign(receipt_bytes(result),purpose='receipt'))
             await tx.append_event(Event(id=event_id(request,principal.subject),type=spec.name,time=result.committed_at,
                 request_id=request.request_id,actor=principal.actor,subject=principal.subject,resources=result.resources,data={'operation':spec.name}))
             await tx.save_result(principal.subject,request.payload_digest,result)
-        return replace(result,prefer_cli=request.source!='msg',cli_url='/rules/cli' if request.source!='msg' else None)
+        return replace(result,prefer_cli=request.source!='msg',cli_url='/AGENTS.md' if request.source!='msg' else None)
 
 
 def result_wire(result):

@@ -109,7 +109,7 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
 
 def next_link(app,operation,args):
     packet=request_for(operation,args,app.settings.service_url,source='manual')
-    return f'/~{operation}/run/j/'+b64(canonical(packet))
+    return f'/-/g/{operation}/j/'+b64(canonical(packet))
 
 
 def install(app):

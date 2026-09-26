@@ -9,7 +9,7 @@ from test_service import register,call,NOW
 
 
 @pytest.mark.asyncio
-async def test_consistent_backup_restores_content_but_never_root_private_key(installed,tmp_path):
+async def test_consistent_backup_restores_content_but_never_root_private_key(installed,tmp_path,pg_dsn):
     app,_=installed
     key,uid,_=await register(app,'backup-agent')
     posted=await call(app,'content.post_create',{'parent':'/main','body':'survives recovery'},key=key,subject=uid)
@@ -17,7 +17,7 @@ async def test_consistent_backup_restores_content_but_never_root_private_key(ins
     assert result['root_private_key_included'] is False
     with zipfile.ZipFile(tmp_path/'data-backup.zip') as z:
         assert not any(name.startswith('root/') or 'key.json' in name for name in z.namelist())
-    restore(tmp_path/'data-backup.zip',tmp_path/'restored-etc',tmp_path/'restored-data')
+    restore(tmp_path/'data-backup.zip',tmp_path/'restored-etc',tmp_path/'restored-data',postgres_dsn=pg_dsn)
     restored=Application(load_settings(tmp_path/'restored-etc'),clock=lambda:NOW)
     await restored.load()
     read=await call(restored,'discovery.get',{'id':posted.resources[0].id})

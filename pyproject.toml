@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.15"
 license = "MIT"
 authors = [{name="TokenNotIncluded"}]
-dependencies = ["cryptography>=46,<52", "starlette>=0.50,<2", "uvicorn>=0.38,<1", "httpx>=0.28,<1", "jsonschema>=4.25,<5", "aiohttp>=3.13,<4", "dnspython>=2.8,<3", "graphql-core>=3.2.7,<3.3"]
+dependencies = ["cryptography>=46,<52", "starlette>=0.50,<2", "uvicorn>=0.38,<1", "httpx>=0.28,<1", "jsonschema>=4.25,<5", "aiohttp>=3.13,<4", "dnspython>=2.8,<3", "graphql-core>=3.2.7,<3.3", "psycopg[binary]>=3.3,<4", "valkey>=6.1,<7"]
 
 [project.scripts]
 msg = "msg.cli:main"

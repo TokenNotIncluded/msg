@@ -46,15 +46,15 @@ def test_tool_policy_intersection_does_not_widen_allowlists_or_limits():
 async def test_only_scoped_tool_is_visible_jobs_are_deduped_and_output_transfers(installed,tmp_path):
     app,root=installed
     key,uid,base=await register(app,'tool-agent')
-    denied=await call(app,'tool.invoke',{'id':'/_tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid)
+    denied=await call(app,'tool.invoke',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid)
     assert denied.error.code=='tool_certificate_required',wire(denied)
     cap=scoped(app,'tool.use','tool_dns',app.registry.capability('tool.use').operations)
     cert=await approve(app,root,uid,key,(cap,))
-    tools=await call(app,'discovery.get',{'id':'/_tools'},key=key,subject=uid,certs=(cert.resource_id,))
+    tools=await call(app,'discovery.get',{'id':'/tools'},key=key,subject=uid,certs=(cert.resource_id,))
     assert [t['name'] for t in tools.data['items']]==['dns']
-    wrong=await call(app,'tool.invoke',{'id':'/_tools/curl','arguments':{'url':'https://example.org'}},key=key,subject=uid,certs=(cert.resource_id,))
+    wrong=await call(app,'tool.invoke',{'id':'/tools/curl','arguments':{'url':'https://example.org'}},key=key,subject=uid,certs=(cert.resource_id,))
     assert wrong.error.code=='tool_certificate_required'
-    args={'id':'/_tools/dns','arguments':{'name':'example.org','type':'A'}}
+    args={'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}}
     first=await call(app,'tool.invoke',args,key=key,subject=uid,certs=(cert.resource_id,),rid='tool-once')
     second=await call(app,'tool.invoke',args,key=key,subject=uid,certs=(cert.resource_id,),rid='tool-once')
     assert first.status=='accepted' and second.replayed,wire(first)
@@ -80,7 +80,7 @@ async def test_pending_job_rechecks_revocation_and_expired_lease_is_uncertain(in
     app,root=installed
     key,uid,base=await register(app,'worker-agent')
     cert=await approve(app,root,uid,key,(scoped(app,'tool.use','tool_dns',app.registry.capability('tool.use').operations),))
-    result=await call(app,'tool.invoke',{'id':'/_tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert.resource_id,))
+    result=await call(app,'tool.invoke',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert.resource_id,))
     async with app.metadata.transaction(write=True) as tx:
         tx.execute('UPDATE certificates SET revoked=1 WHERE id=?',(cert.resource_id,),write=True)
     ran=[]
@@ -92,7 +92,7 @@ async def test_pending_job_rechecks_revocation_and_expired_lease_is_uncertain(in
         job=await tx.job(result.data['job_id'])
         assert job.state=='failed'
     cert2=await approve(app,root,uid,key,(scoped(app,'tool.use','tool_dns',app.registry.capability('tool.use').operations),))
-    job_result=await call(app,'tool.invoke',{'id':'/_tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert2.resource_id,))
+    job_result=await call(app,'tool.invoke',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert2.resource_id,))
     async with app.metadata.transaction(write=True) as tx:
         job=await tx.job(job_result.data['job_id'])
         await tx.save_job(replace(job,state='running',lease_until=NOW-timedelta(seconds=1)))
@@ -106,7 +106,7 @@ async def test_tool_external_success_then_revocation_records_uncertain(installed
     app,root=installed
     key,uid,_=await register(app,'late-revocation')
     cert=await approve(app,root,uid,key,(scoped(app,'tool.use','tool_dns',app.registry.capability('tool.use').operations),))
-    result=await call(app,'tool.invoke',{'id':'/_tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert.resource_id,))
+    result=await call(app,'tool.invoke',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert.resource_id,))
     async def runner(tool,args,policies,outdir):
         async with app.metadata.transaction(write=True) as tx:
             tx.execute('UPDATE certificates SET revoked=1 WHERE id=?',(cert.resource_id,),write=True)

@@ -13,7 +13,6 @@ import getpass
 import os
 from pathlib import Path
 import re
-import sqlite3
 import sys
 
 from msg.constants import *
@@ -39,7 +38,10 @@ async def _provision(app,pin):
     protected=settings.config_dir/'root'
     marker=settings.config_dir/'initialization.pending'
     require(not root_envelope(settings.config_dir).exists() and not settings.trust_file.exists() and
-            not settings.server.database_file.exists() and not marker.exists(),'initialization_requires_recovery')
+            not marker.exists(),'initialization_requires_recovery')
+    await app.open_storage()
+    async with app.metadata.transaction(write=False) as tx:
+        require(tx.one('SELECT COUNT(*) FROM resources')[0] == 0,'initialization_requires_recovery')
     root=Ed25519Signer.generate()
     envelope=seal_private_key(root.private_bytes(),pin)
     settings.config_dir.mkdir(parents=True,exist_ok=True)
@@ -56,7 +58,6 @@ async def _provision(app,pin):
     durable_write(settings.service_keys/'online.key',online.private_bytes(),mode=0o600)
     durable_write(settings.service_keys/'receipt.key',receipt.private_bytes(),mode=0o600)
     durable_write(settings.service_keys/'tokens.key',os.urandom(32),mode=0o600)
-    await app.open_storage()
     now=app.clock()
     await bootstrap(app.metadata,app.contents,app.registry,now)
     root_grants=app.primary_ceiling()
@@ -303,4 +304,3 @@ async def _revoke(app,certificate_id,signer, *, reason,operator):
             authority=(ResourceRef(id=app.certificates.root_certificate.resource_id),),before_digest=digest(certificate),
             after_digest=digest(statement),previous_digest=None,entry_digest='',result='revoked'))
     return {'certificate_id':certificate_id,'revoked':True,'signature':wire(signature)}
-

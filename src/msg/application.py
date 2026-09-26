@@ -21,7 +21,8 @@ from msg.security.capabilities import install_capabilities, primary_ceiling, bas
 from msg.security.certificates import CertificateValidator
 from msg.security.crypto import Ed25519Signer
 from msg.storage.git import GitContentStore
-from msg.storage.sqlite import SqliteMetadataStore
+from msg.storage.postgres import PostgresMetadataStore
+from msg.storage.valkey_bus import ValkeyOutboxSignal
 
 
 class Application:
@@ -61,7 +62,9 @@ class Application:
 
     async def open_storage(self):
         if self.metadata is None:
-            self.metadata=SqliteMetadataStore(self.settings.server.database_file)
+            signal=(ValkeyOutboxSignal(self.settings.server.valkey_url)
+                    if self.settings.server.valkey_url else None)
+            self.metadata=PostgresMetadataStore(self.settings.server.postgres_dsn,signal=signal)
         if self.contents is None:
             self.contents=GitContentStore(self.settings.server.content_dir)
 

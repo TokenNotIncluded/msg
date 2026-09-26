@@ -14,10 +14,11 @@ from msg.transports.client import HTTPTransport
 from msg.transports.http import create_app
 
 @pytest.mark.asyncio
-async def test_real_token_and_roundtrip_budget(tmp_path):
+async def test_real_token_and_roundtrip_budget(tmp_path,pg_dsn):
     import tiktoken
     encoding=tiktoken.get_encoding('cl100k_base')
-    app=Application(write_example(tmp_path/'etc',tmp_path/'data','http://testserver'))
+    app=Application(write_example(tmp_path/'etc',tmp_path/'data','http://testserver',
+                                  postgres_dsn=pg_dsn))
     csr,root=await _provision(app,'token-budget-test-passphrase')
     await _approve_csr(app,csr,root,expected_digest=None,operator='conformance-fixture')
     records=[]

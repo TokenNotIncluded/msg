@@ -482,7 +482,8 @@ class MailConfig:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ServerConfig:
     config_dir: Path
-    database_file: Path
+    postgres_dsn: str = field(repr=False)
+    valkey_url: str | None = field(repr=False)
     content_dir: Path
     staging_dir: Path
     plugins: tuple[str, ...]

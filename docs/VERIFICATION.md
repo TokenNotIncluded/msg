@@ -1,41 +1,31 @@
 # 本地验收记录
 
-## 结论
+## 2026-09-27 存储迁移与协议入口迭代
 
-本地已实际执行 **101 项测试**，另执行 **5 项完整分片传输验收**：HTTP、纯路径 GET、MCP Streamable HTTP、CLI、MCP stdio。共 **106 个独立用例通过**，这些已执行用例中没有失败或跳过。
+本轮执行者实际报告以下结果，使用 Python 3.15.0rc2、隔离 PostgreSQL 18 与临时 Valkey 9；没有替换生产数据库，没有远端 CI、发布或线上验收结果。
 
-这不是“全部发布验收通过”：当前容器是 **Python 3.13.5**，没有 Python 3.15、graphql-core、tiktoken、bubblewrap 或 OpenSSH 服务。对应运行时、GraphQL、实际 tokenizer 与宿主隔离验收**没有执行**。项目仍要求 Python >=3.15，生产网络入口未为了测试改成允许 3.13。
+| 实际命令 | 结果 |
+| --- | --- |
+| `uv run --no-project --python 3.15 --with-editable . --with pytest --with pytest-asyncio pytest tests -q` | 155 passed in 92.29s，本批修改后全套重跑 |
+| `uv run --no-project --python 3.15 --with-editable . --with pytest --with pytest-asyncio --with tiktoken pytest conformance -q` | 8 passed in 32.27s |
+| `uv build` | GET-only 标量值上限 4096 字节修改后最新构建成功，生成 0.1.0a1 sdist 与 wheel |
+| `python3.15 -m compileall -q src` | 此前存储迁移批次成功 |
 
-准确环境、依赖版本、用例名称和对应 JUnit 文件见 [summary.json](verification/summary.json)。本次没有推送 GitHub、运行远程 Actions、创建 PR、发布 release 或更新线上实例。
+最终全套包括 PostgreSQL outbox、SQL 翻译、真实 Valkey 联动、协议路由、短码字典、AGENTS/真实 msg-entry 技能、/tools/ 与新建帖子/回复规范路径及授权后只读跳转、GET-only token/bootstrap 标量写和 1 KiB transfer.part_put 测试。此前 HTTP/字典/入口等定向检查已包含在全套中，不再次相加。
 
-## 实际执行的分组
+真实组件覆盖 PostgreSQL 事务回滚、并发写入、审计追加、持久 outbox、备份恢复，以及 Valkey 发布订阅和连接失败；Git 使用临时 bare 仓库，签名和客户端加密使用实际密码库。conformance 覆盖现有协议适配器的分片流程及 tokenizer 预算。本批已验证 /-/ 下 POST、签名 GET、MCP 路由与旧写入口拒绝，短码最小目录/分级详情、语义快照，以及新安装 /AGENTS.md、/.agents/skills/msg-entry/SKILL.md、/tools/（0500、tool.use）和新建 post/reply 的 .md 路径，以及授权后只读 308。
 
-| 报告 | 用例数 | 范围 |
-| --- | ---: | --- |
-| core.xml | 31 | 模型、事务、身份 / 签名、授权、业务执行、配置校验 |
-| capabilities.xml | 18 | 每项特殊能力的证书、操作、scope、撤销 / 过期边界 |
-| services.xml | 24 | 批量、扩展、HTTP、分页、诊断、备份、SSH/Git guard、根轮换 |
-| tools.xml | 18 | 网络策略、工具限定、幂等任务、撤销、执行后的不确定状态 |
-| exchange.xml | 5 | 分片、真实 CLI / stdio 子进程、客户端加密密钥库 |
-| client-basic.xml | 2 | 客户端重试与上传正文发布 |
-| client-http.xml / client-path.xml / client-mcp.xml | 3 | 三种客户端的跨传输恢复 |
-| transport-matrix.xml | 3 | HTTP、GET 路径、远程 MCP 的相同分片流程 |
-| cli-matrix.xml / stdio-matrix.xml | 2 | CLI 与本地 MCP 的相同分片流程 |
+**这些通过结果不等于阶段 1 全部完成。** GET-only token/bootstrap 标量写已纳入本组全套；单业务值最多 4096 UTF-8 字节，默认原始 URL 路径上限仍为 8192 字节。当前 token 在原请求重放时可再次交付，不满足严格一次展示；没有本地随机材料的 bootstrap、复杂嵌套输入仍缺。308 仅将已有 .md Post 的旧式无后缀 URL 转到规范路径，私有资源先授权、不泄露目标；旧数据库中真正无后缀的存量 Post 没有自动改名或别名迁移。当前仅提供入口技能，不代表完整技能/局部规则发现已完成。短码仅覆盖顶层 enum/const，嵌套字段/preset 与完整 compact/normal/proof 投影仍待补齐。托管身份、分享和其他后续能力也不能据此称为完成。
 
-全部报告在 [verification/](verification/)。受当前命令执行时限影响，测试分组执行并按用例去重核对，不宣称做过单进程全套运行。相同测试没有重复计入总数。某次整体调用超时并不作为通过依据；客户端用例随后分别执行完成并取得独立 JUnit 结果。
+仓库目前没有 `docs/verification/`、JUnit 汇总、构建日志或 package-smoke 文件；以上为本轮命令结果记录，不提供不存在的证据链接。早期“Python 3.13、101 + 5 用例、SQLite”的验收属于旧实现，不能作为本轮 PostgreSQL/Valkey 证据，也不能与本轮结果合并。
 
-## 测试使用的真实组件
+## 尚未通过的验收
 
-SQLite 事务、回滚与版本更新；临时 bare Git 对象、引用和实际 Git reference-transaction hook；Ed25519 与 PIN 封装；HTTP 回环套接字；真正的 msg CLI / MCP stdio 子进程；客户端加密、下载解密；备份导出与恢复。
+- 最新云盘需求与源码的差异见 [实现范围](IMPLEMENTATION_STATUS.md)，逐阶段出口见 [迭代计划](ITERATION_PLAN.md)。缺失功能不能靠现有测试数量抵消。
+- 工具 runner fixture 不证明真实 bubblewrap 文件系统与网络隔离；需要真实公网、私网授权和重定向场景。
+- SSH 命令解析、凭据和真实 Git hook 测试不证明 sshd 登录握手、禁止转发或宿主隔离。
+- 邮件本地状态测试不证明真实 SMTP/TLS 投递；Webhook 尚无完整实现。
+- 根管理内部测试不证明物理控制台身份与根目录权限；不能为测试关闭 local_only。
+- 需要干净环境安装、远端 CI、备份恢复演练以及独立的部署后验收。本轮没有运行压力基准或独立安全审计，不声明吞吐量或安全覆盖率。
 
-工具授权和任务状态使用受控 runner fixture，不假装执行了真实 bubblewrap。SSH 测试执行了受限命令解析、账号凭据验证和真实 Git hook，但没有实际 sshd 登录握手。根管理测试调用隔离安装内部用例，不把测试 fixture 当成绕过本机控制台检查的生产入口。
-
-## 尚未完成的发布门槛
-
-执行 `python3.15 -m pytest conformance`。其中运行时依赖检查、真实 GraphQL 分片和 tokenizer 预算测试不使用 importorskip 或空成功；缺少依赖会失败。新 CI 配置将这些设为必须执行的步骤，但本次没有向远程推送，所以没有 CI 成功链接。
-
-真实 OpenSSH 登录 / 禁转发、bubblewrap 文件系统隔离、公网与重定向请求、SMTP/TLS 投递以及物理控制台操作还需按 [部署文档](DEPLOYMENT.md) 验收。设计中尚未完成的完整邮件事件投影、浏览 / 下载统计、任意初始化损坏自动修复等见 [实现范围](IMPLEMENTATION_STATUS.md)。
-
-## 构建与静态检查
-
-构建结果和安装烟雾测试记录在 `verification/build.log` 与 `verification/package-smoke.json`。源代码与 conformance 已通过 `compileall`，部署 shell 通过 `sh -n`。没有运行 mypy、ruff、独立安全审计或压力基准，因此不提供相应通过率、覆盖率或吞吐量声明。
+后续记录应同时包含代码提交、准确命令、环境版本、结果和可访问日志；区分单元/集成、协议 conformance、宿主验证及线上验证。disabled/skip 必须说明原因，不能记作 pass。正式功能必须在 CI 启用配置中执行。

@@ -1,16 +1,20 @@
 """Read-only deployment inspection and disposable, real-operation self-tests."""
 from __future__ import annotations
 import asyncio
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from importlib.util import find_spec
 import os
 from pathlib import Path
 import shutil
-import sqlite3
+import psycopg
 import stat
 import subprocess
 import sys
 import tempfile
+import uuid
+from urllib.parse import quote
+from psycopg import sql
 
 from msg.core.codec import canonical, decode, digest, loads, unb64, wire, b64
 from msg.core.errors import Failure, require
@@ -18,21 +22,47 @@ from msg.core.models import Certificate, Resource, ResourceRef, Subject, AuditEv
 from msg.constants import ROOT_SUBJECT
 
 
+@contextmanager
+def temporary_postgres():
+    """Run selftest against a new local cluster, never an installed database."""
+    configured=os.environ.get('MSG_TEST_POSTGRES_URL_TEMPLATE')
+    if configured:
+        name='msg_selftest_'+uuid.uuid4().hex
+        admin=configured.format(database='postgres')
+        with psycopg.connect(admin,autocommit=True) as connection:
+            connection.execute(sql.SQL('CREATE DATABASE {}').format(sql.Identifier(name)))
+        try:
+            yield configured.format(database=name)
+        finally:
+            with psycopg.connect(admin,autocommit=True) as connection:
+                connection.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name)))
+        return
+    with tempfile.TemporaryDirectory(prefix='msg-selftest-pg-',dir='/tmp') as temporary:
+        root=Path(temporary)
+        data=root/'data'
+        socket=root/'socket';socket.mkdir()
+        subprocess.run(['initdb','-D',str(data),'-A','trust','--no-instructions'],
+                       check=True,capture_output=True,text=True)
+        try:
+            subprocess.run(['pg_ctl','-D',str(data),'-l',str(root/'postgres.log'),
+                            '-o',f"-k {socket} -h '' -p 5432",'-w','start'],
+                           check=True,capture_output=True,text=True)
+            yield f'postgresql://localhost:5432/postgres?host={quote(str(socket),safe="")}'
+        finally:
+            subprocess.run(['pg_ctl','-D',str(data),'-m','immediate','-w','stop'],
+                           check=False,capture_output=True,text=True)
+
+
 class ReadOnlyStore:
-    """No constructor DDL, WAL checkpoint, repair or accidental database creation."""
-    def __init__(self,path):
-        self.path=Path(path)
+    """Inspect PostgreSQL without schema creation or repair."""
+    def __init__(self,dsn):
+        self.dsn=dsn
 
     async def inspect(self, callback):
-        from msg.storage.sqlite import SqliteSession
-        connection=sqlite3.connect(self.path.resolve().as_uri()+'?mode=ro',uri=True)
-        try:
-            connection.execute('PRAGMA query_only=ON')
-            connection.execute('BEGIN')
-            session=SqliteSession(connection,write=False)
+        from msg.storage.postgres import PostgresMetadataStore
+        store=PostgresMetadataStore(self.dsn,initialize=False)
+        async with store.transaction(write=False) as session:
             return await callback(session)
-        finally:
-            connection.close()
 
 
 def doctor(config_dir=Path('/etc/msgd'), *, clock=None):
@@ -65,24 +95,19 @@ async def _doctor(config_dir,clock):
         return {'ok':False,'root_id':ROOT_SUBJECT,'checks':checks}
     if sys.version_info[:2]>=(3,15):success('python',version='.'.join(map(str,sys.version_info[:3])))
     else:failed('python','python_315_required',actual='.'.join(map(str,sys.version_info[:3])))
-    missing=[name for name in ('cryptography','starlette','uvicorn','httpx','jsonschema','aiohttp','dns','graphql') if find_spec(name) is None]
+    missing=[name for name in ('cryptography','starlette','uvicorn','httpx','jsonschema','aiohttp','dns','graphql','psycopg','valkey') if find_spec(name) is None]
     if not missing:success('dependencies')
     else:failed('dependencies','dependency_unavailable',missing=missing)
     if shutil.which('git'):success('git')
     else:failed('git','git_missing')
     if not shutil.which('bwrap'):
         warnings.append({'code':'tool_isolation_unavailable','effect':'network_tool_jobs_fail_closed'})
-    if not settings.server.database_file.is_file():
-        failed('storage','database_missing')
-        return {'ok':False,'root_id':ROOT_SUBJECT,'checks':checks,'warnings':warnings}
     try:
         trust=loads(settings.trust_file.read_bytes())
         root=decode(Certificate,trust['certificate'])
         validator=CertificateValidator(app.registry,root,unb64(trust['public_key']),settings.service_url,
                                        clock or (lambda:datetime.now(UTC)))
         async def inspect(tx):
-            require(tx.one('PRAGMA integrity_check')[0]=='ok','database_corrupt')
-            require(not tx.rows('PRAGMA foreign_key_check'),'foreign_key_corrupt')
             require(tx.one('SELECT version FROM schema_version')[0]==1,'schema_version_unknown')
             success('storage')
             try:
@@ -113,9 +138,18 @@ async def _doctor(config_dir,clock):
                 require(audit.get('previous_digest')==previous and digest(audit)==entry_digest,'audit_chain_mismatch')
                 previous=entry_digest
             success('audit',head=previous)
-        await ReadOnlyStore(settings.server.database_file).inspect(inspect)
-    except (Failure,OSError,ValueError,KeyError,sqlite3.DatabaseError) as exc:
+        await ReadOnlyStore(settings.server.postgres_dsn).inspect(inspect)
+    except (Failure,OSError,ValueError,KeyError,psycopg.Error) as exc:
         failed('inspection',getattr(exc,'code','inspection_failed'))
+    if settings.server.valkey_url:
+        try:
+            from msg.storage.valkey_bus import ValkeyOutboxSignal
+            await asyncio.to_thread(ValkeyOutboxSignal(settings.server.valkey_url).client.ping)
+            success('valkey')
+        except Exception:
+            failed('valkey','valkey_unavailable')
+    else:
+        checks['valkey']={'ok':True,'status':'disabled'}
     content=settings.server.content_dir
     if (content/'private.git'/'HEAD').is_file():success('content_layout')
     else:failed('content_layout','content_missing')
@@ -150,10 +184,11 @@ async def selftest():
     from msg.security.certificates import csr_body
     from msg.security.capabilities import grant_for
     checks={}
-    with tempfile.TemporaryDirectory(prefix='msg-selftest-') as temporary:
+    with tempfile.TemporaryDirectory(prefix='msg-selftest-') as temporary, temporary_postgres() as dsn:
         folder=Path(temporary)
         now=datetime.now(UTC)
-        app=Application(write_example(folder/'etc',folder/'data','http://selftest.invalid'),clock=lambda:now)
+        app=Application(write_example(folder/'etc',folder/'data','http://selftest.invalid',
+                                      postgres_dsn=dsn),clock=lambda:now)
         try:
             csr,root=await _provision(app,'selftest-'+os.urandom(24).hex())
             await _approve_csr(app,csr,root,expected_digest=None,operator='isolated-selftest')

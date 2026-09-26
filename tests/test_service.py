@@ -73,7 +73,7 @@ async def test_root_network_forbidden_even_cli_source(installed):
 async def test_default_deny_and_certgate(installed):
     app, _ = installed
     key, uid, cert = await register(app, 'bob')
-    for path in ('/private','/admins','/_tools/curl'):
+    for path in ('/private','/admins','/tools/curl'):
         result = await call(app,'discovery.get',{'id':path},key=key,subject=uid,certs=(cert,))
         assert result.status == 'error', (path,wire(result))
     result = await call(app,'content.post_create',{'parent':'/certified','body':'gate'},key=key,subject=uid,certs=(cert,))
