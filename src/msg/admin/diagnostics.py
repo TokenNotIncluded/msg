@@ -84,8 +84,6 @@ async def _doctor(config_dir,clock):
     def success(name,**data):checks[name]={'ok':True,**data}
     def failed(name,code,**data):checks[name]={'ok':False,'code':code,**data}
     path=Path(config_dir)
-    if not (path/'server.toml').is_file():
-        return {'ok':False,'root_id':ROOT_SUBJECT,'checks':{'configuration':{'ok':False,'code':'configuration_missing'}}}
     try:
         settings=load_settings(path)
         app=Application(settings,clock=clock)
@@ -181,6 +179,130 @@ async def _doctor(config_dir,clock):
     return {'ok':all(c['ok'] for c in checks.values()),'root_id':ROOT_SUBJECT,'checks':checks,'warnings':warnings}
 
 
+async def _selftest_ca_chain(app,root,call,register,now):
+    """Publish a real, narrowly scoped CA chain in the disposable test instance."""
+    from msg.core.models import CertificateRequest, IssuancePolicy, Scope, Signature
+    from msg.plugins.common import new_id
+    from msg.security.capabilities import grant_for
+    from msg.security.certificates import csr_body, sign_certificate
+    from msg.admin.root import _approve_csr
+
+    scope=Scope(resource_id=app.namespace_root,descendants=True)
+    issue=grant_for(app.registry.capability('cert.issue'),scope=scope,
+                    operations=('cert.publish@1',))
+    ca_issue=grant_for(app.registry.capability('cert.ca.issue'),scope=scope,
+                       operations=('cert.publish@1',))
+    read=grant_for(app.registry.capability('discovery.basic'),scope=scope,
+                   operations=('discovery.get@1',))
+    ca_grants=(issue,ca_issue)
+    issuable=(issue,ca_issue,read)
+
+    async def request_certificate(key,uid,issuer,kind,grants,policy=None):
+        csr=CertificateRequest(resource_id='pending',applicant=uid,subject_id=uid,
+            requested_issuer=issuer,public_key=key.public_key,kind=kind,grants=tuple(grants),
+            issuance=policy,requested_ttl_seconds=600,target_service=app.settings.service_url,
+            delegation_depth=0,authority_sources=(),request_digest='',
+            possession_proof=Signature(key_id=key.key_id,algorithm='ed25519',value=b''))
+        proof=key.sign(canonical(csr_body(csr)),purpose='csr')
+        result=await call('cert.request',{'requested_issuer':issuer,'public_key':b64(key.public_key),
+            'kind':kind,'grants':wire(tuple(grants)),'issuance':wire(policy),
+            'requested_ttl_seconds':600,'possession_proof':wire(proof)},key,uid)
+        require(result.status=='ok',result.error.code if result.error else 'selftest_csr_failed')
+        return result
+
+    async def publish(parent,parent_key,parent_uid,key,uid,kind,grants,policy=None):
+        requested=await request_certificate(key,uid,parent_uid,kind,grants,policy)
+        cert=Certificate(resource_id=new_id('cert'),serial=new_id('serial'),subject_id=uid,
+            key_id=key.key_id,issuer_id=parent_uid,parent_certificate_id=parent.resource_id,
+            authority_sources=(),kind=kind,grants=tuple(grants),not_before=now,
+            expires_at=now+timedelta(seconds=600),target_service=app.settings.service_url,
+            delegation_depth=0,issuance=policy,
+            signature=Signature(key_id=parent_key.key_id,algorithm='ed25519',value=b''))
+        cert=sign_certificate(cert,parent_key)
+        result=await call('cert.publish',{'csr_id':requested.data['csr_id'],
+            'certificate':wire(cert)},parent_key,parent_uid,(parent.resource_id,))
+        return result,cert,requested
+
+    l1_key,l1_uid=await register('test-l1')
+    l1_policy=IssuancePolicy(issue_grants=issuable,max_cert_ttl_seconds=600,
+                             max_child_ca_depth=2,max_delegation_depth=0)
+    l1_request=await request_certificate(l1_key,l1_uid,ROOT_SUBJECT,'ca',ca_grants,l1_policy)
+    l1=await _approve_csr(app,l1_request.data['csr_id'],root,
+                          expected_digest=l1_request.data['request_digest'],operator='isolated-selftest')
+    l2_key,l2_uid=await register('test-l2')
+    l2_policy=IssuancePolicy(issue_grants=issuable,max_cert_ttl_seconds=600,
+                             max_child_ca_depth=1,max_delegation_depth=0)
+    l2_result,l2,_=await publish(l1,l1_key,l1_uid,l2_key,l2_uid,'ca',ca_grants,l2_policy)
+    require(l2_result.status=='ok',l2_result.error.code if l2_result.error else 'selftest_l2_failed')
+    l3_key,l3_uid=await register('test-l3')
+    l3_policy=IssuancePolicy(issue_grants=issuable,max_cert_ttl_seconds=600,
+                             max_child_ca_depth=0,max_delegation_depth=0)
+    l3_result,l3,_=await publish(l2,l2_key,l2_uid,l3_key,l3_uid,'ca',ca_grants,l3_policy)
+    require(l3_result.status=='ok',l3_result.error.code if l3_result.error else 'selftest_l3_failed')
+    leaf_key,leaf_uid=await register('test-leaf')
+    leaf_result,leaf,_=await publish(l3,l3_key,l3_uid,leaf_key,leaf_uid,'capability',(read,))
+    require(leaf_result.status=='ok',leaf_result.error.code if leaf_result.error else 'selftest_leaf_failed')
+    async with app.metadata.transaction(write=False) as tx:
+        for cert in (l1,l2,l3,leaf):
+            await app.certificates.validate(cert.resource_id,tx)
+        paths=[await tx.path(cert.resource_id) for cert in (l1,l2,l3,leaf)]
+    test_path='/_test/'+app.selftest_run_id
+    valid=(all(path.startswith(test_path+'/') for path in paths) and
+           all(grant.scope.resource_id==app.namespace_root for cert in (l1,l2,l3,leaf)
+               for grant in (*cert.grants,*(cert.issuance.issue_grants if cert.issuance else ()))))
+
+    l4_key,l4_uid=await register('test-l4')
+    l4_result,l4,l4_request=await publish(l3,l3_key,l3_uid,l4_key,l4_uid,'ca',ca_grants,l3_policy)
+    async with app.metadata.transaction(write=False) as tx:
+        pending=(await tx.csr_state(l4_request.data['csr_id'])).status=='pending'
+        absent=tx.one('SELECT 1 FROM certificates WHERE id=?',(l4.resource_id,)) is None
+    denied=(l4_result.error is not None and l4_result.error.code=='ca_depth_exceeded'
+            and pending and absent)
+
+    out_of_scope=grant_for(app.registry.capability('discovery.basic'),
+        scope=Scope(resource_id='r_root',descendants=True),operations=('discovery.get@1',))
+    bad_scope_key,bad_scope_uid=await register('test-bad-scope')
+    bad_scope,bad_scope_cert,bad_scope_request=await publish(
+        l1,l1_key,l1_uid,bad_scope_key,bad_scope_uid,'capability',(out_of_scope,))
+    async with app.metadata.transaction(write=False) as tx:
+        scope_pending=(await tx.csr_state(bad_scope_request.data['csr_id'])).status=='pending'
+        scope_absent=tx.one('SELECT 1 FROM certificates WHERE id=?',(bad_scope_cert.resource_id,)) is None
+    denied_scope=(bad_scope.error is not None and bad_scope.error.code=='issuance_scope_exceeded'
+                  and scope_pending and scope_absent)
+
+    broad_read=grant_for(app.registry.capability('discovery.basic'),scope=scope,
+        operations=('discovery.get@1','discovery.list@1'))
+    bad_ops_key,bad_ops_uid=await register('test-bad-ops')
+    bad_ops,bad_ops_cert,bad_ops_request=await publish(
+        l1,l1_key,l1_uid,bad_ops_key,bad_ops_uid,'capability',(broad_read,))
+    async with app.metadata.transaction(write=False) as tx:
+        ops_pending=(await tx.csr_state(bad_ops_request.data['csr_id'])).status=='pending'
+        ops_absent=tx.one('SELECT 1 FROM certificates WHERE id=?',(bad_ops_cert.resource_id,)) is None
+    denied_ops=(bad_ops.error is not None and bad_ops.error.code=='issuance_scope_exceeded'
+                and ops_pending and ops_absent)
+
+    child_key,child_uid=await register('test-leaf-child')
+    leaf_issue,leaf_child,leaf_request=await publish(
+        leaf,leaf_key,leaf_uid,child_key,child_uid,'capability',(read,))
+    async with app.metadata.transaction(write=False) as tx:
+        leaf_pending=(await tx.csr_state(leaf_request.data['csr_id'])).status=='pending'
+        leaf_absent=tx.one('SELECT 1 FROM certificates WHERE id=?',(leaf_child.resource_id,)) is None
+    leaf_denied=(leaf_issue.error is not None and leaf_pending and leaf_absent)
+
+    async with app.metadata.transaction(write=True) as tx:
+        tx.execute('UPDATE certificates SET revoked=1 WHERE id=?',(l1.resource_id,),write=True)
+    async with app.metadata.transaction(write=False) as tx:
+        try:
+            await app.certificates.validate(leaf.resource_id,tx)
+        except Failure as exc:
+            revoked=exc.code=='certificate_revoked'
+        else:
+            revoked=False
+    return {'ca_l1_l2_l3_leaf':valid,'ca_l3_cannot_issue_ca':denied,
+            'ca_ancestor_revocation':revoked,'ca_scope_expansion_denied':denied_scope,
+            'ca_operations_expansion_denied':denied_ops,'ca_leaf_cannot_issue':leaf_denied}
+
+
 async def selftest():
     """No production database, listener, root PIN or live trust state is touched."""
     from dataclasses import replace
@@ -196,11 +318,25 @@ async def selftest():
     with tempfile.TemporaryDirectory(prefix='msg-selftest-') as temporary, temporary_postgres() as dsn:
         folder=Path(temporary)
         now=datetime.now(UTC)
+        run_id=uuid.uuid4().hex
+        test_path='/_test/'+run_id
         app=Application(write_example(folder/'etc',folder/'data','http://selftest.invalid',
-                                      postgres_dsn=dsn),clock=lambda:now)
+                                      postgres_dsn=dsn),clock=lambda:now,selftest_run_id=run_id)
         try:
             csr,root=await _provision(app,'selftest-'+os.urandom(24).hex())
             await _approve_csr(app,csr,root,expected_digest=None,operator='isolated-selftest')
+            async with app.metadata.transaction(write=False) as tx:
+                namespace=app.namespace_root
+                require(await tx.path(namespace)==test_path,'selftest_namespace_missing')
+                root_scoped=True
+                for (resource_id,) in tx.execute('SELECT id FROM resources'):
+                    if resource_id in {'r_root','t_selftest'}:
+                        continue
+                    ancestors=await tx.ancestors(resource_id)
+                    if resource_id!=namespace and namespace not in {item.id for item in ancestors}:
+                        root_scoped=False
+                        break
+                checks['isolated_namespace']=root_scoped
             async def call(name,args,key=None,subject=None,certs=(),expected=(),request_id=None):
                 packet=request_for(name,args,app.settings.service_url,subject=subject,signer=key,
                     certificates=certs,expected=expected,expires_at=now+timedelta(seconds=120),request_id=request_id)
@@ -221,7 +357,8 @@ async def selftest():
                 require(result.status=='ok','selftest_csr_failed')
                 return await _approve_csr(app,result.data['csr_id'],root,expected_digest=result.data['request_digest'],operator='isolated-selftest')
             alice,ua=await register('alice');bob,ub=await register('bob')
-            post=await call('content.post_create',{'parent':'/tmp','body':'retained source bytes\r\n'},alice,ua,request_id='same-write')
+            post=await call('content.post_create',{'parent':test_path+'/tmp','body':'retained source bytes\r\n'},alice,ua,request_id='same-write')
+            require(post.status=='ok',post.error.code if post.error else 'selftest_post_failed')
             # OnlineIssuer exercises only the independent temporary Test Root
             # created above. No production trust material or signer is opened.
             async with app.metadata.transaction(write=False) as tx:
@@ -259,29 +396,29 @@ async def selftest():
                 try:await app.certificates.validate(delegated.data['certificate_id'],tx)
                 except Failure as exc:delegation_invalid=exc.code=='authority_source_inactive'
             checks['online_source_revocation']=revoked_source.status=='ok' and derived.kind=='identity' and delegation_invalid
-            repeat=await call('content.post_create',{'parent':'/tmp','body':'retained source bytes\r\n'},alice,ua,request_id='same-write')
+            repeat=await call('content.post_create',{'parent':test_path+'/tmp','body':'retained source bytes\r\n'},alice,ua,request_id='same-write')
             checks['idempotency']=repeat.replayed and repeat.resources==post.resources
             rejected=await call('content.archive',{'id':post.resources[0].id},bob,ub,
                 expected=((post.resources[0].id,post.data['generation']),))
             checks['sticky']=rejected.error is not None and rejected.error.code=='sticky_denied'
-            denied=await call('discovery.get',{'id':'/private'},bob,ub)
+            denied=await call('discovery.get',{'id':test_path+'/private'},bob,ub)
             checks['deny']=denied.error is not None and denied.error.code=='permission_denied'
-            denied=await call('content.post_create',{'parent':'/certified','body':'gate'},bob,ub)
+            denied=await call('content.post_create',{'parent':test_path+'/certified','body':'gate'},bob,ub)
             grant=grant_for(app.registry.capability('resource.certified_write'),scope=Scope(resource_id='t_certified',descendants=True),
                 operations=('content.post_create@1',))
             cert=await approve(bob,ub,(grant,))
-            accepted=await call('content.post_create',{'parent':'/certified','body':'gate'},bob,ub,(cert.resource_id,))
+            accepted=await call('content.post_create',{'parent':test_path+'/certified','body':'gate'},bob,ub,(cert.resource_id,))
             checks['certgate']=denied.error is not None and denied.error.code=='certificate_gate' and accepted.status=='ok'
             wrong=grant_for(app.registry.capability('resource.certified_write'),scope=Scope(resource_id='t_main',descendants=True),
                 operations=('content.post_create@1',))
             wrong_cert=await approve(alice,ua,(wrong,))
-            rejected=await call('content.post_create',{'parent':'/certified','body':'wrong scope'},alice,ua,(wrong_cert.resource_id,))
+            rejected=await call('content.post_create',{'parent':test_path+'/certified','body':'wrong scope'},alice,ua,(wrong_cert.resource_id,))
             checks['certificate_scope']=rejected.error is not None and rejected.error.code=='certificate_gate'
             manage=grant_for(app.registry.capability('group.manage_override'),scope=Scope(resource_id='g_admins'),
                 operations=('group.member.add@1','group.member.remove@1'))
             manager=await approve(alice,ua,(manage,))
             await call('group.member.add',{'group':'g_admins','subject':ub},alice,ua,(manager.resource_id,))
-            child=await call('content.topic_create',{'parent':'/admins','name':'selftest'},bob,ub)
+            child=await call('content.topic_create',{'parent':test_path+'/admins','name':'selftest'},bob,ub)
             require(child.status=='ok','selftest_group_failed')
             async with app.metadata.transaction(write=False) as tx:
                 resource=await tx.resource(child.resources[0].id)
@@ -291,12 +428,13 @@ async def selftest():
             checks['membership_revocation']=rejected.error is not None
             async with app.metadata.transaction(write=True) as tx:
                 tx.execute('UPDATE certificates SET revoked=1 WHERE id=?',(cert.resource_id,),write=True)
-            rejected=await call('content.post_create',{'parent':'/certified','body':'revoked'},bob,ub,(cert.resource_id,))
+            rejected=await call('content.post_create',{'parent':test_path+'/certified','body':'revoked'},bob,ub,(cert.resource_id,))
             checks['certificate_revocation']=rejected.error is not None and rejected.error.code=='certificate_revoked'
-            rejected=await call('discovery.get',{'id':'/private'},root,ROOT_SUBJECT)
+            rejected=await call('discovery.get',{'id':test_path+'/private'},root,ROOT_SUBJECT)
             checks['root_network_rejected']=rejected.error is not None and rejected.error.code=='local_only'
             all_versions=await call('discovery.get',{'id':post.resources[0].id,'view':'meta'})
             checks['stable_id_read']=all_versions.status=='ok'
+            checks.update(await _selftest_ca_chain(app,root,call,register,now))
         except Failure as exc:
             checks['failure']={'code':exc.code}
         finally:

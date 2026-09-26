@@ -180,6 +180,70 @@ def create_app(service):
             if path=='/healthz':
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 return json_response({'status':'ok' if service._loaded else 'not_ready'},200 if service._loaded else 503)
+            if path in {'/_read/query','/_r/query'} or raw_path.startswith((b'/_read/c/',b'/_r/c/')):
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                continuation=raw_path.startswith((b'/_read/c/',b'/_r/c/'))
+                require(not continuation or not request.url.query,'unknown_query_parameter')
+                if continuation:
+                    segments=raw_path.split(b'/')
+                    require(len(segments)==4 and segments[2]==b'c' and
+                            re.fullmatch(rb'[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',segments[3]) is not None,
+                            'invalid_cursor')
+                    cursor=segments[3].decode('ascii')
+                    query,_=service.cursors.inspect_page(cursor,service.clock())
+                    operation=query.get('operation')
+                    require(operation=='discovery.read_query','cursor_kind_mismatch')
+                    args={'cursor':cursor}
+                else:
+                    pairs=request.query_params.multi_items()
+                    require(len(pairs)==len({key for key,_ in pairs}),'duplicate_query_parameter')
+                    query=dict(pairs)
+                    require(set(query)<={'root','select','filter','sort','first','after','expand','projection'},
+                            'unknown_query_parameter')
+                    require(query.get('expand','none')=='none' and
+                            query.get('projection','meta')=='meta','query_cost_exceeded')
+                    if 'after' in query:
+                        require(set(query)=={'after'},'cursor_query_mismatch')
+                        cursor=query['after']
+                        saved,_=service.cursors.inspect_page(cursor,service.clock())
+                        operation=saved.get('operation')
+                        require(operation=='discovery.read_query','cursor_kind_mismatch')
+                        args={'cursor':cursor}
+                    else:
+                        require(bool(query.get('root')),'read_query_root_required')
+                        first=query.get('first','50')
+                        require(first.isdecimal() and 1<=int(first)<=100,'query_cost_exceeded')
+                        selected=query.get('select','id,type,name,revision,generation,path').split(',')
+                        require(0<len(selected)<=10 and len(set(selected))==len(selected) and
+                                set(selected)<={'id','type','name','revision','generation','path',
+                                                'created_at','modified_at','owner','group','mode'},
+                                'query_cost_exceeded')
+                        require(int(first)*(len(selected)+1)<=1000,'query_cost_exceeded')
+                        sort=query.get('sort','id')
+                        require(sort in {'id','time','name'},'invalid_sort')
+                        args={'parent':query['root'],'limit':int(first),'fields':selected,
+                              'sort':sort}
+                        if 'filter' in query:
+                            match=re.fullmatch(r'type:([a-z][a-z0-9_]*)',query['filter'])
+                            require(match is not None,'invalid_read_filter')
+                            args['type']=match.group(1)
+                        operation='discovery.read_query'
+                require(service.registry.operation(operation).effect=='read','effect_mismatch')
+                header=request.headers.get('x-msg-request')
+                if header:
+                    packet=path_packet(header,'j',limits.max_request_bytes)
+                    require(packet.operation==operation and canonical(packet.arguments)==canonical(args),
+                            'representation_mismatch')
+                else:
+                    packet=request_for(operation,args,service.settings.service_url,source='manual')
+                result=await service.executor.execute(packet,entry='network')
+                if result.error:
+                    return json_response(result_wire(result),error_status(result.error.code))
+                value=wire(result.data)
+                payload=canonical(value)
+                require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                return Response(b'' if request.method=='HEAD' else payload,media_type='application/json',
+                                headers=BASE_HEADERS)
             if path in {'/_search','/_s'} or raw_path.startswith((
                     b'/_index/by-tag/',b'/_i/by-tag/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')

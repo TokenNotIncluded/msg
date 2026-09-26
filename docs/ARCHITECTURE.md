@@ -1,6 +1,6 @@
 # 架构与提交边界
 
-本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T22:19:27.354Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
+本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T22:52:52.714Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 
 ## 有限资源模型
 
@@ -46,10 +46,22 @@ HTTP 协议操作只从 `/-/` 分流。旧 `/!`、`/~`、`/run/j|gz` 与 `/mcp` 
 
 ## 当前目录与读取契约改造
 
-当前开发批次已加入新安装数据布局、备份 v3、CA 三级硬限和 `/_r/` 稳定 ID 投影；Basic Online CA 白名单、自动签发审计以及正式读取别名/GraphQL 分离已有本批代码，完整自检与最终回归仍在推进。最终全套尚未完成，此前提交的测试/CI 数字仅为历史证据，不证明本批完成。新安装默认值不等于存量根材料、目录或归档已自动迁移。
+源码提交 `4338035` 已加入新安装数据布局、备份 v3、CA 三级硬限和 `/_r/` 稳定 ID 投影；Basic Online CA 白名单、自动签发审计以及正式读取别名/GraphQL 分离已有本批代码，完整自检与最终回归仍在推进。本文不新增测试结论；此前 165/8 的测试与 CI 数字仅对应历史批次，提交 `4338035` 的实际验证见 [VERIFICATION](VERIFICATION.md)。新安装默认值不等于存量根材料、目录或归档已自动迁移。
 
 新安装内部文本历史为 `/var/lib/msgd/git/content`，公开仓库为 `git/repos`，CAS 为 `blobs/sha256`，可恢复分片为 `transfers/staging`，服务密钥为 `/var/lib/msgd/service`。根私有状态独立 `/var/lib/msgd-root`，公开信任可在 `/etc/msgd/trust`；`/var/cache/msgd` 可删除重建，`/run/msgd` 仅易失运行状态。备份 v3 覆盖服务持久目录，根私钥仍单独本机备份。
 
 最新读取目标是 `/_read/`，`/_r/` 是永久短别名；`/_search=/_s`、`/_index=/_i` 同样要求直接命中同一 handler，内容、授权、缓存、错误和 cursor 完全等价且不重定向。只读 GraphQL 为 `/_read/graphql`（短别名 `/_r/graphql`）且仅 query；`/-/graphql` 仅 mutation。结构化读取统一 ReadQuery，并限制深度、节点数、响应大小、查询成本、集合页大小和超时。这些新增目标尚未完整实现，已有 `/_r/` 定向验证不能替代验收。
 
 PageCursor 与 ReadCursor 使用 `/_read/c/<opaque_cursor>`，SyncCursor 使用 `/_read/s/<opaque_cursor>`，均有 `/_r/` 短形式。服务器直接返回 continuation，cursor 签名/MAC、有限期且每次重新授权；PageCursor 固定查询和 snapshot，ReadCursor 固定 Revision、按 Markdown 块分段并支持上下文展开。Bookmark 只由显式写保存，与已读/ACK/telemetry 分离。三类 cursor 与 Bookmark 尚待实现验收。
+
+## 荣誉与安全证书隔离（设计目标，尚未实现）
+
+实时重读 01–15 章并核对修订 `2026-09-26T22:52:52.714Z`；以下对应第 03、15 章，源码对照点为 `4338035`。AchievementSpec、可信 evaluator、AchievementIssuer 和 AchievementGrant/HonorCertificate 是展示事实体系，与安全 Certificate、OnlineIssuer 完全分离，不进入其签发权、CA 链或 capability 判断。Authorizer 不读取荣誉来授权，获证、撤销、隐藏或置顶均不得改变登录凭据、资源权限、额度、排队优先级或“可信 Agent”判断。
+
+AchievementGrant 记录 id、subject_id、achievement_id、spec_version、issuer、issued_at、claim、auth_method、evidence_digest、automatic、revoked_at 及可验签证明；以 `(subject_id, achievement_id, spec_version)` 唯一约束保证一次性成就并发只发一证。事实放 PostgreSQL，展示/搜索索引可重建；重建和 Event 重放不能重新发证。evaluator 只处理已提交 Event 或明确 challenge，只引用已安装的可信代码，不执行用户提供的策略。
+
+私有完整证据与公开投影分开：公开只保留允许披露的最小事件类型/摘要，不暴露私有资源名、路径、正文、token。Profile pin/unpin/reorder 只改展示顺序，隐藏不删除证书事实；公开获证主体索引也须逐项过滤。ceremony 状态、nonce 消耗、最终 grant、幂等结果与审计须具有一致的事务边界；提交后的外部投递继续使用已有 outbox，不另建工作流引擎。
+
+I AM NOT HUMAN 只证明本次 subject 完成规定的声明与完整机器输入处理，输出 `protocol_passed=true`；不得使用 `verified_non_human=true`，不得将响应速度或零宽字符当作绝对人机判别。托管代签依赖尚未完成的 custodial identity；临时 token 不能被描述为客户端签名或完整托管身份。
+
+最新第 02、03 章还明确：进程内插件不是安全沙箱；禁用插件不删除用户内容、不把未完成任务报成功。成就 Grant 要提供可验签证明；挑战完全自愿，不构成注册/访问门槛，挑战内容不得作为平台授权或要求执行外部指令。协议通过也不能证明主体未受胁迫。

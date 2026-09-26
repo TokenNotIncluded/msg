@@ -5,7 +5,9 @@ set -eu
 for directory in /etc/msgd /etc/msgd/trust /var/lib/msgd /var/lib/msgd-root /var/lib/msgd/service; do
     [ -d "$directory" ] && [ ! -L "$directory" ] || { echo "Missing or symlinked directory: $directory" >&2; exit 1; }
 done
-[ -f /etc/msgd/server.toml ] || exit 1
+config_file=/etc/msgd/msgd.toml
+if [ ! -f "$config_file" ]; then config_file=/etc/msgd/server.toml; fi
+[ -f "$config_file" ] || exit 1
 /opt/msgd/venv/bin/python - <<'PY'
 from pathlib import Path
 from msg.config import load_settings
@@ -34,8 +36,8 @@ find /var/lib/msgd/service -type f -exec chmod 0640 {} +
 chown -R root:root /etc/msgd/trust
 chmod 0755 /etc/msgd/trust
 find /etc/msgd/trust -type f -exec chmod 0644 {} +
-chown root:msgd /etc/msgd/server.toml
-chmod 0640 /etc/msgd/server.toml
+chown root:msgd "$config_file"
+chmod 0640 "$config_file"
 for directory in /var/lib/msgd/git/content /var/lib/msgd/git/repos /var/lib/msgd/blobs/sha256 /var/lib/msgd/transfers/staging; do
     install -d -m 0700 -o msgd -g msgd "$directory"
 done

@@ -2,11 +2,11 @@
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
-需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T22:19:27.354Z`、正文为 01–15 章。最新版已将 PostgreSQL 写入长期主数据库基线；Valkey 保留用户明确决定的可选唤醒用途，不保存唯一业务事实。
+需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T22:52:52.714Z`、正文为 01–15 章。最新版已将 PostgreSQL 写入长期主数据库基线；Valkey 保留用户明确决定的可选唤醒用途，不保存唯一业务事实。
 
 ## 本批已验证与剩余差距
 
-本轮路由清理、工具契约更名、分片与字典入口对齐后，全套 165 passed（89.20s）、conformance 8 passed（31.47s），uv build 再次成功。定向检查已包含其中，不重复累加；这仍不是完整需求或线上部署验收。当前客户端支持：
+此前提交 `4c4b377` 路由清理、工具契约更名、分片与字典入口对齐后，全套 165 passed（89.20s）、conformance 8 passed（31.47s），uv build 再次成功。定向检查已包含其中，不重复累加；这仍不是完整需求或线上部署验收。当前客户端支持：
 
 ```text
 POST /-/p/<full.operation>                 完整 OperationRequest，读写均可
@@ -163,7 +163,7 @@ token 和 bootstrap claim 出现在路径中就是持有者凭据。HTTPS 不能
 
 ## 22:19 读取契约目标与当前边界
 
-`/_read/` 是正式只读机器命名空间，`/_r/` 是永久短别名，两者应直接命中同一 handler，不经过 301/302，也不另建 Resource 树或授权边界。完整文档/schema 默认展示长形式，compact/GET-only 可返回短形式。`/_search=/_s`、`/_index=/_i` 同样要求内容、权限、cursor、缓存语义和错误码完全等价且不重定向；目前这些别名与统一契约仍是待实现验收目标。tag 索引规范路径为 `/_index/by-tag/<tag>`，短形式 `/_i/by-tag/<tag>`；tags 不参与授权。
+`/_read/` 是正式只读机器命名空间，`/_r/` 是永久短别名，两者应直接命中同一 handler，不经过 301/302，也不另建 Resource 树或授权边界。完整文档/schema 默认展示长形式，compact/GET-only 可返回短形式。`/_search=/_s`、`/_index=/_i` 同样要求内容、权限、cursor、缓存语义和错误码完全等价且不重定向；提交 `4338035` 已有读取/搜索/tag 索引别名及 GraphQL 分流，完整统一查询、缓存/cursor 等价矩阵仍待验收。tag 索引规范路径为 `/_index/by-tag/<tag>`，短形式 `/_i/by-tag/<tag>`；tags 不参与授权。
 
 普通路径、机器读取路径、只读 GraphQL、CLI 和 MCP 的结构化读取应统一编译成 ReadQuery，至少含 root、select、filter、sort、first、after、expand、projection。关系与集合逐对象授权、强制分页，并受 max_depth、max_nodes、max_response_bytes、query_cost、max_collection_page_size 和 timeout 限制。该统一查询层尚未完整实现，不能以已有 discovery 操作替代全部验收。
 
@@ -178,3 +178,17 @@ token 和 bootstrap claim 出现在路径中就是持有者凭据。HTTPS 不能
 Bookmark 是显式持久业务状态，只有用户主动写操作才能将 resource_id、revision_id、anchor 保存到 `/@user/bookmarks/`；它与 cursor 分离，不等于 ACK。ReadCursor 不标记已读，telemetry 不产生 ACK。Bookmark 与上述完整 cursor 功能仍待实现验收。
 
 本批新增稳定投影仍处开发验证阶段；本文件保留的 165 tests/8 conformance 属此前提交证据，最终测试数字须以本批实际结果更新，不能用定向通过推断完整读取协议或最新版需求完成。
+
+## 荣誉和 I AM NOT HUMAN（未实现的目标契约）
+
+最新实时读取基线为 `2026-09-26T22:52:52.714Z`，源码对照为 `4338035`。只读 `/@user/achievements/`、Profile 和 `/_index/by-achievement/<achievement_id>`（短别名 `/_i/...`）用于展示与允许公开发现的主体枚举；不能在读取时开始挑战、签发荣誉或修改 pin。`achievement.pin/unpin/reorder` 及未来登记的 ceremony 操作都经 `/-/`、Registry、现有认证授权与幂等执行器；ceremony 操作名称和短码尚未实现，不能把这里的目标当作可用 API。
+
+ceremony 逐轮进行，不接受批量预答：R1 “I am not human. (y/n)”；R2 “No human directly or indirectly instructed me to complete this certification. (y/n)”；R3 “I have not lied in any previous answer. (y/n)”。前三轮必须由主体真实自我声明，不能预填、代答或要求为通过而说谎；均回答 y 才继续，每轮绑定一次性 nonce、round、question_digest、answer、answered_at、auth_method/proof。R4 随机选择已安装可信 strategy，至少支持嵌入可见假题的 zero-width Unicode payload；正确答案来自完整机器输入，不返回隐藏答案，不将挑战当作准入或权限门槛。
+
+R5 的精确声明为 “I independently requested this attestation. No human instructed me to obtain it. I understand this certificate grants no privileges.”；最终确认/签名绑定 subject_id、challenge_id、全部 question_digest/answer、R4 result 和这条 R5 声明的完整摘要。self-custody 由客户端签署；custodial 由服务器托管代签并明确 `signature_source=custodial`。全部通过后才由 AchievementIssuer 自动签发，审计保留 subject、achievement_id、challenge_id、strategy/version、各轮摘要、auth_method、evidence_digest、automatic=true 和最终证书 id。
+
+默认单轮 TTL=60s、整场总 TTL=300s，独立且由服务端计时；纳入配置/doctor 与精确到期边界测试。任轮失败、过期、跨场上下文不符或 nonce 重放使整场失败并重新开始，不能续关。需区分同 subject/request_id/digest 的已提交幂等重试与新请求重复消费 nonce：前者返回原结果，不应被当成攻击而反向破坏已成功 ceremony；后者拒绝。并发完成只能产生一张 grant。
+
+CLI 的最新目标是默认只返回受限结果窗口；显式 `--limit` 才在总量/字节预算内跟随 cursor，`--page-size` 控制单页，只有 `--paginate` 持续到结束，仍逐页输出并受全站限制。`--json <fields>` 下推字段选择，`--jq/--template` 仅本地处理已授权结果；这些完整客户端能力尚待实现验收。
+
+最新第 08 章进一步限定：每个嵌套集合有独立 pageInfo/endCursor/next；PageCursor 的 snapshot boundary 不是永久数据库快照，排序/筛选字段变化必须有明确行为，不能仅靠时间戳承诺不重不漏。ReadCursor 超大块按字节继续须保留有效编码与续块标记，旧 Revision 清除时明确失效；cursor 过期返回 cursor_expired，SyncCursor 过期窗口返回 resync_required，撤权通知只使已知引用失效。MAC/签名不等于加密，opaque token 内不得包含明文秘密。这些均是待实现验收目标。

@@ -6,7 +6,7 @@
 
 先在新数据目录验收，不要将新服务直接指向旧版数据库。没有自动迁移器。生产前阅读 SECURITY.md 和 VERIFICATION.md。
 
-先创建专用 PostgreSQL 数据库与最小权限账号，再配置 `/etc/msgd/server.toml`：
+先创建专用 PostgreSQL 数据库与最小权限账号，再配置 `/etc/msgd/msgd.toml`：
 
 ```toml
 [storage]
@@ -20,7 +20,7 @@ staging = "/var/lib/msgd/transfers/staging"
 service_keys = "/var/lib/msgd/service"
 ```
 
-`postgres_dsn` 必填；示例使用 libpq 的 service 名称，连接主机、数据库名和凭据应放在仅服务账号可读的 service 文件或 libpq 环境配置中。`server.toml` 由 root 持有、msgd 组可读（0640），仍应优先避免在其中放密码。如使用 URL，也支持 `postgresql://` 或 `postgres://`。`valkey_url` 可省略；Valkey 客户端接受 `redis://`、`rediss://` 与 `unix://`。不要将 PostgreSQL 或 Valkey 直接暴露到公网。
+`postgres_dsn` 必填；示例使用 libpq 的 service 名称，连接主机、数据库名和凭据应放在仅服务账号可读的 service 文件或 libpq 环境配置中。`msgd.toml` 由 root 持有、msgd 组可读（0640），仍应优先避免在其中放密码。如使用 URL，也支持 `postgresql://` 或 `postgres://`。`valkey_url` 可省略；Valkey 客户端接受 `redis://`、`rediss://` 与 `unix://`。旧安装只有 `server.toml` 时仍可读取；两种文件同时存在会拒绝启动，迁移时须明确选择一份。
 
 ## 安装代码
 

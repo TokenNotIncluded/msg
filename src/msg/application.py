@@ -8,12 +8,12 @@ import hashlib
 import hmac
 import importlib
 
-from msg.constants import ROOT_SUBJECT
+from msg.constants import ROOT_SPACE, ROOT_SUBJECT
 from msg.core.codec import loads, decode, unb64, b64, canonical
 from msg.core.cursors import CursorCodec
 from msg.core.errors import Failure, require
 from msg.core.executor import OperationExecutor
-from msg.core.models import Certificate
+from msg.core.models import Certificate, Scope
 from msg.core.registry import Registry
 from msg.security.authentication import AuthenticationService
 from msg.security.authorization import AuthorizationService
@@ -26,16 +26,22 @@ from msg.storage.valkey_bus import ValkeyOutboxSignal
 
 
 class Application:
-    def __init__(self,settings, *, clock=None):
+    def __init__(self,settings, *, clock=None, selftest_run_id=None):
         self.settings=settings
         self.clock=clock or (lambda: datetime.now(UTC))
+        # Only the local diagnostic constructs an isolated test namespace.
+        require(selftest_run_id is None or (isinstance(selftest_run_id,str) and
+                len(selftest_run_id)==32 and all(c in '0123456789abcdef' for c in selftest_run_id)),
+                'invalid_selftest_run_id')
+        self.selftest_run_id=selftest_run_id
+        self.namespace_root=ROOT_SPACE if selftest_run_id is None else 't_selftest_'+selftest_run_id
         self.registry=Registry()
         self.metadata=None
         self.contents=None
         self.executor=None
         self._loaded=False
         # Plugins are installed code, never resources, posts, or configuration expressions.
-        implemented=('identity','content','discussion','communication','discovery')
+        implemented=('identity','content','discussion','communication','discovery','achievements')
         configured=set(settings.server.plugins)
         require(configured<=set(implemented)|{'transfer','extensions','system','batch'},'unknown_plugin')
         for plugin in implemented:
@@ -48,17 +54,20 @@ class Application:
         self.registry.freeze()
 
     def primary_ceiling(self):
-        return primary_ceiling(self.registry)
+        return primary_ceiling(self.registry,self.default_scope())
 
     def base_grants(self):
-        return base_grants(self.registry)
+        return base_grants(self.registry,self.default_scope())
+
+    def default_scope(self):
+        return Scope(resource_id=self.namespace_root,descendants=True)
 
     @property
     def base_capability_names(self):
         return frozenset(g.capability for g in self.base_grants())
 
     def temporary_ceiling(self):
-        return temporary_ceiling(self.registry)
+        return temporary_ceiling(self.registry,self.default_scope())
 
     async def open_storage(self):
         if self.metadata is None:

@@ -8,7 +8,7 @@ from msg.core.errors import Failure
 
 def test_example_uses_libpq_service_without_secret(tmp_path):
     settings = write_example(tmp_path / "etc", tmp_path / "data")
-    config = (tmp_path / "etc" / "server.toml").read_text()
+    config = (tmp_path / "etc" / "msgd.toml").read_text()
     assert settings.server.postgres_dsn == "service=msgd"
     assert settings.server.valkey_url is None
     assert "metadata.sqlite3" not in config
@@ -33,7 +33,7 @@ def test_accepts_postgres_and_optional_valkey_urls_without_revealing_secrets(tmp
 def test_rejects_missing_or_invalid_postgres_dsn(tmp_path, replacement):
     config_dir = tmp_path / "etc"
     write_example(config_dir, tmp_path / "data")
-    path = config_dir / "server.toml"
+    path = config_dir / "msgd.toml"
     text = path.read_text().replace('postgres_dsn = "service=msgd"', replacement)
     path.write_text(text)
     with pytest.raises(Failure):
@@ -44,7 +44,7 @@ def test_rejects_missing_or_invalid_postgres_dsn(tmp_path, replacement):
 def test_rejects_invalid_valkey_url(tmp_path, url):
     config_dir = tmp_path / "etc"
     write_example(config_dir, tmp_path / "data")
-    path = config_dir / "server.toml"
+    path = config_dir / "msgd.toml"
     path.write_text(path.read_text().replace("[storage]", f'[storage]\nvalkey_url = "{url}"'))
     with pytest.raises(Failure, match="invalid_valkey_url"):
         load_settings(config_dir)

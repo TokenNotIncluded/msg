@@ -19,6 +19,14 @@ def root_private_dir(config_dir: Path) -> Path:
     return directory.parent / (directory.name + '-root')
 
 
+def server_config_file(config_dir: Path) -> Path:
+    """Prefer the current name, but keep an existing legacy install readable."""
+    directory = Path(config_dir)
+    current, legacy = directory/'msgd.toml', directory/'server.toml'
+    require(not (current.exists() and legacy.exists()), 'ambiguous_server_configuration')
+    return legacy if legacy.exists() else current
+
+
 @dataclass(frozen=True,slots=True)
 class Settings:
     server: ServerConfig
@@ -59,7 +67,7 @@ class Settings:
 
 def load_settings(config_dir=Path('/etc/msgd')):
     config_dir=Path(config_dir)
-    path=config_dir/'server.toml'
+    path=server_config_file(config_dir)
     require(path.is_file(),'configuration_missing')
     data=tomllib.loads(path.read_text())
     require(set(data)<={'server','storage','limits','plugins','tools'},'unknown_configuration_section')
@@ -82,7 +90,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
     postgres_dsn=store.get('postgres_dsn')
     require(isinstance(postgres_dsn,str) and bool(postgres_dsn.strip()) and not any(ord(c)<32 for c in postgres_dsn),
             'invalid_postgres_dsn')
-    # libpq service files keep credentials outside the world-readable server.toml.
+    # libpq service files keep credentials outside the service configuration.
     if postgres_dsn.startswith(('postgresql://','postgres://')):
         try:
             pg_url=urlsplit(postgres_dsn)
@@ -133,7 +141,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
             mail=MailConfig(enabled=True,host=raw['host'],port=raw.get('port',587),tls=raw['tls'],sender=raw['sender'],
                 credential_file=Path(raw['credential_file']) if raw.get('credential_file') else None)
     require(set(data.get('plugins',{}))<={'enabled'},'unknown_plugin_configuration')
-    plugins=tuple(data.get('plugins',{}).get('enabled',('identity','content','discussion','communication','discovery','transfer','extensions','system','batch')))
+    plugins=tuple(data.get('plugins',{}).get('enabled',('identity','content','discussion','communication','discovery','achievements','transfer','extensions','system','batch')))
     require(all(isinstance(name,str) for name in plugins) and len(set(plugins))==len(plugins),'invalid_plugin_list')
     require('identity' in plugins,'identity_plugin_required')
     tools=data.get('tools',{})
@@ -170,7 +178,7 @@ def write_example(config_dir,data_dir,service_url='https://msg.lmm.best',*,postg
     """Local install helper: writes no private key or default PIN."""
     config_dir,data_dir=Path(config_dir),Path(data_dir)
     config_dir.mkdir(parents=True,exist_ok=True)
-    path=config_dir/'server.toml'
+    path=server_config_file(config_dir)
     if not path.exists():
         path.write_text(f'''[server]
 service_url = {json.dumps(service_url)}

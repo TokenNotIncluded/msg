@@ -62,7 +62,8 @@ async def _provision(app,pin):
     durable_write(settings.service_keys/'receipt.key',receipt.private_bytes(),mode=0o600)
     durable_write(settings.service_keys/'tokens.key',os.urandom(32),mode=0o600)
     now=app.clock()
-    await bootstrap(app.metadata,app.contents,app.registry,now)
+    await bootstrap(app.metadata,app.contents,app.registry,now,
+                    selftest_run_id=app.selftest_run_id)
     root_grants=app.primary_ceiling()
     root_certificate=Certificate(resource_id='cert_root',serial=new_id('serial'),subject_id=ROOT_SUBJECT,
         key_id=root.key_id,issuer_id=ROOT_SUBJECT,parent_certificate_id=None,authority_sources=(),kind='ca',
@@ -70,7 +71,7 @@ async def _provision(app,pin):
         delegation_depth=8,issuance=IssuancePolicy(issue_grants=root_grants,max_cert_ttl_seconds=31536000,
             max_child_ca_depth=3,max_delegation_depth=8),signature=Signature(key_id=root.key_id,algorithm='ed25519',value=b''))
     root_certificate=sign_certificate(root_certificate,root)
-    online_use=grant_for(app.registry.capability('cert.issue'))
+    online_use=grant_for(app.registry.capability('cert.issue'),scope=app.default_scope())
     csr=CertificateRequest(resource_id=new_id('csr'),applicant=ONLINE_CA,subject_id=ONLINE_CA,
         requested_issuer=ROOT_SUBJECT,public_key=online.public_key,kind='ca',grants=(online_use,),
         issuance=IssuancePolicy(issue_grants=app.base_grants(),max_cert_ttl_seconds=settings.base_certificate_ttl,

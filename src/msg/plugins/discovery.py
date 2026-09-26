@@ -1,6 +1,7 @@
 """ACL-filtered reads and rebuildable discovery projections."""
 from __future__ import annotations
 import difflib
+from datetime import timedelta
 from msg.constants import *
 from msg.core.codec import canonical,wire,decode,loads,digest,b64
 from msg.core.errors import Failure,require
@@ -150,22 +151,44 @@ def install(app):
              'sort':{'enum':['id','time','name']},'direction':{'enum':['asc','desc']},'limit':{'type':'integer','minimum':1,'maximum':200},'cursor':STRING,'fields':fields}
     async def list_items(ctx,request,tx):
         a=dict(request.arguments)
+        stable=request.operation=='discovery.read_query'
+        principal={'actor':ctx.principal.actor,'subject':ctx.principal.subject,
+                   'credential_id':ctx.principal.credential_id}
+        if stable and a.get('cursor'):
+            saved_query,_=app.cursors.inspect_page(a['cursor'],ctx.now)
+            require(saved_query.get('operation')==request.operation,'cursor_query_mismatch')
+            supplied={k:v for k,v in a.items() if k!='cursor'}
+            require(not supplied,'cursor_query_mismatch')
+            a={**saved_query['arguments'],'cursor':a['cursor']}
         if a.get('tag') is not None:
             a['tag']=normalize_tag(a['tag'])
         parent=await resolve(tx,a['parent']) if a.get('parent') else None
+        if stable and parent:
+            a['parent']=parent
         if parent==TOOLS_SPACE:
             return HandlerOutput(data={'items':await filtered_tools(app,ctx,request,tx)})
         if parent:
             await check_access(app,ctx,request,tx,parent,'list')
         limit=a.get('limit',50)
+        if stable:
+            fields_count=len(a.get('fields',('id','type','name','revision','generation','path')))
+            require(limit<=100 and limit*(fields_count+1)<=1000,'query_cost_exceeded')
         query_hash=digest({k:v for k,v in a.items() if k!='cursor'})
         sort=a.get('sort','id')
         column={'id':'r.id','time':'r.created_at','name':'r.name'}[sort]
         descending=a.get('direction','asc')=='desc'
         comparison,ordering=('<','DESC') if descending else ('>','ASC')
-        position=app.cursors.decode(a['cursor'],'page',query_hash) if a.get('cursor') else (['\uffff','\uffff'] if descending else ['', ''])
+        query_args={k:v for k,v in a.items() if k!='cursor'}
+        if stable and a.get('cursor'):
+            position,snapshot=app.cursors.decode_page(a['cursor'],request.operation,
+                                                       query_args,principal,ctx.now)
+        else:
+            position=app.cursors.decode(a['cursor'],'page',query_hash) if a.get('cursor') else (['\uffff','\uffff'] if descending else ['', ''])
+            snapshot=ctx.now
         filters=['r.state=?']
         parameters=[a.get('state','active')]
+        if stable:
+            filters.append('r.created_at<=?');parameters.append(wire(snapshot))
         if parent:
             filters.append('r.parent=?'); parameters.append(parent)
         if a.get('type'):
@@ -204,12 +227,19 @@ def install(app):
                 break
         data={'items':values}
         if more:
-            cursor=app.cursors.encode('page',query_hash,position)
-            data.update(cursor=cursor,next=next_link(app,request.operation,{**a,'cursor':cursor}),
-                        next_requires_auth=ctx.principal.subject is not None)
+            if stable:
+                cursor=app.cursors.encode_page(request.operation,query_args,position,snapshot,
+                    principal,ctx.now+timedelta(minutes=15))
+                data.update(cursor=cursor,next='/_r/c/'+cursor,
+                            next_requires_auth=ctx.principal.subject is not None)
+            else:
+                cursor=app.cursors.encode('page',query_hash,position)
+                data.update(cursor=cursor,next=next_link(app,request.operation,{**a,'cursor':cursor}),
+                            next_requires_auth=ctx.principal.subject is not None)
         return HandlerOutput(data=data)
     op('discovery.list',obj(listing),effect='read')(list_items)
     op('discovery.search',obj(listing,('query',)),effect='read')(list_items)
+    op('discovery.read_query',obj(listing),effect='read')(list_items)
 
     @op('discovery.operations',obj({'known_digest':STRING}),effect='read')
     async def operations(ctx,request,tx):

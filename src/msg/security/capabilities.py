@@ -13,11 +13,12 @@ BASE_FAMILIES = {
         'identity.token_rotate', 'identity.token_create', 'identity.key_add', 'identity.key_revoke',
         'identity.email_set', 'identity.email_verify', 'identity.email_get', 'identity.email_notifications',
         'identity.delegate', 'identity.delegation_revoke', 'identity.certificate_renew',
-        'identity.ssh_key_add', 'identity.ssh_key_revoke', 'identity.ssh_certificates'),
+        'identity.ssh_key_add', 'identity.ssh_key_revoke', 'identity.ssh_certificates',
+        'achievement.start', 'achievement.answer', 'achievement.finish'),
     'resource.basic': ('content.',),
     'discussion.basic': ('discussion.',),
     'communication.basic': ('communication.',),
-    'discovery.basic': ('discovery.', 'cert.get', 'job.get'),
+    'discovery.basic': ('discovery.', 'cert.get', 'job.get', 'achievement.list'),
     'transfer.basic': ('transfer.',),
     'group.basic': ('group.create', 'group.member.', 'group.admin.'),
     'cert.request': ('cert.request', 'cert.cancel'),
@@ -39,6 +40,7 @@ TEMPORARY_OPERATIONS = frozenset({
     'discovery.capabilities','discovery.schema','discovery.diff','discovery.references',
     'transfer.open','transfer.part_put','transfer.part_get','transfer.status','transfer.seal','transfer.cancel',
     'batch.independent','batch.atomic','job.get',
+    'achievement.start','achievement.answer','achievement.finish','achievement.list',
 })
 
 
@@ -102,16 +104,16 @@ def grant_for(spec, *, scope=None, operations=None):
         operations=spec.operations if operations is None else frozenset(operations),constraints={})
 
 
-def primary_ceiling(registry):
+def primary_ceiling(registry,scope=None):
     # Explicit snapshot: future registry entries do not enter existing credentials.
-    return tuple(grant_for(spec) for spec in registry.capabilities() if spec.operations)
+    return tuple(grant_for(spec,scope=scope) for spec in registry.capabilities() if spec.operations)
 
 
-def base_grants(registry):
-    return tuple(grant_for(spec) for spec in registry.capabilities() if spec.name in BASE_FAMILIES and spec.operations)
+def base_grants(registry,scope=None):
+    return tuple(grant_for(spec,scope=scope) for spec in registry.capabilities() if spec.name in BASE_FAMILIES and spec.operations)
 
 
-def temporary_ceiling(registry):
+def temporary_ceiling(registry,scope=None):
     temporary=frozenset(f'{name}@1' for name in TEMPORARY_OPERATIONS)
-    return tuple(grant_for(spec,operations=spec.operations&temporary) for spec in registry.capabilities()
+    return tuple(grant_for(spec,scope=scope,operations=spec.operations&temporary) for spec in registry.capabilities()
         if spec.name in BASE_FAMILIES and spec.operations&temporary)

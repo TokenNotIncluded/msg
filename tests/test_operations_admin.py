@@ -71,4 +71,11 @@ async def test_selftest_isolated_end_to_end_checks():
     result=await selftest()
     assert result['ok'],result
     assert result['checks']['sticky'] and result['checks']['certgate'] and result['checks']['root_network_rejected']
+    assert result['checks']['isolated_namespace']
+    assert result['checks']['ca_l1_l2_l3_leaf']
+    assert result['checks']['ca_l3_cannot_issue_ca']
+    assert result['checks']['ca_ancestor_revocation']
+    assert result['checks']['ca_scope_expansion_denied']
+    assert result['checks']['ca_operations_expansion_denied']
+    assert result['checks']['ca_leaf_cannot_issue']
     assert result['cleaned_up']

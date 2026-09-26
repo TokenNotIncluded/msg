@@ -23,7 +23,7 @@ from msg.security.policy import scope_subset,constraints_subset
 
 async def make_user(app,tx,ctx,id,handle,kind):
     require(re.fullmatch(r'[a-z][a-z0-9-]{1,40}',handle) is not None and handle not in {'root','online-ca'},'invalid_handle')
-    resource=Resource(id=id,type='user',type_version=1,name='@'+handle,parent=ROOT_SPACE,owner=id,group=PUBLIC_GROUP,
+    resource=Resource(id=id,type='user',type_version=1,name='@'+handle,parent=app.namespace_root,owner=id,group=PUBLIC_GROUP,
         mode=0o755,generation=0,revision=None,state='active',created_at=ctx.now,created_by=id,
         modified_at=ctx.now,modified_by=id)
     await tx.insert(resource)
@@ -258,7 +258,7 @@ def install(app):
         name=request.arguments['name']
         require(re.fullmatch(r'[a-z][a-z0-9-]{1,40}',name) is not None and name not in {'public','admins'},'invalid_group_name')
         rid=new_id('g')
-        r=Resource(id=rid,type='organization',type_version=1,name='&'+name,parent=ROOT_SPACE,
+        r=Resource(id=rid,type='organization',type_version=1,name='&'+name,parent=app.namespace_root,
             owner=ctx.principal.subject,group=rid,mode=0o2775,generation=0,revision=None,state='active',
             created_at=ctx.now,created_by=ctx.principal.actor,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.insert(r)

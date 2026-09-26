@@ -42,10 +42,13 @@ async def seed_resource(tx,contents,data,now,body=None,media_type='text/markdown
     return resource
 
 
-async def bootstrap(store,contents,registry,now):
+async def bootstrap(store,contents,registry,now, *, selftest_run_id=None):
     definition=manifest()
+    namespace_root='t_selftest_'+selftest_run_id if selftest_run_id is not None else ROOT_SPACE
     async with store.transaction(write=True) as tx:
         for data in definition['resources']:
+            if selftest_run_id is not None and data['id']!='r_root' and data['parent']==ROOT_SPACE:
+                data=dict(data,parent=namespace_root)
             registry.resource_type(data['type'],1)
             body=None
             if data['type']=='tool':
@@ -57,6 +60,11 @@ async def bootstrap(store,contents,registry,now):
                 body=MSG_ENTRY_SKILL
             await seed_resource(tx,contents,data,now,body,
                                 'application/json' if data['type']=='tool' else 'text/markdown')
+            if selftest_run_id is not None and data['id']=='r_root':
+                await seed_resource(tx,contents,dict(id='t_selftest',type='topic',name='_test',
+                    parent=ROOT_SPACE,owner=ROOT_SUBJECT,group=ADMINS_GROUP,mode='0711'),now)
+                await seed_resource(tx,contents,dict(id=namespace_root,type='topic',name=selftest_run_id,
+                    parent='t_selftest',owner=ROOT_SUBJECT,group=ADMINS_GROUP,mode='0711'),now)
         for id,kind,primary,local in ((ROOT_SUBJECT,'system',ADMINS_GROUP,True),(ONLINE_CA,'system',ADMINS_GROUP,False)):
             if not tx.one('SELECT id FROM identities WHERE id=?',(id,)):
                 await tx.update_identity(Subject(resource_id=id,kind=kind,primary_group=primary,auth_version=0,local_only=local),-1)

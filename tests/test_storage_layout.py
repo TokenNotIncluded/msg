@@ -29,7 +29,7 @@ async def test_new_installation_uses_documented_persistent_layout(tmp_path):
     app = SimpleNamespace(settings=SimpleNamespace(server=server))
     assert NativeGitStore(app).path('example') == server.repositories_dir / 'example.git'
 
-    config = tmp_path / 'etc' / 'server.toml'
+    config = tmp_path / 'etc' / 'msgd.toml'
     config.write_text('\n'.join(line for line in config.read_text().splitlines()
                                 if not line.startswith(('repositories =', 'blobs =',
                                                         'service_keys ='))) + '\n')

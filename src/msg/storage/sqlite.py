@@ -68,6 +68,14 @@ CREATE TABLE IF NOT EXISTS reactions (subject TEXT, resource TEXT, kind TEXT, re
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS projections (resource_id TEXT PRIMARY KEY, text TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS email_challenges (subject TEXT PRIMARY KEY, digest TEXT NOT NULL, expires TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS achievement_ceremonies (
+ id TEXT PRIMARY KEY, subject TEXT NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS achievement_ceremonies_subject ON achievement_ceremonies(subject);
+CREATE TABLE IF NOT EXISTS achievement_grants (
+ id TEXT PRIMARY KEY, subject TEXT NOT NULL, achievement_id TEXT NOT NULL,
+ spec_version INTEGER NOT NULL, body TEXT NOT NULL,
+ UNIQUE(subject,achievement_id,spec_version));
+CREATE INDEX IF NOT EXISTS achievement_grants_lookup ON achievement_grants(achievement_id,subject);
 """
 
 

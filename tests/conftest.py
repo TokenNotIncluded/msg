@@ -41,7 +41,7 @@ async def installed(tmp_path,installation_seed,pg_cluster):
     dsn=pg_cluster.format(database=database)
     shutil.copytree(seed/'etc',tmp_path/'etc')
     shutil.copytree(seed/'data',tmp_path/'data')
-    config=tmp_path/'etc'/'server.toml'
+    config=tmp_path/'etc'/'msgd.toml'
     config.write_text(config.read_text().replace(str(seed),str(tmp_path)).replace(seed_dsn,dsn))
     app=Application(load_settings(tmp_path/'etc'),clock=lambda:NOW)
     await app.load()
