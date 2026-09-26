@@ -62,7 +62,7 @@ class ReferenceGuard:
     async def run(self):
         """One task owns both halves of each SQLite transaction."""
         manager = tx = None
-        prepared = None
+        preparing = prepared = None
         while True:
             message, answer = await self.queue.get()
             try:
@@ -74,8 +74,17 @@ class ReferenceGuard:
                     answer.set_result({'ok':True})
                     return
                 changes = self.validate_changes(message['changes'])
-                if state == 'prepared':
+                if state == 'preparing':
                     require(manager is None, 'git_transaction_already_prepared')
+                    # Git 2.54+ invokes this phase before taking ref locks.
+                    # Preflight current authority without holding a SQLite write
+                    # reservation, then re-check inside the prepared phase.
+                    async with self.app.metadata.transaction(write=False) as preflight:
+                        await self.authorize(preflight)
+                    preparing = changes
+                elif state == 'prepared':
+                    require(manager is None, 'git_transaction_already_prepared')
+                    require(preparing is None or changes == preparing, 'git_transaction_mismatch')
                     manager = self.app.metadata.transaction(write=True)
                     tx = await manager.__aenter__()
                     try:
@@ -117,7 +126,7 @@ class ReferenceGuard:
                             if not tx.closed:
                                 await active.__aexit__(*sys.exc_info())
                             raise
-                    tx = prepared = None
+                    tx = preparing = prepared = None
                 else:
                     raise Failure('invalid_git_hook_state')
                 answer.set_result({'ok':True})

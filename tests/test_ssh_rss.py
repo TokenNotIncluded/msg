@@ -44,7 +44,7 @@ async def test_registered_ssh_key_binds_identity_and_ceiling(installed):
 
 @pytest.mark.asyncio
 async def test_git_reference_guard_real_commit_and_revoked_key(installed,tmp_path):
-    from msg.extensions.ssh_git import guarded_command
+    from msg.extensions.ssh_git import ReferenceGuard,guarded_command
     from msg.extensions.repositories import NativeGitStore
     app,_=installed
     key,uid,_=await register(app,'ssh-git-owner')
@@ -71,6 +71,15 @@ async def test_git_reference_guard_real_commit_and_revoked_key(installed,tmp_pat
         assert accepted.status=='accepted',wire(accepted)
         async with app.metadata.transaction(write=False) as tx:return await tx.job(accepted.data['job_id'])
     initial=await job()
+    # Git 2.54+ invokes reference-transaction with a pre-lock `preparing`
+    # phase. Exercise it explicitly so older local Git versions do not hide
+    # compatibility regressions.
+    probe=ReferenceGuard(app,initial)
+    probe_task=asyncio.create_task(probe.run())
+    changes=f"{'0'*40} {commit} refs/heads/main"
+    assert (await probe.message({'state':'preparing','changes':changes}))['ok']
+    await probe.message({'state':'stop'})
+    await probe_task
     code=await guarded_command(app,initial,lambda _:['update-ref','refs/heads/main',commit,'0'*40])
     assert code==0
     async with app.metadata.transaction(write=False) as tx:
