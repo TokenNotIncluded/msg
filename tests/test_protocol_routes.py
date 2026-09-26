@@ -22,8 +22,8 @@ async def test_post_and_path_get_execute_only_under_protocol_namespace(installed
     new_path = '/-/g/content.post_create/j/' + b64(canonical(packet))
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                  base_url='http://testserver') as http:
-        assert (await http.post('/!content.post_create', content=canonical(packet))).status_code == 405
-        assert (await http.get(old_path)).status_code == 405
+        assert (await http.post('/!content.post_create', content=canonical(packet))).status_code == 404
+        assert (await http.get(old_path)).status_code == 404
         assert (await http.post('/main', content=canonical(packet))).status_code == 405
         assert (await http.head(new_path)).status_code == 200
         assert (await http.get('/-/p/content.post_create')).status_code == 405
@@ -52,8 +52,8 @@ async def test_mcp_moves_into_protocol_namespace_and_resource_queries_remain_rea
                           'clientInfo': {'name': 'test', 'version': '1'}}}
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                  base_url='http://testserver') as http:
-        assert (await http.post('/mcp', json=message)).status_code == 405
-        assert (await http.post('/~discovery.get', content=b'{}')).status_code == 405
+        assert (await http.post('/mcp', json=message)).status_code == 404
+        assert (await http.post('/~discovery.get', content=b'{}')).status_code == 404
         response = await http.post('/-/mcp', json=message)
         assert response.status_code == 200, response.text
         assert response.json()['result']['capabilities']['tools'] is not None

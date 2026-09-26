@@ -41,7 +41,7 @@ class MCPServer:
                     'operation':{'const':spec.name},'contract_version':{'const':spec.version},
                     'arguments':registry.schema(spec.input_schema)}}
                 input_schema={'type':'object','properties':{'packet':packet_schema},'required':['packet'],'additionalProperties':False}
-            tools.append({'name':spec.name,'description':f'{spec.name}@{spec.version}; {spec.effect}; contract /-/d/{spec.name}',
+            tools.append({'name':spec.name,'description':f'{spec.name}@{spec.version}; {spec.effect}; contract /-/d/{spec.name.split(".",1)[0]}/{spec.name}',
                 'inputSchema':input_schema,'outputSchema':RESULT_SCHEMA,
                 'annotations':{'readOnlyHint':spec.effect=='read','idempotentHint':True,
                     'destructiveHint':spec.effect!='read','openWorldHint':spec.effect=='external'}})

@@ -152,6 +152,7 @@ class EffectWorker:
     async def _tool(self, job, directory):
         from msg.extensions.tools import read_tool, tool_policies
         from msg.core.models import NetworkPolicy
+        require(job.operation == 'tool.run', 'unknown_operation')
         async with self.app.metadata.transaction(write=False) as tx:
             principal = await current_principal(self.app, job.principal, tx)
             context, request = worker_context(self.app, job, principal), effect_request(self.app, job, principal)

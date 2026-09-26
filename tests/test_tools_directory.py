@@ -25,14 +25,14 @@ async def test_new_install_tools_path_keeps_permissions_and_capability_gate(inst
 
     key, uid, _ = await register(app, 'tools-directory')
     args = {'id': '/tools/dns', 'arguments': {'name': 'example.org', 'type': 'A'}}
-    denied = await call(app, 'tool.invoke', args, key=key, subject=uid)
+    denied = await call(app, 'tool.run', args, key=key, subject=uid)
     assert denied.error.code == 'tool_certificate_required', wire(denied)
     cap = scoped(app, 'tool.use', 'tool_dns', app.registry.capability('tool.use').operations)
     cert = await approve(app, root, uid, key, (cap,))
     listing = await call(app, 'discovery.get', {'id': '/tools'}, key=key, subject=uid,
                          certs=(cert.resource_id,))
     assert [tool['name'] for tool in listing.data['items']] == ['dns']
-    accepted = await call(app, 'tool.invoke', args, key=key, subject=uid,
+    accepted = await call(app, 'tool.run', args, key=key, subject=uid,
                           certs=(cert.resource_id,))
     assert accepted.status == 'accepted', wire(accepted)
 
@@ -52,10 +52,10 @@ async def test_legacy_tools_path_is_read_only_and_new_alias_still_checks_certifi
                              certs=(cert.resource_id,))
     assert [tool['name'] for tool in legacy_read.data['items']] == ['dns']
     args = {'id': '/_tools/dns', 'arguments': {'name': 'example.org', 'type': 'A'}}
-    rejected = await call(app, 'tool.invoke', args, key=key, subject=uid,
+    rejected = await call(app, 'tool.run', args, key=key, subject=uid,
                           certs=(cert.resource_id,))
     assert rejected.error.code == 'legacy_tool_path_read_only', wire(rejected)
     canonical = {**args, 'id': '/tools/dns'}
-    allowed = await call(app, 'tool.invoke', canonical, key=key, subject=uid,
+    allowed = await call(app, 'tool.run', canonical, key=key, subject=uid,
                          certs=(cert.resource_id,))
     assert allowed.status == 'accepted', wire(allowed)

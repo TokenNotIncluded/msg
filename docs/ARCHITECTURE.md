@@ -1,6 +1,6 @@
 # 架构与提交边界
 
-本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。PostgreSQL + Valkey 是本轮明确选型，替代云文档旧 SQLite 描述。
+本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T21:46:43.426Z`、正文为 01–16 章。PostgreSQL + Valkey 是用户后续明确决定，覆盖文档的 SQLite 选型；其余需求继续有效。
 
 ## 有限资源模型
 
@@ -36,6 +36,10 @@ PostgreSQL 保存资源、主体、凭据、证书状态、关系投影、当前
 
 ## 协议与扩展的当前缺口
 
-现有 HTTP 适配器仍支持 /!、/~ 和 /mcp；最新需求要求所有写传输集中在 /-/，并用 Registry 生成短码字典。这是待实施迁移，不能以“统一执行器”代替路由验收。新 .md 规范路径、/AGENTS.md、/tools/ 与输出投影也须同步更新所有客户端和发现入口。
+HTTP 协议操作只从 `/-/` 分流。旧 `/!`、`/~`、`/run/j|gz` 与 `/mcp` 不再有兼容 handler；普通资源、RSS、latest 与原生 Git 的公开读取在执行前核对注册操作为 read。原生 Git 的 POST `git-upload-pack` 只读，`git-receive-pack` 不开放。普通 Git/LFS 路径及子路径永久只读，写入只能直接走 `/-/` 注册操作；标准客户端发现写地址的兼容性仍待验证，不允许普通路径代理、重定向写入或额外子域名。旧兼容 handler 删除已纳入最终回归，本轮 Python 3.15 最终全套 165 passed、conformance 8 passed、uv build 成功。新 .md 规范路径、/AGENTS.md、/tools/ 已覆盖新安装；旧库存量链接和完整输出投影仍需单独迁移与验收。
 
 临时 token 不能代替托管身份；mode/证书不能代替可追踪 ShareGrant；现有全文更新不能代替 patch/grep；现有 hosting 独立 origin 不能满足同域托管要求。新增这些能力应继续复用资源、授权、事务与事件，不另建业务后端。
+
+第 13 章规定工具调用名为 `tool.run`；`/tools/` 只发现凭据允许的工具，路径本身绝不执行。公开契约已迁移为 `tool.run`，`tool.invoke` 仅保留不可执行 tombstone，短码不改义复用。`/-/transfer` 已提供六种分片操作的完整 OperationRequest POST 与只读 GET 发现；两段式 `/-/d/<namespace>/<operation>` 已实现。上述本地验证不代表完整工具/Git LFS/托管身份、逐 feature 验收或本轮远端 CI。
+
+最新第 15 章按 feature 要求实现、默认值、样例或明确空/禁用/拒绝状态、测试、doctor、selftest 与 CI 全部具备。插件 disabled 必须如实报告 disabled/skip；doctor 只读，selftest 隔离清理，root 测试也不关闭 local_only。第 11 章还要求 Files/LFS/Transfer 共用 BlobStore、下载流式或范围读取，禁止无鉴权 CAS 直链和把明确二进制直接写入普通 Git 对象；这些均须单独验收。

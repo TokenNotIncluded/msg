@@ -29,7 +29,7 @@ async def test_http_post_path_get_and_head_have_exact_effects(installed):
         assert get.status_code==200 and get.json()['replayed'],get.text
         assert 'http-one'==get.json()['request_id']
         forbidden=await http.get('/~content.post_create/run/j/'+b64(canonical(packet)))
-        assert forbidden.status_code>=400
+        assert forbidden.status_code==404
         describe=await http.get('/-/d/content.post_create')
         assert describe.status_code==200
         raw=await http.get('/_id/'+post.json()['resources'][0]['id']+'/raw')

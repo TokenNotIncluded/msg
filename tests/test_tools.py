@@ -2,12 +2,16 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 import pytest
+import httpx
 
 from msg.core.codec import wire,canonical,digest
 from msg.core.errors import Failure
 from msg.core.models import Scope,NetworkPolicy,ResourceRef
 from msg.security.network import validate_url,validate_addresses,intersect_policy
 from msg.workers.effects import EffectWorker,ToolResult
+from msg.extensions.tools import descriptor, read_tool
+from msg.transports.dictionary import build_dictionary
+from msg.transports.http import create_app
 from test_service import register,call,NOW
 from test_authorization import approve,scoped
 
@@ -46,17 +50,17 @@ def test_tool_policy_intersection_does_not_widen_allowlists_or_limits():
 async def test_only_scoped_tool_is_visible_jobs_are_deduped_and_output_transfers(installed,tmp_path):
     app,root=installed
     key,uid,base=await register(app,'tool-agent')
-    denied=await call(app,'tool.invoke',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid)
+    denied=await call(app,'tool.run',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid)
     assert denied.error.code=='tool_certificate_required',wire(denied)
     cap=scoped(app,'tool.use','tool_dns',app.registry.capability('tool.use').operations)
     cert=await approve(app,root,uid,key,(cap,))
     tools=await call(app,'discovery.get',{'id':'/tools'},key=key,subject=uid,certs=(cert.resource_id,))
     assert [t['name'] for t in tools.data['items']]==['dns']
-    wrong=await call(app,'tool.invoke',{'id':'/tools/curl','arguments':{'url':'https://example.org'}},key=key,subject=uid,certs=(cert.resource_id,))
+    wrong=await call(app,'tool.run',{'id':'/tools/curl','arguments':{'url':'https://example.org'}},key=key,subject=uid,certs=(cert.resource_id,))
     assert wrong.error.code=='tool_certificate_required'
     args={'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}}
-    first=await call(app,'tool.invoke',args,key=key,subject=uid,certs=(cert.resource_id,),rid='tool-once')
-    second=await call(app,'tool.invoke',args,key=key,subject=uid,certs=(cert.resource_id,),rid='tool-once')
+    first=await call(app,'tool.run',args,key=key,subject=uid,certs=(cert.resource_id,),rid='tool-once')
+    second=await call(app,'tool.run',args,key=key,subject=uid,certs=(cert.resource_id,),rid='tool-once')
     assert first.status=='accepted' and second.replayed,wire(first)
     assert first.data['job_id']==second.data['job_id']
     executions=[]
@@ -80,7 +84,7 @@ async def test_pending_job_rechecks_revocation_and_expired_lease_is_uncertain(in
     app,root=installed
     key,uid,base=await register(app,'worker-agent')
     cert=await approve(app,root,uid,key,(scoped(app,'tool.use','tool_dns',app.registry.capability('tool.use').operations),))
-    result=await call(app,'tool.invoke',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert.resource_id,))
+    result=await call(app,'tool.run',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert.resource_id,))
     async with app.metadata.transaction(write=True) as tx:
         tx.execute('UPDATE certificates SET revoked=1 WHERE id=?',(cert.resource_id,),write=True)
     ran=[]
@@ -92,7 +96,7 @@ async def test_pending_job_rechecks_revocation_and_expired_lease_is_uncertain(in
         job=await tx.job(result.data['job_id'])
         assert job.state=='failed'
     cert2=await approve(app,root,uid,key,(scoped(app,'tool.use','tool_dns',app.registry.capability('tool.use').operations),))
-    job_result=await call(app,'tool.invoke',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert2.resource_id,))
+    job_result=await call(app,'tool.run',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert2.resource_id,))
     async with app.metadata.transaction(write=True) as tx:
         job=await tx.job(job_result.data['job_id'])
         await tx.save_job(replace(job,state='running',lease_until=NOW-timedelta(seconds=1)))
@@ -106,7 +110,7 @@ async def test_tool_external_success_then_revocation_records_uncertain(installed
     app,root=installed
     key,uid,_=await register(app,'late-revocation')
     cert=await approve(app,root,uid,key,(scoped(app,'tool.use','tool_dns',app.registry.capability('tool.use').operations),))
-    result=await call(app,'tool.invoke',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert.resource_id,))
+    result=await call(app,'tool.run',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},key=key,subject=uid,certs=(cert.resource_id,))
     async def runner(tool,args,policies,outdir):
         async with app.metadata.transaction(write=True) as tx:
             tx.execute('UPDATE certificates SET revoked=1 WHERE id=?',(cert.resource_id,),write=True)
@@ -115,3 +119,32 @@ async def test_tool_external_success_then_revocation_records_uncertain(installed
     await EffectWorker(app,tool_runner=runner).run_once()
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.job(result.data['job_id'])).state=='uncertain'
+
+
+@pytest.mark.asyncio
+async def test_tool_run_is_the_only_public_operation_and_old_short_code_is_retired(installed):
+    app, _ = installed
+    dictionary = build_dictionary(app.registry)
+    new_code = dictionary.code_for('operation', 'tool.run@1')
+    assert dictionary.resolve_operation(new_code).name == 'tool.run'
+    assert dictionary.lookup_document(new_code)['operations'][0]['name'] == 'tool.run'
+    retired = dictionary.lookup_document('o7hu7ftf')
+    assert retired['deprecated'] and retired['identity'] == 'tool.invoke@1'
+    with pytest.raises(Failure, match='deprecated_short_code'):
+        dictionary.resolve_operation('o7hu7ftf')
+    with pytest.raises(Failure, match='unknown_operation'):
+        app.registry.operation('tool.invoke')
+    assert descriptor('dns')['operation'] == 'tool.run'
+    async with app.metadata.transaction(write=False) as tx:
+        assert (await read_tool(app, tx, 'tool_dns')).operation == 'tool.run'
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        current = await http.get('/-/d/tool.run')
+        assert current.status_code == 200
+        assert current.json()['operations'][0]['code'] == new_code
+        old = await http.get('/-/d/o7hu7ftf')
+        assert old.status_code == 200
+        assert old.json()['deprecated'] is True
+        rejected = await http.get('/-/g/o7hu7ftf/j/invalid')
+        assert rejected.status_code == 400
+        assert rejected.json()['error']['code'] == 'deprecated_short_code'

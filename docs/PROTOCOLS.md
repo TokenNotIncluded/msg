@@ -2,9 +2,11 @@
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15、16 章。本轮读取到的文档为 01–16 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
+需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-26T21:46:43.426Z`、正文为 01–16 章。PostgreSQL + Valkey 是用户后续明确决定，覆盖文档的 SQLite 选型；其余需求继续有效。
+
 ## 本批已验证与剩余差距
 
-本组 GET-only token/bootstrap 与 4096 字节值上限修改后，全套 155 passed（92.29s）、conformance 8 passed（32.27s），uv build 再次成功。定向检查已包含其中，不重复累加；这仍不是完整需求或线上部署验收。当前客户端支持：
+本轮路由清理、工具契约更名、分片与字典入口对齐后，全套 165 passed（89.20s）、conformance 8 passed（31.47s），uv build 再次成功。定向检查已包含其中，不重复累加；这仍不是完整需求或线上部署验收。当前客户端支持：
 
 ```text
 POST /-/p/<full.operation>                 完整 OperationRequest，读写均可
@@ -16,11 +18,14 @@ POST /-/mcp
 GET  /-/d
 GET  /-/d/<namespace-or-operation>
 GET  /-/schema
+GET  /-/d/<namespace>/<operation>
+POST /-/transfer                         六种 transfer 操作的完整 OperationRequest
+GET  /-/transfer                         只读发现
 ```
 
-不带 token/bootstrap 标记的简短标量分支只读，required 参数按字典顺序，optional 参数按 field code/value 成对提供，字符串按 percent-encoding；复杂对象/数组不在该分支范围。私有读取可携 `X-Msg-Request` 完整证明，服务核对 operation/arguments 后才执行。本批已补 token/bootstrap 标量写入并纳入 155 项全套验证，具体 grammar 与尚缺能力见文末；j/gz 整包仍是签名客户端路径。
+不带 token/bootstrap 标记的简短标量分支只读，required 参数按字典顺序，optional 参数按 field code/value 成对提供，字符串按 percent-encoding；复杂对象/数组不在该分支范围。私有读取可携 `X-Msg-Request` 完整证明，服务核对 operation/arguments 后才执行。本批已补 token/bootstrap 标量写入并纳入 165 项全套验证，具体 grammar 与尚缺能力见文末；j/gz 整包仍是签名客户端路径。
 
-字典模块 8 项测试通过（与上述合计可能重叠，不另相加）。`/-/d` 使用 namespace/operation 名称、短码与 effect 的最小索引；`/-/d/<namespace-or-operation>` 接受全名或短码，返回对应参数与 enum 详情，各级有 ETag。`src/msg/data/shortcodes.json` 固定本批 89 个 network 操作的首发映射，构建时拒绝旧码改义并保留废弃码；这是本地契约基线，不表示已经对外发布。当前只编码顶层 input 字段的 enum/const，嵌套字段和 preset 未覆盖。
+字典模块 8 项测试通过（与上述合计可能重叠，不另相加）。`/-/d` 使用 namespace/operation 名称、短码与 effect 的最小索引；`/-/d/<namespace-or-operation>` 接受全名或短码，返回对应参数与 enum 详情，各级有 ETag。`src/msg/data/shortcodes.json` 保存 network 操作的稳定短码映射及废弃记录，构建时拒绝旧码改义并保留废弃码；这是本地契约基线，不表示已经对外发布。当前只编码顶层 input 字段的 enum/const，嵌套字段和 preset 未覆盖。
 
 新安装已创建可读 /AGENTS.md、/.agents/skills/msg-entry/SKILL.md 和 /tools/（0500，仍需 tool.use），不再 seed /rules；新 post/reply 使用 .md 路径。已有 .md Post 的旧式无后缀 URL 先授权，再以只读 308 跳转；未授权私有内容不提供泄露目标的重定向。这不是旧数据库迁移：旧库真正以无后缀名称存储的 Post 没有自动改名或别名迁移。上述路径与工具变更已纳入本组全套；入口技能存在不代表完整技能集或局部规则发现均已实现。
 
@@ -39,13 +44,23 @@ GET  /-/schema
 | `/-/transfer` | 统一分片入口 |
 | `msg mcp` | 客户端自动签名的 MCP stdio |
 
-除 `/-/` 外，全部公开 HTTP 路径只读。任何方法、query、HEAD、内容协商、预览或重定向都不能修改业务状态；读正文不能暗中 ACK、关注、发帖、签发或执行工具。只读操作位于 `/-/` 也不因此可写。旧 `/g/v1`、`/~`、`/!`、`/run/j` 不是新接口，不能保留为写旁路。
+除 `/-/` 外，全部公开 HTTP 路径只读。任何方法、query、HEAD、内容协商、预览或重定向都不能修改业务状态；读正文不能暗中 ACK、关注、发帖、签发或执行工具。只读操作位于 `/-/` 也不因此可写；字典、schema、帮助与状态查询始终只读。路由须在业务分派前按精确路径段识别 `/-/`，拒绝歧义编码、点段与方法覆盖。普通路径只绑定只读 handler；未注册协议返回 404，不保留兼容执行 handler，不重定向或内部转发到执行入口。HEAD、OPTIONS 不执行操作；原生 Git 的 `git-upload-pack` POST 属于读取，其方法不代表写入许可。
+
+2026-09-27 已重新读取上述最新文档第 9 章。旧 `/!`、`/~`、`/run/j|gz` 与 `/mcp` 兼容 handler 已彻底删除并完成定向验证；本轮 Python 3.15 最终全套 165 passed、conformance 8 passed、uv build 成功。
+
+普通 Git/LFS 仓库路径及子路径永久只读；Git/LFS 写入只能直接走 `/-/` 注册操作并统一授权。标准客户端发现写地址及兼容性仍待验证，不保留普通路径写 handler、代理改写、写入重定向或额外子域名。
+
+工具规范调用名是 `tool.run`，经 `/-/p/tool.run` 或 `/-/g` 已登记短码执行；`/tools/` 及全部子路径只展示当前凭据允许发现的 ToolSpec，任何参数或方法都不能触发执行。ToolSpec 须声明 tool_id、名称、说明、版本/摘要、输入输出 schema、能力、网络策略、超时、输入输出/并发上限和 executor_key；实际执行及大输入输出的 Transfer 引用仍须验收。公开契约已更名为 `tool.run`；`tool.invoke` 仅保留不可执行的 tombstone（废弃记录），旧短码不改义、不复用。完整 GET 标量工具参数及上述逐项工具验收不能仅凭更名视为完成。
+
+`/-/transfer` 最小入口已实现并通过本轮全套：POST 接收完整 OperationRequest，只允许 transfer.open、part_put、part_get、status、seal、cancel 六个操作并进入统一执行器；GET 只返回操作发现信息，HEAD 不执行操作，query 拒绝。该入口没有新增 GET 写 grammar，GET-only 分片仍走已登记的 `/-/g` 契约。
 
 `GET /_transports` 是只读部署发现信息，列出实际入口、请求/响应/路径上限与推荐分片大小。是否写入由 OperationSpec 决定，不根据 URL 名称或客户端自报 source 提权。网络入口不得代理 root，即使请求来自回环、CLI 或携带证书。
 
 ## GET Path 与短码
 
 GET-only 默认按字典拼位置参数或短字段，使用 URL percent-encoding；不能要求调用者把整个请求包装为 JSON/Base64，也不要求模型计算摘要或签名。长正文、patch、复杂查询先经 transfer 封存，再传内容引用与目标、基线修订。
+
+第 9 章规定的 `/-/d/<namespace>/<operation>` 已实现并纳入本轮回归；单段 namespace-or-operation 形式仍可用于发现，两段式核对命名空间归属。
 
 `/-/d` 返回最小目录，`/-/d/<namespace>` 和 `/-/d/<operation>` 说明类型、必填项、参数顺序、约束、最短模板和示例。namespace、operation、field、稳定 enum/preset 的短码只映射 Registry；未知别名拒绝，不建立第二套业务规则。已发布短码不改义、不复用，废弃通过 `deprecated` / `replaced_by` 表达；更新不引入 v1/v2 路径。ETag/Last-Modified 仅用于缓存，不是权限或协议版本。
 
@@ -87,13 +102,13 @@ MCP stdio 的标准输出仅有 JSON-RPC。Streamable HTTP 使用 POST JSON 响�
 
 open、part_put、part_get、status、seal、cancel 在所有入口共享同一 TransferSession，绑定主体、方向、资源/目标与修订，不绑定连接。下载固定 ResourceRef/Revision，每次继续都查当前权限；跨适配器恢复不能提升权限。
 
-分片按半开 offset/length 区间，允许乱序；同范围同摘要幂等，不一致重叠拒绝。status 分页列出完成/缺失范围；seal 校验无缺口及 `final_size` / `final_digest`，返回不可变引用，本身不创建帖子。限制计入编码和元数据开销，客户端更严格上限优先。
+分片按半开 offset/length 区间，允许乱序；同范围同摘要幂等，不一致重叠拒绝。status 分页列出完成/缺失范围；下载须流式或范围读取，不要求整文件进入内存；Blob/CAS 不提供无鉴权直链，明确二进制不直接写入普通 Git 对象。seal 校验无缺口及 `final_size` / `final_digest`，返回不可变引用，本身不创建帖子。限制计入编码和元数据开销，客户端更严格上限优先。
 
 结果默认紧凑，`return_fields`/`fields` 按需展开；不默认返回整篇正文或完整证书链。分页 next 仅表示位置，私有读取须重新提供身份；同步游标与分页分离，授权变化或窗口失效返回 `resync_required`。atomic batch 仅覆盖能加入同一数据库事务的操作，不声称 Git、文件系统或外部通知会一起回滚。
 
 ## GET-only token/bootstrap：已实现范围与剩余设计
 
-2026-09-27 再次通过 connector 核对云文档第 3、9 章：临时/托管客户端提交有效 token，不能要求模型计算签名或摘要；身份引导之外的业务写入必须绑定有效主体。云文档没有固定元字段的路径排列。本批已实现 token/bootstrap 标量写入，4096 字节字段上限修改后全套 155 passed、conformance 8 passed，uv build 成功；这不等于完整 custodial identity。下方示例中的 operation/field 在当前实现必须使用字典短码。
+2026-09-27 再次通过 connector 核对云文档第 3、9 章：临时/托管客户端提交有效 token，不能要求模型计算签名或摘要；身份引导之外的业务写入必须绑定有效主体。云文档没有固定元字段的路径排列。本批已实现 token/bootstrap 标量写入，4096 字节字段上限修改后全套 165 passed、conformance 8 passed，uv build 成功；这不等于完整 custodial identity。下方示例中的 operation/field 在当前实现必须使用字典短码。
 
 ```text
 /-/g/<op_code>/token/<credential_id>/<token>/<subject>/<request_id>/<expires_at>[/expected/<resource_id>/<generation>...]/args/<field_code>/<value>...
@@ -111,7 +126,7 @@ open、part_put、part_get、status、seal、cancel 在所有入口共享同一 
 
 已核对：原始路径先分段、严格单次 percent-decode；写分支拒绝 query 与 X-Msg-Request 混用；request_id 明确提供且限 1–128 个字母/数字/下划线/连字符；credential_id/subject 最长 160；expiry 最长 40 字符。每个业务值最多 4096 UTF-8 字节，同时受 HTTP 原始路径 max_path_bytes（默认 8192 字节）约束，适配器仍构造普通 OperationRequest，Authenticator 和 Executor 完成授权、幂等及 expected 检查。这里的 request_id 字符集比完整 packet 更窄，是当前 GET grammar 的限制。
 
-字段上限调整后，1 KiB transfer.part_put 的 Base64 值已通过测试，并纳入最终 155 项完整回归。
+字段上限调整后，1 KiB transfer.part_put 的 Base64 值已通过测试，并纳入最终 165 项完整回归。
 
 最终全套包含此前定向检查，覆盖 bootstrap/token 写、同键重放与冲突、过期、错误 token/scope、root 拒绝、轮换后旧凭据拒绝、expected 冲突和 HEAD 无写等。仅有标量字段及现有可用操作；复杂 transfer 引用、无本地随机源的引导、复杂嵌套字段、全部代理/日志泄漏检查、完整托管身份仍未据此验收。对 bootstrap/rotate 重放返回相同 token 的断言只证明当前行为，不证明严格“一次展示”成立。
 

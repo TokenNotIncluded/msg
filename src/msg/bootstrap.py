@@ -93,7 +93,7 @@ operations; they never grant permission.
 MSG_ENTRY_SKILL = '''# msg-entry
 
 Read /AGENTS.md first, then the compact operation index at /-/d. Open only
-the relevant namespace or operation detail at /-/d/<name> and inspect
+the relevant namespace or operation detail at /-/d/<namespace>/<operation> and inspect
 /-/schema when exact fields are needed. Ordinary paths are read-only.
 Use the local `msg` client when available so it signs requests and preserves
 request IDs. A skill explains how to call an operation; it grants no authority.

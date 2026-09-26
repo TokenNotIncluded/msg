@@ -22,7 +22,7 @@ TOOL_OUTPUT={'type':'object'}
 
 
 def descriptor(name):
-    return {'tool_id':'tool_'+name,'version':1,'executor_key':name,'operation':'tool.invoke',
+    return {'tool_id':'tool_'+name,'version':1,'executor_key':name,'operation':'tool.run',
         'required_capabilities':['tool.use'],'input_schema':{'id':'schema:tool.'+name+':input'},
         'output_schema':{'id':'schema:tool.'+name+':output'},
         'network':{'schemes':['http','https'],'hosts':[],'ports':[80,443],
@@ -55,13 +55,13 @@ async def read_tool(app,tx,rid,revision=None):
     rev=await tx.revision(ResourceRef(id=rid,revision=revision))
     value=loads(await app.contents.read_bytes(rev.content,limit=65536))
     require(value['executor_key'] in {'dns','curl'} and value['tool_id']==rid,'untrusted_tool_executor')
-    return ToolSpec(resource=ResourceRef(id=rid,revision=rev.id),operation='tool.invoke',
+    return ToolSpec(resource=ResourceRef(id=rid,revision=rev.id),operation='tool.run',
         input_schema=decode(ResourceRef,value['input_schema']),output_schema=decode(ResourceRef,value['output_schema']),
         executor_key=value['executor_key'],network=decode(NetworkPolicy,value['network']))
 
 
 async def tool_policies(app,principal,tool,args,tx):
-    operation='tool.invoke@1'
+    operation='tool.run@1'
     grants=await app.authorizer.grants(principal,tx)
     certs=[g for g in grants if await grant_covers(g,'tool.use',operation,tool.resource.id,tx)]
     ceilings=[g for g in principal.ceiling if await grant_covers(g,'tool.use',operation,tool.resource.id,tx)]
@@ -110,7 +110,7 @@ def register(app,op):
         app.registry.add_schema(ResourceRef(id='schema:tool.'+name+':input'),schema)
         app.registry.add_schema(ResourceRef(id='schema:tool.'+name+':output'),TOOL_OUTPUT)
 
-    @op('tool.invoke',obj({'id':IDENTIFIER,'revision':IDENTIFIER,'arguments':{'type':'object'}},('id','arguments')),effect='external')
+    @op('tool.run',obj({'id':IDENTIFIER,'revision':IDENTIFIER,'arguments':{'type':'object'}},('id','arguments')),effect='external')
     async def invoke(ctx,request,tx):
         rid=await resolve_tool_for_invoke(tx,request.arguments['id'])
         await check_access(app,ctx,request,tx,rid,'tool_use')

@@ -20,6 +20,8 @@ from msg.transports.packet import decode_packet, gunzip, path_packet
 
 BASE_HEADERS={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
               'Content-Security-Policy':"default-src 'none'; sandbox",'Cache-Control':'no-store'}
+TRANSFER_OPERATIONS=frozenset({'transfer.open','transfer.part_put','transfer.part_get',
+                               'transfer.status','transfer.seal','transfer.cancel'})
 
 
 def json_response(value,status=200,headers=None):
@@ -109,15 +111,30 @@ def create_app(service):
             origin=request.headers.get('origin')
             if origin is not None:
                 require(origin.rstrip('/')==f'{expected.scheme}://{expected.netloc}','forbidden_origin')
+            require('x-http-method-override' not in request.headers and
+                    'x-method-override' not in request.headers,'method_not_allowed')
             path=request.url.path
+            if (path=='/-' or path.startswith('/-/')) and not (raw_path==b'/-' or raw_path.startswith(b'/-/')):
+                raise Failure('not_found')
+            if raw_path.startswith(b'/-/'):
+                segments=raw_path.split(b'/')
+                if (any(unquote_to_bytes(segment) in {b'.',b'..'} for segment in segments) or
+                        any(b'%' in segment for segment in segments[2:4]) or
+                        (len(segments)>4 and segments[2] in {b'g',b'p'} and
+                         b'.' in segments[3] and b'%' in segments[4])):
+                    raise Failure('not_found')
             native=re.fullmatch(r'(/[@&][^/]+/[^/]+\.git)/(.*)',path)
             if native:
+                require(service.registry.operation('git.refs').effect=='read','effect_mismatch')
                 from msg.extensions.repositories import NativeGitStore
                 return await NativeGitStore(service).http(request,native.group(1),native.group(2))
+            if path.startswith(('/!','/~','/run/j/','/run/gz/')) or path=='/mcp':
+                raise Failure('not_found')
             if request.method=='OPTIONS':
                 return Response(status_code=405,headers=BASE_HEADERS)
             if path in {'/rss','/-/rss'}:
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
+                require(service.registry.operation('discovery.feed').effect=='read','effect_mismatch')
                 from msg.extensions.rss import render_feed
                 args=dict(request.query_params)
                 require(set(args)<={'parent','limit','cursor'},'unknown_query_parameter')
@@ -135,6 +152,7 @@ def create_app(service):
                     headers={**BASE_HEADERS,'Content-Length':str(len(payload)),'Cache-Control':'private, no-cache'})
             if path.startswith('/latest/'):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
+                require(service.registry.operation('discovery.list').effect=='read','effect_mismatch')
                 kind=path.removeprefix('/latest/')
                 service.registry.resource_type(kind,1)
                 packet=request_for('discovery.list',{'type':kind,'sort':'time','direction':'desc','limit':1},service.settings.service_url)
@@ -143,18 +161,37 @@ def create_app(service):
             if path=='/healthz':
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 return json_response({'status':'ok' if service._loaded else 'not_ready'},200 if service._loaded else 503)
+            if path=='/-/transfer':
+                require(not request.url.query,'unknown_query_parameter')
+                require(request.method in {'GET','HEAD','POST'},'method_not_allowed')
+                if request.method=='HEAD':
+                    return Response(status_code=200,headers=BASE_HEADERS)
+                if request.method=='GET':
+                    available=tuple(sorted(spec.name for spec in service.registry.operations('network')
+                                           if spec.name in TRANSFER_OPERATIONS))
+                    return json_response({'version':1,'operations':available,
+                                          'request':'OperationRequest JSON via POST'})
+                packet=decode_packet(await body_bytes(request,limits.max_request_bytes),
+                                     limits.max_request_bytes)
+                require(packet.operation in TRANSFER_OPERATIONS,'operation_mismatch')
+                spec=service.registry.operation(packet.operation,packet.contract_version)
+                require('network' in spec.entries,'entry_not_allowed')
+                result=await service.executor.execute(packet,entry='network')
+                value=result_wire(result)
+                require(len(canonical(value))<=limits.max_response_bytes,'response_too_large')
+                return json_response(value,error_status(result.error.code) if result.error else 200)
             if path=='/_transports':
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 data={'version':1,'target_service':service.settings.service_url,'limits':wire(limits),
                     'recommended_part_bytes':service.settings.max_part_bytes,'encodings':['j','gz'],
                     'transports':{'http':'/-/p/operation','path_get':'/-/g/operation/j/packet',
                                   'graphql':'/-/graphql','mcp_http':'/-/mcp',
+                                  'transfer':'/-/transfer',
                                   'mcp_stdio':'msg mcp'},
                     'operations':{s.name:s.effect for s in service.registry.operations('network')},
                     'contract_digest':service.registry.catalog()['digest']}
                 return json_response(data)
-            if path in {'/-/mcp','/mcp'}:
-                require(path=='/-/mcp','method_not_allowed')
+            if path=='/-/mcp':
                 require(request.method=='POST','method_not_allowed')
                 protocol=request.headers.get('mcp-protocol-version')
                 require(protocol is None or protocol in SUPPORTED_VERSIONS,'unsupported_mcp_version')
@@ -180,10 +217,28 @@ def create_app(service):
                     short_codes=build_dictionary(service.registry)
                 if path.startswith('/-/d/'):
                     scope=path.removeprefix('/-/d/')
-                    require(re.fullmatch(r'[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*(?:@[1-9][0-9]*)?',scope)
-                            is not None,'not_found')
-                    document=short_codes.lookup_document(scope)
-                    etag=short_codes.etag_for(scope)
+                    parts=scope.split('/')
+                    require(len(parts) in {1,2} and all(
+                        re.fullmatch(r'[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)*(?:@[1-9][0-9]*)?',part)
+                        is not None for part in parts),'not_found')
+                    if len(parts)==2:
+                        namespace_key,operation_key=parts
+                        namespaces={key:row['identity']
+                                    for row in short_codes.document['codes']['namespace']
+                                    if not row.get('deprecated')
+                                    for key in (row['identity'],row['code'])}
+                        namespace=namespaces.get(namespace_key)
+                        require(namespace is not None,'not_found')
+                        try:
+                            document=short_codes.lookup_document(operation_key)
+                        except Failure as exc:
+                            raise Failure('not_found') from exc
+                        require(len(document.get('operations',()))==1 and
+                                document['operations'][0]['namespace']==namespace,'not_found')
+                        etag=short_codes.etag_for(operation_key)
+                    else:
+                        document=short_codes.lookup_document(scope)
+                        etag=short_codes.etag_for(scope)
                 else:
                     document=short_codes.index_document if path=='/-/d' else short_codes.schema_document
                     etag=short_codes.index_etag if path=='/-/d' else short_codes.schema_etag
@@ -260,44 +315,6 @@ def create_app(service):
                 value=result_wire(result)
                 require(len(canonical(value))<=limits.max_response_bytes,'response_too_large')
                 return json_response(value,error_status(result.error.code) if result.error else 200)
-            match=re.fullmatch(r'/([!~])([a-z][a-z0-9_.]*)(?:/(schema|run/(j|gz)/([A-Za-z0-9_-]+)))?',path)
-            if match:
-                prefix,name,suffix,encoding,encoded=match.groups()
-                spec=service.registry.operation(name)
-                require('network' in spec.entries,'entry_not_allowed')
-                require((spec.effect=='read')==(prefix=='~'),'effect_mismatch')
-                require(prefix=='~' or (request.method in {'GET','HEAD'} and not encoded),
-                        'method_not_allowed')
-                require(request.method in {'GET','HEAD'},'method_not_allowed')
-                # HEAD is always safe, including on a capability-bearing run path.
-                if request.method=='HEAD':
-                    return Response(status_code=200,headers=BASE_HEADERS)
-                if suffix=='schema':
-                    require(request.method=='GET','method_not_allowed')
-                    return json_response({'operation':service.registry.describe(spec),'input':service.registry.schema(spec.input_schema),
-                                          'output':service.registry.schema(spec.output_schema)})
-                if encoded:
-                    require(request.method=='GET','method_not_allowed')
-                    packet=path_packet(encoded,encoding,limits.max_request_bytes)
-                elif request.method=='GET' and prefix=='!':
-                    return json_response(service.registry.describe(spec))
-                elif request.method=='GET' and prefix=='~':
-                    encoded_header=request.headers.get('x-msg-request')
-                    if encoded_header:
-                        packet=path_packet(encoded_header,'j',limits.max_request_bytes)
-                    else:
-                        pairs=request.query_params.multi_items()
-                        require(len(pairs)==len({k for k,v in pairs}),'duplicate_query_parameter')
-                        require(set(request.query_params)<={'arguments'},'unknown_query_parameter')
-                        args=loads(request.query_params.get('arguments','{}'))
-                        packet=request_for(name,args,service.settings.service_url,source='manual')
-                else:
-                    raise Failure('method_not_allowed')
-                require(packet.operation==name,'operation_mismatch')
-                result=await service.executor.execute(packet,entry='network')
-                value=result_wire(result)
-                require(len(canonical(value))<=limits.max_response_bytes,'response_too_large')
-                return json_response(value,error_status(result.error.code) if result.error else 200)
             if path=='/-' or path.startswith('/-/'):
                 raise Failure('not_found')
             require(request.method in {'GET','HEAD'},'method_not_allowed')
@@ -328,6 +345,7 @@ def create_app(service):
                                 redirect_target=await tx.path(rid)
                                 resource_path=redirect_target
             op='discovery.raw' if view=='raw' else 'discovery.get'
+            require(service.registry.operation(op).effect=='read','effect_mismatch')
             args={'id':resource_path}
             if revision: args['revision']=revision
             if view in {'meta','history'}: args['view']=view
