@@ -14,7 +14,8 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:18
+        # Ubuntu runner provides pg_dump 16; its client must not be older than the server.
+        image: postgres:16
         env:
           POSTGRES_USER: msgtest
           POSTGRES_PASSWORD: msgtest

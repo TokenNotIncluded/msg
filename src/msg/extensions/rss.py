@@ -18,16 +18,19 @@ def register(app, op):
         if parent:
             await check_access(app,ctx,request,tx,parent,'list')
         binding = digest({'parent':parent,'limit':args.get('limit',30)})
-        position = app.cursors.decode(args['cursor'],'rss',binding) if args.get('cursor') else ['\uffff','\uffff']
-        parameters = [*position]
-        condition = ''
+        position = app.cursors.decode(args['cursor'],'rss',binding) if args.get('cursor') else None
+        parameters = []
+        conditions = []
+        if position is not None:
+            conditions.append(' AND (created_at,id)<(?,?)')
+            parameters.extend(position)
         if parent:
-            condition=' AND parent=?'
+            conditions.append(' AND parent=?')
             parameters.append(parent)
         limit = args.get('limit',30)
         items=[];more=False;last=position
-        for raw in tx.execute("SELECT body FROM resources WHERE type='post' AND state='active' AND (created_at,id)<(?,?)"+
-                              condition+' ORDER BY created_at DESC,id DESC',parameters):
+        for raw in tx.execute("SELECT body FROM resources WHERE type='post' AND state='active'"+
+                              ''.join(conditions)+' ORDER BY created_at DESC,id DESC',parameters):
             resource = decode(Resource,loads(raw[0]))
             if not await visible(app,ctx,request,tx,resource.id):
                 continue
