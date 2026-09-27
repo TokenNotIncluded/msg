@@ -615,6 +615,20 @@ def register(app,op):
         return HandlerOutput(data={'resource_id':rid,'oid':request.arguments['oid'],
                                    'size':request.arguments['size']})
 
+    @op('git.lfs_migrate',obj({'id':IDENTIFIER,
+        'oid':{'type':'string','pattern':'^[0-9a-f]{64}$'}},('id','oid')))
+    async def lfs_migrate(ctx,request,tx):
+        require(ctx.principal.method in {'signature','token'},'authentication_required')
+        rid=await resolve(tx,request.arguments['id'])
+        await check_access(app,ctx,request,tx,rid,'write')
+        resource=await tx.resource(rid)
+        require(resource.type=='repo' and resource.state=='active','not_a_repository')
+        store=NativeGitStore(app)
+        limit=store.lfs_capacity(tx)
+        result=await asyncio.to_thread(store.lfs(rid).migrate_legacy,
+            request.arguments['oid'],quota_bytes=limit)
+        return HandlerOutput(data={'resource_id':rid,'oid':request.arguments['oid'],**result})
+
     @op('git.create',obj({'parent':IDENTIFIER,'name':STRING},('parent','name')),signature=True)
     async def create(ctx,request,tx):
         parent=await tx.resource(await resolve(tx,request.arguments['parent']))

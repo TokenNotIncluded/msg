@@ -8,6 +8,7 @@ from msg.core.codec import b64,unb64,wire,decode,canonical,loads,parse_time,dige
 from msg.core.errors import Failure,require
 from msg.core.models import ResourceRef,HandlerOutput
 from msg.core.tags import normalize_tag
+from msg.core.read_query import read_query_version
 from msg.core.transfer import TransferService
 from msg.plugins.common import registration,resolve,create_resource,check_access
 from msg.plugins.schemas import obj,INTEGER,STRING,IDENTIFIER,BYTES,REF
@@ -42,8 +43,7 @@ async def sealed_read_query(app,ctx,request,tx,transfer):
     require(args.get('parent' if kind=='read' else 'scope') is not None and
             'cursor' not in args,'invalid_query_ref')
     operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
-    contract_version=(2 if kind=='read' and any(name in args for name in
-        ('expand','collection','nested_first')) else
+    contract_version=(read_query_version(args) if kind=='read' else
         4 if kind=='search' and 'suggest' in args else
         3 if kind=='search' and any(name in args for name in
         ('source_kind','relation_type')) else 2 if kind=='search' and 'facets' in args else 1)
@@ -194,13 +194,14 @@ def install(app):
                 'query_ref_digest_mismatch')
         require(query.get('query_kind')==kind,'query_ref_digest_mismatch')
         operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
-        contract_version=(2 if kind=='read' and any(name in args for name in
-            ('expand','collection','nested_first')) else
+        contract_version=(read_query_version(args) if kind=='read' else
             4 if kind=='search' and 'suggest' in args else
             3 if kind=='search' and any(name in args for name in
             ('source_kind','relation_type')) else 2 if kind=='search' and 'facets' in args else 1)
         principal=query_ref_principal(ctx.principal)
         normalized=dict(args)
+        if kind=='read' and contract_version==3:
+            normalized['query_version']=3
         scope_field='parent' if kind=='read' else 'scope'
         if normalized.get(scope_field):
             normalized[scope_field]=await resolve(tx,normalized[scope_field])
@@ -238,7 +239,11 @@ def install(app):
             short=app.cursors.encode('query-ref-page',{'query_ref_digest':digest(token)},
                 {'last':page['last'],'snapshot':page['snapshot'],'principal':principal,
                  'query_digest':digest(normalized),'expires_at':wire(expiry)})
-            data.update(cursor=short,next=f'/_r/q/{token}/c/{short}',next_requires_auth=True)
+            data['cursor']=short
+            if data.get('next'):
+                data.update(next=f'/_r/q/{token}/c/{short}',next_requires_auth=True)
+            if 'pageInfo' in data:
+                data['pageInfo']={**data['pageInfo'],'endCursor':short}
         return replace(output,data=data)
 
     finish()

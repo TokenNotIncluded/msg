@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import fcntl
+import stat
+import time
+from contextlib import contextmanager
 import os
 import re
 import shutil
@@ -36,88 +40,179 @@ def durable_write(path: Path, data: bytes, mode: int = 0o600):
 
 
 class LFSObjectStore:
-    """Shared immutable bytes, with repository hardlinks as durable ACL roots.
+    """Verified shared bytes; repository hardlinks remain the only ACL roots.
 
-    Only the repository link is served. Knowing a digest never grants access to
-    the shared object. The hardlink requirement also makes GC independent of
-    a racy scan of Git refs or PostgreSQL metadata.
+    Publishers still hold the metadata transaction for current authorization.
+    A shared filesystem lock also serializes LFS capacity, migration and GC
+    across worker processes. It is not a substitute for PostgreSQL authority.
     """
     def __init__(self, repo: Path, shared_root: Path | None = None):
         self.root=Path(repo)/'lfs'/'objects'
-        # Same SHA-256 binary CAS directory used by GitContentStore/Transfer.
         self.shared=Path(shared_root) if shared_root is not None else None
 
     def path(self, oid: str) -> Path:
-        require(re.fullmatch(r'[0-9a-f]{64}',oid) is not None,'invalid_lfs_oid')
+        require(isinstance(oid,str) and re.fullmatch(r'[0-9a-f]{64}',oid) is not None,
+                'invalid_lfs_oid')
         return self.root/oid[:2]/oid[2:4]/oid
 
     def size(self, oid: str) -> int | None:
         path=self.path(oid)
+        require(not path.is_symlink(),'lfs_object_conflict')
         return path.stat().st_size if path.is_file() else None
 
     def _shared_path(self,oid: str) -> Path:
         require(self.shared is not None,'lfs_shared_store_required')
-        self.path(oid)  # Validate before constructing any path.
+        self.path(oid)
         return self.shared/oid
+
+    @contextmanager
+    def _locked(self, *, timeout=30.0):
+        require(self.shared is not None,'lfs_shared_store_required')
+        require(not self.shared.is_symlink(),'lfs_shared_volume_required')
+        self.shared.mkdir(parents=True,exist_ok=True)
+        try:
+            fd=os.open(self.shared/'.msg-lfs.lock',
+                       os.O_CREAT|os.O_RDWR|os.O_NOFOLLOW|os.O_CLOEXEC,0o600)
+        except OSError as exc:
+            raise Failure('lfs_object_conflict') from exc
+        try:
+            require(stat.S_ISREG(os.fstat(fd).st_mode),'lfs_object_conflict')
+            deadline=time.monotonic()+timeout
+            while True:
+                try:
+                    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    require(time.monotonic()<deadline,'server_busy',retryable=True)
+                    time.sleep(min(0.01,max(0,deadline-time.monotonic())))
+            yield
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _sync(directory):
+        fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(fd)
+        finally:os.close(fd)
+
+    @staticmethod
+    def _verify(path,oid,size):
+        """Do not follow links or accept same-size corruption/replaced bytes."""
+        require(type(size) is int and 0<=size<=2**63-1,'lfs_size_mismatch')
+        try:
+            fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+        except FileNotFoundError as exc:
+            raise Failure('lfs_object_missing') from exc
+        except OSError as exc:
+            raise Failure('lfs_object_conflict') from exc
+        with os.fdopen(fd,'rb') as source:
+            before=os.fstat(source.fileno())
+            require(stat.S_ISREG(before.st_mode),'lfs_object_conflict')
+            require(before.st_size==size,'lfs_size_mismatch')
+            hasher=hashlib.sha256()
+            actual=0
+            while chunk:=source.read(1024*1024):
+                actual+=len(chunk)
+                require(actual<=size,'lfs_size_mismatch')
+                hasher.update(chunk)
+            after=os.fstat(source.fileno())
+        require(actual==size,'lfs_size_mismatch')
+        require(hasher.hexdigest()==oid,'lfs_digest_mismatch')
+        require((before.st_ino,before.st_size,before.st_mtime_ns,before.st_ctime_ns)==
+                (after.st_ino,after.st_size,after.st_mtime_ns,after.st_ctime_ns),
+                'lfs_object_conflict')
+        return after
 
     def shared_usage(self) -> int:
         require(self.shared is not None,'lfs_shared_store_required')
-        return sum(path.stat().st_size for path in self.shared.iterdir()
-                   if path.is_file() and re.fullmatch(r'[0-9a-f]{64}',path.name))
+        if not self.shared.exists():return 0
+        total=0
+        for path in self.shared.iterdir():
+            if not re.fullmatch(r'[0-9a-f]{64}',path.name):continue
+            info=path.lstat()
+            require(stat.S_ISREG(info.st_mode),'lfs_object_conflict')
+            total+=info.st_size
+        return total
 
-    def publish(self, oid: str, staged: Path, size: int, *, quota_bytes: int | None = None):
+    def _publish(self,oid,staged,size,quota_bytes):
         destination=self.path(oid)
-        require(staged.stat().st_size==size,'lfs_size_mismatch')
-        if destination.is_file():
-            require(destination.stat().st_size==size,'lfs_object_conflict')
-            return
-        if self.shared is None:
-            raise Failure('lfs_shared_store_required')
         shared=self._shared_path(oid)
-        shared.parent.mkdir(parents=True,exist_ok=True)
+        if quota_bytes is not None:
+            require(type(quota_bytes) is int and quota_bytes>=0,'invalid_lfs_deployment_capacity')
+        require(not any(path.is_symlink() for path in
+            (self.root,self.root.parent,destination.parent.parent,destination.parent)),
+            'lfs_object_conflict')
+        self._verify(staged,oid,size)
+        if destination.exists() or destination.is_symlink():
+            self._verify(destination,oid,size)
         destination.parent.mkdir(parents=True,exist_ok=True)
-        # Validate layout before reserving bytes or creating a CAS orphan.
         require(shared.parent.stat().st_dev==destination.parent.stat().st_dev,
                 'lfs_shared_volume_required')
-        # The caller holds PostgreSQL's deployment-wide write lock. A failed or
-        # interrupted copy leaves only a private .pending file, never an OID.
-        if not shared.is_file():
+        if shared.exists() or shared.is_symlink():
+            self._verify(shared,oid,size)
+        else:
             if quota_bytes is not None:
                 require(self.shared_usage()+size<=quota_bytes,'lfs_deployment_capacity_exceeded')
             fd,temporary=tempfile.mkstemp(prefix='.pending-',dir=shared.parent)
             try:
                 with os.fdopen(fd,'wb') as target,staged.open('rb') as source:
-                    shutil.copyfileobj(source,target,1024*1024)
+                    hasher=hashlib.sha256()
+                    actual=0
+                    while chunk:=source.read(1024*1024):
+                        actual+=len(chunk)
+                        require(actual<=size,'lfs_size_mismatch')
+                        hasher.update(chunk);target.write(chunk)
+                    require(actual==size,'lfs_size_mismatch')
+                    require(hasher.hexdigest()==oid,'lfs_digest_mismatch')
                     target.flush();os.fsync(target.fileno())
+                # Never overwrite an existing canonical inode: other repositories
+                # can already hold hardlinks to it. A collision is reverified.
                 try:os.link(temporary,shared)
-                except FileExistsError:pass
+                except FileExistsError:self._verify(shared,oid,size)
+                self._sync(shared.parent)
             finally:
                 os.unlink(temporary)
-            directory=os.open(shared.parent,os.O_RDONLY|os.O_DIRECTORY)
-            try:os.fsync(directory)
-            finally:os.close(directory)
-        require(shared.stat().st_size==size,'lfs_object_conflict')
-        # A cross-device copy would silently turn one quota entry into many
-        # physical copies and break the link-count GC root. Reject it.
-        # Publish a link into the ACL-scoped repo, never a shared CAS URL.
-        try:os.link(shared,destination)
-        except FileExistsError:require(destination.stat().st_size==size,'lfs_object_conflict')
-        directory=os.open(destination.parent,os.O_RDONLY|os.O_DIRECTORY)
-        try:os.fsync(directory)
-        finally:os.close(directory)
+        if destination.exists() and os.path.samefile(shared,destination):
+            return False
+        # An atomic link replacement retains a legacy ACL root through every
+        # crash point. No published path ever points at a partly copied file.
+        with tempfile.TemporaryDirectory(prefix='.pending-',dir=destination.parent) as temp:
+            linked=Path(temp)/'object'
+            os.link(shared,linked)
+            os.replace(linked,destination)
+            self._sync(destination.parent)
+        self._sync(destination.parent)
+        return True
+
+    def publish(self, oid: str, staged: Path, size: int, *, quota_bytes: int | None = None):
+        self.path(oid)
+        with self._locked():
+            self._publish(oid,Path(staged),size,quota_bytes)
+
+    def migrate_legacy(self,oid: str, *, quota_bytes: int | None = None):
+        """Explicit authenticated write, never called by HEAD/GET/stat/batch."""
+        source=self.path(oid)
+        with self._locked():
+            require(source.is_file() and not source.is_symlink(),'lfs_object_missing')
+            size=source.stat().st_size
+            changed=self._publish(oid,source,size,quota_bytes)
+        return {'state':'migrated' if changed else 'already_shared','size':size}
 
     def collect_unlinked(self, *, older_than: float, index: Path) -> tuple[int,int]:
-        """Collect canonical bytes only after every repository hardlink is gone."""
+        """Collect only after all repository links and content references vanish."""
         require(self.shared is not None,'lfs_shared_store_required')
+        if not self.shared.exists():return (0,0)
         removed=bytes_removed=0
-        for path in self.shared.iterdir():
-            if not path.is_file() or not re.fullmatch(r'[0-9a-f]{64}',path.name):
-                continue
-            stat=path.stat()
-            if stat.st_nlink!=1 or stat.st_mtime>older_than or (index/path.name).exists():
-                continue
-            path.unlink()
-            removed+=1;bytes_removed+=stat.st_size
+        with self._locked():
+            for path in self.shared.iterdir():
+                if not re.fullmatch(r'[0-9a-f]{64}',path.name):continue
+                info=path.lstat()
+                require(stat.S_ISREG(info.st_mode),'lfs_object_conflict')
+                if info.st_nlink!=1 or info.st_mtime>older_than or (index/path.name).exists():
+                    continue
+                path.unlink()
+                removed+=1;bytes_removed+=info.st_size
+            if removed:self._sync(self.shared)
         return removed,bytes_removed
 
 
