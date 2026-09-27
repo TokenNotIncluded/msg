@@ -46,7 +46,7 @@ def locked_state(state):
 
 def read_intent(path):
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         raise Failure('unsafe_upgrade_journal') from None
     with os.fdopen(fd, 'rb') as stream:
