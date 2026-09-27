@@ -1,11 +1,13 @@
 """Hosted executable bytes stay sandboxed on the service origin."""
 import httpx
 import pytest
+from datetime import timedelta
 
-from msg.core.codec import b64, loads, wire
+from msg.core.codec import b64, canonical, loads, wire
 from msg.core.models import ResourceRef
+from msg.core.requests import request_for
 from msg.transports.http import create_app
-from test_service import call, register
+from test_service import NOW, call, register
 
 
 def isolated(response):
@@ -119,6 +121,19 @@ async def test_preview_history_and_atomic_activation_share_same_csp(installed):
 @pytest.mark.asyncio
 async def test_root_sample_is_public_sandboxed_and_never_uses_root_credentials(installed):
     app, _ = installed
+    async with app.metadata.transaction(write=False) as tx:
+        website=await tx.resource(await tx.resolve('/@root/web'))
+        assert website.type=='website' and website.revision is not None
+        revision=await tx.revision(ResourceRef(id=website.id))
+        manifest=loads(await app.contents.read_bytes(revision.content))
+        assert (await tx.resource(manifest['deployment'])).parent==website.id
+        sample=await tx.resource(manifest['entries']['index.html']['id'])
+        assert sample.type=='file' and sample.revision==manifest['entries']['index.html']['revision']
+        generation=website.generation
+    from msg.bootstrap import bootstrap
+    await bootstrap(app.metadata,app.contents,app.registry,app.clock())
+    async with app.metadata.transaction(write=False) as tx:
+        assert (await tx.resource(website.id)).generation==generation
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                  base_url='http://testserver') as http:
         sample=await http.get('/@root/web/index.html',headers={'Origin':'null',
@@ -126,3 +141,95 @@ async def test_root_sample_is_public_sandboxed_and_never_uses_root_credentials(i
         assert sample.status_code==200
         isolated(sample)
         assert b'should-not-appear' not in sample.content
+
+
+@pytest.mark.asyncio
+async def test_private_preview_readback_then_deploy_and_rollback(installed):
+    app, _ = installed
+    key,user,_=await register(app,'web-preview')
+    site=await call(app,'hosting.create',{'parent':'/@web-preview','name':'web'},
+                    key=key,subject=user)
+    old=await call(app,'content.file_put',{'parent':'/@web-preview/files','name':'old.html',
+        'data':b64(b'<h1>old</h1>'),'media_type':'text/html'},key=key,subject=user)
+    first=await call(app,'hosting.deploy',{'id':site.resources[0].id,
+        'entries':[{'path':'index.html','source':wire(old.resources[0])}]},
+        key=key,subject=user,expected=((site.resources[0].id,site.data['generation']),))
+    assert first.status=='ok',wire(first)
+    changed=await call(app,'content.file_put',{'parent':'/@web-preview/files','name':'changed.html',
+        'data':b64(b'<h1>candidate</h1>'),'media_type':'text/html'},key=key,subject=user)
+    candidate=await call(app,'hosting.preview',{'id':site.resources[0].id,
+        'entries':[{'path':'index.html','source':wire(changed.resources[0])}]},
+        key=key,subject=user,expected=((site.resources[0].id,first.data['generation']),))
+    assert candidate.status=='ok',wire(candidate)
+    candidate_id=candidate.resources[0].id
+    packet=request_for('discovery.raw',{'id':candidate_id},app.settings.service_url,
+        signer=key,subject=user,expires_at=NOW+timedelta(seconds=120))
+    header=b64(canonical(wire(packet)))
+    path=f'/@web-preview/web/_preview/{candidate_id}/index.html'
+    async with app.metadata.transaction(write=False) as tx:
+        before=(tx.one('SELECT COUNT(*) FROM events')[0],
+                tx.one('SELECT COUNT(*) FROM revisions')[0],
+                tx.one('SELECT COUNT(*) FROM resources')[0])
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        live=await http.get('/@web-preview/web/')
+        assert live.content==b'<h1>old</h1>'
+        denied=await http.get(path)
+        assert denied.status_code==403
+        preview=await http.get(path,headers={'X-Msg-Request':header})
+        assert preview.status_code==200 and preview.content==b'<h1>candidate</h1>',preview.text
+        isolated(preview)
+        head=await http.head(path,headers={'X-Msg-Request':header})
+        assert head.status_code==200 and not head.content
+        cached=await http.get(path,headers={'X-Msg-Request':header,'If-None-Match':preview.headers['etag']})
+        assert cached.status_code==304
+        partial=await http.get(path,headers={'X-Msg-Request':header,'Range':'bytes=0-5'})
+        assert partial.status_code==206 and partial.content==b'<h1>ca'
+        disallowed=await http.post(path,content=b'overwrite',headers={'X-Msg-Request':header})
+        assert disallowed.status_code==405
+    async with app.metadata.transaction(write=False) as tx:
+        assert before==(tx.one('SELECT COUNT(*) FROM events')[0],
+                        tx.one('SELECT COUNT(*) FROM revisions')[0],
+                        tx.one('SELECT COUNT(*) FROM resources')[0])
+    async with app.metadata.transaction(write=False) as tx:
+        assert (await tx.resource(site.resources[0].id)).revision==first.resources[0].revision
+        manifest=loads(await app.contents.read_bytes((await tx.revision(ResourceRef(id=candidate_id))).content))
+        preview_file=manifest['entries']['index.html']
+    other_key,other_user,_=await register(app,'preview-stranger')
+    other_packet=request_for('discovery.raw',{'id':candidate_id},app.settings.service_url,
+        signer=other_key,subject=other_user,expires_at=NOW+timedelta(seconds=120))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        outsider=await http.get(path,headers={'X-Msg-Request':b64(canonical(wire(other_packet)))})
+        assert outsider.status_code==403
+    publish=await call(app,'hosting.deploy',{'id':site.resources[0].id,
+        'entries':[{'path':'index.html','source':preview_file}]},key=key,subject=user,
+        expected=((site.resources[0].id,first.data['generation']),))
+    assert publish.status=='ok',wire(publish)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        assert (await http.get('/@web-preview/web/')).content==b'<h1>candidate</h1>'
+    rollback=await call(app,'hosting.activate',{'id':site.resources[0].id,
+        'revision':first.resources[0].revision},key=key,subject=user,
+        expected=((site.resources[0].id,publish.data['generation']),))
+    assert rollback.status=='ok',wire(rollback)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        assert (await http.get('/@web-preview/web/')).content==b'<h1>old</h1>'
+    opened_topic=await call(app,'content.chmod',{'id':candidate_id,'mode':'0755'},
+        key=key,subject=user,expected=((candidate_id,candidate.data['generation']),))
+    assert opened_topic.status=='ok',wire(opened_topic)
+    opened_file=await call(app,'content.chmod',{'id':preview_file['id'],'mode':'0644'},
+        key=key,subject=user,expected=((preview_file['id'],1),))
+    assert opened_file.status=='ok',wire(opened_file)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        anonymous=await http.get('/_read/'+preview_file['id']+'/raw')
+        assert anonymous.status_code==403,anonymous.text
+    revoked=await call(app,'content.chmod',{'id':candidate_id,'mode':'0000'},
+        key=key,subject=user,expected=((candidate_id,opened_topic.data['generation']),))
+    assert revoked.status=='ok',wire(revoked)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        inaccessible=await http.get(path,headers={'X-Msg-Request':header})
+        assert inaccessible.status_code==403

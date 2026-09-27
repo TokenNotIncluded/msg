@@ -17,7 +17,7 @@ from msg.security.policy import constraints_subset,scope_subset,grant_covers
 ONLINE_ISSUABLE_CAPABILITIES=frozenset({
     'identity.basic','resource.basic','discussion.basic','communication.basic',
     'discovery.basic','transfer.basic','group.basic','cert.request','git.basic',
-    'hosting.basic','keystore.basic','batch.basic',
+    'hosting.basic','keystore.basic','batch.basic','sharing.basic',
 })
 
 

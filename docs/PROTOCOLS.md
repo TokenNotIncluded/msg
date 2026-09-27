@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前状态：规则源迁移与标准客户端token @2批次，本地326 passed、8 conformance、uv build成功，未提交、无本批CI，未部署。** 前一提交097b252已推送，[CI 36291133946](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36291133946)已completed/success，其本地319/8/build属于前批，不覆盖当前增量。
+**当前状态：第四批hosting/Notes-Todo/ShareGrant/Sync边界，本地全套332 passed、conformance 8 passed、uv build成功，尚未提交、无本批CI，未部署。** 合并定向28项已包含在全套，不额外累加；短码162→173且旧义不变。真实DNS light.local→10.174.197.165的隔离服务18147验证root web GET/HEAD=200并含CSP sandbox、普通POST web/main=405；临时DB/服务/文件清理且端口无监听。旧ae3aac2的326/8/CI成功仅属前批。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
@@ -323,7 +323,7 @@ QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变�
 
 托管升级使用两阶段双钥PoP，客户端先保存新钥journal；服务器只在空已知age库存时切换。非空库存pending_rewrap保留旧入口，不能在未迁移时销毁唯一可解钥。切换结果丢失后新Ed钥可查询已完成结果，不恢复旧token普通写权。通用逐对象rewrap、外部密文完整验证和严格token一次展示仍缺。
 
-同域hosting在主app匿名只读，所有托管响应强制CSP sandbox且当前禁JS，危险格式作为附件；root web为代码样例而非Resource，preview未实现。light.local产品页测试是“脚本未执行/无API请求”；单独allow-scripts opaque probe是“实际GET私有API→403，CORS不可读”。两份证据不能合并声称同域JS产品可用或所有网络请求被阻断。完整浏览器/preview/root资源矩阵仍需验收。
+同域hosting在主app匿名只读，所有托管响应强制CSP sandbox且当前禁JS，危险格式作为附件；root web已有本批真实Resource，private preview需签名header。light.local产品页测试是“脚本未执行/无API请求”；单独allow-scripts opaque probe是“实际GET私有API→403，CORS不可读”。两份证据不能合并声称同域JS产品可用或所有网络请求被阻断。完整浏览器/preview/root资源矩阵仍需验收。
 
 当前295/8/build已提交d365858，CI已通过；fcf6ae9的成功CI属于前批。
 
@@ -360,3 +360,15 @@ CLI search/grep为受限单页、显式cursor，相关CLI/Sync定向11 passed。
 标准客户端当前默认使用token发行@2，发送前原子保存0600本地journal及独立恢复材料；丢响应保留journal，显式msg identity recover-token恢复，不自动降级@1。含秘密请求仅允许HTTP/GraphQL/MCP HTTP的body传输，PathGET拒绝；真实域必须HTTPS，仅testserver/localhost/127.0.0.1/::1例外。light.local不属于此例外，历史light.local HTTP证据仅为非秘密本地读取探针，不能作为token发行/恢复上线证明。日志脱敏与TLS部署仍须验证。
 
 当前326/8/build仅本地，未提交/无对应CI。公开发布仍缺长期Sync（64引用/15分钟、权限变化resync及路径长度边界）、非空托管库存通用迁移/恢复、完整hosting preview/JS/root Resource与宿主矩阵、完整feature默认/doctor/selftest；不能用新客户端默认@2宣称旧@1已消失或整个服务全部完成。
+
+## 当前第四批实现与验收限制
+
+真实/@root/web已有website/部署清单/文件Resource及Revision，不再只有代码响应样例；hosting.preview创建private候选、不切active指针。读取preview必须携匹配discovery.raw的签名header，不能把返回URL当可直接无凭据浏览器导航；保持禁JS sandbox。hosting切片已纳入332项全套，但不等于完整浏览器/部署矩阵。
+
+Notes已有专用archive/restore，Todo已有本人私有创建/更新/读/列表/归档/恢复，默认pending/neutral；notes定向4 passed。due_at存在不等于已实现到期本人Inbox提醒，该投递仍缺。
+
+ShareGrant工作树已有直接叶资源限时read/revoke/list，合并定向验证通过；不宣称组接收者、转授链或ShareLink完成。Sync仅补>64重放失败/GET零业务状态回归，定向1 passed；长期checkpoint/ack与无限容量同步未实现，不能以失败回归称为扩容。
+
+第四批已完成合并定向：`.venv/bin/python -m pytest -q tests/test_share_grants.py tests/test_notes_todos.py tests/test_hosting_same_origin.py tests/test_sync_cursor.py tests/test_dictionary.py` 为 **28 passed**；短码snapshot由162增至173项，旧码意义不变。此前各项定向不再累加。本批最终332/8/build通过，未提交、无对应CI。
+
+ShareGrant为直接叶资源限时read/revoke/list；私有Note可单项分享但不授父目录列举。SOUL、Todo、DM、system-managed及preview均排除，不等于组分享/转授链/ShareLink。旧安装Online CA证书的grants是冻结快照，新增sharing.basic不能自动扩入旧证书；启用前需受控重签并验证当前授权范围，不能以新安装测试代替存量迁移。

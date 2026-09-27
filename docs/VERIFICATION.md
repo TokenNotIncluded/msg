@@ -1,8 +1,20 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 规则源迁移与标准客户端token @2（未提交，本地全套通过）
+## 2026-09-27 hosting preview、Notes/Todo、ShareGrant与Sync边界（未提交，本地全套通过）
 
-当前工作树 `.venv/bin/python -m pytest -q` 为 **326 passed**，conformance **8 passed**，`uv build -q` 成功；尚未提交、无本批CI。规则源显式迁移保留rule_id/Resource/历史，完整清单/依赖先校验，缺失/未知/重复/悬空声明拒绝。标准客户端默认token @2，0600 journal与显式`msg identity recover-token`，不降级@1。
+当前 `.venv/bin/python -m pytest -q` 为 **332 passed**，conformance **8 passed**，`uv build -q` 成功；尚未提交、无本批远端CI。已报定向hosting **21 passed**、notes **4 passed**、sync **1 passed**；ShareGrant直接叶资源限时read/revoke/list已实现并通过定向，以上不相加成全套。真实root web Resource与private preview、Notes archive/restore/私有Todo、ShareGrant直接叶资源和Sync失败边界各有代码切片，但完整feature仍未完成。
+
+preview需签名header，不是无凭据浏览器链接；Todo尚无到期本人Inbox，Sync长期checkpoint/ack未实现。前一ae3aac2的326/8/build/CI成功不能作为本工作树证据。
+
+
+
+最终合并定向28项已包含在332项全套内，不重复累加；短码162→173且旧码意义不变。真实DNS light.local解析10.174.197.165，隔离服务18147上/@root/web/index.html的GET/HEAD均200、含CSP sandbox；普通POST到web/main均405。临时数据库、服务、文件已清理，端口无监听。此为本地HTTP证据，不是生产部署或完整浏览器preview验证。
+
+ShareGrant直接叶资源限时read/revoke/list、私有Note单项读取不授父目录列举；排除SOUL/Todo/DM/system/preview。旧安装Online CA冻结grants不会自动取得sharing.basic，启用前必须受控重签并验证权限范围，不能直接沿用新安装证据。旧ae3aac2的CI成功不覆盖本批。
+
+## 2026-09-27 规则源迁移与标准客户端token @2（ae3aac2已推送、CI通过）
+
+提交ae3aac2前 `.venv/bin/python -m pytest -q` 为 **326 passed**，conformance **8 passed**，`uv build -q` 成功；提交ae3aac2已推送，[CI 36291771557](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36291771557)已success，未部署。规则源显式迁移保留rule_id/Resource/历史，完整清单/依赖先校验，缺失/未知/重复/悬空声明拒绝。标准客户端默认token @2，0600 journal与显式`msg identity recover-token`，不降级@1。
 
 恢复秘密只用HTTP/GraphQL/MCP HTTP body；PathGET拒绝。真实域要求HTTPS，测试/loopback例外仅testserver、localhost、127.0.0.1、::1；light.local历史HTTP探针是非秘密读取测试，不证明token安全传输。当前没有生产部署证明。
 
@@ -108,3 +120,7 @@ CLI search/grep采用单页与显式cursor；Sync授权epoch/Topic成员摘要�
 - 仍需要部署环境中的备份恢复演练及独立上线验收。本轮没有运行压力基准或独立安全审计，不声明吞吐量或安全覆盖率。
 
 后续记录应同时包含代码提交、准确命令、环境版本、结果和可访问日志；区分单元/集成、协议 conformance、宿主验证及线上验证。disabled/skip 必须说明原因，不能记作 pass。正式功能必须在 CI 启用配置中执行。
+
+第四批已完成合并定向：`.venv/bin/python -m pytest -q tests/test_share_grants.py tests/test_notes_todos.py tests/test_hosting_same_origin.py tests/test_sync_cursor.py tests/test_dictionary.py` 为 **28 passed**；短码snapshot由162增至173项，旧码意义不变。此前各项定向不再累加。第四批最终332/8/build通过，未提交、无对应CI。
+
+ShareGrant为直接叶资源限时read/revoke/list；私有Note可单项分享但不授父目录列举。SOUL、Todo、DM、system-managed及preview均排除，不等于组分享/转授链/ShareLink。旧安装Online CA证书的grants是冻结快照，新增sharing.basic不能自动扩入旧证书；启用前需受控重签并验证当前授权范围，不能以新安装测试代替存量迁移。

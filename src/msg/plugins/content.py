@@ -131,7 +131,7 @@ async def source_content(app,ctx,request,tx,value):
 async def removable(app,ctx,request,tx,resource):
     chain=(*await tx.ancestors(resource.id),resource)
     require(not any(item.id=='t_last_will' for item in chain),'legacy_directive_only')
-    require(not any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes'}
+    require(not any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes','todos'}
                     for parent,child in zip(chain,chain[1:])),
             'personal_managed_resource')
     require(resource.id!='r_agents' and all(
@@ -143,6 +143,13 @@ async def removable(app,ctx,request,tx,resource):
     if parent.mode&STICKY:
         require(ctx.principal.subject in {resource.owner,parent.owner},'sticky_denied')
     return parent
+
+
+async def require_unmanaged_personal(tx,resource):
+    chain=(*await tx.ancestors(resource.id),resource)
+    require(not any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes','todos'}
+                    for parent,child in zip(chain,chain[1:])),
+            'personal_managed_resource')
 
 
 async def ensure_public_repositories(tx,resource, *, mode=None,parent=None):
@@ -187,6 +194,7 @@ def install(app):
         topic=await resolve(tx,request.arguments['id'])
         resource=await tx.resource(topic)
         require(resource.type=='topic' and resource.state=='active','topic_not_active')
+        await require_unmanaged_personal(tx,resource)
         require(ctx.principal.subject is not None and ctx.principal.actor==ctx.principal.subject,
                 'topic_subject_required')
         await app.authorizer.require_base(ctx.principal,operation_id(request),topic,tx)
@@ -409,6 +417,7 @@ def install(app):
         'maxItems':16}},('id','tags')))
     async def tags_set(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))
+        await require_unmanaged_personal(tx,resource)
         check='manage' if resource.type in {'topic','repo'} else 'write'
         await check_access(app,ctx,request,tx,resource.id,check)
         require(app.registry.resource_type(resource.type,resource.type_version).taggable,
@@ -498,6 +507,7 @@ def install(app):
         requirements=requirement('id','chmod'),signature=True)
     async def chmod(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))
+        await require_unmanaged_personal(tx,resource)
         await assert_generation(request,resource)
         require(resource.type not in {'csr','certificate','tool','delegation'},'controlled_resource')
         mode=int(request.arguments['mode'],8)
@@ -512,6 +522,7 @@ def install(app):
         requirements=requirement('id','chgrp'),signature=True)
     async def chgrp(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))
+        await require_unmanaged_personal(tx,resource)
         await assert_generation(request,resource)
         group=await resolve(tx,request.arguments['group'])
         await tx.organization(group)
@@ -528,6 +539,7 @@ def install(app):
         requirements=requirement('id','chown'),signature=True)
     async def chown(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))
+        await require_unmanaged_personal(tx,resource)
         await assert_generation(request,resource)
         require(resource.type not in {'user','organization','certificate','csr','tool','delegation'},'controlled_resource')
         owner=await resolve(tx,request.arguments['owner'])
@@ -543,6 +555,7 @@ def install(app):
         requirements=requirement('id','purge'),signature=True)
     async def purge(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))
+        await require_unmanaged_personal(tx,resource)
         await assert_generation(request,resource)
         require(resource.type in {'post','file','attachment','template','skill','keystore'},'purge_leaf_only')
         revisions=[decode(__import__('msg.core.models',fromlist=['Revision']).Revision,loads(r[0]))
@@ -567,6 +580,7 @@ def install(app):
         requirements=requirement('id','manage'),signature=True)
     async def configure(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))
+        await require_unmanaged_personal(tx,resource)
         require(resource.type=='topic','not_a_topic')
         await assert_generation(request,resource)
         tx.set_setting('policy:'+resource.id,request.arguments['policy'])

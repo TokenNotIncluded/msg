@@ -13,6 +13,7 @@ from msg.core.models import Resource,ResourceRef,Revision,Subject,Organization,M
 RULE_NAMES=('identity','read-write','auth','topics','files','recovery','security','protocol')
 SOURCE_HEADER=re.compile(r'<!-- rule_id: ([a-z][a-z0-9.\-]*); version: ([1-9][0-9]*) -->\n')
 REQUIRES_HEADER=re.compile(r'<!-- requires_rules: ([^\n<>]*) -->')
+ROOT_WEB_SAMPLE=b'<!doctype html><meta charset="utf-8"><title>msg web sample</title><h1>msg web sample</h1>\n'
 # Public identity and location are deliberately independent of the release file.
 # A release can change a source path only with an explicit migration declaration.
 RULE_SPECS=(('msg.bootstrap','r_agents',ROOT_SPACE,'AGENTS.md','AGENTS.md',1000),
@@ -218,6 +219,20 @@ async def bootstrap(store,contents,registry,now, *, selftest_run_id=None):
                     parent=ROOT_SPACE,owner=ROOT_SUBJECT,group=ADMINS_GROUP,mode='0711'),now)
                 await seed_resource(tx,contents,dict(id=namespace_root,type='topic',name=selftest_run_id,
                     parent='t_selftest',owner=ROOT_SUBJECT,group=ADMINS_GROUP,mode='0711'),now)
+        if selftest_run_id is None:
+            # Stable bootstrap IDs make repeated starts idempotent. The hosting
+            # read path uses these ordinary resources, not a special-case page.
+            sample_blob_digest=digest(ROOT_WEB_SAMPLE)
+            sample_revision='v_boot_'+digest(('f_root_web_index',sample_blob_digest))[7:39]
+            manifest_body=canonical({'format_version':1,'deployment':'t_root_web_deploy',
+                'entries':{'index.html':{'id':'f_root_web_index','revision':sample_revision}}})
+            await seed_resource(tx,contents,dict(id='w_root_web',type='website',name='web',parent='u_root',
+                owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode='0755'),now,manifest_body,'application/json')
+            await seed_resource(tx,contents,dict(id='t_root_web_deploy',type='topic',name='deploy-bootstrap',
+                parent='w_root_web',owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode='0755'),now)
+            await seed_resource(tx,contents,dict(id='f_root_web_index',type='file',name='index.html',
+                parent='t_root_web_deploy',owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode='0644'),
+                now,ROOT_WEB_SAMPLE,'text/html')
         for data in definition['resources']:
             if data['type']!='topic':
                 continue

@@ -15,7 +15,7 @@ from msg.core.models import (
     Scope,HandlerOutput,EmailSettings,EffectJob,Event,AuditEvent,AccessRequirement,
 )
 from msg.plugins.common import (registration,resolve,operation_id,check_access,new_id,create_resource,
-    revise_resource,assert_generation,output_for)
+    revise_resource,assert_generation,output_for,validate_name)
 from msg.plugins.schemas import *
 from msg.core.requests import signing_bytes
 from msg.security.crypto import key_id,subject_id,verify
@@ -433,7 +433,8 @@ def install(app):
                                            body=body,media_type='text/markdown',mode=0o600)
         else:
             resource=await tx.resource(existing[0])
-            require(resource.type=='file' and resource.owner==subject.resource_id,
+            require(resource.type=='file' and resource.owner==subject.resource_id and
+                    resource.state=='active',
                     'personal_resource_conflict')
             require(request.arguments.get('expected_revision')==resource.revision,
                     'revision_conflict')
@@ -508,6 +509,145 @@ def install(app):
         body=(await app.contents.read_bytes(revision.content)).decode('utf-8')
         return HandlerOutput(data={'id':row[0],'name':request.arguments['name'],
                                    'revision':revision.id,'content':body})
+
+    async def owned_personal_item(ctx,request,tx,folder_name,name,type):
+        subject=await controlled_owner(app,ctx,request,tx)
+        validate_name(name)
+        folder=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',
+                      (subject.resource_id,folder_name))
+        require(folder is not None,f'{type}_not_found')
+        directory=await tx.resource(folder[0])
+        require(directory.type=='topic' and directory.owner==subject.resource_id and
+                directory.mode&0o077==0,'personal_resource_conflict')
+        row=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',
+                   (directory.id,name))
+        require(row is not None,f'{type}_not_found')
+        resource=await tx.resource(row[0])
+        require(resource.type==type and resource.owner==subject.resource_id and
+                resource.mode&0o077==0,'personal_resource_conflict')
+        return resource
+
+    async def personal_item_state(ctx,request,tx,folder_name,type,state):
+        resource=await owned_personal_item(ctx,request,tx,folder_name,
+                                           request.arguments['name'],type)
+        require(request.arguments['expected_revision']==resource.revision,'revision_conflict')
+        await assert_generation(request,resource)
+        require(resource.state!=state,'state_unchanged')
+        require(resource.state in {'active','archived'},'personal_resource_conflict')
+        updated=replace(resource,state=state,generation=resource.generation+1,
+                        modified_at=ctx.now,modified_by=ctx.principal.actor)
+        await tx.replace(updated,resource.generation)
+        return output_for(updated,state=state)
+
+    personal_state_args=obj({'name':STRING,'expected_revision':IDENTIFIER},
+                            ('name','expected_revision'))
+
+    @op('identity.note_archive',personal_state_args,signature=True)
+    async def note_archive(ctx,request,tx):
+        return await personal_item_state(ctx,request,tx,'notes','file','archived')
+
+    @op('identity.note_restore',personal_state_args,signature=True)
+    async def note_restore(ctx,request,tx):
+        return await personal_item_state(ctx,request,tx,'notes','file','active')
+
+    todo_status={'enum':['pending','in_progress','done']}
+    todo_priority={'enum':['low','neutral','high']}
+    todo_put_args=obj({'name':STRING,'title':STRING,'description':STRING,
+        'status':todo_status,'priority':todo_priority,'due_at':{'type':['string','null']},
+        'related_resource':{'anyOf':[REF,{'type':'null'}]},
+        'expected_revision':IDENTIFIER},('name','title'))
+
+    @op('identity.todo_put',todo_put_args,signature=True)
+    async def todo_put(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        args=request.arguments
+        name=validate_name(args['name'])
+        title=args['title']
+        description=args.get('description','')
+        require(1<=len(title)<=240 and len(description)<=8192,'todo_text_too_large')
+        validate_personal_body(title+'\n'+description,limit=16384)
+        due_at=args.get('due_at')
+        if due_at is not None:
+            due_at=wire(parse_time(due_at))
+        related=args.get('related_resource')
+        if related is not None:
+            rid=await resolve(tx,related['id'])
+            await check_access(app,ctx,request,tx,rid,'read')
+            if related.get('revision') is not None:
+                await tx.revision(ResourceRef(id=rid,revision=related['revision']))
+            related={'id':rid,'revision':related.get('revision')}
+        body=canonical({'title':title,'description':description,
+            'status':args.get('status','pending'),'priority':args.get('priority','neutral'),
+            'due_at':due_at,'related_resource':related}).decode('utf-8')
+        folder=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',
+                      (subject.resource_id,'todos'))
+        if folder is None:
+            require('expected_revision' not in args,'todo_revision_not_found')
+            directory=await create_resource(app,ctx,request,tx,parent=subject.resource_id,
+                                            type='topic',name='todos',mode=0o700)
+        else:
+            directory=await tx.resource(folder[0])
+            require(directory.type=='topic' and directory.owner==subject.resource_id and
+                    directory.mode&0o077==0,'personal_resource_conflict')
+        row=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',(directory.id,name))
+        if row is None:
+            require('expected_revision' not in args,'todo_revision_not_found')
+            resource=await create_resource(app,ctx,request,tx,parent=directory.id,
+                type='todo',name=name,body=body,media_type='application/json',mode=0o600)
+        else:
+            resource=await tx.resource(row[0])
+            require(resource.type=='todo' and resource.owner==subject.resource_id and
+                    resource.state=='active' and resource.mode&0o077==0,
+                    'personal_resource_conflict')
+            require(args.get('expected_revision')==resource.revision,'revision_conflict')
+            await assert_generation(request,resource)
+            resource=await revise_resource(app,ctx,request,tx,resource,body,'application/json')
+        save_personal_proof(tx,request,resource,subject.resource_id,'todo',ctx.now)
+        return output_for(resource,**loads(body))
+
+    @op('identity.todo_list',obj({'after_name':STRING,'limit':{'type':'integer',
+        'minimum':1,'maximum':100}}),effect='read')
+    async def todo_list(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        folder=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',
+                      (subject.resource_id,'todos'))
+        if folder is None:
+            return HandlerOutput(data={'items':[],'next_after_name':None})
+        directory=await tx.resource(folder[0])
+        require(directory.type=='topic' and directory.owner==subject.resource_id and
+                directory.mode&0o077==0,'personal_resource_conflict')
+        limit=request.arguments.get('limit',50)
+        rows=tx.rows("SELECT id,name,revision,generation FROM resources WHERE parent=? "
+            "AND type='todo' AND state='active' AND name>? ORDER BY name LIMIT ?",
+            (directory.id,request.arguments.get('after_name',''),limit+1))
+        page=rows[:limit]
+        items=[]
+        for rid,name,revision_id,generation in page:
+            revision=await tx.revision(ResourceRef(id=rid,revision=revision_id))
+            details=loads((await app.contents.read_bytes(revision.content)).decode('utf-8'))
+            items.append({'id':rid,'name':name,'revision':revision_id,
+                'generation':generation,'title':details['title'],'status':details['status'],
+                'priority':details['priority'],'due_at':details['due_at']})
+        return HandlerOutput(data={'items':items,
+            'next_after_name':page[-1][1] if len(rows)>limit else None})
+
+    @op('identity.todo_get',obj({'name':STRING},('name',)),effect='read')
+    async def todo_get(ctx,request,tx):
+        resource=await owned_personal_item(ctx,request,tx,'todos',
+                                           request.arguments['name'],'todo')
+        require(resource.state=='active','todo_not_found')
+        revision=await tx.revision(ResourceRef(id=resource.id,revision=resource.revision))
+        body=loads((await app.contents.read_bytes(revision.content)).decode('utf-8'))
+        return HandlerOutput(data={'id':resource.id,'name':resource.name,
+            'revision':revision.id,'generation':resource.generation,**body})
+
+    @op('identity.todo_archive',personal_state_args,signature=True)
+    async def todo_archive(ctx,request,tx):
+        return await personal_item_state(ctx,request,tx,'todos','todo','archived')
+
+    @op('identity.todo_restore',personal_state_args,signature=True)
+    async def todo_restore(ctx,request,tx):
+        return await personal_item_state(ctx,request,tx,'todos','todo','active')
 
     legacy_action={'enum':['publish_final_message','archive_public_profile',
                            'handoff_information','preserve_account','impersonate',
@@ -1220,7 +1360,7 @@ def install(app):
         cert=await issue_online(app,tx,target,credential.id,ctx,request)
         return HandlerOutput(resources=(ResourceRef(id=target),),data={'key_id':credential.id,'certificate_id':cert.resource_id})
 
-    all_types=('topic','post','template','file','attachment','tool','user','organization','certificate','csr','delegation','repo','website','keystore','skill','legacy_directive')
+    all_types=('topic','post','template','file','attachment','tool','user','organization','certificate','csr','delegation','repo','website','keystore','skill','legacy_directive','todo')
     types=[ResourceTypeSpec(name=name,version=1,container=name in {'topic','user','organization','repo','website'},
         content_schema=None,operations=frozenset(),relations=frozenset({'reply_to','thread_root','quote','repost','attachment','template'}),
         taggable=name in {'post','topic','repo'}) for name in all_types]

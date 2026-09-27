@@ -64,6 +64,37 @@ def register(app,op):
         resource=await revise_resource(app,ctx,request,tx,resource,body,'application/json')
         return output_for(resource,files=len(entries),url=app.settings.service_url.rstrip('/')+await tx.path(resource.id)+'/')
 
+    @op('hosting.preview',obj({'id':IDENTIFIER,'entries':{'type':'array','minItems':1,
+        'items':obj({'path':STRING,'source':REF},('path','source'))}},('id','entries')),signature=True)
+    async def preview(ctx,request,tx):
+        website=await tx.resource(await resolve(tx,request.arguments['id']))
+        require(website.type=='website' and website.state=='active','not_a_website')
+        await check_access(app,ctx,request,tx,website.id,'write')
+        await assert_generation(request,website)
+        sources=[];names=set()
+        for item in request.arguments['entries']:
+            path=path_name(item['path'])
+            require(path not in names,'duplicate_hosting_path');names.add(path)
+            ref=decode(ResourceRef,item['source']);require(ref.revision is not None,'source_revision_required')
+            await check_access(app,ctx,request,tx,ref.id,'read')
+            sources.append((path,(await tx.revision(ref)).content))
+        candidate=await create_resource(app,ctx,request,tx,parent=website.id,type='topic',
+            name='preview-'+new_id('p'),mode=0o700)
+        entries={}
+        for index,(path,blob) in enumerate(sources):
+            private=await create_resource(app,ctx,request,tx,parent=candidate.id,type='file',
+                name=f'file-{index}',body=blob,media_type=blob.media_type,mode=0o600)
+            tx.set_setting('hosting_preview_file:'+private.id,
+                           {'website':website.id,'owner':ctx.principal.subject})
+            entries[path]={'id':private.id,'revision':private.revision}
+        candidate=await revise_resource(app,ctx,request,tx,candidate,
+            canonical({'format_version':1,'entries':entries}),'application/json')
+        tx.set_setting('hosting_preview:'+candidate.id,
+                       {'website':website.id,'owner':ctx.principal.subject})
+        return output_for(candidate,files=len(entries),
+            url=(app.settings.service_url.rstrip('/')+await tx.path(website.id)+
+                 '/_preview/'+candidate.id+'/'))
+
     @op('hosting.activate',obj({'id':IDENTIFIER,'revision':IDENTIFIER},('id','revision')),signature=True)
     async def activate(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))
@@ -83,11 +114,11 @@ HOSTED_HEADERS={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referre
     'Content-Security-Policy':"sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     'Cache-Control':'no-store'}
 DOWNLOAD_TYPES={'application/xhtml+xml','image/svg+xml','application/xml','text/xml','application/pdf'}
-ROOT_SAMPLE=b'<!doctype html><meta charset="utf-8"><title>msg web sample</title><h1>msg web sample</h1>\n'
 
 
 def hosted_error(code):
-    status=403 if code in {'forbidden_host','permission_denied','credential_ceiling'} else \
+    status=403 if code in {'forbidden_host','permission_denied','credential_ceiling',
+                           'authentication_required','local_only','credential_revoked'} else \
         405 if code=='method_not_allowed' else 416 if code=='range_not_satisfiable' else 404
     return Response(canonical({'error':code}),status_code=status,media_type='application/json',
                     headers=HOSTED_HEADERS)
@@ -115,7 +146,6 @@ async def serve_hosted(service,request):
     if len(parts)<2 or not parts[0].startswith(('@','&')):
         return None
     site_path='/'+parts[0]+'/'+parts[1]
-    root_sample=site_path=='/@root/web'
     try:
         async with service.metadata.transaction(write=False) as tx:
             try:
@@ -125,26 +155,7 @@ async def serve_hosted(service,request):
                 rid=None
             website=await tx.resource(rid) if rid is not None else None
             if website is None or website.type!='website':
-                if not root_sample:
-                    return None
-                raw_path=request.scope.get('raw_path',request.url.path.encode())
-                try:
-                    require(b'%' not in raw_path and raw_path.decode('ascii')==request.url.path,
-                            'not_found')
-                except UnicodeDecodeError as exc:
-                    raise Failure('not_found') from exc
-                require(request.method in {'GET','HEAD'},'method_not_allowed')
-                require(request.url.path in {'/@root/web','/@root/web/','/@root/web/index.html'},'not_found')
-                etag='"'+digest(ROOT_SAMPLE)+'"'
-                headers={**HOSTED_HEADERS,'ETag':etag,'Content-Length':str(len(ROOT_SAMPLE)),
-                         'Accept-Ranges':'bytes'}
-                if request.headers.get('if-none-match')==etag:
-                    return Response(status_code=304,headers=headers)
-                byte_range,status,range_headers=hosted_range(request,len(ROOT_SAMPLE),etag)
-                headers.update(range_headers)
-                headers['Content-Length']=str(byte_range[1]-byte_range[0])
-                return Response(b'' if request.method=='HEAD' else ROOT_SAMPLE[byte_range[0]:byte_range[1]],
-                                status_code=status,media_type='text/html',headers=headers)
+                return None
             raw_path=request.scope.get('raw_path',request.url.path.encode())
             try:
                 require(b'%' not in raw_path and raw_path.decode('ascii')==request.url.path,
@@ -152,24 +163,47 @@ async def serve_hosted(service,request):
             except UnicodeDecodeError as exc:
                 raise Failure('not_found') from exc
             require(request.method in {'GET','HEAD'},'method_not_allowed')
-            require(website.state=='active' and website.revision is not None,'not_found')
+            require(website.state=='active','not_found')
             file_parts=parts[2:]
+            preview_id=None
+            if len(file_parts)>=2 and file_parts[0]=='_preview':
+                preview_id=file_parts[1]
+                require(re.fullmatch(r'[A-Za-z0-9_-]{1,128}',preview_id) is not None,'not_found')
+                file_parts=file_parts[2:]
             revision_id=website.revision
-            if len(file_parts)>=2 and file_parts[0]=='_rev':
+            if preview_id is None and len(file_parts)>=2 and file_parts[0]=='_rev':
                 revision_id=file_parts[1]
                 file_parts=file_parts[2:]
             file_path='/'.join(file_parts) or 'index.html'
             if request.url.path.endswith('/') and file_parts:
                 file_path+='/index.html'
             file_path=path_name(file_path)
-            packet=request_for('discovery.raw',{'id':rid},service.settings.service_url)
+            if preview_id is not None:
+                from msg.transports.packet import path_packet
+                signed=request.headers.get('x-msg-request')
+                require(bool(signed),'authentication_required')
+                packet=path_packet(signed,'j',service.settings.server.limits.max_request_bytes)
+                require(packet.operation=='discovery.raw' and dict(packet.arguments)=={'id':preview_id}
+                        and packet.proof is not None,'representation_mismatch')
+            else:
+                require(revision_id is not None,'not_found')
+                packet=request_for('discovery.raw',{'id':rid},service.settings.service_url)
             principal=await service.authenticator.authenticate(packet,tx,entry='network')
             from msg.core.models import ExecutionContext
             import time
             context=ExecutionContext(request_id=packet.request_id,principal=principal,
                 entry='network',now=service.clock(),deadline_monotonic=time.monotonic()+30)
             await check_access(service,context,packet,tx,rid,'read')
-            revision=await tx.revision(ResourceRef(id=rid,revision=revision_id))
+            if preview_id is not None:
+                candidate=await tx.resource(preview_id)
+                require(candidate.type=='topic' and candidate.parent==rid and candidate.state=='active' and
+                        candidate.revision is not None and
+                        tx.setting('hosting_preview:'+candidate.id)==
+                        {'website':rid,'owner':candidate.owner},'not_found')
+                await check_access(service,context,packet,tx,candidate.id,'read')
+                revision=await tx.revision(ResourceRef(id=candidate.id,revision=candidate.revision))
+            else:
+                revision=await tx.revision(ResourceRef(id=rid,revision=revision_id))
             manifest=loads(await service.contents.read_bytes(revision.content,limit=65536))
             require(type(manifest) is dict and type(manifest.get('entries')) is dict,'invalid_deployment')
             item=manifest['entries'].get(file_path)

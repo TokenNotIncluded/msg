@@ -1,4 +1,4 @@
-"""Single owner/group/mode/credential/certificate authorization path."""
+"""Current owner/group/mode/ShareGrant/credential/certificate authorization path."""
 from __future__ import annotations
 from msg.constants import ROOT_SUBJECT,TOOLS_SPACE
 from msg.core.errors import Failure,require
@@ -63,6 +63,23 @@ class AuthorizationService:
         return any([g.capability in BASE_FAMILIES and operation in g.operations and
                     await scope_contains(g.scope,resource,session) for g in principal.ceiling])
 
+    def shared_read(self,principal,resource,chain,now,session):
+        """A direct, live source for exactly one resource's read check."""
+        if principal.subject is None or principal.actor != principal.subject:
+            return False
+        if any(item.id in {'r_agents','r_rules','t_last_will'} or
+               item.type in {'tool','csr','certificate','credential','legacy_directive'}
+               for item in chain):
+            return False
+        if any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','todos'}
+               for parent,child in zip(chain,chain[1:])):
+            return False
+        row=session.one('''SELECT grantor,expires_at FROM share_grants
+            WHERE resource_id=? AND grantee=? AND revoked_at IS NULL''',
+                        (resource.id,principal.subject))
+        return bool(row and row[0]==resource.owner and parse_time(row[1])>now
+                    and resource.state=='active')
+
     async def require_base(self,principal,operation,resource,session):
         await self._ceiling(principal,operation,resource,session)
         require(await self.ordinary(principal,operation,resource,session),'credential_ceiling')
@@ -77,6 +94,13 @@ class AuthorizationService:
             operation=check.operation
             await self._ceiling(principal,operation,resource.id,session)
             chain=(*await session.ancestors(resource.id),resource)
+            preview=next((marker for item in chain
+                for marker in (session.setting('hosting_preview:'+item.id),
+                               session.setting('hosting_preview_file:'+item.id)) if marker),None)
+            if preview is not None:
+                require(principal.subject==preview['owner'] or
+                        (principal.subject==ROOT_SUBJECT and context.entry=='local_admin'
+                         and principal.method=='local'),'permission_denied')
             if check.check in _WRITE_CHECKS and any(
                     item.id in {'r_agents','r_rules'} for item in chain):
                 require(False,'system_managed_resource')
@@ -84,10 +108,15 @@ class AuthorizationService:
                 require(operation in {'identity.legacy_put@1','identity.legacy_archive@1'} and
                         principal.subject==resource.owner,'legacy_directive_only')
             if check.check in _WRITE_CHECKS and any(
-                    parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes'}
+                    parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes','todos'}
                     for parent,child in zip(chain,chain[1:])):
-                require(operation in {'identity.personal_put@1','identity.note_put@1',
-                                      'identity.soul_visibility@1'} and
+                sharing_notes=(operation in {'sharing.grant@1','sharing.revoke@1'} and
+                    all(child.name not in {'SOUL.md','AGENTS.md','todos'}
+                        for parent,child in zip(chain,chain[1:]) if parent.type=='user'))
+                require((sharing_notes or operation in {'identity.personal_put@1','identity.note_put@1',
+                                      'identity.soul_visibility@1','identity.note_archive@1',
+                                      'identity.note_restore@1','identity.todo_put@1',
+                                      'identity.todo_archive@1','identity.todo_restore@1'}) and
                         principal.subject==resource.owner,'personal_managed_resource')
             if check.check in _WRITE_CHECKS and principal.subject is not None:
                 for ancestor in reversed(chain):
@@ -127,11 +156,13 @@ class AuthorizationService:
             tool_access=resource.type=='tool' and await self.has(principal,'tool.use',operation,resource.id,session)
             if resource.type=='tool':
                 require(tool_access,'tool_certificate_required')
+            shared_read=(check.check=='read' and self.shared_read(
+                principal,resource,chain,context.now,session))
             for ancestor in chain[:-1]:
                 readable=allows(ancestor,principal.subject,memberships,'traverse')
                 override=await self.has(principal,'resource.read_override',operation,ancestor.id,session)
                 minimal_tool=tool_access and ancestor.id==TOOLS_SPACE
-                require(readable or override or minimal_tool,'permission_denied')
+                require(readable or override or minimal_tool or shared_read,'permission_denied')
                 require(ancestor.state=='active','ancestor_inactive')
             if check.check in _WRITE_CHECKS:
                 require(principal.subject is not None,'authentication_required')
@@ -162,6 +193,8 @@ class AuthorizationService:
                 allowed=False
             else:
                 allowed=allows(resource,principal.subject,memberships,check.check)
+                if not allowed and check.check=='read':
+                    allowed=shared_read
             ordinary=await self.ordinary(principal,operation,resource.id,session)
             if not ordinary and check.check=='read':
                 output=session.setting('tool_output:'+resource.id)

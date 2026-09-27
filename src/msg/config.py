@@ -175,7 +175,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
             description=item.get('description'),policy_ref=item.get('policy_ref')))
     require(len({item.id for item in custodians})==len(custodians),'duplicate_recovery_custodian')
     require(set(data.get('plugins',{}))<={'enabled'},'unknown_plugin_configuration')
-    plugins=tuple(data.get('plugins',{}).get('enabled',('identity','content','discussion','communication','discovery','achievements','recovery','transfer','extensions','system','batch')))
+    plugins=tuple(data.get('plugins',{}).get('enabled',('identity','content','discussion','communication','discovery','achievements','recovery','sharing','transfer','extensions','system','batch')))
     require(all(isinstance(name,str) for name in plugins) and len(set(plugins))==len(plugins),'invalid_plugin_list')
     require('identity' in plugins,'identity_plugin_required')
     tools=data.get('tools',{})

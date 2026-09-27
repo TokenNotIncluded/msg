@@ -225,6 +225,17 @@ async def test_sync_over_64_refs_fails_without_advancing_cursor(installed):
         assert over.status_code==400,over.text
         assert over.json()['error']['code']=='resync_required'
         assert 'sync_cursor' not in over.json() and 'next' not in over.json()
+        # Replaying from the beginning is not a long-term recovery strategy:
+        # the same exact seen-set boundary is reached again.  Keep this as a
+        # regression until a /-/ checkpoint operation can persist exact state.
+        restarted=await http.get(signed_path(app,key,user,'/_r/s/start',{}))
+        assert restarted.status_code==200
+        replay_cursor=restarted.json()['sync_cursor']
+        replay=await http.get('/_r/s/'+replay_cursor,
+                              headers=signed_header(app,key,user,{'cursor':replay_cursor}))
+        assert replay.status_code==400
+        assert replay.json()['error']['code']=='resync_required'
+        assert 'sync_cursor' not in replay.json() and 'next' not in replay.json()
     assert await state(app)==before
 
 

@@ -2,7 +2,7 @@
 
 权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T00:35:34.164Z`。
 
-**当前状态：规则源迁移与标准客户端token @2批次，本地326 passed、8 conformance、uv build成功，未提交、无本批CI，未部署。** 前一提交097b252已推送，[CI 36291133946](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36291133946)已completed/success，其本地319/8/build属于前批，不覆盖当前增量。
+**当前状态：第四批hosting/Notes-Todo/ShareGrant/Sync边界，本地全套332 passed、conformance 8 passed、uv build成功，尚未提交、无本批CI，未部署。** 合并定向28项已包含在全套，不额外累加；短码162→173且旧义不变。真实DNS light.local→10.174.197.165的隔离服务18147验证root web GET/HEAD=200并含CSP sandbox、普通POST web/main=405；临时DB/服务/文件清理且端口无监听。旧ae3aac2的326/8/CI成功仅属前批。
 
 历史证据单独保留：`e01dacc` 本地 228/8/build 与[CI 36281301900](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)通过；`f085e7f` 本地 206/8/build 与 CI 通过。220 是双钥加入前的中间结果，不是当前基线，不与任何测试数量累加。详细命令见 [VERIFICATION](VERIFICATION.md)。
 
@@ -15,7 +15,7 @@
 | DM | 双主体唯一 pair、request/accept/reject/send/list/archive/block、独立 post/Revision、Inbox 通知及隐私守卫 | 完整 CLI/分页/附件与分享移动矩阵、群聊历史隔离、离线 SyncCursor、逐 feature 验收 |
 | presence/claim | 主动签名 presence set/clear、默认/过期 unknown；签名 self_claim、authority=none、证据逐项授权 | doctor/selftest/CLI/完整主体视图；presence 默认300s、范围30–3600s是实现选择，非云端指定 |
 | 成就 | self-custody R1–R5、zero-width strategy、60s/300s、独立 grant/ceremony、签名与审计 | custodial、通用 Event evaluator、完整 Spec/Issuer、Profile pin/索引、完整默认/doctor/selftest |
-| Git/hosting/宿主 | 公开 Git、受限 SSH、`/-/git/<repo-id>` HTTP 小包 receive-pack、read_url/push_url；现有 hosting/CSP | 完整大包/流式/LFS；同域JS/preview/root样例Resource与完整部署回滚矩阵；真实 sshd/bubblewrap/SMTP/浏览器 |
+| Git/hosting/宿主 | 公开 Git、受限 SSH、`/-/git/<repo-id>` HTTP 小包 receive-pack、read_url/push_url；现有 hosting/CSP | 完整大包/流式/LFS；同域JS与完整preview/部署回滚矩阵（root Resource与private preview切片已有）；真实 sshd/bubblewrap/SMTP/浏览器 |
 | 资源/存储/工具 | Registry/执行器、PostgreSQL 权威事实、可选 Valkey 唤醒、Transfer、签名审计、msgd.toml、新安装目录与备份v3、tool.run | 部署恢复/旧库迁移、ShareGrant/ShareLink、组完整生命周期、file/post patch/grep/rebase/batch、邮件/Webhook/TUI等 |
 | 本批规则/导航/个人文本 | docs/system bootstrap、/_rules默认GET索引+8分片、load幂等源码同步、普通wiki；LinkSet与精确diff；主动签名请求写Notes/SOUL/AGENTS | source/RuleSet精确映射、规则全文/删除迁移、HTML/TUI、Notes完整生命周期/Todos、客户端Revision manifest独立签名、自然语言继承/全部秘密识别 |
 | 其余未实现范围 | 旧模板/回执不是完整功能 | 完整custodial/账号恢复/rewrap/Policy UI/Legacy、其余八项Agent原语完整契约及各feature默认/doctor/selftest矩阵 |
@@ -61,7 +61,7 @@ QueryRef私有描述File由维护任务在过期+1h后满足条件才回收；�
 
 托管→自托管start/finish/result已有两阶段IdentityKey与EncryptionSubkey持有证明，客户端先持久化新钥与本地journal。只有已知age库存为空才完成切换；非空返回pending_rewrap并保留旧入口，不假称密文已迁移。旧token随完成切换失效、响应丢失后可用新Ed钥查询结果。已知库存为空不证明外部或任意格式密文都可恢复；通用逐对象rewrap/外部密文验证仍缺，严格token一次展示仍未完成。
 
-hosting已有主app同域匿名只读入口；所有托管响应强制CSP sandbox，本批不允许JS，危险格式按附件下载。/@root/web/index.html仅代码样例，不是真正Resource/Revision；preview缺，不能报完整hosting feature。
+hosting已有主app同域匿名只读入口；所有托管响应强制CSP sandbox，本批不允许JS，危险格式按附件下载。/@root/web/index.html本批已用真实Resource/Revision，preview候选需签名header，不能报完整hosting feature。
 
 真实light.local浏览器证据分开记录：产品页因本批禁JS而脚本未执行、API请求未发；另一受控sandbox allow-scripts的opaque探针确实发GET到私有API，服务端403，浏览器CORS不可读。前者证明执行限制，后者证明该探针请求的授权拒绝/读取隔离；不能互相替代，也不能证明全部浏览器旁路或支持同域JS。仍需preview/history/raw/304/Range/危险格式、身份携带、导航/窗口/服务worker和完整发布回滚矩阵。
 
@@ -100,3 +100,15 @@ CLI search/grep为受限单页、显式cursor，相关CLI/Sync定向11 passed。
 标准客户端当前默认使用token发行@2，发送前原子保存0600本地journal及独立恢复材料；丢响应保留journal，显式msg identity recover-token恢复，不自动降级@1。含秘密请求仅允许HTTP/GraphQL/MCP HTTP的body传输，PathGET拒绝；真实域必须HTTPS，仅testserver/localhost/127.0.0.1/::1例外。light.local不属于此例外，历史light.local HTTP证据仅为非秘密本地读取探针，不能作为token发行/恢复上线证明。日志脱敏与TLS部署仍须验证。
 
 当前326/8/build仅本地，未提交/无对应CI。公开发布仍缺长期Sync（64引用/15分钟、权限变化resync及路径长度边界）、非空托管库存通用迁移/恢复、完整hosting preview/JS/root Resource与宿主矩阵、完整feature默认/doctor/selftest；不能用新客户端默认@2宣称旧@1已消失或整个服务全部完成。
+
+## 当前第四批实现与验收限制
+
+真实/@root/web已有website/部署清单/文件Resource及Revision，不再只有代码响应样例；hosting.preview创建private候选、不切active指针。读取preview必须携匹配discovery.raw的签名header，不能把返回URL当可直接无凭据浏览器导航；保持禁JS sandbox。hosting切片已纳入332项全套，但不等于完整浏览器/部署矩阵。
+
+Notes已有专用archive/restore，Todo已有本人私有创建/更新/读/列表/归档/恢复，默认pending/neutral；notes定向4 passed。due_at存在不等于已实现到期本人Inbox提醒，该投递仍缺。
+
+ShareGrant工作树已有直接叶资源限时read/revoke/list，合并定向验证通过；不宣称组接收者、转授链或ShareLink完成。Sync仅补>64重放失败/GET零业务状态回归，定向1 passed；长期checkpoint/ack与无限容量同步未实现，不能以失败回归称为扩容。
+
+第四批已完成合并定向：`.venv/bin/python -m pytest -q tests/test_share_grants.py tests/test_notes_todos.py tests/test_hosting_same_origin.py tests/test_sync_cursor.py tests/test_dictionary.py` 为 **28 passed**；短码snapshot由162增至173项，旧码意义不变。此前各项定向不再累加。本批最终332/8/build通过，未提交、无对应CI。
+
+ShareGrant为直接叶资源限时read/revoke/list；私有Note可单项分享但不授父目录列举。SOUL、Todo、DM、system-managed及preview均排除，不等于组分享/转授链/ShareLink。旧安装Online CA证书的grants是冻结快照，新增sharing.basic不能自动扩入旧证书；启用前需受控重签并验证当前授权范围，不能以新安装测试代替存量迁移。

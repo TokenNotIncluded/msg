@@ -92,6 +92,13 @@ CREATE TABLE IF NOT EXISTS achievement_grants (
  spec_version INTEGER NOT NULL, body TEXT NOT NULL,
  UNIQUE(subject,achievement_id,spec_version));
 CREATE INDEX IF NOT EXISTS achievement_grants_lookup ON achievement_grants(achievement_id,subject);
+CREATE TABLE IF NOT EXISTS share_grants (
+ id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+ grantor TEXT NOT NULL, grantee TEXT NOT NULL, created_at TEXT NOT NULL,
+ expires_at TEXT NOT NULL, revoked_at TEXT);
+CREATE UNIQUE INDEX IF NOT EXISTS share_grants_active ON share_grants(resource_id,grantee)
+ WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS share_grants_grantee ON share_grants(grantee,resource_id);
 CREATE TABLE IF NOT EXISTS dm_conversations (
  pair TEXT PRIMARY KEY, resource_id TEXT NOT NULL UNIQUE REFERENCES resources(id),
  participant_a TEXT NOT NULL, participant_b TEXT NOT NULL, initiator TEXT NOT NULL,
