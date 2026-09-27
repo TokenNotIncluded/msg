@@ -46,14 +46,17 @@ def locked_state(state):
 
 def read_intent(path):
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         raise Failure('unsafe_upgrade_journal') from None
-    with os.fdopen(fd, 'rb') as stream:
-        info = os.fstat(stream.fileno())
+    try:
+        info = os.fstat(fd)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and
                 info.st_nlink == 1 and info.st_mode & 0o077 == 0, 'unsafe_upgrade_journal')
-        raw = stream.read(8193)
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            raw = stream.read(8193)
+    finally:
+        os.close(fd)
     require(len(raw) <= 8192, 'invalid_upgrade_journal')
     try:
         value = loads(raw)
