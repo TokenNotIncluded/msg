@@ -1,8 +1,15 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 SearchQuery@3、共享LFS CAS与hosting CLI（未提交，本地全套通过）
+## 2026-09-27 Inbox Webhook、只读TUI与Search suggest @4（未提交，本地全套通过）
 
-权威修订实时核实仍00:35:34.164Z。GIT_CONFIG_GLOBAL=/dev/null下全套 **363 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；未提交、无本批CI。联合定向28包含在全套内，不累加；短码191→192保旧义。SearchQuery@3新增source_kind/relation_type，q/3/query-string/QueryRef同版本。LFS新对象共用blob_dir CAS、repo hardlink GC根、显式pin保留修复；PG串行默认4GiB准入与共享卷sentinel仅限LFS新对象，旧repo迁移及全worker staging预算未完。hosting CLI preview/deploy/activate/history使用签名header及惰性输出文件限制。
+GIT_CONFIG_GLOBAL=/dev/null下全套 **379 passed**、conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；短码192→196旧义保留。未提交、无本批CI，不借用e18d0b6的363/8/build CI。
+
+Webhook为Inbox opt-in、vault封存secret，HMAC/去重/SSRF/uncertain定向已纳入全套；真实公网/Domain Events未验。TUI第一片Home/Inbox/Search/Thread只读、零自动ACK。Search@4显式suggest，spell未做。以上不等于完整Webhook/TUI/Search feature或生产部署。
+
+
+## 2026-09-27 SearchQuery@3、共享LFS CAS与hosting CLI（e18d0b6已推送、CI成功）
+
+权威修订实时核实仍00:35:34.164Z。GIT_CONFIG_GLOBAL=/dev/null下全套 **363 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；已提交推送e18d0b6，[CI 36297201348](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36297201348)completed/success（363/8/build）。联合定向28包含在全套内，不累加；短码191→192保旧义。SearchQuery@3新增source_kind/relation_type，q/3/query-string/QueryRef同版本。LFS新对象共用blob_dir CAS、repo hardlink GC根、显式pin保留修复；PG串行默认4GiB准入与共享卷sentinel仅限LFS新对象，旧repo迁移及全worker staging预算未完。hosting CLI preview/deploy/activate/history使用签名header及惰性输出文件限制。
 
 前批81ec32a已提交，本地355/8/build，CI36296327583已completed/success（355/8/build），不能归作本批通过证据。
 

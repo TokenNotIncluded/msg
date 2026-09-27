@@ -102,6 +102,7 @@ def parser():
     download=commands.add_parser('download');download.add_argument('resource');download.add_argument('file',type=Path)
     download.add_argument('--revision');download.add_argument('--part-bytes',type=int,default=65536)
     commands.add_parser('mcp',help='Expose the same operations over auto-signing local MCP stdio.')
+    commands.add_parser('tui',help='Browse Home, Inbox, search and threads without ACK or writes.')
     cert=commands.add_parser('cert').add_subparsers(dest='action',required=True)
     cert.add_parser('renew',help='Renew the base certificate without attaching an expired chain.')
     certget=cert.add_parser('get');certget.add_argument('id')
@@ -377,6 +378,10 @@ async def run(args):
         elif command=='mcp':
             from msg.transports.stdio import serve_stdio
             await serve_stdio(client)
+            return 0
+        elif command=='tui':
+            from msg.tui import run_tui
+            await run_tui(client)
             return 0
         else: raise Failure('unknown_command')
         rendered=result_wire(result) if isinstance(result,OperationResult) else result

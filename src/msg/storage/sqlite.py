@@ -80,6 +80,9 @@ CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT
 CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, dedupe TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, next_at TEXT NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS watches (subject TEXT, resource TEXT, PRIMARY KEY(subject,resource));
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, sender TEXT, recipient TEXT, resource TEXT, event_id TEXT, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS webhook_endpoints (
+ subject TEXT PRIMARY KEY, url TEXT NOT NULL, nonce TEXT NOT NULL, ciphertext TEXT NOT NULL,
+ enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), generation INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS reactions (subject TEXT, resource TEXT, kind TEXT, revision TEXT NOT NULL DEFAULT '', body TEXT NOT NULL, PRIMARY KEY(subject,resource,kind,revision));
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS projections (resource_id TEXT PRIMARY KEY, text TEXT NOT NULL);

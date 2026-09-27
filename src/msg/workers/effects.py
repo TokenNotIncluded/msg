@@ -96,7 +96,8 @@ def effect_request(app, job, principal):
 
 
 class EffectWorker:
-    def __init__(self, app, *, tool_runner=None, mail_sender=None, lease_seconds=120):
+    def __init__(self, app, *, tool_runner=None, mail_sender=None, webhook_sender=None,
+                 lease_seconds=120):
         self.app = app
         if tool_runner is None:
             from msg.workers.sandbox import BubblewrapRunner
@@ -105,6 +106,10 @@ class EffectWorker:
             from msg.workers.mail import SmtpSender
             mail_sender = SmtpSender(app.settings.server.mail)
         self.tool_runner, self.mail_sender = tool_runner, mail_sender
+        if webhook_sender is None:
+            from msg.workers.webhook import WebhookSender
+            webhook_sender = WebhookSender()
+        self.webhook_sender = webhook_sender
         self.lease_seconds = lease_seconds
 
     async def _claim(self):
@@ -148,6 +153,20 @@ class EffectWorker:
                 await tx.save_job(replace(current,state='pending',lease_until=None,
                     next_attempt_at=self.app.clock()+timedelta(seconds=delay)))
             tx.set_setting('job_status:'+job.id,{'code':code})
+
+    async def _retry_webhook(self,job):
+        async with self.app.metadata.transaction(write=True) as tx:
+            current=await tx.job(job.id)
+            if current.state!='running' or current.attempts!=job.attempts:
+                return
+            if current.attempts>=8:
+                await tx.save_job(replace(current,state='failed',lease_until=None))
+                tx.set_setting('job_status:'+job.id,{'code':'webhook_attempts_exhausted'})
+            else:
+                delay=min(3600,30*2**(current.attempts-1))
+                await tx.save_job(replace(current,state='pending',lease_until=None,
+                    next_attempt_at=self.app.clock()+timedelta(seconds=delay)))
+                tx.set_setting('job_status:'+job.id,{'code':'webhook_retry_scheduled'})
 
     async def _tool(self, job, directory):
         from msg.extensions.tools import read_tool, tool_policies
@@ -244,6 +263,39 @@ class EffectWorker:
         require(state in {'sent', 'uncertain'}, 'invalid_delivery_result')
         await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
 
+    async def _webhook(self, job):
+        from msg.core.codec import canonical
+        from msg.workers.webhook import open_secret, validate_endpoint
+        require(job.operation=='communication.send','invalid_webhook_event')
+        async with self.app.metadata.transaction(write=False) as tx:
+            principal=await current_principal(self.app,job.principal,tx)
+            recipient=job.arguments['recipient_subject']
+            subject=await tx.subject(recipient)
+            require(not subject.local_only,'local_only')
+            row=tx.one('''SELECT url,nonce,ciphertext,enabled,generation FROM webhook_endpoints
+                          WHERE subject=?''',(recipient,))
+            require(row is not None and row[3]==1 and
+                    row[4]==job.arguments['endpoint_generation'],'webhook_disabled')
+            message=tx.one('SELECT sender,recipient,event_id FROM messages WHERE id=?',
+                           (job.arguments['message_id'],))
+            require(message is not None and message==(principal.subject,recipient,job.event_id),
+                    'webhook_event_missing')
+            url=row[0]
+            validate_endpoint(url)
+            secret=open_secret(self.app,recipient,row[1],row[2])
+        timestamp=str(int(self.app.clock().timestamp()))
+        # No resource ref or body: current resource permissions cannot leak into
+        # an external delivery through a delayed job.
+        body=canonical({'event_id':job.event_id,'delivery_id':job.id,
+                        'timestamp':timestamp,'subject_id':recipient,'type':'inbox.reference'})
+        state=await self.webhook_sender.send(url,secret,body,timestamp=timestamp,
+                                             event_id=job.event_id,delivery_id=job.id)
+        require(state in {'delivered','retry','failed'},'invalid_delivery_result')
+        if state=='retry':
+            await self._retry_webhook(job)
+        else:
+            await self._finish(job,'done' if state=='delivered' else 'failed',state)
+
     async def run_once(self):
         job, execute = await self._claim()
         if job is None:
@@ -257,6 +309,8 @@ class EffectWorker:
                     await self._tool(job, Path(temp))
             elif job.kind == 'mail':
                 await self._mail(job)
+            elif job.kind == 'webhook':
+                await self._webhook(job)
             elif job.kind == 'git.push':
                 from msg.extensions.repositories import execute_push
                 await execute_push(self.app,job)

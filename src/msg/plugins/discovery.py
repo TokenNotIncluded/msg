@@ -525,10 +525,14 @@ def install(app):
                            'source_kind':{'enum':['release','user','operation']},
                            'relation_type':{'enum':['reply_to','thread_root','quote','repost',
                                                     'attachment','template']}}}
+    lexical_schema_v4={**lexical_schema_v3,
+                       'properties':{**lexical_schema_v3['properties'],
+                                     'suggest':BOOLEAN}}
 
     @op('discovery.lexical_search',lexical_schema_v1,effect='read')
     @op('discovery.lexical_search',lexical_schema,effect='read',version=2)
     @op('discovery.lexical_search',lexical_schema_v3,effect='read',version=3)
+    @op('discovery.lexical_search',lexical_schema_v4,effect='read',version=4)
     async def lexical_search(ctx,request,tx):
         a=dict(request.arguments)
         internal_page=getattr(request,'internal_page_state',None)
@@ -544,7 +548,8 @@ def install(app):
             a={**saved['arguments'],'cursor':a['cursor']}
         # A cursor or sealed QueryRef carries arguments from an earlier call.
         # Keep those arguments inside the version selected for this call too.
-        require(not (request.contract_version<3 and
+        require(not (request.contract_version<4 and 'suggest' in a) and
+                not (request.contract_version<3 and
                      {'source_kind','relation_type'}&a.keys()) and
                 not (request.contract_version<2 and 'facets' in a),
                 'cursor_query_mismatch')
@@ -582,6 +587,12 @@ def install(app):
         author=await resolve(tx,a['author']) if a.get('author') else None
         results=[]
         facet_counts={name:{} for name in a.get('facets',())}
+        # Suggestion counts describe *matched readable resources*, not raw
+        # indexed terms. Rebuild on every page so revoked grants disappear.
+        suggestions={}
+        suggest_prefix=terms[-1] if a.get('suggest') and terms else ''
+        if a.get('suggest'):
+            require(2<=len(suggest_prefix)<=32,'query_cost_exceeded')
         scanned=0
         # Restrict the SQL candidate set before applying the work budget. A
         # global LIMIT lets unrelated (or unreadable) rows starve a small scope.
@@ -695,6 +706,17 @@ def install(app):
             if a.get('fields'):
                 item={key:item[key] for key in selected if key in item}
             results.append((sort_key,item))
+            if a.get('suggest'):
+                # Names alone keep this optional projection small and avoid
+                # mining arbitrary body text. A resource contributes at most
+                # once to each candidate, regardless of repeated words.
+                require(len(name)<=256,'query_cost_exceeded')
+                words={word.casefold() for word in re.findall(r'[\w-]+',name)}
+                for word in words:
+                    if (suggest_prefix!=word and word.startswith(suggest_prefix)
+                            and len(word)<=32):
+                        suggestions[word]=suggestions.get(word,0)+1
+                        require(len(suggestions)<=100,'query_cost_exceeded')
             # Aggregate only matched resources after the current read grant was
             # checked. Never derive buckets from the SQL candidates or a
             # previous page cursor: grants can disappear between page reads.
@@ -712,6 +734,10 @@ def install(app):
                                   for key,count in sorted(values.items(),
                                       key=lambda pair:(-pair[1],pair[0]))]
                             for name,values in facet_counts.items()}
+        if a.get('suggest'):
+            data['suggestions']=[{'value':word,'count':count}
+                                 for word,count in sorted(suggestions.items(),
+                                     key=lambda pair:(-pair[1],pair[0]))[:10]]
         if len(following)>limit:
             cursor=app.cursors.encode_page(request.operation,normalized,page[-1][0],snapshot,
                 principal,ctx.now+timedelta(minutes=15))

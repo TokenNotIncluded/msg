@@ -118,6 +118,38 @@ def _dm_notice(tx,ctx,request,recipient,resource):
 def install(app):
     op,finish=registration(app,'communication',('identity','content'))
 
+    @op('communication.webhook_set',obj({'url':{'type':'string','minLength':1,'maxLength':2048},
+        'secret':{'type':'string','minLength':43,'maxLength':86}},('url','secret')),signature=True)
+    async def webhook_set(ctx,request,tx):
+        from msg.workers.webhook import seal_secret, validate_endpoint
+        subject=_signed_subject(ctx)
+        await app.authorizer.require_base(ctx.principal,operation_id(request),subject,tx)
+        url=request.arguments['url']
+        validate_endpoint(url)
+        nonce,ciphertext=seal_secret(app,subject,request.arguments['secret'])
+        tx.execute('''INSERT INTO webhook_endpoints (subject,url,nonce,ciphertext,enabled,generation)
+            VALUES (?,?,?,?,1,1) ON CONFLICT(subject) DO UPDATE SET url=excluded.url,
+            nonce=excluded.nonce,ciphertext=excluded.ciphertext,enabled=1,
+            generation=webhook_endpoints.generation+1''',
+            (subject,url,nonce,ciphertext),write=True)
+        return HandlerOutput(data={'enabled':True,'url':url})
+
+    @op('communication.webhook_disable',obj(),signature=True)
+    async def webhook_disable(ctx,request,tx):
+        subject=_signed_subject(ctx)
+        await app.authorizer.require_base(ctx.principal,operation_id(request),subject,tx)
+        tx.execute('UPDATE webhook_endpoints SET enabled=0,generation=generation+1 WHERE subject=?',
+                   (subject,),write=True)
+        return HandlerOutput(data={'enabled':False})
+
+    @op('communication.webhook_status',obj(),effect='read')
+    async def webhook_status(ctx,request,tx):
+        subject=_signed_subject(ctx)
+        await app.authorizer.require_base(ctx.principal,operation_id(request),subject,tx)
+        row=tx.one('SELECT url,enabled,generation FROM webhook_endpoints WHERE subject=?',(subject,))
+        return HandlerOutput(data={'enabled':bool(row and row[1]),'url':row[0] if row else None,
+                                   'generation':row[2] if row else 0})
+
     @op('communication.presence_get',obj({'subject_id':IDENTIFIER},('subject_id',)),effect='read')
     async def presence_get(ctx,request,tx):
         subject=await resolve(tx,request.arguments['subject_id'])
@@ -353,6 +385,14 @@ def install(app):
         eid=event_id(request,ctx.principal.subject)
         tx.execute('INSERT INTO messages VALUES (?,?,?,?,?,?)',
             (record['id'],ctx.principal.subject,recipient,ref.id,eid,canonical(record).decode()),write=True)
+        if r.type=='user':
+            row=tx.one('SELECT enabled,generation FROM webhook_endpoints WHERE subject=?',(recipient,))
+            if row and row[0]:
+                await tx.enqueue(EffectJob(id=new_id('job'),event_id=eid,kind='webhook',
+                    dedupe_key=f'{eid}:{recipient}:webhook',principal=ctx.principal,
+                    operation=request.operation,arguments={'recipient_subject':recipient,
+                        'message_id':record['id'],'endpoint_generation':row[1]},
+                    state='pending',attempts=0,next_attempt_at=ctx.now,lease_until=None))
         # Notification is an external projection; it never includes private body content.
         if r.type=='user' and app.settings.server.mail:
             row=tx.one('SELECT body FROM emails WHERE subject=?',(recipient,))

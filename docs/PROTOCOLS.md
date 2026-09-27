@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前状态：第九批在GIT_CONFIG_GLOBAL=/dev/null下本地全套363 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码191→192保旧义，联合定向28包含在全套内、不累加。前批81ec32a的[CI 36296327583](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36296327583)已completed/success（355/8/build），不覆盖当前增量。
+**当前状态：第十批Webhook Inbox、只读TUI与Search suggest，在GIT_CONFIG_GLOBAL=/dev/null下本地全套379 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码192→196保旧义。前批e18d0b6的[CI 36297201348](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36297201348)completed/success（363/8/build），不覆盖当前工作树。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
@@ -329,7 +329,7 @@ QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变�
 
 ## 新增搜索/Grep与Legacy切片（本地验证通过，尚未提交）
 
-SearchQuery通过discovery.lexical_search读取有限scope的词法结果，q/2纯路径和SearchQuery QueryRef共用Operation执行器；结果按当前权限过滤后构造snippet/解释/LinkSet及分页。Grep只处理已知范围，固定串或禁分组/量词/回溯等很小正则子集，返回Revision与匹配上下文；count_only亦须授权。facets已有第八批@2切片，suggest/spell及完整查询/大库边界仍缺。SQL递归限定scope候选，当前可见性与基础过滤通过后再累计候选预算；2001条范围外资源不饿死范围内查询的回归已通过。仍不声称恒定时间或所有时序侧信道消除。
+SearchQuery通过discovery.lexical_search读取有限scope的词法结果，q/2纯路径和SearchQuery QueryRef共用Operation执行器；结果按当前权限过滤后构造snippet/解释/LinkSet及分页。Grep只处理已知范围，固定串或禁分组/量词/回溯等很小正则子集，返回Revision与匹配上下文；count_only亦须授权。facets已有第八批@2切片，suggest已有@4切片，spell及完整查询/大库边界仍缺。SQL递归限定scope候选，当前可见性与基础过滤通过后再累计候选预算；2001条范围外资源不饿死范围内查询的回归已通过。仍不声称恒定时间或所有时序侧信道消除。
 
 LegacyDirective已有identity.legacy_put/get/archive/status与/last-will/本人签名登记；private/public可选，更新绑定expected_revision，公开正文只表达意愿，恢复/checkpoint/handoff引用独立保存并当前授权裁剪。普通post/reply/like/移动/分享不能替代专用操作。declaration_only=true与automatic_transition=false意味着不执行遗愿、不因presence过期变legacy、不授账号/资源/CA权限；完整恢复执行、Revision独立签名及自然语言秘密检测仍缺。
 
@@ -411,10 +411,18 @@ doctor.authority_snapshot只读比较当前Registry与旧Root/Online CA签名gra
 
 ## 第九批当前切片
 
-SearchQuery@3新增source_kind/relation_type过滤，HTTP q/3、query-string、QueryRef/续页使用同版本，旧@1/@2不改义；关系条件只匹配当前Revision关系类型，不等于任意图查询或全套高级搜索，suggest/spell仍缺。
+SearchQuery@3新增source_kind/relation_type过滤，HTTP q/3、query-string、QueryRef/续页使用同版本，旧@1/@2不改义；关系条件只匹配当前Revision关系类型，不等于任意图查询或全套高级搜索，suggest已有第十批@4显式切片，spell仍缺。
 
 LFS新对象与Files/Transfer共用blob_dir CAS，repo hardlink作为GC保留根，修复显式pin误删。PostgreSQL串行准入默认4GiB并用共享卷sentinel核对后端一致性；该限制只覆盖LFS新对象，不是所有文件/全worker staging或整个部署磁盘配额。旧repo LFS迁移、全部署staging及其它CAS写入预算仍缺，不能以共用目录推断所有历史对象已迁移。
 
 CLI已有hosting preview/deploy/activate/history；private preview使用签名header，输出遵守惰性文件创建/覆盖限制，不提供无凭据可打开preview URL。当前本地363/8/build通过，未提交/无本批CI；真实浏览器全部入口矩阵、托管JS、长期运维与完整feature门槛不由此自动完成。
 
 第九批边界：Files/LFS/Transfer共用BlobStore对新LFS对象已实现，旧对象与全部署staging/其它CAS写预算尚未完成；hosting preview CLI不输出裸可执行URL，签名header与惰性文件创建限制保留。
+
+## 第十批局部实现与未验范围
+
+Webhook仅Inbox-based显式opt-in，secret由vault封存；HMAC签名、投递去重、SSRF限制与uncertain有定向并纳入本地全套。真实公网接收端/完整网络部署矩阵及Domain Event订阅未验，不能声称外部投递端到端已完成；默认关闭和当前授权裁剪不放宽。
+
+TUI仅第一片只读Home/Inbox/Search/Thread，复用公共客户端契约且不自动ACK；没有完整产品功能、写交互或全部终端/恢复矩阵。Search@4的suggest为显式请求、不默认改写查询；spell未实现，旧版本schema与短码不改义。
+
+当前379/8/build只是未提交本地证据，短码192→196；不借用e18d0b6的363/8成功CI，不表示生产部署。

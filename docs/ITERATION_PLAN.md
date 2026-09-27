@@ -2,7 +2,7 @@
 
 权威[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)最新修订仍为2026-09-27T00:35:34.164Z。
 
-**当前状态：第九批在GIT_CONFIG_GLOBAL=/dev/null下本地全套363 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码191→192保旧义，联合定向28包含在全套内、不累加。前批81ec32a的[CI 36296327583](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36296327583)已completed/success（355/8/build），不覆盖当前增量。
+**当前状态：第十批Webhook Inbox、只读TUI与Search suggest，在GIT_CONFIG_GLOBAL=/dev/null下本地全套379 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码192→196保旧义。前批e18d0b6的[CI 36297201348](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36297201348)completed/success（363/8/build），不覆盖当前工作树。
 
 1. **c62e516的309/8/build与CI已通过；验证后续CLI Search/Grep和SyncCursor改动。** 保持未接custodial写fail-closed；网络代解密不开放。继续补完整RouteSpec/只读零业务变更矩阵，UA guard不替代认证。
 2. **补齐custodial非空库存升级。** 双钥PoP/本地journal/空库存切换与新钥查结果已有；下一步显式逐对象可恢复密文rewrap→确认迁移结果→撤销托管token→按策略销毁旧vault钥并审计。每步断线/重复请求可安全恢复，未完成不能冒称self-custody。严格token一次展示必须同时解决首次响应丢失恢复，不靠重复返回秘密掩盖。
@@ -86,10 +86,18 @@ doctor.authority_snapshot只读比较当前Registry与旧Root/Online CA签名gra
 
 ## 第九批当前切片
 
-SearchQuery@3新增source_kind/relation_type过滤，HTTP q/3、query-string、QueryRef/续页使用同版本，旧@1/@2不改义；关系条件只匹配当前Revision关系类型，不等于任意图查询或全套高级搜索，suggest/spell仍缺。
+SearchQuery@3新增source_kind/relation_type过滤，HTTP q/3、query-string、QueryRef/续页使用同版本，旧@1/@2不改义；关系条件只匹配当前Revision关系类型，不等于任意图查询或全套高级搜索，suggest已有第十批@4显式切片，spell仍缺。
 
 LFS新对象与Files/Transfer共用blob_dir CAS，repo hardlink作为GC保留根，修复显式pin误删。PostgreSQL串行准入默认4GiB并用共享卷sentinel核对后端一致性；该限制只覆盖LFS新对象，不是所有文件/全worker staging或整个部署磁盘配额。旧repo LFS迁移、全部署staging及其它CAS写入预算仍缺，不能以共用目录推断所有历史对象已迁移。
 
 CLI已有hosting preview/deploy/activate/history；private preview使用签名header，输出遵守惰性文件创建/覆盖限制，不提供无凭据可打开preview URL。当前本地363/8/build通过，未提交/无本批CI；真实浏览器全部入口矩阵、托管JS、长期运维与完整feature门槛不由此自动完成。
 
 第九批边界：Files/LFS/Transfer共用BlobStore对新LFS对象已实现，旧对象与全部署staging/其它CAS写预算尚未完成；hosting preview CLI不输出裸可执行URL，签名header与惰性文件创建限制保留。
+
+## 第十批局部实现与未验范围
+
+Webhook仅Inbox-based显式opt-in，secret由vault封存；HMAC签名、投递去重、SSRF限制与uncertain有定向并纳入本地全套。真实公网接收端/完整网络部署矩阵及Domain Event订阅未验，不能声称外部投递端到端已完成；默认关闭和当前授权裁剪不放宽。
+
+TUI仅第一片只读Home/Inbox/Search/Thread，复用公共客户端契约且不自动ACK；没有完整产品功能、写交互或全部终端/恢复矩阵。Search@4的suggest为显式请求、不默认改写查询；spell未实现，旧版本schema与短码不改义。
+
+当前379/8/build只是未提交本地证据，短码192→196；不借用e18d0b6的363/8成功CI，不表示生产部署。
