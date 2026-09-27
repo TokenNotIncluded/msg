@@ -46,6 +46,41 @@ async def test_dm_request_accept_send_and_third_party_deny(installed):
 
 
 @pytest.mark.asyncio
+async def test_first_dm_request_can_include_one_private_introduction(installed):
+    app,_=installed
+    alice_key,alice,_=await register(app,'dm-intro-alice')
+    bob_key,bob,_=await register(app,'dm-intro-bob')
+    eve_key,eve,_=await register(app,'dm-intro-eve')
+    intro='I would like to discuss the draft.'
+    created=await call(app,'communication.dm_request',
+                       {'recipient':bob,'introduction':intro},
+                       key=alice_key,subject=alice,contract_version=2)
+    assert created.status=='ok',wire(created)
+    ref=created.data['introduction_ref']
+    assert ref['id'] and ref['revision']
+    for key,subject in ((alice_key,alice),(bob_key,bob)):
+        read=await call(app,'discovery.get',{'id':ref['id']},
+                        key=key,subject=subject)
+        assert read.status=='ok' and read.data['content']==intro
+    hidden=await call(app,'discovery.get',{'id':ref['id']},
+                      key=eve_key,subject=eve)
+    assert hidden.status=='error'
+    search=await call(app,'discovery.search',{'query':intro},
+                      key=eve_key,subject=eve)
+    assert search.status=='error' or not search.data.get('items')
+    duplicate=await call(app,'communication.dm_request',
+                         {'recipient':alice,'introduction':'Do not append this.'},
+                         key=bob_key,subject=bob,contract_version=2)
+    assert duplicate.status=='ok'
+    assert duplicate.data['conversation_id']==created.data['conversation_id']
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM resources WHERE parent=? AND type=?',
+                      (created.data['conversation_id'],'post'))[0]==1
+        messages=tx.rows('SELECT body FROM messages WHERE recipient=?',(bob,))
+        assert all(intro not in body for (body,) in messages)
+
+
+@pytest.mark.asyncio
 async def test_dm_reject_block_archive_and_other_message_immutable(installed):
     app, _ = installed
     alice_key, alice, _ = await register(app, 'dm-amber')

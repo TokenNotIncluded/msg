@@ -34,9 +34,13 @@ async def test_dm_cli_request_accept_send_read_and_block(installed,tmp_path,monk
             result=loads(capsys.readouterr().out.encode().strip())
             return status,result
 
-        status,requested=await invoke(alice_dir,'request',bob.state.subject)
+        status,requested=await invoke(alice_dir,'request',bob.state.subject,
+                                      '--intro','Hello from Alice')
         assert status==0 and requested['status']=='ok'
         conversation=requested['data']['conversation_id']
+        intro_id=requested['data']['introduction_ref']['id']
+        status,introduction=await invoke(bob_dir,'read',intro_id)
+        assert status==0 and introduction['data']['content']=='Hello from Alice'
         status,accepted=await invoke(bob_dir,'accept',conversation)
         assert status==0 and accepted['data']['state']=='active'
         status,sent=await invoke(alice_dir,'send',conversation,'--text','private CLI message')

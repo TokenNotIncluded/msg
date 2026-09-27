@@ -361,7 +361,6 @@ def install(app):
                               'issued_at','expires_at','evidence_digest','authority')})
         return HandlerOutput(data={'items':items})
 
-    @op('communication.dm_request',obj({'recipient':IDENTIFIER},('recipient',)),signature=True)
     async def dm_request(ctx,request,tx):
         from msg.plugins.common import create_resource
         sender=_signed_subject(ctx)
@@ -385,9 +384,24 @@ def install(app):
             (pair,resource_id,participant_a,participant_b,initiator,state,created_at,updated_at)
             VALUES (?,?,?,?,?,?,?,?)''',
                    (pair,topic.id,first,second,sender,'pending',wire(ctx.now),wire(ctx.now)),write=True)
+        introduction=request.arguments.get('introduction')
+        intro_ref=None
+        if introduction is not None:
+            require(len(introduction.encode('utf-8'))<=1024,'introduction_too_large')
+            intro=await create_resource(app,ctx,request,tx,parent=topic.id,type='post',
+                                        body=introduction,media_type='text/markdown',mode=0o600)
+            intro_ref=ResourceRef(id=intro.id,revision=intro.revision)
         _dm_notice(tx,ctx,request,recipient,topic.id)
-        return HandlerOutput(resources=(ResourceRef(id=topic.id),),
-                             data={'conversation_id':topic.id,'state':'pending','participant_pair':[first,second]})
+        data={'conversation_id':topic.id,'state':'pending',
+              'participant_pair':[first,second]}
+        if intro_ref is not None:
+            data['introduction_ref']=wire(intro_ref)
+        return HandlerOutput(resources=(ResourceRef(id=topic.id),),data=data)
+    op('communication.dm_request',obj({'recipient':IDENTIFIER},('recipient',)),
+       signature=True)(dm_request)
+    op('communication.dm_request',obj({'recipient':IDENTIFIER,
+        'introduction':{'type':'string','minLength':1,'maxLength':500}},
+        ('recipient',)),signature=True,version=2)(dm_request)
 
     async def dm_decision(ctx,request,tx):
         subject=_signed_subject(ctx)

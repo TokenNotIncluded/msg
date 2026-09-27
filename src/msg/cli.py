@@ -90,6 +90,7 @@ def parser():
     dm_actions=dm.add_subparsers(dest='action',required=True)
     dm_actions.add_parser('list')
     dm_request=dm_actions.add_parser('request');dm_request.add_argument('recipient')
+    dm_request.add_argument('--intro')
     dm_send=dm_actions.add_parser('send');dm_send.add_argument('conversation');dm_send.add_argument('--text',required=True)
     dm_read=dm_actions.add_parser('read');dm_read.add_argument('resource')
     for action in ('accept','reject','archive'):
@@ -307,7 +308,9 @@ async def run(args):
         elif command=='dm':
             if args.action=='list':result=await client.call('communication.dm_list')
             elif args.action=='request':result=await client.call('communication.dm_request',
-                                                                 {'recipient':args.recipient})
+                {'recipient':args.recipient,**({'introduction':args.intro}
+                                               if args.intro is not None else {})},
+                contract_version=2 if args.intro is not None else 1)
             elif args.action=='send':result=await client.call('communication.dm_send',
                 {'conversation_id':args.conversation,'body':args.text})
             elif args.action=='read':result=await client.call('discovery.get',{'id':args.resource})

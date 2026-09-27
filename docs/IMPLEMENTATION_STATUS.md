@@ -4,9 +4,9 @@
 
 本次实时读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)修订 `ANLCKQn-8pecglFO…`，192个非空段；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQkjYH6n_sfl…`、71段，已含A19/A20等后续归档。此前189/71及更早196/19、首次5段+4句仅为历史迁移记录，不能将全部71段归为那次迁移；后续用户归档不取消回归要求。
 
-上一已提交批次 `cfd9a30` 的[CI36308410947](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36308410947)completed/success，远端 **433 core / 8 conformance / build通过**；此前本地432是mode小修之前。以上不覆盖当前未提交工作树。**当前未提交工作树本地core全套502 passed in 437.51s，`uv build -q`与`git diff --check`通过；conformance 8 passed in 82.57s。** 不称完整market_e2e、发布或生产部署。 既有定向76与Bounty5等互有重叠，不累加；最新手动跨模块交易链测试通过但不是官方market_e2e。
+此前 `cfd9a30` 的[CI36308410947](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36308410947)为433 core/8 conformance/build成功。最新已提交的 `fb9bb65` 在[CI36310779270](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36310779270)完成 **502 core / 8 conformance / build通过**，仅证明该提交。当前main另有未提交的DM首次介绍`communication.dm_request@2`切片：本地全套 **503 passed in 462.02s**，其后CLI空介绍与私密搜索回归改动经DM/CLI/字典定向 **18 passed**，conformance **8 passed in 78.55s**、`uv build -q`与`git diff --check`通过；当前增量尚无CI或部署证据。手动跨模块交易链属于fb9，仍不等于官方market_e2e。
 
-归档审计已修正A01/A16/A18的完成范围：临时主体双钥、复杂GET短码及完整模板/示例、首次DM最小介绍明确回到待办；正式双钥注册、已支持的标量路径与其余已验证DM行为不因此作废。这三项不能因502项通过而自动标完成。
+归档审计已修正A01/A16/A18的完成范围：临时主体双钥、复杂GET短码及完整模板/示例、首次DM最小介绍已回到待办；现有未提交@2切片待CI验证；正式双钥注册、已支持的标量路径与其余已验证DM行为不因此作废。这三项不能因502项通过而自动标完成。
 
 | 本批切片 | 当前实现事实 | 明确未完成项 |
 | --- | --- | --- |
@@ -30,7 +30,7 @@ Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get�
 
 `test_market_manual_flow.py` 已串起Test Root内部mint/银行登记/注资→10MSG预托管PoP奖励→5MSG固定bundle购买→买家显式prepare/get/accept→bank15/buyer5、total_supply20。它使用内部本机用例和手动交付，**不证明官方market_e2e要求的bank fund命令、自动Delivery、SMTP sink/未验证邮箱边界及全部失败矩阵**。DisputeResolver/仲裁和大型Transfer也仍缺。
 
-下一出口：core502与build已通过，明确提交/CI归属；再补系统LedgerAccount分型及跨模块备份/恢复、自动交付与状态故障恢复、大型Transfer；随后按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
+下一出口：fb9已提交并通过CI，当前DM@2待提交/CI；再补系统LedgerAccount分型及跨模块备份/恢复、自动交付与状态故障恢复、大型Transfer；随后按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
 
 ## 历史：文档迁移与此前验证归属
 

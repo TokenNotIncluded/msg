@@ -2,9 +2,9 @@
 
 三项DCR的主要建议已经写入[权威项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，不再是“待用户批准”。本次实时读取迁移后修订 `ANLCKQn-8pecglFOz3FbfUUAK2pRUi9ILo-7l73yyV6-L-YLF2Bsho40Yx-AIgGXELv-eUikApTStBiuHnQARputdmoczj6SOYp9sL3dXl4`，192个非空段。下文以该正文为规范，区分需求已生效与实现尚未完成。
 
-[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQkjYH6n_sfl…`、71段，已含A19/A20等后续归档；首次19段归档中的5个整段和4句依据e126539与成功CI36306888836，不能将后续全部归档归因于该次迁移；不表示本文件讨论的秘密传输/恢复完整功能已完成。上一批cfd9a30远端CI36308410947已success（433 core/8 conformance/build）；本地432是mode修订前。当前新增本机money/offer管理、MoneyConfig、恢复窗口备份配置、Bounty、funded退款与≤1MiB买家手动交付/结算，本地core502 passed in 437.51s、conformance 8 passed in 82.57s、uv build -q及diff检查通过；手动跨模块链通过不等于官方market_e2e或本批CI。
+[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQkjYH6n_sfl…`、71段，已含A19/A20等后续归档；首次19段归档中的5个整段和4句依据e126539与成功CI36306888836，不能将后续全部归档归因于该次迁移；不表示本文件讨论的秘密传输/恢复完整功能已完成。cfd9a30远端CI36308410947为433/8/build成功；fb9bb65远端CI36310779270为502/8/build成功，均不覆盖当前未提交DM介绍@2。DM介绍本地全套503 passed，随后CLI/私密搜索小修经定向18 passed、conformance8/build/diff通过，仍无本批CI；手动跨模块链属于fb9，但不是官方market_e2e。
 
-此前189/71是历史基线。A01/A16/A18归档范围已修正，临时主体双钥、复杂GET短码/完整模板示例和首次DM介绍保留为未完成需求；这是完成状态纠偏，不撤销DCR三项已生效规范。
+此前189/71是历史基线。A01/A16/A18归档范围已修正，临时主体双钥、复杂GET短码/完整模板示例和首次DM介绍已有未提交@2切片，待CI和完整验收；这是完成状态纠偏，不撤销DCR三项已生效规范。
 
 ## DCR-01：秘密传输与纯路径边界——已采纳并扩充
 
@@ -27,6 +27,12 @@
 状态须区分identity_switched/history_recoverable/server_key_retired，以及online_retired/backup_retired。无法迁移默认pending；用户可显式接受不可恢复，或保留受限旧钥并继续披露server-decryptable。在线销毁、备份退役、token撤销分别审计；恢复旧备份须重放撤销/退役状态，不复活token、证书当前授权或旧签名能力。
 
 现有副本mapping、冻结清单与ACK不等于完整实现。B类受限Envelope、新写入切换/增量、逐项解密闭环、状态拆分、备份退役与旧备份防复活均仍有差距；finalize继续拒绝不完整迁移，不能把已采纳规范写成已经交付。
+
+## DCR-04：临时主体的双钥边界——待决定
+
+现行设计要求建号同步生成独立IdentityKey与EncryptionSubkey，并已把`identity.temporary`创建新主体却不生成双钥列回待办。当前`identity.temporary@1/@2`只发行短期token，后续`identity.upgrade@2`才要求客户端双钥；这不是已完成的建号双钥契约。
+
+建议明确临时身份是否属于正式“建号”。若属于，临时创建也应接收客户端生成的两把公钥及持有证明，并规定旧token-only入口的迁移/拒绝行为；若只是受限的临时主体，应在设计中明示它不是完整账号、不能使用依赖双钥的私有加密能力，并写清升级前后的可用操作和数据迁移。后一选择会修改现行要求，未经决定前仍按主文档记录差距，不能把A01归档扩成所有入口完成。
 
 ## 不因DCR采纳或条款迁出而减少的范围
 
