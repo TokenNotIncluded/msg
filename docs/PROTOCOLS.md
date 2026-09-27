@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前状态：第八批在GIT_CONFIG_GLOBAL=/dev/null下本地全套355 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** facets以lexical_search@2新增，@1旧schema不变；短码190→191旧义保留。路由effect矩阵和只读doctor.authority_snapshot已纳入。前批78dbd80的[CI 36295518895](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36295518895)completed/success（351/8/build），不覆盖当前增量。
+**当前状态：第九批在GIT_CONFIG_GLOBAL=/dev/null下本地全套363 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码191→192保旧义，联合定向28包含在全套内、不累加。前批81ec32a的[CI 36296327583](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36296327583)已completed/success（355/8/build），不覆盖当前增量。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
@@ -408,3 +408,13 @@ ShareLink默认off，system.share_links_set为受控开关；token仅POST body�
 lexical_search@1保持已发布schema，facets只进入@2；QueryRef、续页、HTTP query与q/2共用@2契约，不能将新字段偷偷加入@1。短码190→191，旧码意义保留；本地355/8/build通过，尚无本批CI。
 
 doctor.authority_snapshot只读比较当前Registry与旧Root/Online CA签名grants快照，不修改证书、不自动扩权。旧签名快照不能原位安全增加能力；需要的新增授权必须显式本机Root流程处理，若需Root轮换会使旧信任链失效，必须先评估迁移/重签影响。诊断结果不是升级生产授权的许可，本批不自动修改生产。
+
+## 第九批当前切片
+
+SearchQuery@3新增source_kind/relation_type过滤，HTTP q/3、query-string、QueryRef/续页使用同版本，旧@1/@2不改义；关系条件只匹配当前Revision关系类型，不等于任意图查询或全套高级搜索，suggest/spell仍缺。
+
+LFS新对象与Files/Transfer共用blob_dir CAS，repo hardlink作为GC保留根，修复显式pin误删。PostgreSQL串行准入默认4GiB并用共享卷sentinel核对后端一致性；该限制只覆盖LFS新对象，不是所有文件/全worker staging或整个部署磁盘配额。旧repo LFS迁移、全部署staging及其它CAS写入预算仍缺，不能以共用目录推断所有历史对象已迁移。
+
+CLI已有hosting preview/deploy/activate/history；private preview使用签名header，输出遵守惰性文件创建/覆盖限制，不提供无凭据可打开preview URL。当前本地363/8/build通过，未提交/无本批CI；真实浏览器全部入口矩阵、托管JS、长期运维与完整feature门槛不由此自动完成。
+
+第九批边界：Files/LFS/Transfer共用BlobStore对新LFS对象已实现，旧对象与全部署staging/其它CAS写预算尚未完成；hosting preview CLI不输出裸可执行URL，签名header与惰性文件创建限制保留。

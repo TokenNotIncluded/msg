@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from msg.core.models import ResourceRef,OperationResult
 from msg.transports.client import TRANSPORTS
 
 
-def arguments(value):
+def json_input(value):
     if value=='-':
         raw=sys.stdin.buffer.read(1048577)
     elif value.startswith('@'):
@@ -22,7 +23,11 @@ def arguments(value):
     else:
         raw=value.encode()
     require(len(raw)<=1048576,'arguments_too_large')
-    parsed=loads(raw)
+    return loads(raw)
+
+
+def arguments(value):
+    parsed=json_input(value)
     require(isinstance(parsed,dict),'arguments_must_be_object')
     return parsed
 
@@ -141,6 +146,25 @@ def parser():
     legacy_get=legacy_actions.add_parser('get')
     legacy_get.add_argument('--subject')
     legacy_get.add_argument('--revision')
+    hosting=commands.add_parser('hosting',help='Explicit signed website candidates and revisions.')
+    hosting_actions=hosting.add_subparsers(dest='action',required=True)
+    hosting_create=hosting_actions.add_parser('create')
+    hosting_create.add_argument('parent');hosting_create.add_argument('name')
+    for action in ('preview','deploy'):
+        command=hosting_actions.add_parser(action)
+        command.add_argument('website');command.add_argument('entries',
+            help='JSON array or @file of {path,source:{id,revision}} entries.')
+    hosting_fetch=hosting_actions.add_parser('preview-get',
+        help='Authenticated read of a private candidate into a new local file.')
+    hosting_fetch.add_argument('site_path',help='Website path, e.g. /@alice/web.')
+    hosting_fetch.add_argument('candidate_id')
+    hosting_fetch.add_argument('file_path')
+    hosting_fetch.add_argument('--output',type=Path,required=True)
+    hosting_activate=hosting_actions.add_parser('activate',
+        help='Explicitly publish a previously deployed website revision.')
+    hosting_activate.add_argument('website');hosting_activate.add_argument('revision')
+    hosting_history=hosting_actions.add_parser('history')
+    hosting_history.add_argument('website')
     return cli
 
 
@@ -321,12 +345,44 @@ async def run(args):
                 params={'subject_id':subject}
                 if args.revision:params['revision']=args.revision
                 result=await client.call('identity.legacy_get',params)
+        elif command=='hosting':
+            if args.action=='create':
+                require(state.signer is not None and state.token is None,
+                        'signing_identity_required')
+                result=await client.call('hosting.create',{'parent':args.parent,'name':args.name})
+            elif args.action in {'preview','deploy'}:
+                entries=json_input(args.entries)
+                if args.action=='preview':result=await client.hosting_preview(args.website,entries)
+                else:result=await client.hosting_deploy(args.website,entries)
+            elif args.action=='activate':
+                result=await client.hosting_activate(args.website,args.revision)
+            elif args.action=='history':
+                result=await client.call('discovery.get',{'id':args.website,'view':'history'})
+            else:
+                # A downloaded HTML/SVG file has no server CSP when opened from
+                # disk. Keep the CLI's preview artifact inert by construction.
+                require(args.output.suffix.lower() in {'.txt','.bin'},
+                        'inert_preview_output_required')
+                data,metadata=await client.hosting_preview_get(
+                    args.site_path,args.candidate_id,args.file_path)
+                flags=os.O_CREAT|os.O_EXCL|os.O_WRONLY
+                if hasattr(os,'O_NOFOLLOW'):flags|=os.O_NOFOLLOW
+                fd=os.open(args.output,flags,0o600)
+                try:
+                    with os.fdopen(fd,'wb') as output:output.write(data)
+                except BaseException:
+                    args.output.unlink(missing_ok=True)
+                    raise
+                result={'status':'ok','output':str(args.output),'bytes':len(data),**metadata}
         elif command=='mcp':
             from msg.transports.stdio import serve_stdio
             await serve_stdio(client)
             return 0
         else: raise Failure('unknown_command')
-        print(canonical(result_wire(result) if isinstance(result,OperationResult) else result).decode())
+        rendered=result_wire(result) if isinstance(result,OperationResult) else result
+        if command=='hosting' and args.action=='preview' and isinstance(rendered,dict) and rendered.get('status')=='ok':
+            rendered['data'].pop('url',None)
+        print(canonical(rendered).decode())
         return 1 if isinstance(result,OperationResult) and result.status=='error' else 0
     finally:
         await transport.close()

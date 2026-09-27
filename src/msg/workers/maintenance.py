@@ -192,6 +192,11 @@ async def _collect(app,tx, *, grace_seconds=3600):
         live.add(loads(raw)['content']['digest'][7:])
     recent=time.time()-grace_seconds
     removed=0
+    # Explicit pins are live roots even before a Revision/Transfer pointer is
+    # committed. In particular, tool jobs may hold a blob without either row.
+    git_pins=await asyncio.to_thread(app.contents._run,'for-each-ref','--format=%(refname)','refs/pins')
+    pinned_git={ref.rsplit('/',1)[-1] for ref in git_pins.splitlines()}
+    pin_dir=app.contents.path/'pins'
     for entry in app.contents.index.iterdir():
         if not entry.is_file() or entry.name in live or entry.stat().st_mtime>recent:
             continue
@@ -200,17 +205,21 @@ async def _collect(app,tx, *, grace_seconds=3600):
         key=entry.name
         if len(key)!=64 or any(c not in '0123456789abcdef' for c in key):
             continue
+        if key in pinned_git or (pin_dir.exists() and any(pin_dir.glob('*/'+key))):
+            continue
         data=loads(entry.read_bytes())
         if data['kind']=='git':
-            refs=await asyncio.to_thread(app.contents._run,'for-each-ref','--format=%(refname)','refs/pins','refs/staging')
+            refs=await asyncio.to_thread(app.contents._run,'for-each-ref','--format=%(refname)','refs/staging')
             for ref in refs.splitlines():
                 if ref.endswith('/'+key):
                     await asyncio.to_thread(app.contents._run,'update-ref','-d',ref)
         else:
-            (app.contents.binary/key).unlink(missing_ok=True)
-            pins=app.contents.path/'pins'
-            if pins.exists():
-                for pin in pins.glob('*/'+key):pin.unlink(missing_ok=True)
+            binary=app.contents.binary/key
+            # LFS repository links are durable roots of the shared binary CAS.
+            # Dropping the content index is safe, but keep the canonical inode
+            # while any repository still references it.
+            if binary.exists() and binary.stat().st_nlink==1:
+                binary.unlink()
         entry.unlink(missing_ok=True)
         removed+=1
     # Only roots belonging to revisions actually removed from metadata are removed.
@@ -225,8 +234,13 @@ async def _collect(app,tx, *, grace_seconds=3600):
             if entry.name not in revisions and entry.stat().st_mtime<=recent:
                 entry.unlink(missing_ok=True)
     await asyncio.to_thread(app.contents._run,'gc','--prune=1.hour.ago')
+    from msg.storage.git import LFSObjectStore
+    lfs=LFSObjectStore(Path('/nonexistent'),app.settings.server.blob_dir)
+    collected,freed=await asyncio.to_thread(lfs.collect_unlinked,
+        older_than=recent,index=app.contents.index)
     return {'unreferenced_contents_removed':removed,'shared_bytes':'retained_if_referenced',
-            'backups':'managed_separately'}
+            'backups':'managed_separately','unlinked_lfs_objects_removed':collected,
+            'unlinked_lfs_bytes_removed':freed}
 
 
 async def run_maintenance(app,action, *, scheduled=False,principal=None):

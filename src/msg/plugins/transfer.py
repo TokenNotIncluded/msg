@@ -42,7 +42,8 @@ async def sealed_read_query(app,ctx,request,tx,transfer):
     require(args.get('parent' if kind=='read' else 'scope') is not None and
             'cursor' not in args,'invalid_query_ref')
     operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
-    contract_version=2 if kind=='search' and 'facets' in args else 1
+    contract_version=(3 if kind=='search' and any(name in args for name in
+        ('source_kind','relation_type')) else 2 if kind=='search' and 'facets' in args else 1)
     try:
         app.registry.validate(app.registry.operation(operation,contract_version).input_schema,args)
     except Failure as exc:
@@ -190,7 +191,8 @@ def install(app):
                 'query_ref_digest_mismatch')
         require(query.get('query_kind')==kind,'query_ref_digest_mismatch')
         operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
-        contract_version=2 if kind=='search' and 'facets' in args else 1
+        contract_version=(3 if kind=='search' and any(name in args for name in
+            ('source_kind','relation_type')) else 2 if kind=='search' and 'facets' in args else 1)
         principal=query_ref_principal(ctx.principal)
         normalized=dict(args)
         scope_field='parent' if kind=='read' else 'scope'

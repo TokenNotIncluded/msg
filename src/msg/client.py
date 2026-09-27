@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import hashlib
 import os
 from pathlib import Path
+import re
 import stat
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -162,6 +163,88 @@ class MsgClient:
 
     async def call(self, operation, arguments=None, **kwargs):
         return await self.send(self.prepare(operation,arguments or {},**kwargs))
+
+    async def _website_generation(self, website):
+        meta=self.checked(await self.call('discovery.get',{'id':website,'view':'meta'}))
+        require(meta.data.get('type')=='website','not_a_website')
+        return meta.data['id'],meta.data['generation']
+
+    @staticmethod
+    def _hosting_entries(entries):
+        require(type(entries) is list and bool(entries),'hosting_entries_required')
+        names=set();validated=[]
+        for item in entries:
+            require(type(item) is dict and set(item)=={'path','source'},'invalid_hosting_entry')
+            path=item['path'];source=item['source']
+            require(type(path) is str and 0<len(path)<=2048 and
+                    all(p not in {'','.','..'} and not p.startswith('.') for p in path.split('/')) and
+                    '\\' not in path and all(32<=ord(c)<127 for c in path) and path not in names,
+                    'invalid_hosting_path')
+            require(type(source) is dict and type(source.get('id')) is str and
+                    type(source.get('revision')) is str and bool(source['revision']) and
+                    set(source)=={'id','revision'},'source_revision_required')
+            names.add(path);validated.append({'path':path,'source':source})
+        return validated
+
+    async def hosting_preview(self,website,entries):
+        require(self.state.signer is not None and self.state.token is None,
+                'signing_identity_required')
+        rid,generation=await self._website_generation(website)
+        return await self.call('hosting.preview',{'id':rid,'entries':self._hosting_entries(entries)},
+                               expected=((rid,generation),))
+
+    async def hosting_deploy(self,website,entries):
+        require(self.state.signer is not None and self.state.token is None,
+                'signing_identity_required')
+        rid,generation=await self._website_generation(website)
+        return await self.call('hosting.deploy',{'id':rid,'entries':self._hosting_entries(entries)},
+                               expected=((rid,generation),))
+
+    async def hosting_activate(self,website,revision):
+        require(self.state.signer is not None and self.state.token is None,
+                'signing_identity_required')
+        require(type(revision) is str and bool(revision),'revision_required')
+        rid,generation=await self._website_generation(website)
+        return await self.call('hosting.activate',{'id':rid,'revision':revision},
+                               expected=((rid,generation),))
+
+    async def hosting_preview_get(self,site_path,candidate_id,file_path='index.html',*,max_bytes=1048576):
+        """Fetch candidate bytes with a header-bound proof, never a shareable URL."""
+        require(self.state.signer is not None and self.state.token is None,
+                'signing_identity_required')
+        require(type(self.transport) is HTTPTransport,'hosting_http_transport_required')
+        require(type(site_path) is str and re.fullmatch(r'/[@&][A-Za-z0-9_-]+/[A-Za-z0-9_-]+',site_path),
+                'invalid_website_path')
+        require(type(candidate_id) is str and re.fullmatch(r'[A-Za-z0-9_-]{1,128}',candidate_id),
+                'invalid_candidate_id')
+        require(type(file_path) is str and file_path and len(file_path)<=2048 and
+                all(p not in {'','.','..'} and not p.startswith('.') for p in file_path.split('/')) and
+                all(32<=ord(c)<127 for c in file_path) and '\\' not in file_path and
+                '%' not in file_path and '?' not in file_path and '#' not in file_path,
+                'invalid_hosting_path')
+        require(type(max_bytes) is int and 0<max_bytes<=10485760,'invalid_preview_limit')
+        packet=self.prepare('discovery.raw',{'id':candidate_id})
+        header=b64(canonical(wire(packet)))
+        path=site_path+'/_preview/'+candidate_id+'/'+file_path
+        async with self.transport.http.stream('GET',self.state.server+path,
+                headers={'X-Msg-Request':header},follow_redirects=False) as response:
+            require(not response.is_redirect,'redirect_not_allowed')
+            if response.status_code!=200:
+                code='preview_permission_denied' if response.status_code in {401,403} else \
+                     'preview_not_found' if response.status_code==404 else 'preview_request_failed'
+                raise Failure(code,details={'status':response.status_code})
+            csp=response.headers.get('content-security-policy','').lower()
+            require('sandbox' in csp.split(';')[0].split() and
+                    'allow-scripts' not in csp and 'allow-same-origin' not in csp and
+                    response.headers.get('x-content-type-options')=='nosniff',
+                    'unsafe_preview_response')
+            data=bytearray()
+            async for piece in response.aiter_bytes():
+                require(len(data)+len(piece)<=max_bytes,'preview_too_large')
+                data.extend(piece)
+            return bytes(data),{'media_type':response.headers.get('content-type','application/octet-stream'),
+                                'content_disposition':response.headers.get('content-disposition'),
+                                'etag':response.headers.get('etag')}
 
     def _require_token_secret_transport(self):
         # These envelopes contain a recovery secret. A path transport would put

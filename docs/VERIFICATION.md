@@ -1,8 +1,17 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 Search facets @2、路由effect与权限快照（未提交，本地全套通过）
+## 2026-09-27 SearchQuery@3、共享LFS CAS与hosting CLI（未提交，本地全套通过）
 
-GIT_CONFIG_GLOBAL=/dev/null下全套 **355 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；未提交、无本批CI。lexical_search@1旧schema保持，@2新增facets，QueryRef/续页/HTTP query/q2共用@2；短码190→191旧义保留。路由effect矩阵及只读doctor.authority_snapshot已纳入。
+权威修订实时核实仍00:35:34.164Z。GIT_CONFIG_GLOBAL=/dev/null下全套 **363 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；未提交、无本批CI。联合定向28包含在全套内，不累加；短码191→192保旧义。SearchQuery@3新增source_kind/relation_type，q/3/query-string/QueryRef同版本。LFS新对象共用blob_dir CAS、repo hardlink GC根、显式pin保留修复；PG串行默认4GiB准入与共享卷sentinel仅限LFS新对象，旧repo迁移及全worker staging预算未完。hosting CLI preview/deploy/activate/history使用签名header及惰性输出文件限制。
+
+前批81ec32a已提交，本地355/8/build，CI36296327583已completed/success（355/8/build），不能归作本批通过证据。
+
+
+新LFS对象共享Files/Transfer BlobStore已有；旧对象、全部署staging和其它CAS写入预算未完成。hosting preview CLI禁裸URL、使用签名header且惰性写输出；Search@3来源/关系过滤不包含suggest/spell。
+
+## 2026-09-27 Search facets @2、路由effect与权限快照（81ec32a已提交，CI通过）
+
+GIT_CONFIG_GLOBAL=/dev/null下全套 **355 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；已提交81ec32a，CI36296327583 completed/success（355/8/build）。lexical_search@1旧schema保持，@2新增facets，QueryRef/续页/HTTP query/q2共用@2；短码190→191旧义保留。路由effect矩阵及只读doctor.authority_snapshot已纳入。
 
 诊断仅揭示旧Root/Online CA冻结grants差异；不原位重写签名、不自动扩权或改生产。显式Root轮换会使旧链失效，需先评估重签/迁移。前批78dbd80的CI36295518895已completed/success（351/8/build），不是本批证据。
 

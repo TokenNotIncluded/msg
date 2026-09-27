@@ -36,9 +36,16 @@ def durable_write(path: Path, data: bytes, mode: int = 0o600):
 
 
 class LFSObjectStore:
-    """Repository-scoped, immutable LFS objects; the caller enforces repo ACL."""
-    def __init__(self, repo: Path):
+    """Shared immutable bytes, with repository hardlinks as durable ACL roots.
+
+    Only the repository link is served. Knowing a digest never grants access to
+    the shared object. The hardlink requirement also makes GC independent of
+    a racy scan of Git refs or PostgreSQL metadata.
+    """
+    def __init__(self, repo: Path, shared_root: Path | None = None):
         self.root=Path(repo)/'lfs'/'objects'
+        # Same SHA-256 binary CAS directory used by GitContentStore/Transfer.
+        self.shared=Path(shared_root) if shared_root is not None else None
 
     def path(self, oid: str) -> Path:
         require(re.fullmatch(r'[0-9a-f]{64}',oid) is not None,'invalid_lfs_oid')
@@ -48,29 +55,70 @@ class LFSObjectStore:
         path=self.path(oid)
         return path.stat().st_size if path.is_file() else None
 
-    def publish(self, oid: str, staged: Path, size: int):
+    def _shared_path(self,oid: str) -> Path:
+        require(self.shared is not None,'lfs_shared_store_required')
+        self.path(oid)  # Validate before constructing any path.
+        return self.shared/oid
+
+    def shared_usage(self) -> int:
+        require(self.shared is not None,'lfs_shared_store_required')
+        return sum(path.stat().st_size for path in self.shared.iterdir()
+                   if path.is_file() and re.fullmatch(r'[0-9a-f]{64}',path.name))
+
+    def publish(self, oid: str, staged: Path, size: int, *, quota_bytes: int | None = None):
         destination=self.path(oid)
         require(staged.stat().st_size==size,'lfs_size_mismatch')
-        destination.parent.mkdir(parents=True,exist_ok=True)
         if destination.is_file():
             require(destination.stat().st_size==size,'lfs_object_conflict')
             return
-        # Staging may be on another filesystem. Copy to a private file in the
-        # destination directory, then link it into the immutable object name.
-        # A partial copy is never visible, and concurrent uploads converge.
-        fd,temporary=tempfile.mkstemp(prefix='.pending-',dir=destination.parent)
-        try:
-            with os.fdopen(fd,'wb') as target,staged.open('rb') as source:
-                shutil.copyfileobj(source,target,1024*1024)
-                target.flush();os.fsync(target.fileno())
-            try:os.link(temporary,destination)
-            except FileExistsError:
-                require(destination.stat().st_size==size,'lfs_object_conflict')
-        finally:
-            os.unlink(temporary)
+        if self.shared is None:
+            raise Failure('lfs_shared_store_required')
+        shared=self._shared_path(oid)
+        shared.parent.mkdir(parents=True,exist_ok=True)
+        destination.parent.mkdir(parents=True,exist_ok=True)
+        # Validate layout before reserving bytes or creating a CAS orphan.
+        require(shared.parent.stat().st_dev==destination.parent.stat().st_dev,
+                'lfs_shared_volume_required')
+        # The caller holds PostgreSQL's deployment-wide write lock. A failed or
+        # interrupted copy leaves only a private .pending file, never an OID.
+        if not shared.is_file():
+            if quota_bytes is not None:
+                require(self.shared_usage()+size<=quota_bytes,'lfs_deployment_capacity_exceeded')
+            fd,temporary=tempfile.mkstemp(prefix='.pending-',dir=shared.parent)
+            try:
+                with os.fdopen(fd,'wb') as target,staged.open('rb') as source:
+                    shutil.copyfileobj(source,target,1024*1024)
+                    target.flush();os.fsync(target.fileno())
+                try:os.link(temporary,shared)
+                except FileExistsError:pass
+            finally:
+                os.unlink(temporary)
+            directory=os.open(shared.parent,os.O_RDONLY|os.O_DIRECTORY)
+            try:os.fsync(directory)
+            finally:os.close(directory)
+        require(shared.stat().st_size==size,'lfs_object_conflict')
+        # A cross-device copy would silently turn one quota entry into many
+        # physical copies and break the link-count GC root. Reject it.
+        # Publish a link into the ACL-scoped repo, never a shared CAS URL.
+        try:os.link(shared,destination)
+        except FileExistsError:require(destination.stat().st_size==size,'lfs_object_conflict')
         directory=os.open(destination.parent,os.O_RDONLY|os.O_DIRECTORY)
         try:os.fsync(directory)
         finally:os.close(directory)
+
+    def collect_unlinked(self, *, older_than: float, index: Path) -> tuple[int,int]:
+        """Collect canonical bytes only after every repository hardlink is gone."""
+        require(self.shared is not None,'lfs_shared_store_required')
+        removed=bytes_removed=0
+        for path in self.shared.iterdir():
+            if not path.is_file() or not re.fullmatch(r'[0-9a-f]{64}',path.name):
+                continue
+            stat=path.stat()
+            if stat.st_nlink!=1 or stat.st_mtime>older_than or (index/path.name).exists():
+                continue
+            path.unlink()
+            removed+=1;bytes_removed+=stat.st_size
+        return removed,bytes_removed
 
 
 class GitContentStore:

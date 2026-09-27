@@ -37,6 +37,9 @@ MAX_GIT_PACK_BYTES=32*1024*1024
 MAX_GIT_UPLOAD_SECONDS=120
 _GIT_UPLOAD_SLOTS=asyncio.Semaphore(2)
 MAX_LFS_OBJECT_BYTES=256*1024*1024
+# Deployment-wide, not per-account. Operators may lower this for their shared
+# volume; PostgreSQL records the value so workers with divergent settings fail.
+DEFAULT_LFS_DEPLOYMENT_BYTES=4*1024*1024*1024
 _LFS_UPLOAD_SLOTS=asyncio.Semaphore(2)
 _LFS_STAGED=ContextVar('msg_lfs_staged',default=None)
 
@@ -93,7 +96,28 @@ class NativeGitStore:
         return self.root/(id+'.git')
 
     def lfs(self,id):
-        return LFSObjectStore(self.path(id))
+        return LFSObjectStore(self.path(id),self.app.settings.server.blob_dir)
+
+    def lfs_capacity(self,tx):
+        configured=os.environ.get('MSG_LFS_DEPLOYMENT_MAX_BYTES',str(DEFAULT_LFS_DEPLOYMENT_BYTES))
+        require(configured.isdecimal() and int(configured)>0,'invalid_lfs_deployment_capacity')
+        limit=int(configured)
+        previous=tx.setting('lfs_deployment_capacity_bytes')
+        require(previous is None or previous==limit,'lfs_deployment_capacity_mismatch')
+        for root,key in ((self.app.settings.server.blob_dir,'lfs_shared_store_id'),
+                         (self.root,'lfs_shared_repositories_id')):
+            root.mkdir(parents=True,exist_ok=True)
+            sentinel=root/'.msg-shared-store-id'
+            known=tx.setting(key)
+            if not sentinel.exists():
+                require(known is None,'lfs_shared_volume_required')
+                durable_write(sentinel,(uuid4().hex+'\n').encode())
+            identity=sentinel.read_text().strip()
+            require(bool(re.fullmatch(r'[0-9a-f]{32}',identity)),'invalid_lfs_shared_store_id')
+            require(known is None or known==identity,'lfs_shared_volume_required')
+            if known is None:tx.set_setting(key,identity)
+        if previous is None:tx.set_setting('lfs_deployment_capacity_bytes',limit)
+        return limit
 
     def _lfs_packet(self,request,operation,arguments):
         from msg.transports.packet import path_packet
@@ -584,8 +608,10 @@ def register(app,op):
         await check_access(app,ctx,request,tx,rid,'write')
         resource=await tx.resource(rid)
         require(resource.type=='repo' and resource.state=='active','not_a_repository')
-        await asyncio.to_thread(NativeGitStore(app).lfs(rid).publish,request.arguments['oid'],
-                                staged,request.arguments['size'])
+        store=NativeGitStore(app)
+        limit=store.lfs_capacity(tx)
+        await asyncio.to_thread(store.lfs(rid).publish,request.arguments['oid'],
+                                staged,request.arguments['size'],quota_bytes=limit)
         return HandlerOutput(data={'resource_id':rid,'oid':request.arguments['oid'],
                                    'size':request.arguments['size']})
 

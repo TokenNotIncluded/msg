@@ -520,9 +520,15 @@ def install(app):
     lexical_schema_v1={**lexical_schema,
                        'properties':{name:value for name,value in lexical_schema['properties'].items()
                                      if name!='facets'}}
+    lexical_schema_v3={**lexical_schema,
+                       'properties':{**lexical_schema['properties'],
+                           'source_kind':{'enum':['release','user','operation']},
+                           'relation_type':{'enum':['reply_to','thread_root','quote','repost',
+                                                    'attachment','template']}}}
 
     @op('discovery.lexical_search',lexical_schema_v1,effect='read')
     @op('discovery.lexical_search',lexical_schema,effect='read',version=2)
+    @op('discovery.lexical_search',lexical_schema_v3,effect='read',version=3)
     async def lexical_search(ctx,request,tx):
         a=dict(request.arguments)
         internal_page=getattr(request,'internal_page_state',None)
@@ -536,6 +542,12 @@ def install(app):
             require(saved.get('operation')==request.operation and set(a)=={'cursor'},
                     'cursor_query_mismatch')
             a={**saved['arguments'],'cursor':a['cursor']}
+        # A cursor or sealed QueryRef carries arguments from an earlier call.
+        # Keep those arguments inside the version selected for this call too.
+        require(not (request.contract_version<3 and
+                     {'source_kind','relation_type'}&a.keys()) and
+                not (request.contract_version<2 and 'facets' in a),
+                'cursor_query_mismatch')
         require(a.get('scope') is not None,'search_scope_required')
         scope=await resolve(tx,a['scope'])
         await check_access(app,ctx,request,tx,scope,'list')
@@ -612,6 +624,15 @@ def install(app):
             scanned+=1
             require(scanned<=2000,'query_cost_exceeded')
             revision=await tx.revision(ResourceRef(id=resource.id)) if resource.revision else None
+            # These predicates inspect only the current revision of an already
+            # readable resource. Historical relations and source metadata must
+            # not affect rank, facets or page positions.
+            if a.get('source_kind') and (revision is None or
+                                         revision.source_kind!=a['source_kind']):
+                continue
+            if a.get('relation_type') and (revision is None or not any(
+                    relation.type==a['relation_type'] for relation in revision.relations)):
+                continue
             if author and (revision is None or revision.author!=author):
                 continue
             if a.get('has_attachment') is not None and bool(revision and any(
