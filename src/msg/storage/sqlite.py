@@ -105,6 +105,20 @@ CREATE TABLE IF NOT EXISTS claims (
  id TEXT PRIMARY KEY REFERENCES resources(id), subject TEXT NOT NULL,
  issued_at TEXT NOT NULL, expires_at TEXT, body TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS claims_subject ON claims(subject,issued_at,id);
+CREATE TABLE IF NOT EXISTS topic_settings (
+ topic TEXT PRIMARY KEY REFERENCES resources(id), membership_policy TEXT NOT NULL,
+ CHECK(membership_policy IN ('open','approval','invite','closed')));
+CREATE TABLE IF NOT EXISTS topic_memberships (
+ topic TEXT NOT NULL REFERENCES resources(id), subject TEXT NOT NULL,
+ role TEXT NOT NULL CHECK(role IN ('admin','member')),
+ status TEXT NOT NULL CHECK(status IN ('active','pending','invited','left','removed')),
+ joined_at TEXT, invited_by TEXT, PRIMARY KEY(topic,subject));
+CREATE INDEX IF NOT EXISTS topic_memberships_subject ON topic_memberships(subject,topic);
+CREATE TABLE IF NOT EXISTS topic_bans (
+ topic TEXT NOT NULL REFERENCES resources(id), subject TEXT NOT NULL,
+ actor TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT, reason TEXT,
+ status TEXT NOT NULL CHECK(status IN ('active','lifted')),
+ PRIMARY KEY(topic,subject));
 """
 
 

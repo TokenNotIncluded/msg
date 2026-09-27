@@ -1,8 +1,14 @@
 # 本地与 CI 验收记录
 
+## 2026-09-27 Topic、被动 GET 与纯路径读取批次
+
+权威 Google Drive `ChatGPT` 文件夹文档本批读取到 `2026-09-27T00:20:54.350Z`。当前未提交工作树在本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **249 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功，`sh -n deploy/prepare-service.sh` 和 `git diff --check` 通过。本批含 TopicMembership/Ban 及真实治理 Event、HTTP 虚拟 `/_events.md`、`/-/g` 被动客户端防误触发、简单 ReadQuery/搜索的纯路径 q/1 与短码快照更新。隔离 selftest 曾因 Topic bootstrap 的测试子树建立顺序出现 `not_found`，调整种子顺序后定向与全套均通过。QueryRef、完整 RouteSpec、Topic 增量投影，以及最新新增的 `/_rules`、`/wiki`、SOUL/主体 AGENTS、LinkSet/SearchQuery 全范围仍缺。本批尚无远端 CI 或线上部署结果。
+
 ## 2026-09-27 双钥、主体别名与协议版本批次
 
-权威 Google Drive `ChatGPT` 文件夹文档读取至 `2026-09-26T23:58:21.986Z`。本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **228 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功，`sh -n deploy/prepare-service.sh` 与 `git diff --check` 通过。新增 age/X25519 recipient 使用本机 `age-keygen -y` 与 `age` 加解密做互操作；注册/升级 v2 要求独立加密子钥，旧 v1 保留契约并明确拒绝缺钥注册；主体短长路径别名经真实钥、SSH、keystore、Inbox 数据验证。另含 DM、ReadCursor、presence/claim 与默认 1 MiB Git HTTP push 切片。本批尚未提交或取得对应远端 CI；custodial 双钥、恢复/遗言、Topic 治理、纯路径 QueryRef、新增 passive-client guard 等未实现，不能据此宣称完整需求或线上已更新。
+权威 Google Drive `ChatGPT` 文件夹文档读取至 `2026-09-26T23:58:21.986Z`。本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **228 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功，`sh -n deploy/prepare-service.sh` 与 `git diff --check` 通过。新增 age/X25519 recipient 使用本机 `age-keygen -y` 与 `age` 加解密做互操作；注册/升级 v2 要求独立加密子钥，旧 v1 保留契约并明确拒绝缺钥注册；主体短长路径别名经真实钥、SSH、keystore、Inbox 数据验证。另含 DM、ReadCursor、presence/claim 与默认 1 MiB Git HTTP push 切片。提交 `e01dacc` 已推送，其[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)已通过；custodial 双钥、恢复/遗言、Topic 治理、纯路径 QueryRef、新增 passive-client guard 等尚未纳入该提交，不能据此宣称完整需求或线上已更新。
+
+`e01dacc` 另从临时独立 worktree、临时 PostgreSQL 和临时初始化服务，在本机 `10.174.197.165:18143` 监听，以真实 DNS 直接请求 `http://light.local:18143`（没有 `--resolve`）：`/`、`/AGENTS.md`、`/_r/query?root=/main&first=2`、`/_read/graphql` query 均返回 200，普通 `/main` POST 返回 405。服务按预设时间正常退出；worktree、临时数据库和目录已清理，端口无残留监听。这验证本地域名、Host 校验及本机 HTTP 路由，不代表生产部署或浏览器托管隔离。
 
 ## 2026-09-27 荣誉、读取游标与隔离 CA 自检批次
 

@@ -65,6 +65,15 @@ async def bootstrap(store,contents,registry,now, *, selftest_run_id=None):
                     parent=ROOT_SPACE,owner=ROOT_SUBJECT,group=ADMINS_GROUP,mode='0711'),now)
                 await seed_resource(tx,contents,dict(id=namespace_root,type='topic',name=selftest_run_id,
                     parent='t_selftest',owner=ROOT_SUBJECT,group=ADMINS_GROUP,mode='0711'),now)
+        for data in definition['resources']:
+            if data['type']!='topic':
+                continue
+            tx.execute('''INSERT INTO topic_settings (topic,membership_policy) VALUES (?,?)
+                ON CONFLICT(topic) DO NOTHING''',(data['id'],'open'),write=True)
+            tx.execute('''INSERT INTO topic_memberships
+                (topic,subject,role,status,joined_at,invited_by) VALUES (?,?,?,?,?,?)
+                ON CONFLICT(topic,subject) DO NOTHING''',
+                (data['id'],ROOT_SUBJECT,'admin','active',wire(now),None),write=True)
         for id,kind,primary,local in ((ROOT_SUBJECT,'system',ADMINS_GROUP,True),(ONLINE_CA,'system',ADMINS_GROUP,False)):
             if not tx.one('SELECT id FROM identities WHERE id=?',(id,)):
                 await tx.update_identity(Subject(resource_id=id,kind=kind,primary_group=primary,auth_version=0,local_only=local),-1)

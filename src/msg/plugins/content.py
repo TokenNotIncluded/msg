@@ -2,14 +2,55 @@
 from __future__ import annotations
 from dataclasses import replace
 from msg.constants import ROOT_SPACE,ROOT_SUBJECT
-from msg.core.codec import canonical,decode,loads,wire,unb64,digest
+from msg.core.codec import canonical,decode,loads,wire,unb64,digest,parse_time
 from msg.core.errors import Failure,require
-from msg.core.models import HandlerOutput,ResourceRef,Relation,EffectJob,BlobRef
+from msg.core.models import HandlerOutput,ResourceRef,Relation,EffectJob,BlobRef,Event
 from msg.core.tags import normalize_tags
 from msg.core.template_dsl import parse_template,normalize_values
 from msg.plugins.common import *
 from msg.plugins.schemas import *
 from msg.security.policy import STICKY
+
+
+def topic_admin(tx,topic,subject):
+    row=tx.one('SELECT role,status FROM topic_memberships WHERE topic=? AND subject=?',(topic,subject))
+    return row==('admin','active')
+
+
+def topic_member(tx,topic,subject):
+    return tx.one('SELECT role,status,joined_at,invited_by FROM topic_memberships WHERE topic=? AND subject=?',
+                  (topic,subject))
+
+
+def active_topic_ban(tx,topic,subject,now):
+    row=tx.one('SELECT expires_at FROM topic_bans WHERE topic=? AND subject=? AND status=?',
+               (topic,subject,'active'))
+    return row is not None and (row[0] is None or parse_time(row[0])>now)
+
+
+TOPIC_EVENT_CODES={
+    'topic.create':'tc','topic.member.join':'mj','topic.member.request':'mr',
+    'topic.member.leave':'ml','topic.member.invite':'mi','topic.member.approve':'ma',
+    'topic.member.remove':'mx','topic.member.promote':'mp','topic.member.demote':'md',
+    'topic.member.ban':'mb','topic.member.unban':'mu','topic.policy.change':'pc',
+    'topic.archive':'ta','topic.restore':'tr','topic.move':'tm',
+    'topic.chmod':'tmo','topic.chgrp':'tgr','topic.chown':'tow','topic.configure':'tcf',
+}
+
+
+async def topic_governance_event(tx,ctx,request,topic,action,target, *, reason=None):
+    event=Event(id=new_id('te'),type='topic.'+action,time=ctx.now,
+                request_id=request.request_id,actor=ctx.principal.actor,subject=ctx.principal.subject,
+                resources=(ResourceRef(id=topic),),
+                data={'topic_id':topic,'action':action,'target_subject':target,
+                      **({'reason':reason} if reason else {})})
+    await tx.append_event(event)
+    if target is not None:
+        notice={'id':new_id('message'),'sender':ctx.principal.subject,'actor':ctx.principal.actor,
+                'recipient':target,'resource':{'id':target,'revision':None},'time':wire(ctx.now),
+                'state':'delivered','source':'topic_governance','topic_id':topic,'action':action}
+        tx.execute('INSERT INTO messages VALUES (?,?,?,?,?,?)',
+                   (notice['id'],ctx.principal.subject,target,target,event.id,canonical(notice).decode()),write=True)
 
 
 async def template_content(app,ctx,request,tx,parent,template,values):
@@ -126,7 +167,230 @@ def install(app):
     async def topic_create(ctx,request,tx):
         resource=await create_resource(app,ctx,request,tx,parent=await resolve(tx,request.arguments['parent']),
             type='topic',name=request.arguments['name'])
+        tx.execute('INSERT INTO topic_settings (topic,membership_policy) VALUES (?,?)',
+                   (resource.id,'open'),write=True)
+        tx.execute('''INSERT INTO topic_memberships
+            (topic,subject,role,status,joined_at,invited_by) VALUES (?,?,?,?,?,?)''',
+            (resource.id,ctx.principal.subject,'admin','active',wire(ctx.now),None),write=True)
+        await topic_governance_event(tx,ctx,request,resource.id,'create',ctx.principal.subject)
         return output_for(resource)
+
+    async def governed_topic(ctx,request,tx, *, admin=False):
+        topic=await resolve(tx,request.arguments['id'])
+        resource=await tx.resource(topic)
+        require(resource.type=='topic' and resource.state=='active','topic_not_active')
+        require(ctx.principal.subject is not None and ctx.principal.actor==ctx.principal.subject,
+                'topic_subject_required')
+        await app.authorizer.require_base(ctx.principal,operation_id(request),topic,tx)
+        await check_access(app,ctx,request,tx,topic,'read')
+        if admin:
+            require(topic_admin(tx,topic,ctx.principal.subject),'topic_admin_required')
+        return topic
+
+    @op('content.topic_join',obj({'id':IDENTIFIER},('id',)),signature=True)
+    async def topic_join(ctx,request,tx):
+        topic=await governed_topic(ctx,request,tx)
+        subject=ctx.principal.subject
+        require(not active_topic_ban(tx,topic,subject,ctx.now),'topic_banned')
+        previous=topic_member(tx,topic,subject)
+        require(previous is None or previous[1] not in {'active','pending'},'already_topic_member')
+        policy=tx.one('SELECT membership_policy FROM topic_settings WHERE topic=?',(topic,))
+        membership_policy=policy[0] if policy else 'open'
+        require(membership_policy in {'open','approval'} or
+                (membership_policy=='invite' and previous is not None and previous[1]=='invited'),
+                'topic_join_closed')
+        status='pending' if membership_policy=='approval' and (previous is None or previous[1]!='invited') else 'active'
+        if previous is None:
+            tx.execute('INSERT INTO topic_memberships VALUES (?,?,?,?,?,?)',
+                       (topic,subject,'member',status,wire(ctx.now) if status=='active' else None,None),write=True)
+        else:
+            tx.execute('''UPDATE topic_memberships SET role='member',status=?,joined_at=?
+                WHERE topic=? AND subject=?''',(status,wire(ctx.now) if status=='active' else None,
+                topic,subject),write=True)
+        await topic_governance_event(tx,ctx,request,topic,'member.join' if status=='active' else 'member.request',subject)
+        return HandlerOutput(resources=(ResourceRef(id=topic),),data={'topic_id':topic,'status':status,'role':'member'})
+
+    @op('content.topic_leave',obj({'id':IDENTIFIER},('id',)),signature=True)
+    async def topic_leave(ctx,request,tx):
+        topic=await governed_topic(ctx,request,tx)
+        subject=ctx.principal.subject
+        previous=topic_member(tx,topic,subject)
+        require(previous is not None and previous[1] in {'active','pending','invited'},'not_topic_member')
+        if previous[0]=='admin' and previous[1]=='active':
+            count=tx.one("SELECT COUNT(*) FROM topic_memberships WHERE topic=? AND role='admin' AND status='active'",(topic,))[0]
+            require(count>1,'last_topic_admin')
+        tx.execute("UPDATE topic_memberships SET role='member',status='left' WHERE topic=? AND subject=?",
+                   (topic,subject),write=True)
+        await topic_governance_event(tx,ctx,request,topic,'member.leave',subject)
+        return HandlerOutput(resources=(ResourceRef(id=topic),),data={'topic_id':topic,'status':'left'})
+
+    member_target=obj({'id':IDENTIFIER,'subject_id':IDENTIFIER},('id','subject_id'))
+
+    @op('content.topic_invite',member_target,signature=True)
+    async def topic_invite(ctx,request,tx):
+        topic=await governed_topic(ctx,request,tx,admin=True)
+        target=await resolve(tx,request.arguments['subject_id'])
+        await tx.subject(target)
+        require(not active_topic_ban(tx,topic,target,ctx.now),'topic_banned')
+        prior=topic_member(tx,topic,target)
+        require(prior is None or prior[1] not in {'active','pending','invited'},'already_topic_member')
+        if prior is None:
+            tx.execute('INSERT INTO topic_memberships VALUES (?,?,?,?,?,?)',
+                       (topic,target,'member','invited',None,ctx.principal.subject),write=True)
+        else:
+            tx.execute('''UPDATE topic_memberships SET role='member',status='invited',joined_at=NULL,
+                invited_by=? WHERE topic=? AND subject=?''',(ctx.principal.subject,topic,target),write=True)
+        await topic_governance_event(tx,ctx,request,topic,'member.invite',target)
+        return HandlerOutput(resources=(ResourceRef(id=topic),),data={'topic_id':topic,'status':'invited'})
+
+    @op('content.topic_approve',member_target,signature=True)
+    async def topic_approve(ctx,request,tx):
+        topic=await governed_topic(ctx,request,tx,admin=True)
+        target=await resolve(tx,request.arguments['subject_id'])
+        previous=topic_member(tx,topic,target)
+        require(previous is not None and previous[1]=='pending','topic_request_not_pending')
+        require(not active_topic_ban(tx,topic,target,ctx.now),'topic_banned')
+        tx.execute("UPDATE topic_memberships SET status='active',joined_at=? WHERE topic=? AND subject=?",
+                   (wire(ctx.now),topic,target),write=True)
+        await topic_governance_event(tx,ctx,request,topic,'member.approve',target)
+        return HandlerOutput(resources=(ResourceRef(id=topic),),data={'topic_id':topic,'status':'active'})
+
+    async def update_membership(ctx,request,tx):
+        topic=await governed_topic(ctx,request,tx,admin=True)
+        target=await resolve(tx,request.arguments['subject_id'])
+        previous=topic_member(tx,topic,target)
+        require(previous is not None and previous[1]=='active','not_topic_member')
+        action=request.operation.removeprefix('content.topic_')
+        if action in {'remove','demote'} and previous[0]=='admin':
+            count=tx.one("SELECT COUNT(*) FROM topic_memberships WHERE topic=? AND role='admin' AND status='active'",(topic,))[0]
+            require(count>1,'last_topic_admin')
+        if action=='remove':
+            tx.execute("UPDATE topic_memberships SET role='member',status='removed' WHERE topic=? AND subject=?",
+                       (topic,target),write=True)
+            data={'status':'removed'}
+        else:
+            role='admin' if action=='promote' else 'member'
+            require(previous[0]!=role,'topic_role_unchanged')
+            tx.execute('UPDATE topic_memberships SET role=? WHERE topic=? AND subject=?',
+                       (role,topic,target),write=True)
+            data={'role':role}
+        await topic_governance_event(tx,ctx,request,topic,'member.'+action,target)
+        return HandlerOutput(resources=(ResourceRef(id=topic),),data={'topic_id':topic,**data})
+    for name in ('content.topic_remove','content.topic_promote','content.topic_demote'):
+        op(name,member_target,signature=True)(update_membership)
+
+    @op('content.topic_ban',obj({'id':IDENTIFIER,'subject_id':IDENTIFIER,
+        'reason':{'type':'string','maxLength':500},'expires_at':STRING},('id','subject_id')),signature=True)
+    async def topic_ban(ctx,request,tx):
+        topic=await governed_topic(ctx,request,tx,admin=True)
+        target=await resolve(tx,request.arguments['subject_id'])
+        await tx.subject(target)
+        previous=topic_member(tx,topic,target)
+        if previous is not None and previous[:2]==('admin','active'):
+            count=tx.one("SELECT COUNT(*) FROM topic_memberships WHERE topic=? AND role='admin' AND status='active'",(topic,))[0]
+            require(count>1,'last_topic_admin')
+        expires=request.arguments.get('expires_at')
+        if expires:
+            require(parse_time(expires)>ctx.now,'topic_ban_expired')
+        tx.execute('''INSERT INTO topic_bans (topic,subject,actor,created_at,expires_at,reason,status)
+            VALUES (?,?,?,?,?,?,?) ON CONFLICT(topic,subject) DO UPDATE SET
+            actor=excluded.actor,created_at=excluded.created_at,expires_at=excluded.expires_at,
+            reason=excluded.reason,status='active' ''',
+            (topic,target,ctx.principal.subject,wire(ctx.now),expires,request.arguments.get('reason'),'active'),write=True)
+        if previous is not None:
+            tx.execute("UPDATE topic_memberships SET role='member',status='removed' WHERE topic=? AND subject=?",
+                       (topic,target),write=True)
+        await topic_governance_event(tx,ctx,request,topic,'member.ban',target,
+                                     reason=request.arguments.get('reason'))
+        return HandlerOutput(resources=(ResourceRef(id=topic),),data={'topic_id':topic,'banned_subject':target})
+
+    @op('content.topic_unban',member_target,signature=True)
+    async def topic_unban(ctx,request,tx):
+        topic=await governed_topic(ctx,request,tx,admin=True)
+        target=await resolve(tx,request.arguments['subject_id'])
+        changed=tx.execute("UPDATE topic_bans SET status='lifted' WHERE topic=? AND subject=? AND status='active'",
+                           (topic,target),write=True).rowcount
+        require(changed==1,'topic_ban_not_found')
+        await topic_governance_event(tx,ctx,request,topic,'member.unban',target)
+        return HandlerOutput(resources=(ResourceRef(id=topic),),data={'topic_id':topic,'unbanned_subject':target,
+            'membership_restored':False})
+
+    @op('content.topic_policy_set',obj({'id':IDENTIFIER,
+        'membership_policy':{'enum':['open','approval','invite','closed']}},
+        ('id','membership_policy')),signature=True)
+    async def topic_policy_set(ctx,request,tx):
+        topic=await governed_topic(ctx,request,tx,admin=True)
+        policy=request.arguments['membership_policy']
+        tx.execute('''INSERT INTO topic_settings (topic,membership_policy) VALUES (?,?)
+            ON CONFLICT(topic) DO UPDATE SET membership_policy=excluded.membership_policy''',
+            (topic,policy),write=True)
+        await topic_governance_event(tx,ctx,request,topic,'policy.change',ctx.principal.subject)
+        return HandlerOutput(resources=(ResourceRef(id=topic),),data={'topic_id':topic,
+            'membership_policy':policy})
+
+    @op('content.topic_members',obj({'id':IDENTIFIER},('id',)),effect='read')
+    async def topic_members(ctx,request,tx):
+        topic=await resolve(tx,request.arguments['id'])
+        await check_access(app,ctx,request,tx,topic,'read')
+        require((await tx.resource(topic)).type=='topic','not_a_topic')
+        rows=tx.rows("SELECT subject,role,status,joined_at FROM topic_memberships WHERE topic=? AND status='active' ORDER BY subject",
+                     (topic,))
+        policy=tx.one('SELECT membership_policy FROM topic_settings WHERE topic=?',(topic,))
+        return HandlerOutput(data={'topic_id':topic,'membership_policy':policy[0] if policy else 'open',
+            'items':[{'subject_id':subject,'role':role,'status':status,'joined_at':joined}
+                     for subject,role,status,joined in rows]})
+
+    @op('content.topic_events',obj({'id':IDENTIFIER,
+        'view':{'enum':['compact','normal','proof']},'cursor':STRING,
+        'limit':{'type':'integer','minimum':1,'maximum':50}},('id',)),effect='read')
+    async def topic_events(ctx,request,tx):
+        from msg.plugins.discovery import next_link
+        topic=await resolve(tx,request.arguments['id'])
+        await check_access(app,ctx,request,tx,topic,'read')
+        require((await tx.resource(topic)).type=='topic','not_a_topic')
+        view=request.arguments.get('view','compact')
+        admin=topic_admin(tx,topic,ctx.principal.subject)
+        binding=digest({'topic':topic,'view':view,'subject':ctx.principal.subject,'admin':admin})
+        position=app.cursors.decode(request.arguments['cursor'],'topic_events',binding) if request.arguments.get('cursor') else 9223372036854775807
+        limit=request.arguments.get('limit',10)
+        found=[]
+        for seq,raw in tx.execute('SELECT seq,body FROM events WHERE seq<? ORDER BY seq DESC',(position,)):
+            event=loads(raw)
+            if event['type'] not in TOPIC_EVENT_CODES or event['data'].get('topic_id')!=topic:
+                continue
+            found.append((seq,event))
+            if len(found)>limit:
+                break
+        items=[]
+        for seq,event in found[:limit]:
+            data=dict(event['data'])
+            if not admin:
+                data.pop('reason',None)
+            if view=='compact':
+                items.append({'s':seq,'c':TOPIC_EVENT_CODES[event['type']],
+                              'a':event['actor'],'u':data.get('target_subject'),'t':event['time']})
+            elif view=='normal':
+                line=f"{event['time']} {event['actor']} {data['action']} {data.get('target_subject') or ''}"
+                if admin and data.get('reason'):
+                    line+=' — '+data['reason']
+                items.append({'seq':seq,'text':line})
+            else:
+                proof=dict(event,data=data)
+                result=tx.one('SELECT body FROM results WHERE subject=? AND request_id=?',
+                              (event['subject'],event['request_id']))
+                if result is not None:
+                    proof['receipt']=loads(result[0]).get('receipt')
+                items.append({'seq':seq,'event':proof})
+        response={'topic_id':topic,'view':view,'items':items}
+        if view=='compact':
+            response.update(schema_version=1,event_codes=TOPIC_EVENT_CODES,
+                            base_time=found[0][1]['time'] if found else None)
+        if len(found)>limit:
+            cursor=app.cursors.encode('topic_events',binding,found[limit-1][0])
+            response.update(cursor=cursor,
+                next=next_link(app,'content.topic_events',{**request.arguments,'cursor':cursor}),
+                next_requires_auth=ctx.principal.subject is not None)
+        return HandlerOutput(data=response)
 
     @op('content.post_create',obj(post_fields,('parent',)),requirements=requirement('parent','create'))
     async def post_create(ctx,request,tx):
@@ -188,6 +452,9 @@ def install(app):
             await ensure_public_repositories(tx,resource,mode=resource.mode,parent=resource.parent)
         updated=replace(resource,state=state,generation=resource.generation+1,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.replace(updated,resource.generation)
+        if resource.type=='topic':
+            await topic_governance_event(tx,ctx,request,resource.id,
+                                         'archive' if state=='archived' else 'restore',ctx.principal.subject)
         return output_for(updated,state=state)
     for name in ('content.archive','content.restore'):
         op(name,obj({'id':IDENTIFIER},('id',)))(lifecycle)
@@ -210,6 +477,8 @@ def install(app):
         updated=replace(resource,parent=target,name=name,generation=resource.generation+1,
                         modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.replace(updated,resource.generation)
+        if resource.type=='topic':
+            await topic_governance_event(tx,ctx,request,resource.id,'move',ctx.principal.subject)
         return output_for(updated)
 
     @op('content.chmod',obj({'id':IDENTIFIER,'mode':{'type':'string','pattern':'^[0-7]{4}$'}},('id','mode')),
@@ -222,6 +491,8 @@ def install(app):
         await ensure_public_repositories(tx,resource,mode=mode)
         updated=replace(resource,mode=mode,generation=resource.generation+1,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.replace(updated,resource.generation)
+        if resource.type=='topic':
+            await topic_governance_event(tx,ctx,request,resource.id,'chmod',ctx.principal.subject)
         return output_for(updated,mode=f'{mode:04o}')
 
     @op('content.chgrp',obj({'id':IDENTIFIER,'group':IDENTIFIER},('id','group')),
@@ -236,6 +507,8 @@ def install(app):
                 'group_membership_required')
         updated=replace(resource,group=group,generation=resource.generation+1,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.replace(updated,resource.generation)
+        if resource.type=='topic':
+            await topic_governance_event(tx,ctx,request,resource.id,'chgrp',ctx.principal.subject)
         return output_for(updated,group=group)
 
     @op('content.chown',obj({'id':IDENTIFIER,'owner':IDENTIFIER},('id','owner')),
@@ -249,6 +522,8 @@ def install(app):
         require(not subject.local_only,'local_only')
         updated=replace(resource,owner=owner,generation=resource.generation+1,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.replace(updated,resource.generation)
+        if resource.type=='topic':
+            await topic_governance_event(tx,ctx,request,resource.id,'chown',ctx.principal.subject)
         return output_for(updated,owner=owner)
 
     @op('content.purge',obj({'id':IDENTIFIER,'reason':STRING},('id','reason')),
@@ -284,6 +559,7 @@ def install(app):
         tx.set_setting('policy:'+resource.id,request.arguments['policy'])
         updated=replace(resource,generation=resource.generation+1,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.replace(updated,resource.generation)
+        await topic_governance_event(tx,ctx,request,resource.id,'configure',ctx.principal.subject)
         return output_for(updated)
 
     @op('content.template_put',obj({'parent':IDENTIFIER,'source':STRING},('parent','source')),

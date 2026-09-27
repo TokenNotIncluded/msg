@@ -360,12 +360,23 @@ def install(app):
         for seq,raw in tx.execute('SELECT seq,body FROM events WHERE seq>? ORDER BY seq',(position,)):
             position=seq
             event=loads(raw)
+            if event['type'].startswith('topic.') and event.get('data',{}).get('reason'):
+                from msg.plugins.content import topic_admin
+                topic=event['data'].get('topic_id')
+                if topic is None or not topic_admin(tx,topic,subject):
+                    event['data']=dict(event['data'])
+                    event['data'].pop('reason',None)
             references=event['resources']
             permitted=[]
             for ref in references:
                 if await visible(app,ctx,request,tx,ref['id']):
                     permitted.append(ref)
             relevant=event['subject']==subject or event['subject'] in watches
+            if event['type'].startswith('topic.'):
+                topic=event.get('data',{}).get('topic_id')
+                member=tx.one("SELECT 1 FROM topic_memberships WHERE topic=? AND subject=? AND status='active'",
+                              (topic,subject)) if topic else None
+                relevant=relevant or member is not None
             for ref in permitted:
                 relevant=relevant or ref['id'] in watches or any(r.id in watches for r in await tx.ancestors(ref['id']))
                 direct=await direct_ancestor(tx,ref['id'])

@@ -2,6 +2,7 @@
 from __future__ import annotations
 from msg.constants import ROOT_SUBJECT,TOOLS_SPACE
 from msg.core.errors import Failure,require
+from msg.core.codec import parse_time
 from msg.core.models import ResourceRef
 from msg.security.policy import allows,grant_covers,scope_contains,CERTGATE
 
@@ -76,6 +77,15 @@ class AuthorizationService:
             operation=check.operation
             await self._ceiling(principal,operation,resource.id,session)
             chain=(*await session.ancestors(resource.id),resource)
+            if check.check in _WRITE_CHECKS and principal.subject is not None:
+                for ancestor in reversed(chain):
+                    if ancestor.type!='topic':
+                        continue
+                    ban=session.one("SELECT expires_at FROM topic_bans WHERE topic=? AND subject=? AND status='active'",
+                                    (ancestor.id,principal.subject))
+                    if ban is not None and (ban[0] is None or parse_time(ban[0])>context.now):
+                        require(False,'topic_banned')
+                    break
             direct=None
             for ancestor in chain:
                 direct=session.one('SELECT participant_a,participant_b,state,resource_id FROM dm_conversations WHERE resource_id=?',

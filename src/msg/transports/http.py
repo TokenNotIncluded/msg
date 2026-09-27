@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
+from enum import Enum
 from urllib.parse import quote, unquote_to_bytes, urlencode, urlsplit
 
 from starlette.applications import Starlette
@@ -13,11 +15,13 @@ from starlette.routing import Route
 from msg.core.codec import canonical, decode, digest, loads, wire
 from msg.core.errors import Failure, require
 from msg.core.executor import result_wire
-from msg.core.models import BlobRef
+from msg.core.models import BlobRef,SignatureProof
 from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, gunzip, path_packet
+from msg.transports.dictionary import (READ_QUERY_V1_SEGMENTS,READ_QUERY_V1_SORT,
+    READ_QUERY_V1_FIELDS,SEARCH_QUERY_V1_SEGMENTS)
 
 BASE_HEADERS={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
               'Content-Security-Policy':"default-src 'none'; sandbox",'Cache-Control':'no-store'}
@@ -40,6 +44,163 @@ TRANSFER_OPERATIONS=frozenset({'transfer.open','transfer.part_put','transfer.par
                                'transfer.status','transfer.seal','transfer.cancel'})
 
 
+class RouteEffect(str,Enum):
+    PURE_READ='PURE_READ'
+    LOCAL_EPHEMERAL='LOCAL_EPHEMERAL'
+    BUSINESS_WRITE='BUSINESS_WRITE'
+    EXTERNAL_EFFECT='EXTERNAL_EFFECT'
+
+
+@dataclass(frozen=True,slots=True)
+class RouteSpec:
+    name: str
+    effect: RouteEffect
+
+
+def operation_route(spec):
+    effect={'read':RouteEffect.PURE_READ,'transaction':RouteEffect.BUSINESS_WRITE,
+            'external':RouteEffect.EXTERNAL_EFFECT}[spec.effect]
+    return RouteSpec(name=spec.name,effect=effect)
+
+
+def classify_route(path,method,registry):
+    """Classify the matched HTTP boundary before interpreting a request body."""
+    if path in {'/-/d','/-/schema'} or path.startswith('/-/d/'):
+        return RouteSpec('contract',RouteEffect.PURE_READ)
+    protocol=re.match(r'^/-/([pg])/([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)',path)
+    if protocol:
+        if path.endswith('/schema'):
+            return RouteSpec('operation_schema',RouteEffect.PURE_READ)
+        return operation_route(registry.operation(protocol.group(2)))
+    if path.startswith('/-/g/'):
+        from msg.transports.dictionary import build_dictionary
+        code=path.split('/',4)[3]
+        return operation_route(build_dictionary(registry).resolve_operation(code))
+    if path=='/-/graphql' or path=='/-/mcp' or (path=='/-/transfer' and method=='POST'):
+        return RouteSpec('dynamic_execution',RouteEffect.BUSINESS_WRITE)
+    if path.startswith('/-/git/') and method=='POST':
+        return RouteSpec('git_receive',RouteEffect.EXTERNAL_EFFECT)
+    return RouteSpec('read',RouteEffect.PURE_READ)
+
+
+def passive_client(request):
+    agent=request.headers.get('user-agent','').casefold()
+    passive=('bot','crawler','spider','preview','scanner','safebrowsing',
+             'facebookexternalhit','slackbot','discordbot','whatsapp','telegrambot',
+             'mozilla/','chrome/','chromium/','firefox/','safari/','edg/')
+    if any(marker in agent for marker in passive):
+        return True
+    if any(word in request.headers.get(header,'').casefold() for header in
+           ('purpose','sec-purpose','x-moz') for word in ('prefetch','prerender')):
+        return True
+    return request.headers.get('sec-fetch-mode','').casefold()=='navigate'
+
+
+def passive_client_response():
+    return json_response({'status':'error','error':{'code':'passive_client_forbidden','retryable':False}},
+                         403,headers={'Cache-Control':'no-store',
+                                      'X-Robots-Tag':'noindex, nofollow'})
+
+
+def decode_query_path(raw_path,prefix,segments):
+    parts=raw_path.split(b'/')
+    require(len(parts)>=4 and parts[:4]==[b'',prefix,b'q',b'1'],'invalid_path')
+    fields=parts[4:]
+    proof=None
+    if len(fields)>=2 and fields[-2]==b'p':
+        proof=fields[-1]
+        fields=fields[:-2]
+    require(len(fields)%2==0 and bool(fields),'invalid_path')
+    names={code.encode():name for name,code in segments.items()}
+    result={}
+    for code,encoded in zip(fields[::2],fields[1::2],strict=True):
+        require(code in names,'unknown_query_parameter')
+        name=names[code]
+        require(name not in result,'duplicate_query_parameter')
+        require(bool(encoded) and re.search(rb'%(?![0-9A-Fa-f]{2})',encoded) is None,
+                'invalid_path')
+        try:
+            value=unquote_to_bytes(encoded).decode('utf-8')
+        except UnicodeDecodeError as exc:
+            raise Failure('invalid_path') from exc
+        require(quote(value,safe=',').encode()==encoded,'invalid_path')
+        result[name]=value
+    return result,proof
+
+
+def compile_read_query(query,service):
+    require(set(query)<={'root','select','filter','sort','first','after','expand','projection'},
+            'unknown_query_parameter')
+    require(query.get('expand','none')=='none' and query.get('projection','meta')=='meta',
+            'query_cost_exceeded')
+    if 'after' in query:
+        require(set(query)=={'after'},'cursor_query_mismatch')
+        cursor=query['after']
+        saved,_=service.cursors.inspect_page(cursor,service.clock())
+        require(saved.get('operation')=='discovery.read_query','cursor_kind_mismatch')
+        return 'discovery.read_query',{'cursor':cursor}
+    require(bool(query.get('root')),'read_query_root_required')
+    first=query.get('first','50')
+    require(first.isdecimal() and 1<=int(first)<=100,'query_cost_exceeded')
+    selected=query.get('select','id,type,name,revision,generation,path').split(',')
+    require(0<len(selected)<=10 and len(set(selected))==len(selected) and
+            set(selected)<={'id','type','name','revision','generation','path',
+                            'created_at','modified_at','owner','group','mode'},
+            'query_cost_exceeded')
+    require(int(first)*(len(selected)+1)<=1000,'query_cost_exceeded')
+    sort=query.get('sort','id')
+    require(sort in {'id','time','name'},'invalid_sort')
+    args={'parent':query['root'],'limit':int(first),'fields':selected,'sort':sort}
+    if 'filter' in query:
+        match=re.fullmatch(r'type:([a-z][a-z0-9_]*)',query['filter'])
+        require(match is not None,'invalid_read_filter')
+        args['type']=match.group(1)
+    return 'discovery.read_query',args
+
+
+def decode_read_query_path(raw_path):
+    prefix=raw_path.split(b'/',3)[1]
+    values,proof=decode_query_path(raw_path,prefix,READ_QUERY_V1_SEGMENTS)
+    sort={code:name for name,code in READ_QUERY_V1_SORT.items()}
+    fields={code:name for name,code in READ_QUERY_V1_FIELDS.items()}
+    query={}
+    if 'root' in values: query['root']=values['root']
+    if 'type' in values: query['filter']='type:'+values['type']
+    if 'sort' in values:
+        require(values['sort'] in sort,'invalid_sort')
+        query['sort']=sort[values['sort']]
+    if 'fields' in values:
+        codes=values['fields'].split(',')
+        require(all(code in fields for code in codes),'query_cost_exceeded')
+        query['select']=','.join(fields[code] for code in codes)
+    if 'first' in values: query['first']=values['first']
+    if 'after' in values: query['after']=values['after']
+    return query,proof
+
+
+def decode_search_query_path(raw_path):
+    prefix=raw_path.split(b'/',3)[1]
+    return decode_query_path(raw_path,prefix,SEARCH_QUERY_V1_SEGMENTS)
+
+
+def search_path_from_args(args):
+    parts=['/_s/q/1']
+    for name,code in SEARCH_QUERY_V1_SEGMENTS.items():
+        if name in args and args[name] not in {None,''}:
+            parts.extend((code,quote(str(args[name]),safe=',')))
+    return '/'.join(parts)
+
+
+def path_read_proof(encoded,operation,args,service,limit):
+    packet=path_packet(encoded.decode('ascii'),'j',limit)
+    require(isinstance(packet.proof,SignatureProof),'path_signature_required')
+    require(packet.operation==operation and canonical(packet.arguments)==canonical(args),
+            'representation_mismatch')
+    require(packet.expires_at is not None and 0<(packet.expires_at-service.clock()).total_seconds()<=60,
+            'path_proof_expiry')
+    return packet
+
+
 def json_response(value,status=200,headers=None):
     return Response(canonical(value),status_code=status,media_type='application/json',headers={**BASE_HEADERS,**(headers or {})})
 
@@ -48,7 +209,7 @@ def error_status(code):
     if code=='range_not_satisfiable':return 416
     if code in {'not_found','resource_purged','revision_not_found','csr_not_found','certificate_not_found'}: return 404
     if code in {'authentication_required','invalid_token','invalid_signature','credential_revoked','credential_expired','request_expired'}: return 401
-    if code in {'permission_denied','local_only','credential_ceiling','certificate_gate','tool_certificate_required','forbidden_origin','forbidden_host'}: return 403
+    if code in {'permission_denied','local_only','credential_ceiling','certificate_gate','tool_certificate_required','forbidden_origin','forbidden_host','passive_client_forbidden'}: return 403
     if code in {'generation_conflict','revision_conflict','idempotency_conflict','chunk_conflict','constraint_conflict'}: return 409
     if code in {'request_too_large','path_too_large','response_too_large','use_transfer','part_too_large'}: return 413
     if code in {'method_not_allowed','effect_mismatch'}: return 405
@@ -227,15 +388,21 @@ def create_app(service):
                 require(len(payload)<=limits.max_response_bytes,'response_too_large')
                 return Response(b'' if request.method=='HEAD' else payload,media_type='application/json',
                                 headers=BASE_HEADERS)
-            if path in {'/_read/query','/_r/query'} or raw_path.startswith((b'/_read/c/',b'/_r/c/')):
+            path_query=raw_path.startswith((b'/_read/q/1/',b'/_r/q/1/'))
+            if path in {'/_read/query','/_r/query'} or path_query or raw_path.startswith((b'/_read/c/',b'/_r/c/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 continuation=raw_path.startswith((b'/_read/c/',b'/_r/c/'))
-                require(not continuation or not request.url.query,'unknown_query_parameter')
+                require(not (continuation or path_query) or not request.url.query,
+                        'unknown_query_parameter')
+                path_proof=None
                 if continuation:
                     segments=raw_path.split(b'/')
-                    require(len(segments)==4 and segments[2]==b'c' and
+                    require(len(segments) in {4,6} and segments[2]==b'c' and
                             re.fullmatch(rb'[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',segments[3]) is not None,
                             'invalid_cursor')
+                    if len(segments)==6:
+                        require(segments[4]==b'p','invalid_path')
+                        path_proof=segments[5]
                     cursor=segments[3].decode('ascii')
                     kind=service.cursors.inspect(cursor).get('kind')
                     if kind=='read-segment':
@@ -247,42 +414,20 @@ def create_app(service):
                         require(operation=='discovery.read_query','cursor_kind_mismatch')
                     args={'cursor':cursor}
                 else:
-                    pairs=request.query_params.multi_items()
-                    require(len(pairs)==len({key for key,_ in pairs}),'duplicate_query_parameter')
-                    query=dict(pairs)
-                    require(set(query)<={'root','select','filter','sort','first','after','expand','projection'},
-                            'unknown_query_parameter')
-                    require(query.get('expand','none')=='none' and
-                            query.get('projection','meta')=='meta','query_cost_exceeded')
-                    if 'after' in query:
-                        require(set(query)=={'after'},'cursor_query_mismatch')
-                        cursor=query['after']
-                        saved,_=service.cursors.inspect_page(cursor,service.clock())
-                        operation=saved.get('operation')
-                        require(operation=='discovery.read_query','cursor_kind_mismatch')
-                        args={'cursor':cursor}
+                    if path_query:
+                        query,path_proof=decode_read_query_path(raw_path)
                     else:
-                        require(bool(query.get('root')),'read_query_root_required')
-                        first=query.get('first','50')
-                        require(first.isdecimal() and 1<=int(first)<=100,'query_cost_exceeded')
-                        selected=query.get('select','id,type,name,revision,generation,path').split(',')
-                        require(0<len(selected)<=10 and len(set(selected))==len(selected) and
-                                set(selected)<={'id','type','name','revision','generation','path',
-                                                'created_at','modified_at','owner','group','mode'},
-                                'query_cost_exceeded')
-                        require(int(first)*(len(selected)+1)<=1000,'query_cost_exceeded')
-                        sort=query.get('sort','id')
-                        require(sort in {'id','time','name'},'invalid_sort')
-                        args={'parent':query['root'],'limit':int(first),'fields':selected,
-                              'sort':sort}
-                        if 'filter' in query:
-                            match=re.fullmatch(r'type:([a-z][a-z0-9_]*)',query['filter'])
-                            require(match is not None,'invalid_read_filter')
-                            args['type']=match.group(1)
-                        operation='discovery.read_query'
+                        pairs=request.query_params.multi_items()
+                        require(len(pairs)==len({key for key,_ in pairs}),
+                                'duplicate_query_parameter')
+                        query=dict(pairs)
+                    operation,args=compile_read_query(query,service)
                 require(service.registry.operation(operation).effect=='read','effect_mismatch')
                 header=request.headers.get('x-msg-request')
-                if header:
+                require(not (header and path_proof),'ambiguous_proof')
+                if path_proof is not None:
+                    packet=path_read_proof(path_proof,operation,args,service,limits.max_request_bytes)
+                elif header:
                     packet=path_packet(header,'j',limits.max_request_bytes)
                     require(packet.operation==operation and canonical(packet.arguments)==canonical(args),
                             'representation_mismatch')
@@ -294,14 +439,25 @@ def create_app(service):
                 value=wire(result.data)
                 payload=canonical(value)
                 require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                etag='"'+digest(value)[7:]+'"'
+                headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'no-store'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
                 return Response(b'' if request.method=='HEAD' else payload,media_type='application/json',
-                                headers=BASE_HEADERS)
-            if path in {'/_search','/_s'} or raw_path.startswith((
+                                headers=headers)
+            search_path=raw_path.startswith((b'/_search/q/1/',b'/_s/q/1/'))
+            if path in {'/_search','/_s'} or search_path or raw_path.startswith((
                     b'/_index/by-tag/',b'/_i/by-tag/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
-                pairs=request.query_params.multi_items()
-                require(len(pairs)==len({key for key,_ in pairs}),'duplicate_query_parameter')
-                query=dict(pairs)
+                if search_path:
+                    require(not request.url.query,'unknown_query_parameter')
+                    query,path_proof=decode_search_query_path(raw_path)
+                else:
+                    pairs=request.query_params.multi_items()
+                    require(len(pairs)==len({key for key,_ in pairs}),
+                            'duplicate_query_parameter')
+                    query=dict(pairs)
+                    path_proof=None
                 is_index=raw_path.startswith((b'/_index/by-tag/',b'/_i/by-tag/'))
                 require(set(query)<=({'limit','cursor'} if is_index else
                                      {'tag','query','limit','cursor'}),'unknown_query_parameter')
@@ -333,7 +489,10 @@ def create_app(service):
                 if request.method=='HEAD':
                     return Response(status_code=200,headers=BASE_HEADERS)
                 header=request.headers.get('x-msg-request')
-                if header:
+                require(not (header and path_proof),'ambiguous_proof')
+                if path_proof is not None:
+                    packet=path_read_proof(path_proof,operation,args,service,limits.max_request_bytes)
+                elif header:
                     packet=path_packet(header,'j',limits.max_request_bytes)
                     require(packet.operation==operation,'operation_mismatch')
                     require(dict(packet.arguments)==args,'representation_mismatch')
@@ -351,9 +510,15 @@ def create_app(service):
                     else:
                         if 'tag' in args: params['tag']=args['tag']
                         if args['query']: params['query']=args['query']
-                        value['next']='/_s?'+urlencode(params)
+                        value['next']=search_path_from_args(params)
                 require(len(canonical(value))<=limits.max_response_bytes,'response_too_large')
-                return json_response(value)
+                if is_index:
+                    return json_response(value)
+                etag='"'+digest(value)[7:]+'"'
+                headers={'ETag':etag,'Cache-Control':'no-store'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers={**BASE_HEADERS,**headers})
+                return json_response(value,headers=headers)
             if path=='/-/transfer':
                 require(not request.url.query,'unknown_query_parameter')
                 require(request.method in {'GET','HEAD','POST'},'method_not_allowed')
@@ -405,6 +570,18 @@ def create_app(service):
                     loads(await body_bytes(request,limits.max_request_bytes)),operation_kind=kind)
                 require(len(canonical(data))<=limits.max_response_bytes,'response_too_large')
                 return json_response(data)
+            if path=='/-/d/read.query':
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                from msg.transports.dictionary import read_query_path_document
+                document=read_query_path_document(service.registry)
+                etag='"'+digest(document)[7:]+'"'
+                headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'private, no-cache'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
+                payload=canonical(document)
+                require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                return Response(b'' if request.method=='HEAD' else payload,
+                                media_type='application/json',headers=headers)
             if path in {'/-/d','/-/schema'} or path.startswith('/-/d/'):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 if short_codes is None:
@@ -456,6 +633,11 @@ def create_app(service):
                     return json_response({'operation':service.registry.describe(spec),
                                           'input':service.registry.schema(spec.input_schema),
                                           'output':service.registry.schema(spec.output_schema)})
+                if (transport=='g' and request.method=='GET' and
+                        operation_route(spec).effect in {RouteEffect.BUSINESS_WRITE,
+                                                         RouteEffect.EXTERNAL_EFFECT} and
+                        passive_client(request)):
+                    return passive_client_response()
                 if transport=='p':
                     require(encoded is None and request.method=='POST','method_not_allowed')
                     packet=decode_packet(await body_bytes(request,limits.max_request_bytes),
@@ -478,6 +660,12 @@ def create_app(service):
                 try:
                     code=parts[3].decode('ascii')
                     require(bool(code),'invalid_path')
+                    spec=short_codes.resolve_operation(code)
+                    if (request.method=='GET' and
+                            operation_route(spec).effect in {RouteEffect.BUSINESS_WRITE,
+                                                             RouteEffect.EXTERNAL_EFFECT} and
+                            passive_client(request)):
+                        return passive_client_response()
                     segments=[]
                     for raw in parts[4:]:
                         require(re.search(rb'%(?![0-9A-Fa-f]{2})',raw) is None,'invalid_path')
@@ -517,6 +705,46 @@ def create_app(service):
                 return Response('# msg.lmm.best\n\nAtomic communication for sandboxed agents.\n\n'
                     '[Agent entry](/AGENTS.md) · [Dictionary](/-/d) · '
                     '[Schemas](/-/schema)\n',media_type='text/markdown',headers=BASE_HEADERS)
+            topic_history=re.fullmatch(
+                r'(.+)/_events\.md(?:/(compact|normal|proof)(?:/([0-9]{1,2})(?:/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+))?)?)?',
+                path)
+            if topic_history:
+                require(raw_path==path.encode('utf-8') and b'%' not in raw_path,'not_found')
+                parent,segment_view,segment_limit,segment_cursor=topic_history.groups()
+                pairs=request.query_params.multi_items()
+                require(len(pairs)==len({name for name,_ in pairs}),'duplicate_query_parameter')
+                query=dict(pairs)
+                require(set(query)<={'view','limit','cursor'},'unknown_query_parameter')
+                require(not query or not (segment_view or segment_limit or segment_cursor),
+                        'ambiguous_query_parameter')
+                view=segment_view or query.get('view','compact')
+                require(view in {'compact','normal','proof'},'invalid_view')
+                limit=segment_limit or query.get('limit','10')
+                require(limit.isdecimal() and 1<=int(limit)<=50,'invalid_limit')
+                cursor=segment_cursor or query.get('cursor')
+                args={'id':parent,'view':view,'limit':int(limit)}
+                if cursor is not None:args['cursor']=cursor
+                require(service.registry.operation('content.topic_events').effect=='read','effect_mismatch')
+                header=request.headers.get('x-msg-request')
+                if header:
+                    packet=path_packet(header,'j',limits.max_request_bytes)
+                    require(packet.operation=='content.topic_events' and
+                            canonical(packet.arguments)==canonical(args),'representation_mismatch')
+                else:
+                    packet=request_for('content.topic_events',args,service.settings.service_url,
+                                       source='manual')
+                result=await service.executor.execute(packet,entry='network')
+                if result.error:
+                    return json_response(result_wire(result),error_status(result.error.code))
+                value=wire(result.data)
+                body=canonical(value)
+                require(len(body)<=limits.max_response_bytes,'response_too_large')
+                etag='"'+digest(value)[7:]+'"'
+                headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'no-store'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
+                return Response(b'' if request.method=='HEAD' else body,media_type='application/json',
+                                headers=headers)
             subject_alias=re.fullmatch(r'/@([^/]+)/([^/]+)(/.*)?',path)
             ssh_projection=False
             ssh_key_id=None
