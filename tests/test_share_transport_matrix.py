@@ -142,7 +142,11 @@ async def test_live_group_reshare_revocation_across_read_surfaces(tmp_path, pg_d
         assert marker in canonical(historical).decode()
         history = ok(await invoke('discovery.get', {'id': rid, 'view': 'history'}))
         assert original in canonical(history).decode()
-        cached = {'id': rid, 'known_digest': digest(current['data'])}
+        # Pin the same non-null fields for the wire and stored projections.
+        # Compact adapters omit optional null values in the default view.
+        projection = {'id': rid, 'fields': ['id', 'revision', 'generation', 'content']}
+        warm = ok(await invoke('discovery.get', projection))
+        cached = {**projection, 'known_digest': digest(warm['data'])}
         assert ok(await invoke('discovery.get', cached))['data']['not_modified']
         search = {'scope': '/main', 'terms': marker, 'field': 'body', 'snippet': True}
         assert rid in canonical(ok(await invoke('discovery.lexical_search', search))).decode()
