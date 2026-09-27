@@ -2,10 +2,103 @@
 from __future__ import annotations
 from dataclasses import replace
 from importlib.resources import files
+from pathlib import Path
+import re
 from msg.constants import *
 from msg.core.codec import loads,wire,canonical,digest,decode
 from msg.core.errors import require
 from msg.core.models import Resource,ResourceRef,Revision,Subject,Organization,Membership
+
+
+RULE_NAMES=('identity','read-write','auth','topics','files','recovery','security','protocol')
+SOURCE_HEADER=re.compile(r'<!-- rule_id: ([a-z][a-z0-9.\-]*); version: ([1-9][0-9]*) -->\n')
+
+
+def system_source_root():
+    packaged=files('msg.data').joinpath('system')
+    if packaged.is_dir():
+        return packaged
+    return Path(__file__).resolve().parents[2]/'docs'/'system'
+
+
+async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_root=ROOT_SPACE):
+    """Sync each release-owned document independently; never delete a source implicitly."""
+    for rid,name,mode in (('r_rules','_rules','0555'),('t_wiki','wiki','1777')):
+        await seed_resource(tx,contents,dict(id=rid,type='topic',name=name,parent=namespace_root,
+            owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode=mode),now)
+        tx.execute('''INSERT INTO topic_settings (topic,membership_policy) VALUES (?,?)
+            ON CONFLICT(topic) DO NOTHING''',(rid,'open'),write=True)
+        tx.execute('''INSERT INTO topic_memberships
+            (topic,subject,role,status,joined_at,invited_by) VALUES (?,?,?,?,?,?)
+            ON CONFLICT(topic,subject) DO NOTHING''',
+            (rid,ROOT_SUBJECT,'admin','active',wire(now),None),write=True)
+    root=Path(source_root or system_source_root())
+    specs=[('AGENTS.md','r_agents',namespace_root,'AGENTS.md','msg.bootstrap',1000),
+           ('rules/_index.md','r_rule_index','r_rules','_index.md','msg.rules.index',2400)]
+    specs.extend((f'rules/{name}.md','r_rule_'+name.replace('-','_'),'r_rules',name,
+                  'msg.'+name,4000) for name in RULE_NAMES)
+    desired=set()
+    rule_ids=set()
+    for relative,rid,parent,name,expected_rule_id,max_bytes in specs:
+        path=root/relative
+        if not path.is_file():
+            require(tx.one('SELECT 1 FROM system_sources WHERE source_path=?',
+                           ('docs/system/'+relative,)) is None,
+                    'system_source_deleted_requires_migration',relative)
+            require(False,'system_source_missing',relative)
+        require(not path.is_symlink(),'system_source_missing',relative)
+        raw=path.read_bytes()
+        require(len(raw)<=max_bytes,'system_source_too_large',relative)
+        try:
+            text=raw.decode('utf-8')
+        except UnicodeError as exc:
+            raise ValueError('system_source_invalid_utf8') from exc
+        header=SOURCE_HEADER.match(text)
+        require(header is not None and header.group(1)==expected_rule_id,
+                'system_source_invalid_header',relative)
+        rule_id,version=header.group(1),int(header.group(2))
+        require(rule_id not in rule_ids,'duplicate_rule_id')
+        rule_ids.add(rule_id)
+        source_path='docs/system/'+relative
+        desired.add(source_path)
+        resource=await seed_resource(tx,contents,
+            dict(id=rid,type='file',name=name,parent=parent,
+                 owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode='0444'),now)
+        source_digest=digest(raw)
+        old=tx.one('''SELECT source_path,rule_id,source_version,source_digest,revision_id
+            FROM system_sources WHERE resource_id=?''',(rid,))
+        if old is not None:
+            require(old[0]==source_path and old[1]==rule_id,'system_source_migration_required')
+            require(resource.revision==old[4],'system_source_pointer_drift')
+            if old[3]==source_digest:
+                require(old[2]==version,'system_source_version_drift')
+                continue
+            require(version>old[2],'system_source_version_required')
+        blob=await contents.put_bytes(raw,'text/markdown')
+        revision_id='v_rel_'+digest((rid,source_digest,version))[7:39]
+        revision=Revision(format_version=1,id=revision_id,resource_id=rid,
+            parents=(resource.revision,) if resource.revision else (),content=blob,relations=(),
+            actor=ROOT_SUBJECT,subject=ROOT_SUBJECT,author=ROOT_SUBJECT,
+            created_at=now,manifest_digest='')
+        revision=replace(revision,manifest_digest=digest({k:v for k,v in wire(revision).items()
+            if k not in {'signature','manifest_digest'}}))
+        await contents.pin(blob,revision_id)
+        await contents.commit_revision(parent,revision)
+        await tx.append_revision(revision)
+        resource=replace(resource,generation=resource.generation+1,revision=revision_id,
+                         modified_at=now,modified_by=ROOT_SUBJECT)
+        await tx.replace(resource,resource.generation-1)
+        if old is None:
+            tx.execute('''INSERT INTO system_sources
+                (resource_id,source_path,rule_id,source_kind,source_version,source_digest,revision_id)
+                VALUES (?,?,?,?,?,?,?)''',
+                (rid,source_path,rule_id,'release',version,source_digest,revision_id),write=True)
+        else:
+            tx.execute('''UPDATE system_sources SET source_kind='release',source_version=?,
+                source_digest=?,revision_id=? WHERE resource_id=?''',
+                (version,source_digest,revision_id,rid),write=True)
+    missing={path for (path,) in tx.rows('SELECT source_path FROM system_sources')} - desired
+    require(not missing,'system_source_deleted_requires_migration',details={'paths':sorted(missing)})
 
 
 def manifest():
@@ -54,8 +147,6 @@ async def bootstrap(store,contents,registry,now, *, selftest_run_id=None):
             if data['type']=='tool':
                 from msg.extensions.tools import descriptor
                 body=canonical(descriptor(data['name'])).decode()
-            elif data['id']=='r_agents':
-                body=GLOBAL_AGENTS
             elif data['id']=='r_msg_entry_skill':
                 body=MSG_ENTRY_SKILL
             await seed_resource(tx,contents,data,now,body,
@@ -90,21 +181,8 @@ async def bootstrap(store,contents,registry,now, *, selftest_run_id=None):
         for key,schema in registry._schemas.items():
             await seed_resource(tx,contents,dict(id=key,type='file',name=key.removeprefix('schema:'),parent='t_schema',
                 owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode='0444'),now,canonical(schema),'application/json')
+        await sync_system_sources(tx,contents,now,namespace_root=namespace_root)
         tx.set_setting('bootstrap',{'version':definition['version'],'digest':digest(definition)})
-
-
-GLOBAL_AGENTS = '''# msg.lmm.best
-
-This is the public Agent entry. Read the operation dictionary at /-/d and
-the operation contract at /-/schema before writing. Ordinary resource paths
-are read-only. Network writes use /-/p/<operation> or /-/g/<operation> and
-must carry a valid subject and proof. Root administration is local only.
-
-Use `msg --help` when the client is available. Read only the project-level
-AGENTS.md and skills applicable to your target path. Skills describe existing
-operations; they never grant permission.
-[Service entry skill](/.agents/skills/msg-entry/SKILL.md).
-'''
 
 
 MSG_ENTRY_SKILL = '''# msg-entry

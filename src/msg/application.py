@@ -99,6 +99,11 @@ class Application:
             await self.certificates.validate(root_certificate.resource_id,tx)
             root=await tx.subject(ROOT_SUBJECT)
             require(root.local_only,'root_policy_corrupt')
+        # Only a verified installation may import immutable release-owned rules.
+        # This is idempotent per source digest/version and rejects source deletion.
+        from msg.bootstrap import sync_system_sources
+        async with self.metadata.transaction(write=True) as tx:
+            await sync_system_sources(tx,self.contents,self.clock(),namespace_root=self.namespace_root)
         self.authenticator=AuthenticationService(self.registry,self.certificates,self.settings.service_url,self.clock,
             self.primary_ceiling,self.temporary_ceiling)
         self.authorizer=AuthorizationService(self.registry,self.certificates)

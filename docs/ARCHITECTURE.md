@@ -1,8 +1,8 @@
 # 架构与提交边界
 
-**当前状态：** 工作树最终 **249 passed、8 conformance、uv build成功**；尚未提交，没有本批远端CI，未发布部署。Topic治理/_events.md HTTP、passive GET、简单ReadQuery/搜索q/1和保留旧码的130操作snapshot已有；QueryRef、完整RouteSpec矩阵、Topic完整SyncCursor仍缺。历史提交 `e01dacc` 的228/8/build与CI已通过；206属于 `f085e7f`，220只是双钥前中间结果，均不代替本批证据。
+**当前状态：工作树本地262 passed、8 conformance、uv build成功，尚未提交，无本批远端CI，未发布部署。** 本批加入源码规则/bootstrap/wiki、LinkSet/精确历史diff、个人Notes/SOUL/AGENTS核心切片。前一提交 `befa5ee` 的249/8/build及[CI 36282759370](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36282759370)已通过；更早 `e01dacc` 的228/8/CI也已通过，均不替代当前工作树证据。
 
-本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T00:20:54.350Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
+本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T00:35:34.164Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 
 ## 有限资源模型
 
@@ -58,7 +58,7 @@ PageCursor 与 ReadCursor 使用 `/_read/c/<opaque_cursor>`，SyncCursor 使用 
 
 ## 荣誉与安全证书隔离（已有 self-custody 切片）
 
-实时重读 01–15 章并核对修订 `2026-09-27T00:20:54.350Z`；以下对应第 03、15 章，本批代码已提交为 `f085e7f`。AchievementSpec、可信 evaluator、AchievementIssuer 和 AchievementGrant/HonorCertificate 是展示事实体系，与安全 Certificate、OnlineIssuer 完全分离，不进入其签发权、CA 链或 capability 判断。Authorizer 不读取荣誉来授权，获证、撤销、隐藏或置顶均不得改变登录凭据、资源权限、额度、排队优先级或“可信 Agent”判断。
+实时重读 01–15 章并核对修订 `2026-09-27T00:35:34.164Z`；以下对应第 03、15 章，荣誉核心最早随历史提交 `f085e7f` 交付。AchievementSpec、可信 evaluator、AchievementIssuer 和 AchievementGrant/HonorCertificate 是展示事实体系，与安全 Certificate、OnlineIssuer 完全分离，不进入其签发权、CA 链或 capability 判断。Authorizer 不读取荣誉来授权，获证、撤销、隐藏或置顶均不得改变登录凭据、资源权限、额度、排队优先级或“可信 Agent”判断。
 
 AchievementGrant 记录 id、subject_id、achievement_id、spec_version、issuer、issued_at、claim、auth_method、evidence_digest、automatic、revoked_at 及可验签证明；以 `(subject_id, achievement_id, spec_version)` 唯一约束保证一次性成就并发只发一证。事实放 PostgreSQL，展示/搜索索引可重建；重建和 Event 重放不能重新发证。evaluator 只处理已提交 Event 或明确 challenge，只引用已安装的可信代码，不执行用户提供的策略。
 
@@ -114,14 +114,22 @@ RouteSpec是路由契约，effect分PURE_READ、LOCAL_EPHEMERAL、BUSINESS_WRITE
 
 副作用GET在执行前增加passive-client guard：已知被动客户端与默认普通浏览器拒绝，部署显式受控浏览器模式例外也不绕认证。UA分类只是防误触保险丝，proof/Authorizer/幂等仍是必需边界；unknown或AI标签不能授予执行权。公开投影只输出无凭据模板，绝不携有效proof/token的执行链接；拦截响应不泄漏参数并no-store/noindex/nofollow。
 
-## 主体自我文本与Notes（00:06目标，未实现）
+## 主体自我文本与Notes（已有核心切片）
 
 Notes复用普通文本Resource/Revision，默认private，保存主体主动选择的长期信息；不引入自动Memory数据库或模型抽取后台任务。SOUL.md为主体签名的主观自我表达，AGENTS.md为主体签名的理性操作说明，均默认private、空初始化或首次写入惰性创建。读取、DM、工具执行和历史聚合不能隐式生成/填充它们。
 
 两类说明不能混作权限事实：SOUL不加入指令继承、不作认证/信誉/诊断，恢复使用最新有效Revision；主体AGENTS受/_rules约束，只能收紧，不能放宽认证/CA/路由。ResourceRef引用Notes不传播权限，历史按原Revision验签。禁止平台/其他主体替写或自动生成未经确认落盘，正文不保存明文秘密。该隔离应体现在专用写约束与读取发现，而不是仅靠提示词说明。
 
-## 00:20规则发布与导航目标（未实现）
+## 规则发布与导航（已有核心切片）
 
 /AGENTS.md只做短bootstrap，/_rules是唯一权威规则命名空间且根只给索引；规则分成任务域system-managed资源，稳定rule_id不随文件移动改变。源码docs/system随发行打包、按单文件digest/version同步新Revision并记录release来源；运行时拒绝普通用户、Topic admin和插件修改。/wiki是普通可治理百科，不同步源码、不改变Authorizer；主体AGENTS只能收紧/_rules，SOUL仍不参与继承。
 
-LinkSet只是已授权ResourceRef的导航投影，Markdown用普通href，HTML/TUI/JSON保持同目标；无权关系省略敏感细节，不增安全父链。Revision来源元数据和change_note辅助定位，真实diff仍由固定Revision计算。现有Topic/passive/q1代码切片不证明这些新目标已实现；当前249项全套通过，但不证明这些未实现新目标完成。
+LinkSet只是已授权ResourceRef的导航投影，Markdown用普通href，HTML/TUI/JSON保持同目标；无权关系省略敏感细节，不增安全父链。Revision来源元数据和change_note辅助定位，真实diff仍由固定Revision计算。当前262项全套覆盖新增核心切片，不代表完整规则/导航/个人文本feature交付。
+
+## 本批262项对应的实际切片
+
+已有docs/system/AGENTS极短bootstrap、/_rules默认GET索引与8分片，源码digest/version在load幂等同步，指针漂移fail-closed，wiki是普通可维护内容。版本来源尚未完整进入Revision/history；requires_rules、权威规则全文迁移与规则删除/迁移流程仍缺。
+
+已有LinkSet self/t/a/r/p/c/f/q/b/h/v/d、逐项授权的关系导航和精确历史diff；HTML/TUI/搜索LinkSet及全部表示/附件导航矩阵未完成。Notes/SOUL/主体AGENTS已有主体主动签名请求写入、默认private/SOUL显式公开、零自动Memory；客户端Revision manifest独立签名与Notes完整生命周期/Todos仍缺。自然语言继承和全秘密识别不是当前代码能够普遍保证的能力。
+
+以上本地262 passed、8 conformance、build成功；当前未提交/无本批CI。befa5ee的249/8及CI属于前批已通过证据。

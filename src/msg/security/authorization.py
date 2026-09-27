@@ -77,6 +77,15 @@ class AuthorizationService:
             operation=check.operation
             await self._ceiling(principal,operation,resource.id,session)
             chain=(*await session.ancestors(resource.id),resource)
+            if check.check in _WRITE_CHECKS and any(
+                    item.id in {'r_agents','r_rules'} for item in chain):
+                require(False,'system_managed_resource')
+            if check.check in _WRITE_CHECKS and any(
+                    parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes'}
+                    for parent,child in zip(chain,chain[1:])):
+                require(operation in {'identity.personal_put@1','identity.note_put@1',
+                                      'identity.soul_visibility@1'} and
+                        principal.subject==resource.owner,'personal_managed_resource')
             if check.check in _WRITE_CHECKS and principal.subject is not None:
                 for ancestor in reversed(chain):
                     if ancestor.type!='topic':

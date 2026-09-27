@@ -17,6 +17,8 @@ BASE_FAMILIES = {
         'identity.identity_key_get', 'identity.identity_key_list',
         'identity.encryption_key_get', 'identity.encryption_key_list',
         'identity.encryption_key_rotate',
+        'identity.personal_put','identity.soul_visibility','identity.note_put',
+        'identity.note_list','identity.note_get',
         'achievement.start', 'achievement.answer', 'achievement.finish'),
     'resource.basic': ('content.',),
     'discussion.basic': ('discussion.',),

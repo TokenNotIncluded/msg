@@ -14,12 +14,37 @@ from msg.core.models import (
     CapabilityGrant,Certificate,CertificateRequest,IssuancePolicy,Signature,CertificateRequestState,
     Scope,HandlerOutput,EmailSettings,EffectJob,Event,AuditEvent,AccessRequirement,
 )
-from msg.plugins.common import registration,resolve,operation_id,check_access,new_id,create_resource,output_for
+from msg.plugins.common import (registration,resolve,operation_id,check_access,new_id,create_resource,
+    revise_resource,assert_generation,output_for)
 from msg.plugins.schemas import *
+from msg.core.requests import signing_bytes
 from msg.security.crypto import key_id,subject_id,verify
 from msg.security.age_keys import public_from_recipient,encryption_key_id
 from msg.security.certificates import ONLINE_ISSUABLE_CAPABILITIES,sign_certificate,csr_body,verify_csr
 from msg.security.policy import scope_subset,constraints_subset
+
+
+SECRET_TEXT=re.compile(r'(?i)(?:-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|AGE-SECRET-KEY-1[A-Z0-9]+'
+    r'|\b(?:sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,}'
+    r'|xox[baprs]-[A-Za-z0-9-]{20,}|AKIA[0-9A-Z]{16})\b'
+    r'|\b(?:api[_ -]?key|secret|token|password|private[_ -]?key)\b\s*[:=]\s*\S{12,})')
+RULE_BYPASS_TEXT=re.compile(r'(?is)\b(?:ignore|override|bypass|disable|skip)\b.{0,80}'
+    r'(?:/_rules|authentication|authorization|certificate|\bCA\b|security|permission)'
+    r'|\ballow\s+anonymous\s+writ(?:e|es|ing)\b')
+
+
+def validate_personal_body(body, *, agents=False, limit=65536):
+    require(type(body) is str and len(body.encode('utf-8'))<=limit,'personal_text_too_large')
+    require(SECRET_TEXT.search(body) is None,'plaintext_secret_forbidden')
+    if agents:
+        require(RULE_BYPASS_TEXT.search(body) is None,'personal_rules_cannot_relax_platform')
+
+
+def save_personal_proof(tx,request,resource,subject,kind,now):
+    tx.execute('''INSERT INTO personal_revision_proofs
+        (revision_id,subject,kind,signature,signed_envelope,created_at) VALUES (?,?,?,?,?,?)''',
+        (resource.revision,subject,kind,canonical(request.proof.signature).decode(),
+         b64(signing_bytes(request)),wire(now)),write=True)
 
 
 async def make_user(app,tx,ctx,id,handle,kind):
@@ -142,6 +167,94 @@ def install(app):
         return HandlerOutput(resources=(ResourceRef(id=user.id),),data={'subject_id':user.id,'key_id':credential.id,
             'encryption_key_id':encryption_id,'encryption_recipient':request.arguments['encryption_recipient'],
             'certificate_id':cert.resource_id,'handle':request.arguments['handle']})
+
+    async def personal_write(ctx,request,tx, *, name,kind,parent):
+        subject=await controlled_owner(app,ctx,request,tx)
+        body=request.arguments['body']
+        validate_personal_body(body,agents=kind=='agents',
+                               limit=min(65536,app.settings.server.limits.max_request_bytes))
+        existing=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',(parent,name))
+        if existing is None:
+            require('expected_revision' not in request.arguments,'personal_revision_not_found')
+            resource=await create_resource(app,ctx,request,tx,parent=parent,type='file',name=name,
+                                           body=body,media_type='text/markdown',mode=0o600)
+        else:
+            resource=await tx.resource(existing[0])
+            require(resource.type=='file' and resource.owner==subject.resource_id,
+                    'personal_resource_conflict')
+            require(request.arguments.get('expected_revision')==resource.revision,
+                    'revision_conflict')
+            await assert_generation(request,resource)
+            resource=await revise_resource(app,ctx,request,tx,resource,body,'text/markdown')
+        save_personal_proof(tx,request,resource,subject.resource_id,kind,ctx.now)
+        return output_for(resource,signature_source='self-custody',proof_purpose='request')
+
+    @op('identity.personal_put',obj({'kind':{'enum':['soul','agents']},'body':STRING,
+        'expected_revision':IDENTIFIER},('kind','body')),signature=True)
+    async def personal_put(ctx,request,tx):
+        subject=ctx.principal.subject
+        require(subject is not None,'authentication_required')
+        name='SOUL.md' if request.arguments['kind']=='soul' else 'AGENTS.md'
+        return await personal_write(ctx,request,tx,name=name,kind=request.arguments['kind'],parent=subject)
+
+    @op('identity.soul_visibility',obj({'visibility':{'enum':['private','public']}},
+                                       ('visibility',)),signature=True)
+    async def soul_visibility(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        row=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',
+                   (subject.resource_id,'SOUL.md'))
+        require(row is not None,'personal_resource_not_found')
+        resource=await tx.resource(row[0])
+        await assert_generation(request,resource)
+        mode=0o644 if request.arguments['visibility']=='public' else 0o600
+        require(resource.mode!=mode,'visibility_unchanged')
+        updated=replace(resource,mode=mode,generation=resource.generation+1,
+                        modified_at=ctx.now,modified_by=ctx.principal.actor)
+        await tx.replace(updated,resource.generation)
+        return output_for(updated,visibility=request.arguments['visibility'])
+
+    @op('identity.note_put',obj({'name':STRING,'body':STRING,'expected_revision':IDENTIFIER},
+                                ('name','body')),signature=True)
+    async def note_put(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        folder=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',
+                      (subject.resource_id,'notes'))
+        if folder is None:
+            notes=await create_resource(app,ctx,request,tx,parent=subject.resource_id,
+                                        type='topic',name='notes',mode=0o700)
+            parent=notes.id
+        else:
+            notes=await tx.resource(folder[0])
+            require(notes.type=='topic' and notes.owner==subject.resource_id and
+                    notes.mode&0o077==0,'personal_resource_conflict')
+            parent=notes.id
+        return await personal_write(ctx,request,tx,name=request.arguments['name'],kind='note',parent=parent)
+
+    @op('identity.note_list',obj(),effect='read')
+    async def note_list(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        folder=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',
+                      (subject.resource_id,'notes'))
+        if folder is None:
+            return HandlerOutput(data={'items':[]})
+        rows=tx.rows("SELECT id,name,revision FROM resources WHERE parent=? AND state='active' ORDER BY name,id",
+                     (folder[0],))
+        return HandlerOutput(data={'items':[{'id':rid,'name':name,'revision':revision}
+                                            for rid,name,revision in rows]})
+
+    @op('identity.note_get',obj({'name':STRING},('name',)),effect='read')
+    async def note_get(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        folder=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',
+                      (subject.resource_id,'notes'))
+        require(folder is not None,'note_not_found')
+        row=tx.one("SELECT id,revision FROM resources WHERE parent=? AND name=? AND state='active'",
+                   (folder[0],request.arguments['name']))
+        require(row is not None,'note_not_found')
+        revision=await tx.revision(ResourceRef(id=row[0],revision=row[1]))
+        body=(await app.contents.read_bytes(revision.content)).decode('utf-8')
+        return HandlerOutput(data={'id':row[0],'name':request.arguments['name'],
+                                   'revision':revision.id,'content':body})
 
     @op('identity.identity_key_list',obj({'subject_id':IDENTIFIER},('subject_id',)),effect='read')
     async def identity_key_list(ctx,request,tx):

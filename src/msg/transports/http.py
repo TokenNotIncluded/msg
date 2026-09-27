@@ -235,7 +235,10 @@ def describe_resource(data):
     if 'content' in data:
         content=data['content']
         if isinstance(content,str):
-            return content
+            links=data.get('links',{})
+            navigation=' '.join(f"[{rel}]({link['path']})" for rel,link in links.items()
+                                if isinstance(link,dict) and link.get('path'))
+            return content.rstrip('\n')+'\n\n'+navigation+'\n' if navigation else content
         from msg.core.template_dsl import render_values
         if isinstance(content,dict) and 'template_id' in content and 'values' in content:
             return render_values(content['values'])
@@ -361,6 +364,72 @@ def create_app(service):
             if path=='/healthz':
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 return json_response({'status':'ok' if service._loaded else 'not_ready'},200 if service._loaded else 503)
+            link_path=raw_path
+            link_proof=None
+            link_parts=raw_path.split(b'/')
+            if len(link_parts)>=2 and link_parts[-2]==b'p' and raw_path.startswith((b'/_read/',b'/_r/')):
+                link_path=b'/'.join(link_parts[:-2])
+                link_proof=link_parts[-1]
+            link_view=re.fullmatch(rb'/_r(?:ead)?/([A-Za-z0-9_.:-]{1,160})/'
+                rb'(links|l/(self|[a-z])|diff/([A-Za-z0-9_.:-]{1,160})'
+                rb'(?:/([A-Za-z0-9_.:-]{1,160}))?(?:/o/([0-9]+))?)',link_path)
+            if link_view:
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                rid=link_view.group(1).decode('ascii')
+                rel=link_view.group(3).decode('ascii') if link_view.group(3) else None
+                old=link_view.group(4).decode('ascii') if link_view.group(4) else None
+                new=link_view.group(5).decode('ascii') if link_view.group(5) else None
+                offset=link_view.group(6).decode('ascii') if link_view.group(6) else None
+                pairs=request.query_params.multi_items()
+                require(len(pairs)==len({key for key,_ in pairs}),'duplicate_query_parameter')
+                query=dict(pairs)
+                if old is not None or rel=='d':
+                    require(not query,'unknown_query_parameter')
+                    operation='discovery.diff_view'
+                    args={'id':rid}
+                    if rel=='d':
+                        args['previous']=True
+                    elif new is None:
+                        args['known_revision']=old
+                    else:
+                        args.update(old_revision=old,new_revision=new)
+                    if offset is not None:
+                        require(new is not None,'invalid_diff_range')
+                        args['offset']=int(offset)
+                else:
+                    require(rel is None or rel in {'self','t','a','r','p','c','f','q','b','h','v'},
+                            'unknown_link_relation')
+                    require(set(query)<=({'limit'} if rel in {'c','f','q','b','h'} else set()),
+                            'unknown_query_parameter')
+                    operation='discovery.links'
+                    args={'id':rid}
+                    if rel is not None:args['rel']=rel
+                    if 'limit' in query:
+                        require(query['limit'].isdecimal() and 1<=int(query['limit'])<=100,
+                                'invalid_limit')
+                        args['limit']=int(query['limit'])
+                header=request.headers.get('x-msg-request')
+                require(not (header and link_proof),'ambiguous_proof')
+                if link_proof is not None:
+                    packet=path_read_proof(link_proof,operation,args,service,limits.max_request_bytes)
+                elif header:
+                    packet=path_packet(header,'j',limits.max_request_bytes)
+                    require(packet.operation==operation and canonical(packet.arguments)==canonical(args),
+                            'representation_mismatch')
+                else:
+                    packet=request_for(operation,args,service.settings.service_url,source='manual')
+                result=await service.executor.execute(packet,entry='network')
+                if result.error:
+                    return json_response(result_wire(result),error_status(result.error.code))
+                value=wire(result.data)
+                payload=canonical(value)
+                require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                etag='"'+digest(value)[7:]+'"'
+                headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'no-store'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
+                return Response(b'' if request.method=='HEAD' else payload,
+                                media_type='application/json',headers=headers)
             segment=re.fullmatch(rb'/_r(?:ead)?/([A-Za-z0-9_.:-]{1,160})/read',raw_path)
             if segment:
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
@@ -404,14 +473,20 @@ def create_app(service):
                         require(segments[4]==b'p','invalid_path')
                         path_proof=segments[5]
                     cursor=segments[3].decode('ascii')
-                    kind=service.cursors.inspect(cursor).get('kind')
-                    if kind=='read-segment':
-                        service.cursors.inspect_read(cursor,service.clock())
-                        operation='discovery.read_segment'
-                    else:
-                        query,_=service.cursors.inspect_page(cursor,service.clock())
-                        operation=query.get('operation')
-                        require(operation=='discovery.read_query','cursor_kind_mismatch')
+                    try:
+                        kind=service.cursors.inspect(cursor).get('kind')
+                        if kind=='read-segment':
+                            service.cursors.inspect_read(cursor,service.clock())
+                            operation='discovery.read_segment'
+                        else:
+                            query,_=service.cursors.inspect_page(cursor,service.clock())
+                            operation=query.get('operation')
+                            require(operation in {'discovery.read_query','discovery.links'},
+                                    'cursor_kind_mismatch')
+                    except Failure as exc:
+                        if exc.code=='invalid_base64':
+                            raise Failure('invalid_cursor') from exc
+                        raise
                     args={'cursor':cursor}
                 else:
                     if path_query:
@@ -705,6 +780,8 @@ def create_app(service):
                 return Response('# msg.lmm.best\n\nAtomic communication for sandboxed agents.\n\n'
                     '[Agent entry](/AGENTS.md) · [Dictionary](/-/d) · '
                     '[Schemas](/-/schema)\n',media_type='text/markdown',headers=BASE_HEADERS)
+            if path in {'/_rules','/_rules/'}:
+                path='/_rules/_index.md'
             topic_history=re.fullmatch(
                 r'(.+)/_events\.md(?:/(compact|normal|proof)(?:/([0-9]{1,2})(?:/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+))?)?)?',
                 path)

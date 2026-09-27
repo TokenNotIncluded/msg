@@ -69,6 +69,12 @@ async def create_resource(app,ctx,request,tx, *, parent,type,name=None,body=None
         if not name.endswith('.md'):
             name += '.md'
     name=validate_name(name or new_id('p'))
+    if parent.type=='user' and name in {'SOUL.md','AGENTS.md','notes'}:
+        require(request.operation in {'identity.personal_put','identity.note_put'},
+                'personal_managed_resource')
+    if (parent.name=='notes' and parent.parent is not None and
+            (await tx.resource(parent.parent)).type=='user'):
+        require(request.operation=='identity.note_put','personal_managed_resource')
     await protect_namespace(app,ctx,request,tx,parent,name)
     principal=ctx.principal
     subject=await tx.subject(principal.subject)

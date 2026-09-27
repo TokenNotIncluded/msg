@@ -6,7 +6,7 @@ from datetime import timedelta
 from msg.constants import *
 from msg.core.codec import canonical,wire,decode,loads,digest,b64
 from msg.core.errors import Failure,require
-from msg.core.models import Resource,ResourceRef,HandlerOutput,Credential
+from msg.core.models import Resource,ResourceRef,Revision,HandlerOutput,Credential
 from msg.core.tags import normalize_tag
 from msg.core.requests import request_for
 from msg.core.template_dsl import render_values
@@ -39,6 +39,104 @@ def short_subject_path(path):
     if len(parts)>=3 and parts[1].startswith('@'):
         parts[2]={'keys':'k','certificates':'cert','keystore':'ks'}.get(parts[2],parts[2])
     return '/'.join(parts)
+
+
+LINK_RELATIONS=frozenset({'self','t','a','r','p','c','f','q','b','h','v','d'})
+
+
+async def visible_link(app,ctx,request,tx,ref):
+    if not await visible(app,ctx,request,tx,ref.id):
+        return None
+    target=await tx.resource(ref.id)
+    if target.state=='purged':
+        return None
+    if ref.revision is not None:
+        try:
+            await tx.revision(ref)
+        except Failure as exc:
+            if exc.code=='revision_not_found':
+                return None
+            raise
+    return {'ref':wire(ref),'path':short_subject_path(await tx.path(ref.id))}
+
+
+async def basic_links(app,ctx,request,tx,resource,revision):
+    rid=resource.id
+    current=ResourceRef(id=rid,revision=revision.id if revision is not None else resource.revision)
+    singles={'self':{'ref':wire(current),'path':short_subject_path(await tx.path(rid))}}
+    if resource.type in {'post','attachment','file'} and resource.parent:
+        parent=await tx.resource(resource.parent)
+        if parent.type=='topic':
+            link=await visible_link(app,ctx,request,tx,ResourceRef(id=parent.id))
+            if link:singles['t']=link
+    if revision is not None:
+        author=await visible_link(app,ctx,request,tx,ResourceRef(id=revision.author))
+        if author:singles['a']=author
+        singles['v']={'ref':wire(current),'path':f'/_r/{rid}/rev/{revision.id}'}
+        if len(revision.parents)==1:
+            singles['d']={'from':wire(ResourceRef(id=rid,revision=revision.parents[0])),
+                          'to':wire(current),'path':f'/_r/{rid}/l/d'}
+        outgoing={relation.type:relation.target for relation in revision.relations
+                  if relation.type in {'reply_to','thread_root'}}
+        if resource.type=='post':
+            root=outgoing.get('thread_root',current)
+            link=await visible_link(app,ctx,request,tx,root)
+            if link:singles['r']=link
+        if 'reply_to' in outgoing:
+            link=await visible_link(app,ctx,request,tx,outgoing['reply_to'])
+            if link:singles['p']=link
+    return singles
+
+
+async def relation_page(app,ctx,request,tx,resource,revision,rel,limit,position,snapshot):
+    if rel in {'c','b','f','q'} and position=='':
+        position=['','']
+    candidates=()
+    if rel=='h':
+        rows=tx.execute('''SELECT body FROM revisions WHERE resource_id=? AND id>?
+            AND created_at<=? ORDER BY id LIMIT 2049''',(resource.id,position,wire(snapshot)))
+        candidates=((item.id,ResourceRef(id=resource.id,revision=item.id))
+                    for (raw,) in rows for item in (decode(Revision,loads(raw)),))
+    elif rel in {'c','b'}:
+        kinds=('reply_to',) if rel=='c' else ('quote','repost')
+        placeholders=','.join('?' for _ in kinds)
+        rows=tx.execute(f'''SELECT rel.source_id,rel.type,rel.revision_id
+            FROM relations rel JOIN resources r ON r.id=rel.source_id AND r.revision=rel.revision_id
+            WHERE rel.target_id=? AND rel.type IN ({placeholders}) AND r.state='active'
+            AND r.created_at<=? AND (rel.source_id,rel.type)>(?,?)
+            ORDER BY rel.source_id,rel.type LIMIT 2049''',
+            (resource.id,*kinds,wire(snapshot),*position))
+        candidates=(([source,kind],ResourceRef(id=source,revision=current_revision))
+                    for source,kind,current_revision in rows)
+    elif rel in {'f','q'} and revision is not None:
+        kinds={'attachment'} if rel=='f' else {'quote','repost'}
+        require(len(revision.relations)<=2048,'query_cost_exceeded')
+        candidates=sorted(([relation.target.id,relation.type],relation.target)
+                          for relation in revision.relations if relation.type in kinds)
+    items=[]
+    last=position
+    more=False
+    scanned=0
+    for key,ref in candidates:
+        if key<=position:
+            continue
+        scanned+=1
+        require(scanned<=2048,'query_cost_exceeded')
+        link=await visible_link(app,ctx,request,tx,ref)
+        if link is None:
+            continue
+        if rel=='h':
+            historical=await tx.revision(ref)
+            link.update(author=historical.author,created_at=wire(historical.created_at))
+            for field in ('change_note','source_kind','source_version'):
+                value=getattr(historical,field,None)
+                if value is not None:link[field]=wire(value)
+        if len(items)==limit:
+            more=True
+            break
+        items.append(link)
+        last=key
+    return items,last,more
 
 
 async def filtered_tools(app,ctx,request,tx):
@@ -108,11 +206,14 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
             meta['raw_url']=f'/_id/{rid}/revisions/{rev.id}/raw'
             meta['transfer_operation']='transfer.open'
         meta['relations']=wire(rev.relations,compact=True)
+    if resource.type=='post' and (not fields or 'links' in fields):
+        active=await tx.revision(ResourceRef(id=rid,revision=revision))
+        meta['links']=await basic_links(app,ctx,request,tx,resource,active)
     known=set(meta)
     if fields:
         require(set(fields)<=known,'unknown_projection_field')
         return {k:meta[k] for k in fields}
-    defaults=('id','type','name','revision','generation','path','content','items','keys','certificates',
+    defaults=('id','type','name','revision','generation','path','content','items','keys','certificates','links',
               'relations','raw_url','transfer_operation','kind','local_only','list_operation')
     if resource.tags:
         defaults=(*defaults,'tags')
@@ -425,6 +526,105 @@ def install(app):
             if len(items)>=request.arguments.get('limit',50):
                 break
         return HandlerOutput(data={'items':items})
+
+    @op('discovery.links',obj({'id':IDENTIFIER,'rel':{'enum':sorted(LINK_RELATIONS)},
+        'cursor':STRING,'limit':{'type':'integer','minimum':1,'maximum':100}}),effect='read')
+    async def links(ctx,request,tx):
+        args=dict(request.arguments)
+        principal={'actor':ctx.principal.actor,'subject':ctx.principal.subject,
+                   'credential_id':ctx.principal.credential_id}
+        if args.get('cursor'):
+            saved,_=app.cursors.inspect_page(args['cursor'],ctx.now)
+            require(saved.get('operation')=='discovery.links' and set(args)=={'cursor'},
+                    'cursor_query_mismatch')
+            args={**saved['arguments'],'cursor':args['cursor']}
+        require(args.get('id') is not None,'read_resource_required')
+        rid=await resolve(tx,args['id'])
+        await check_access(app,ctx,request,tx,rid,'read')
+        resource=await tx.resource(rid)
+        require(resource.state!='purged','resource_purged')
+        revision=await tx.revision(ResourceRef(id=rid)) if resource.revision else None
+        rel=args.get('rel')
+        if rel is not None:
+            require(rel in LINK_RELATIONS,'unknown_link_relation')
+        limit=args.get('limit',50)
+        query_args={'id':rid,'rel':rel,'limit':limit}
+        if args.get('cursor'):
+            position,snapshot=app.cursors.decode_page(args['cursor'],request.operation,
+                                                       query_args,principal,ctx.now)
+        else:
+            position,snapshot='',ctx.now
+        current=ResourceRef(id=rid,revision=resource.revision)
+        singles=await basic_links(app,ctx,request,tx,resource,revision)
+        collections={'c','f','q','b','h'}
+        if rel in collections:
+            items,last,more=await relation_page(app,ctx,request,tx,resource,revision,rel,
+                                                limit,position,snapshot)
+            data={'id':rid,'revision':resource.revision,'rel':rel,'items':items}
+            if more:
+                cursor=app.cursors.encode_page(request.operation,query_args,last,snapshot,principal,
+                                               ctx.now+timedelta(minutes=15))
+                data.update(cursor=cursor,next='/_r/c/'+cursor,
+                            next_requires_auth=ctx.principal.subject is not None)
+            return HandlerOutput(data=data)
+        if rel is not None:
+            require(rel in singles,'not_found')
+            return HandlerOutput(data=singles[rel])
+        linkset=dict(singles)
+        for kind in sorted(collections):
+            items,_,_=await relation_page(app,ctx,request,tx,resource,revision,kind,1,'',ctx.now)
+            if items:
+                linkset[kind]={'source':wire(current),'path':f'/_r/{rid}/l/{kind}',
+                               'collection':True}
+        return HandlerOutput(data={'id':rid,'revision':resource.revision,'links':linkset})
+
+    @op('discovery.diff_view',obj({'id':IDENTIFIER,'known_revision':IDENTIFIER,
+        'old_revision':IDENTIFIER,'new_revision':IDENTIFIER,'previous':BOOLEAN,
+        'offset':{'type':'integer','minimum':0},'limit':{'type':'integer','minimum':1,'maximum':500}},
+        ('id',)),effect='read')
+    async def diff_view(ctx,request,tx):
+        args=request.arguments
+        rid=await resolve(tx,args['id'])
+        await check_access(app,ctx,request,tx,rid,'read')
+        resource=await tx.resource(rid)
+        require(resource.state!='purged' and resource.revision is not None,'revision_not_found')
+        variants=sum((bool(args.get('previous')),bool(args.get('known_revision')),
+                      bool(args.get('old_revision') or args.get('new_revision'))))
+        require(variants==1,'invalid_diff_range')
+        if args.get('previous'):
+            current=await tx.revision(ResourceRef(id=rid,revision=resource.revision))
+            require(len(current.parents)==1,'previous_revision_not_found')
+            old,new=current.parents[0],current.id
+        elif args.get('known_revision'):
+            old,new=args['known_revision'],resource.revision
+        else:
+            require(bool(args.get('old_revision')) and bool(args.get('new_revision')),
+                    'invalid_diff_range')
+            old,new=args['old_revision'],args['new_revision']
+        before=await tx.revision(ResourceRef(id=rid,revision=old))
+        after=await tx.revision(ResourceRef(id=rid,revision=new))
+        for revision in (before,after):
+            require(revision.content.media_type.startswith('text/') or
+                    revision.content.media_type=='application/json','text_diff_required')
+            require(revision.content.size<=4*app.settings.server.limits.max_response_bytes,
+                    'diff_requires_transfer')
+        prior_bytes=await app.contents.read_bytes(before.content)
+        current_bytes=await app.contents.read_bytes(after.content)
+        require(prior_bytes.count(b'\n')+current_bytes.count(b'\n')<=20000,
+                'query_cost_exceeded')
+        prior=prior_bytes.decode('utf-8').splitlines(keepends=True)
+        current=current_bytes.decode('utf-8').splitlines(keepends=True)
+        path=short_subject_path(await tx.path(rid))
+        lines=list(difflib.unified_diff(prior,current,fromfile=path+'@'+old,tofile=path+'@'+new))
+        offset,limit=args.get('offset',0),args.get('limit',500)
+        data={'from':wire(ResourceRef(id=rid,revision=old)),
+              'to':wire(ResourceRef(id=rid,revision=new)),
+              'diff':''.join(lines[offset:offset+limit])}
+        if offset+limit<len(lines):
+            data['next_offset']=offset+limit
+            data['next']=f'/_r/{rid}/diff/{old}/{new}/o/{offset+limit}'
+        return HandlerOutput(data=data)
+
     @op('discovery.raw',obj({'id':IDENTIFIER,'revision':IDENTIFIER,'offset':INTEGER,'length':INTEGER},('id',)),effect='read')
     async def raw(ctx,request,tx):
         a=request.arguments

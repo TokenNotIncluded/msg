@@ -1,8 +1,12 @@
 # 本地与 CI 验收记录
 
+## 2026-09-27 源码规则、LinkSet 与个人文档批次
+
+本批按 Google Drive `ChatGPT` 文件夹需求读取至 `2026-09-27T00:35:34.164Z`。本地 Python 3.15/PostgreSQL 下 `uv run python -m pytest -q` 为 **262 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功，`git diff --check` 通过。源码发行的短 `/AGENTS.md`、`/_rules` 索引和八个规则分片已打入 sdist/wheel，启动按文件 digest/version 幂等同步 Revision；`/wiki` 按普通签名资源治理。LinkSet、逐项授权的集合导航和真实 Revision diff，以及主动写入的私有 Notes/SOUL/主体 AGENTS 有定向回归。全套首轮曾因短 AGENTS 未列无凭据 `/-/p/<operation>` 模板失败；把源码规则版本升到 2 后，入口/规则定向与最终全套通过。发行来源字段的完整 Revision/history 投影、requires_rules、HTML/TUI 导航、个人文档独立 manifest 签名与完整秘密识别仍缺。本批尚未提交、没有对应远端 CI，也没有线上部署验证。
+
 ## 2026-09-27 Topic、被动 GET 与纯路径读取批次
 
-权威 Google Drive `ChatGPT` 文件夹文档本批读取到 `2026-09-27T00:20:54.350Z`。当前未提交工作树在本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **249 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功，`sh -n deploy/prepare-service.sh` 和 `git diff --check` 通过。本批含 TopicMembership/Ban 及真实治理 Event、HTTP 虚拟 `/_events.md`、`/-/g` 被动客户端防误触发、简单 ReadQuery/搜索的纯路径 q/1 与短码快照更新。隔离 selftest 曾因 Topic bootstrap 的测试子树建立顺序出现 `not_found`，调整种子顺序后定向与全套均通过。QueryRef、完整 RouteSpec、Topic 增量投影，以及最新新增的 `/_rules`、`/wiki`、SOUL/主体 AGENTS、LinkSet/SearchQuery 全范围仍缺。本批尚无远端 CI 或线上部署结果。
+权威 Google Drive `ChatGPT` 文件夹文档本批读取到 `2026-09-27T00:20:54.350Z`。提交 `befa5ee` 前的本地 Python 3.15/PostgreSQL 验证：`uv run python -m pytest -q` 为 **249 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功，`sh -n deploy/prepare-service.sh` 和 `git diff --check` 通过。本批含 TopicMembership/Ban 及真实治理 Event、HTTP 虚拟 `/_events.md`、`/-/g` 被动客户端防误触发、简单 ReadQuery/搜索的纯路径 q/1 与短码快照更新。隔离 selftest 曾因 Topic bootstrap 的测试子树建立顺序出现 `not_found`，调整种子顺序后定向与全套均通过。QueryRef、完整 RouteSpec、Topic 增量投影，以及最新新增的 `/_rules`、`/wiki`、SOUL/主体 AGENTS、LinkSet/SearchQuery 全范围仍缺。提交已推送，其[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36282759370)已通过；未线上部署。
 
 ## 2026-09-27 双钥、主体别名与协议版本批次
 

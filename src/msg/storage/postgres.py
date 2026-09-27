@@ -130,6 +130,15 @@ CREATE TABLE IF NOT EXISTS topic_bans (
  actor TEXT NOT NULL, created_at TEXT NOT NULL, expires_at TEXT, reason TEXT,
  status TEXT NOT NULL CHECK(status IN ('active','lifted')),
  PRIMARY KEY(topic,subject));
+CREATE TABLE IF NOT EXISTS system_sources (
+ resource_id TEXT PRIMARY KEY REFERENCES resources(id), source_path TEXT NOT NULL UNIQUE,
+ rule_id TEXT NOT NULL UNIQUE, source_kind TEXT NOT NULL,
+ source_version INTEGER NOT NULL, source_digest TEXT NOT NULL,
+ revision_id TEXT NOT NULL REFERENCES revisions(id));
+CREATE TABLE IF NOT EXISTS personal_revision_proofs (
+ revision_id TEXT PRIMARY KEY REFERENCES revisions(id), subject TEXT NOT NULL,
+ kind TEXT NOT NULL, signature TEXT NOT NULL, signed_envelope TEXT NOT NULL,
+ created_at TEXT NOT NULL);
 """
 
 

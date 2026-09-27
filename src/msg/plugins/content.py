@@ -129,6 +129,13 @@ async def source_content(app,ctx,request,tx,value):
 
 
 async def removable(app,ctx,request,tx,resource):
+    chain=(*await tx.ancestors(resource.id),resource)
+    require(not any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes'}
+                    for parent,child in zip(chain,chain[1:])),
+            'personal_managed_resource')
+    require(resource.id!='r_agents' and all(
+        ancestor.id!='r_rules' for ancestor in await tx.ancestors(resource.id)) and
+        resource.id!='r_rules','system_managed_resource')
     require(resource.parent is not None and resource.id!=ROOT_SUBJECT,'protected_resource')
     parent=await tx.resource(resource.parent)
     await check_access(app,ctx,request,tx,parent.id,'remove')
@@ -473,6 +480,11 @@ def install(app):
         require(app.registry.resource_type(parent.type,1).container,'not_a_container')
         await ensure_public_repositories(tx,resource,parent=target)
         name=validate_name(request.arguments.get('name',resource.name))
+        if parent.type=='user' and name in {'SOUL.md','AGENTS.md','notes'}:
+            require(False,'personal_managed_resource')
+        if (parent.name=='notes' and parent.parent is not None and
+                (await tx.resource(parent.parent)).type=='user'):
+            require(False,'personal_managed_resource')
         await protect_namespace(app,ctx,request,tx,parent,name)
         updated=replace(resource,parent=target,name=name,generation=resource.generation+1,
                         modified_at=ctx.now,modified_by=ctx.principal.actor)
