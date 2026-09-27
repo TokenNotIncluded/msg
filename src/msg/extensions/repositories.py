@@ -708,6 +708,7 @@ def register(app,op):
 
 async def execute_push(app,job):
     from msg.workers.effects import current_principal,worker_context,effect_request
+    from msg.workers.leases import current_attempt
     store=NativeGitStore(app)
     app.settings.server.staging_dir.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix='git-push-',dir=app.settings.server.staging_dir) as temp:
@@ -729,8 +730,9 @@ async def execute_push(app,job):
                 context,request=worker_context(app,job,principal),effect_request(app,job,principal)
                 await check_access(app,context,request,tx,job.arguments['id'],'write')
                 require(tx.setting('runtime_config',{}).get('accept_writes',True),'writes_paused')
-                current=await tx.job(job.id)
-                require(current.state=='running' and current.attempts==job.attempts,'job_lease_lost')
+                current=await current_attempt(app,tx,job)
+                if current is None:
+                    return
                 await store.update_refs(job.arguments['id'],job.arguments['changes'])
                 moved=True
                 resource=await tx.resource(job.arguments['id'])

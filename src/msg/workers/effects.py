@@ -23,6 +23,7 @@ from msg.core.requests import request_for
 from msg.plugins.common import check_access, create_resource
 from msg.security.policy import scope_subset
 from msg.security.network import intersect_policy
+from msg.workers.leases import current_attempt
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,28 +132,18 @@ class EffectWorker:
             await tx.save_job(job)
             return job, True
 
-    async def _live_attempt(self, tx, job):
-        """Fence completions even when no other worker has swept expired leases."""
-        current = await tx.job(job.id)
-        if current.state != 'running' or current.attempts != job.attempts:
-            return None
-        if current.lease_until is None or current.lease_until <= self.app.clock():
-            await tx.save_job(replace(current, state='uncertain', lease_until=None))
-            tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
-            return None
-        return current
-
-    async def _finish(self, job, state, code):
+    async def _finish(self, job, state, code, *, status=None):
         async with self.app.metadata.transaction(write=True) as tx:
-            current = await self._live_attempt(tx, job)
+            current = await current_attempt(self.app, tx, job)
             if current is None:
                 return
             await tx.save_job(replace(current, state=state, lease_until=None))
-            tx.set_setting('job_status:' + job.id, {'code': code})
+            tx.set_setting('job_status:' + job.id,
+                           {'code': code} if status is None else status)
 
     async def _retry(self, job, retry_code, exhausted_code):
         async with self.app.metadata.transaction(write=True) as tx:
-            current = await self._live_attempt(tx, job)
+            current = await current_attempt(self.app, tx, job)
             if current is None:
                 return
             exhausted = current.attempts >= 8
@@ -223,8 +214,9 @@ class EffectWorker:
             blob = await self.app.contents.put(pieces(), result.media_type)
             await self.app.contents.pin(blob, 'job:'+job.id)
             async with self.app.metadata.transaction(write=True) as tx:
-                current = await tx.job(job.id)
-                require(current.state == 'running' and current.attempts == job.attempts, 'job_lease_lost')
+                current = await current_attempt(self.app, tx, job)
+                if current is None:
+                    return
                 principal = await current_principal(self.app, job.principal, tx)
                 context, request = worker_context(self.app, job, principal), effect_request(self.app, job, principal)
                 await check_access(self.app, context, request, tx, ref.id, 'tool_use')
@@ -368,9 +360,7 @@ class EffectWorker:
             elif job.kind == 'maintenance':
                 from msg.workers.maintenance import run_maintenance
                 result=await run_maintenance(self.app,job.arguments['action'],principal=job.principal)
-                await self._finish(job,'done','ok')
-                async with self.app.metadata.transaction(write=True) as tx:
-                    tx.set_setting('job_status:'+job.id,result)
+                await self._finish(job,'done','ok',status=result)
             elif job.kind == 'gc.resource':
                 # Purge permission was consumed by the committed tombstone. This
                 # idempotent cleanup cannot change another resource's retention.
