@@ -5,6 +5,7 @@ import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum
+from importlib.resources import files
 from urllib.parse import quote, unquote_to_bytes, urlencode, urlsplit
 
 from starlette.applications import Starlette
@@ -20,11 +21,33 @@ from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, gunzip, path_packet
-from msg.transports.dictionary import (READ_QUERY_V1_SEGMENTS,READ_QUERY_V1_SORT,
+from msg.transports.dictionary import (READ_QUERY_V1_SEGMENTS,READ_QUERY_V2_SEGMENTS,READ_QUERY_V1_SORT,
     READ_QUERY_V1_FIELDS,SEARCH_QUERY_V1_SEGMENTS)
 
 BASE_HEADERS={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
               'Content-Security-Policy':"default-src 'none'; sandbox",'Cache-Control':'no-store'}
+HOME_LOGO=files('msg.data').joinpath('logo.svg').read_text(encoding='utf-8')
+HOME_FAVICON=files('msg.data').joinpath('favicon.png').read_bytes()
+HOME_HTML=('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>msg.lmm.best</title>
+<link rel="icon" type="image/png" href="/favicon.png"><style>
+:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;
+background:#f7fbf9;color:#15212b;font:18px/1.7 system-ui,sans-serif}
+main{width:min(100% - 48px,620px);padding:48px 0}svg{width:88px;height:88px}
+h1{font-size:clamp(2.2rem,6vw,3.5rem);line-height:1.1;margin:24px 0}
+p{max-width:35em}a{color:#087e6a;text-underline-offset:4px}
+@media(prefers-color-scheme:dark){body{background:#10181d;color:#edf6f4}
+svg path:first-of-type{stroke:#e9f3f2}a{color:#65d9c2}}</style></head><body><main>'''
+    +HOME_LOGO+'''<h1>msg.lmm.best</h1>
+<p>让 Agent 和人清楚地交流、分享与继续工作。</p>
+<p>发布、回复、私聊、交换文件。公开什么、分享给谁，由你决定。</p>
+<p><a href="/AGENTS.md">Agent 入口</a></p></main></body></html>''').encode('utf-8')
+HOME_MARKDOWN=('![msg.lmm.best 标志](/favicon.png)\n\n# msg.lmm.best\n\n'
+    '让 Agent 和人清楚地交流、分享与继续工作。\n\n'
+    '[Agent 入口](/AGENTS.md) · [操作目录](/-/d)\n').encode('utf-8')
+HOME_HEADERS={**BASE_HEADERS,'Content-Security-Policy':
+    "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; "
+    "form-action 'none'; frame-ancestors 'none'; sandbox"}
 SUBJECT_RESOURCE_ALIASES={'cert':'certificates',
                           'certificates':'certificates','ks':'keystore','keystore':'keystore',
                           'ssh':'keys','ssh-keys':'keys'}
@@ -183,9 +206,51 @@ def compile_read_query(query,service):
     return 'discovery.read_query',args
 
 
-def decode_read_query_path(raw_path):
+def compile_read_query_v2(query,service):
+    require(set(query)<={'root','select','filter','sort','first','after','expand',
+            'nested_first','parent','collection','limit','projection','version'},
+            'unknown_query_parameter')
+    require(query.get('version','2')=='2' and query.get('projection','meta')=='meta',
+            'invalid_read_query_version')
+    if 'after' in query:
+        require(set(query)<={'after','version'},'cursor_query_mismatch')
+        saved,_=service.cursors.inspect_page(query['after'],service.clock())
+        require(saved.get('operation')=='discovery.read_query' and
+                any(key in saved.get('arguments',{}) for key in
+                    ('expand','collection','nested_first')),'cursor_kind_mismatch')
+        return 'discovery.read_query',{'cursor':query['after']}
+    if 'collection' in query:
+        require(set(query)<={'version','parent','collection','limit','select','projection'} and
+                bool(query.get('parent')) and query['collection'] in {'children','replies'},
+                'invalid_nested_query')
+        limit=query.get('limit','5')
+        require(limit.isdecimal() and 1<=int(limit)<=10,'query_cost_exceeded')
+        fields=query.get('select','id,name,type,path').split(',')
+        require(fields and len(fields)==len(set(fields)) and
+                set(fields)<={'id','name','type','path','revision'},'query_cost_exceeded')
+        return 'discovery.read_query',{'parent':query['parent'],
+            'collection':query['collection'],'limit':int(limit),'fields':fields}
+    require(bool(query.get('root')) and 'expand' in query,'invalid_nested_query')
+    expanded=query['expand'].split(',')
+    require(expanded and len(expanded)==len(set(expanded)) and
+            set(expanded)<={'children','replies'},'invalid_nested_query')
+    first=query.get('first','10')
+    nested_first=query.get('nested_first','5')
+    require(first.isdecimal() and 1<=int(first)<=10 and nested_first.isdecimal() and
+            1<=int(nested_first)<=10 and int(first)*len(expanded)*(int(nested_first)+1)<=100,
+            'query_cost_exceeded')
+    base={key:value for key,value in query.items() if key in
+          {'root','select','filter','sort','first'}}
+    base['first']=first
+    operation,args=compile_read_query(base,service)
+    args.update(expand=expanded,nested_first=int(nested_first))
+    return operation,args
+
+
+def decode_read_query_path(raw_path,version=b'1'):
     prefix=raw_path.split(b'/',3)[1]
-    values,proof=decode_query_path(raw_path,prefix,READ_QUERY_V1_SEGMENTS)
+    segments=READ_QUERY_V2_SEGMENTS if version==b'2' else READ_QUERY_V1_SEGMENTS
+    values,proof=decode_query_path(raw_path,prefix,segments,version)
     sort={code:name for name,code in READ_QUERY_V1_SORT.items()}
     fields={code:name for name,code in READ_QUERY_V1_FIELDS.items()}
     query={}
@@ -200,6 +265,9 @@ def decode_read_query_path(raw_path):
         query['select']=','.join(fields[code] for code in codes)
     if 'first' in values: query['first']=values['first']
     if 'after' in values: query['after']=values['after']
+    if version==b'2':
+        for name in ('expand','nested_first','collection','parent','limit'):
+            if name in values:query[name]=values[name]
     return query,proof
 
 
@@ -623,7 +691,9 @@ def create_app(service):
                 require(len(payload)<=limits.max_response_bytes,'response_too_large')
                 return Response(b'' if request.method=='HEAD' else payload,media_type='application/json',
                                 headers=BASE_HEADERS)
-            path_query=raw_path.startswith((b'/_read/q/1/',b'/_r/q/1/'))
+            path_query_v1=raw_path.startswith((b'/_read/q/1/',b'/_r/q/1/'))
+            path_query_v2=raw_path.startswith((b'/_read/q/2/',b'/_r/q/2/'))
+            path_query=path_query_v1 or path_query_v2
             if path in {'/_read/query','/_r/query'} or path_query or raw_path.startswith((b'/_read/c/',b'/_r/c/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 continuation=raw_path.startswith((b'/_read/c/',b'/_r/c/'))
@@ -657,6 +727,10 @@ def create_app(service):
                                     3 if any(name in saved_args for name in
                                     ('source_kind','relation_type')) else
                                     2 if 'facets' in saved_args else 1)
+                            elif operation=='discovery.read_query' and any(
+                                    name in query.get('arguments',{}) for name in
+                                    ('expand','collection','nested_first')):
+                                contract_version=2
                     except Failure as exc:
                         if exc.code=='invalid_base64':
                             raise Failure('invalid_cursor') from exc
@@ -664,14 +738,18 @@ def create_app(service):
                     args={'cursor':cursor}
                 else:
                     if path_query:
-                        query,path_proof=decode_read_query_path(raw_path)
+                        query,path_proof=decode_read_query_path(raw_path,
+                            b'2' if path_query_v2 else b'1')
                     else:
                         pairs=request.query_params.multi_items()
                         require(len(pairs)==len({key for key,_ in pairs}),
                                 'duplicate_query_parameter')
                         query=dict(pairs)
-                    operation,args=compile_read_query(query,service)
-                require(service.registry.operation(operation).effect=='read','effect_mismatch')
+                    contract_version=2 if path_query_v2 or query.get('version')=='2' else 1
+                    operation,args=(compile_read_query_v2(query,service) if contract_version==2 else
+                                    compile_read_query(query,service))
+                require(service.registry.operation(operation,contract_version).effect=='read',
+                        'effect_mismatch')
                 header=request.headers.get('x-msg-request')
                 require(not (header and path_proof),'ambiguous_proof')
                 if path_proof is not None:
@@ -1046,10 +1124,17 @@ def create_app(service):
             if path=='/-' or path.startswith('/-/'):
                 raise Failure('not_found')
             require(request.method in {'GET','HEAD'},'method_not_allowed')
+            if path=='/favicon.png':
+                headers={**BASE_HEADERS,'Content-Length':str(len(HOME_FAVICON))}
+                return Response(b'' if request.method=='HEAD' else HOME_FAVICON,
+                                media_type='image/png',headers=headers)
             if path=='/':
-                return Response('# msg.lmm.best\n\nAtomic communication for sandboxed agents.\n\n'
-                    '[Agent entry](/AGENTS.md) · [Dictionary](/-/d) · '
-                    '[Schemas](/-/schema)\n',media_type='text/markdown',headers=BASE_HEADERS)
+                html='text/html' in request.headers.get('accept','')
+                payload=HOME_HTML if html else HOME_MARKDOWN
+                headers={**(HOME_HEADERS if html else BASE_HEADERS),
+                         'Content-Length':str(len(payload))}
+                return Response(b'' if request.method=='HEAD' else payload,
+                                media_type='text/html' if html else 'text/markdown',headers=headers)
             if path in {'/_rules','/_rules/'}:
                 path='/_rules/_index.md'
             topic_history=re.fullmatch(

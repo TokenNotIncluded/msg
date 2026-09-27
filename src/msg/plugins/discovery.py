@@ -504,6 +504,122 @@ def install(app):
     op('discovery.search',obj(listing,('query',)),effect='read')(list_items)
     op('discovery.read_query',obj(listing),effect='read')(list_items)
 
+    nested_schema=obj({**listing,
+        'expand':{'type':'array','items':{'enum':['children','replies']},
+                  'maxItems':2,'uniqueItems':True},
+        'nested_first':{'type':'integer','minimum':1,'maximum':10},
+        'collection':{'enum':['children','replies']}},())
+
+    async def nested_page(ctx,request,tx,args):
+        """An independent, reauthorized page of one resource's collection."""
+        principal={'actor':ctx.principal.actor,'subject':ctx.principal.subject,
+                   'credential_id':ctx.principal.credential_id}
+        a=dict(args)
+        if a.get('cursor'):
+            saved,_=app.cursors.inspect_page(a['cursor'],ctx.now)
+            require(saved.get('operation')==request.operation and
+                    saved.get('arguments',{}).get('collection') in {'children','replies'} and
+                    set(a)=={'cursor'},'cursor_query_mismatch')
+            a={**saved['arguments'],'cursor':a['cursor']}
+        require(a.get('collection') in {'children','replies'} and a.get('parent') and
+                not ({'expand','nested_first','type','author','query','tag','state',
+                      'sort','direction'} & a.keys()),'invalid_nested_query')
+        parent=await resolve(tx,a['parent'])
+        collection=a['collection']
+        limit=a.get('limit',5)
+        require(1<=limit<=10 and set(a.get('fields',('id','name','type','path'))) <=
+                {'id','name','type','path','revision'},'query_cost_exceeded')
+        query_args={k:v for k,v in a.items() if k!='cursor'}
+        if a.get('cursor'):
+            position,snapshot=app.cursors.decode_page(a['cursor'],request.operation,
+                                                       query_args,principal,ctx.now)
+        else:
+            position,snapshot=('',ctx.now) if collection=='children' else (['',''],ctx.now)
+        # A parent whose read/list grant was revoked cannot be used to enumerate
+        # descendants even if a previously issued cursor still has a valid MAC.
+        await check_access(app,ctx,request,tx,parent,
+                           'list' if collection=='children' else 'read')
+        resource=await tx.resource(parent)
+        require(resource.state=='active','ancestor_inactive')
+        items=[]
+        more=False
+        last=position
+        if collection=='children':
+            scanned=0
+            scan_position=position
+            while len(items)<=limit:
+                require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+                rows=tx.rows('''SELECT body,id FROM resources WHERE parent=? AND state='active'
+                    AND created_at<=? AND id>? ORDER BY id LIMIT 128''',
+                    (parent,wire(snapshot),scan_position))
+                if not rows:
+                    break
+                for raw,rid in rows:
+                    scanned+=1
+                    require(scanned<=2048,'query_cost_exceeded')
+                    scan_position=rid
+                    if not await visible(app,ctx,request,tx,rid):
+                        continue
+                    if len(items)==limit:
+                        more=True
+                        break
+                    child=decode(Resource,loads(raw))
+                    value=await metadata(tx,child)
+                    fields=a.get('fields',('id','name','type','path'))
+                    items.append({key:value[key] for key in fields})
+                    last=rid
+                if more or len(rows)<128:
+                    break
+        else:
+            revision=await tx.revision(ResourceRef(id=parent)) if resource.revision else None
+            items,last,more=await relation_page(app,ctx,request,tx,resource,revision,
+                                                'c',limit,position,snapshot)
+        end_cursor=None
+        if items:
+            end_cursor=app.cursors.encode_page(request.operation,query_args,last,snapshot,
+                principal,ctx.now+timedelta(minutes=15))
+        page_info={'hasNextPage':more,'endCursor':end_cursor}
+        data={'items':items,'pageInfo':page_info}
+        if more:
+            data['next']='/_r/c/'+end_cursor
+            data['next_requires_auth']=ctx.principal.subject is not None
+        return data
+
+    @op('discovery.read_query',nested_schema,effect='read',version=2)
+    async def read_query_v2(ctx,request,tx):
+        a=dict(request.arguments)
+        if a.get('cursor'):
+            saved,_=app.cursors.inspect_page(a['cursor'],ctx.now)
+            require(saved.get('operation')==request.operation and set(a)=={'cursor'},
+                    'cursor_query_mismatch')
+            if saved.get('arguments',{}).get('collection'):
+                return HandlerOutput(data=await nested_page(ctx,request,tx,a))
+            a=saved['arguments']
+        if a.get('collection'):
+            return HandlerOutput(data=await nested_page(ctx,request,tx,request.arguments))
+        expand=a.get('expand',())
+        require(not expand or 'id' in a.get('fields',('id',)),'unknown_projection_field')
+        limit=a.get('limit',50)
+        nested_first=a.get('nested_first',5)
+        require(not expand or (limit<=10 and limit*len(expand)*(nested_first+1)<=100),
+                'query_cost_exceeded')
+        result=await list_items(ctx,request,tx)
+        data=dict(result.data)
+        items=[]
+        for source in data['items']:
+            require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+            item=dict(source)
+            if expand:
+                item['collections']={}
+                for collection in expand:
+                    child_args={'parent':item['id'],'collection':collection,'limit':nested_first}
+                    item['collections'][collection]=await nested_page(ctx,request,tx,child_args)
+            items.append(item)
+        data['items']=items
+        data['pageInfo']={'hasNextPage':bool(data.get('next')),
+                          'endCursor':data.get('cursor')}
+        return HandlerOutput(data=data)
+
     lexical_fields={'type':'array','items':STRING,'maxItems':12,'uniqueItems':True}
     lexical_facets={'type':'array','items':{'enum':['type','tag']},
                     'maxItems':2,'uniqueItems':True}

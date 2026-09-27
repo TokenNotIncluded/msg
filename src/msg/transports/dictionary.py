@@ -23,6 +23,8 @@ _DEFAULT_PUBLISHED = object()
 # meanings of these short segments must not change within version 1.
 READ_QUERY_V1_SEGMENTS = {'root':'r','type':'t','sort':'s','fields':'f',
                           'first':'n','after':'a'}
+READ_QUERY_V2_SEGMENTS = {**READ_QUERY_V1_SEGMENTS,'expand':'x',
+                          'nested_first':'nf','collection':'co','parent':'pa','limit':'l'}
 READ_QUERY_V1_SORT = {'id':'i','time':'t','name':'n'}
 READ_QUERY_V1_FIELDS = {'id':'i','type':'t','name':'n','revision':'v',
                         'generation':'g','path':'p','created_at':'c',
@@ -32,11 +34,14 @@ SEARCH_QUERY_V1_SEGMENTS = {'query':'q','tag':'t','limit':'n','cursor':'a'}
 
 def read_query_path_document(registry):
     require(registry.operation('discovery.read_query').effect=='read','effect_mismatch')
+    require(registry.operation('discovery.read_query',2).effect=='read','effect_mismatch')
     require(registry.operation('discovery.search').effect=='read','effect_mismatch')
-    return {'version':1,'segments':READ_QUERY_V1_SEGMENTS,
+    return {'version':1,'available_versions':[1,2],
+            'segments':READ_QUERY_V1_SEGMENTS,'segments_v2':READ_QUERY_V2_SEGMENTS,
             'sort':READ_QUERY_V1_SORT,'fields':READ_QUERY_V1_FIELDS,
             'search_segments':SEARCH_QUERY_V1_SEGMENTS,
             'read_template':'/_read/q/1/r/{percent-encoded-root}/t/{type}/s/{sort-code}/f/{field-codes}/n/{first}',
+            'read_template_v2':'/_read/q/2/r/{percent-encoded-root}/x/{collections}/n/{first}/nf/{nested-first}',
             'search_template':'/_search/q/1/q/{percent-encoded-query}/n/{limit}',
             'proof_suffix':'/p/{short-lived-signed-OperationRequest}',
             'continuation':'/_r/c/{opaque-cursor}',

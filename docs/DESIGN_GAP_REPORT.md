@@ -1,16 +1,26 @@
 # 项目设计差距报告
 
+### 08:21 最新需求新增范围（尚未实现）
+
+本次按 Drive 返回的修改时间 `2026-09-27T08:21:28.728Z` 重新读取同一权威文档（193段，01–15章）。相对旧报告，货币与寄售市场是实质新增范围，不能沿用“无钱包/Store待定”来排除：基础身份/公开读/普通通信免费，货币不购买认证、CA、系统权限或优先级，禁止法币充值提现与收益承诺。
+
+- **货币**：精确minor_units/scale=6、primary稳定ID、余额/双边账本/总量守恒；@root仅本机mint/burn/BankRole/转账/报价，银行不增发不透支；transfer/redeem、价格快照、Entitlement与pending/settle/refund。当前未见相应完整实现。
+- **寄售与订单**：/store Listing与不可变ConsignmentPackage；订单固定listing/package/价格/条款版本，随机不可枚举order_id且无权与不存在等价。managed_instant、sealed_manual与service交付不同；不是已有帖子/Transfer换个名字即可满足。
+- **资金托管与仲裁**：buyer→Escrow→seller/refund/split原子记账；版本化客观故障处理，Arbitrator只签Decision不能改Ledger，确定性panel/quorum/利益冲突排除和限定appeal。不能借管理员或AI自由裁量补空白。
+- **发货与隐私**：权威交付在买家订单/_delivery，Inbox只给最小引用，Email仅可选通道；下单锁定买家已验证endpoint，发货重新核对buyer/DeliveryTarget/邮箱owner/加密钥owner；seller不获真实邮箱，secret不明文SMTP，claimed不等于SMTP送达。
+- **验收与持久化**：PG保存权威货币/订单/Escrow/交付/仲裁事实并一致备份；默认零发行量/余额、无银行/报价、空store与订单集合。双花/幂等/价格修订/授权裁剪/退款/交付错配/仲裁边界/恢复均须独立测试、doctor/selftest与CI。本批423 core、8 conformance与build只覆盖当前已实现功能，不覆盖这些新增货币/市场契约，也不证明整章完成或生产部署。
+
 本报告记录实现事实与差距，不修改需求，不使用完成百分比。
 
 ## 对照基线与证据
 
-- 权威来源：Google Drive `ChatGPT` 文件夹（`1L0gl0AqThp100kRrviq-jorc04cPSnYO`）唯一[《msg.lmm.best｜项目设计》](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)。本次实时读取修订为 **2026-09-27T05:54:08.096Z**，185段、01–15章。正文压缩不减少验收范围。
-- 报告实现基线：**PR #63合并main的2b4d483d58dfe4eb2d81565377238dbb5e17a6b5**，基于52dd4b4之后的变更。新增patch/rebase/batch与分享@2已收口；GIT_CONFIG_GLOBAL=/dev/null本地全套 **414 passed**、conformance **8 passed**、构建成功，main CI36302710481已completed/success（414 core、8 conformance、build），未部署。
+- 权威来源：Google Drive `ChatGPT` 文件夹（`1L0gl0AqThp100kRrviq-jorc04cPSnYO`）唯一[《msg.lmm.best｜项目设计》](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)。本次实时读取修订为 **2026-09-27T08:21:28.728Z**，01–15章。正文压缩不减少验收范围。
+- 当前实现基线：main `324038c6f2068c35e8449789c57d8fd32cb2366a` 上的未提交增量，handoff/lease、ReadQuery@2与logo已纳入本地core **423 passed**；本批conformance **8 passed**、build与diff检查通过，无本批CI或生产部署证据。旧PR #63的414/8/build与main CI仅是历史基线。
 - CI：[36301644644](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36301644644)，已 **completed/success（408 core、8 conformance、build）**，对应完整提交 `52dd4b401800b4ecf0e42316ce7ad4f11ee1a679`。该CI只覆盖52dd4b4，不覆盖后续414项工作树。
 - 已合并变更：content.text_patch@2显式rebase/text_patch_batch、ShareGrant@2 group/read-only空constraints/受限reshare已纳入414项本地验证；旧@1不变。PR #63已合并，使用main CI36302710481的成功结果，不借用52dd4b4的CI。
 - 部署：没有本重写版本已完成生产部署、旧库迁移、生产在线备份/恢复或旧CA升级的证据。本机 `light.local`、真实git-lfs与隔离恢复均属于各自本地验证，不等于生产证明。
 
-既有[实现状态](IMPLEMENTATION_STATUS.md)、[路线](ITERATION_PLAN.md)、[验收记录](VERIFICATION.md)包含逐批历史，一些早期“未实现/未提交”描述已落后；本报告以main合并提交与分层验收为准，不把历史测试相加。
+既有[实现状态](IMPLEMENTATION_STATUS.md)、[路线](ITERATION_PLAN.md)、[验收记录](VERIFICATION.md)包含逐批历史，一些早期“未实现/未提交”描述已落后；本报告以当前main工作树和明确归属的分层验收为准，不把历史测试相加。
 
 ## 状态用语
 
@@ -20,21 +30,33 @@
 
 | 章 | 状态 | 当前PR代码已有 | 剩余需求/验收 |
 | --- | --- | --- | --- |
-| 01 定位范围 | 基本符合，未整章验收 | 免费、统一通信原语，无收费/登录/通用工作流；运行限额 | 真实token/往返/失败重试持续测量；部署容量与恢复演练。实现预算不等于个人配额。 |
+| 01 定位范围 | 基本符合，未整章验收 | 统一通信原语，无新增登录/通用工作流；运行限额 | 最新需求货币/BankRole/账本/Entitlement未覆盖；真实token/往返/失败重试持续测量、部署容量与恢复演练仍缺。 |
 | 02 架构注册表 | 局部 | 模块化单体、Registry/OperationExecutor、版本化短码/多协议、可信插件 | 所有正式feature统一向量、完整插件迁移/停用任务矩阵；不能由旧CA通配符获得新增能力。 |
 | 03 身份凭据 | 局部 | Ed25519+age/X25519双钥，托管AES-GCM vault，@2一次交付/显式恢复，客户端journal，受限双钥升级，RecoveryPolicy/Envelope，荣誉R1–R5 | 旧@1兼容仍非严格一次交付；历史密文迁移finalize仍fail-closed；外部密文可解性不可证明；完整恢复/托管解密生命周期、荣誉evaluator/pin/完整投影与全矩阵。 |
 | 04 CA根管理 | 局部 | 三级CA/收缩/撤销检查、Basic Online白名单、独立Test Root、自检/只读authority_snapshot | 存量签名Root/Online CA新增能力治理、完整链/来源组合矩阵与真实控制台。改Registry不改旧签名；Root轮换会影响旧链。 |
 | 05 资源/组/Topic | 局部 | Resource/Revision、mode特殊位；Topic四策略/角色/ban/虚拟事件；组织四策略/三角色、旧组织兼容、public虚拟组 | 所有授权来源组合、跨入口/失效/并发矩阵及完整feature映射；管理员不能据角色获取系统/CA权。 |
 | 06 分享/个人空间 | 局部 | 直接叶资源ShareGrant及@2 group/read-only空constraints/受限reshare、默认off的POST-body ShareLink；Notes/Todo及本人到期提醒；SOUL/AGENTS；Legacy本人签名登记 | @2仅read且constraints必须空，不等于任意操作/约束转授；分享排除DM/SOUL/Todo/system/preview。完整私有内容签名/语义约束；Legacy只声明、不执行；恢复策略UI与完整生命周期。 |
 | 07 内容讨论 | 局部 | 独立post/reply、模板/引用/归档、metadata/rollback、post_write/patch别名、LinkSet | text_patch@2显式rebase与text_patch_batch已有本地验证；仍缺完整操作族、unified/heading-block patch和历史generation映射。批量只承诺SQL引用原子发布，失败可留Git不可达孤儿，非跨存储回滚；客户端独立Revision签名仍不完备。 |
-| 08 读取与发现 | 局部 | 短长别名、规则分片/wiki、history/diff/LinkSet、Page/ReadCursor、Sync与持久checkpoint、Read/Search QueryRef | 全协议/嵌套ReadQuery、全部字段/缓存/错误等价、token-only纯路径与长URL边界、完整HTML/TUI导航、Bookmark。checkpoint GET不推进，签名ack不是内容ACK。 |
+| 08 读取与发现 | 局部 | 短长别名、规则分片/wiki、history/diff/LinkSet、Page/ReadCursor、Sync与持久checkpoint、Read/Search QueryRef | ReadQuery@2已有children/replies一层独立分页；仍缺全协议/任意嵌套、全部字段/缓存/错误等价、token-only纯路径与长URL边界、完整HTML/TUI导航、Bookmark。checkpoint GET不推进，签名ack不是内容ACK。 |
 | 09 操作边界 | 局部 | /-/分流、effect矩阵、passive GET guard、幂等与当前授权、稳定字典 | 全部真实路由/代理/方法/编码的零业务写入矩阵、部署日志与TLS。含恢复秘密的标准客户端请求禁PathGET；不能宣称任意路径客户端已经完成全部私有操作。 |
 | 10 文件/搜索/Grep | 局部 | lexical_search@4：过滤、facet、source/relation、显式suggest；受限Grep、exact/context唯一patch | spell、全部搜索关系/来源/投影条件、完整file.*、unified/Markdown patch、更广rebase/batch、可选行指纹；全时序无泄露未证明。 |
 | 11 存储/传输/托管 | 局部 | PG权威/Git/CAS/Transfer；真实git-lfs、Range、新LFS共用BlobStore、限定准入；同域禁JS、真实root Resource/private preview；backup v4 | 旧LFS迁移、全部署staging/其它CAS预算、多ref原子证据；preview需签名header非裸浏览器链接；完整浏览器矩阵；生产在线备份未演练，外部Git并发可能fail-closed。 |
-| 12 事件/通知/协作 | 局部 | Inbox/DM/ACK、Sync、Todo提醒、presence/claim；Inbox Webhook及需webhook.domain的三类owner事件订阅 | 所有通知来源/偏好；真实公网/SMTP；handoff/lease/request/offer/proposal/checkpoint/watch完整契约。同步checkpoint不是工作checkpoint。 |
+| 12 事件/通知/协作 | 局部 | Inbox/DM/ACK、Sync、Todo提醒、presence/claim；新增handoff状态/CAS/最小通知和非排他lease TTL/续期/释放；Inbox Webhook及需webhook.domain的三类owner事件订阅 | 所有通知来源/偏好；真实公网/SMTP；handoff/lease主体读取路径、专用CLI及完整Resource/Relation/Event/default/doctor/selftest契约；request/offer/proposal/工作checkpoint/watch完整契约。同步checkpoint不是工作checkpoint。 |
 | 13 工具/客户端 | 局部 | CLI Search/Grep/hosting/recovery、MCP、受限SSH/工具、RSS；TUI只读Home/Inbox/Search/Thread | TUI全视图与交互；完整--json/--jq/--template等；真实sshd、bubblewrap、DNS/重定向/私网授权与生产运行矩阵。 |
 | 14 配置与接口 | 局部 | msgd.toml、根/服务/缓存分离、源码规则按文件digest/version及显式迁移、requires_rules、恢复drill闸 | 每项配置完整doctor、精确RuleSet/全部规则覆盖、旧布局迁移、生产秘密备份恢复和操作流程。源码规则迁移不是自动改生产授权。 |
-| 15 默认/TDD | 局部 | BootstrapManifest v5十二项feature rows、真实doctor/selftest映射、隔离Test Root；本批414项本地测试 | 十二项不覆盖所有正式feature；partial/disabled只报告完成度、不关现有API。完整默认/样例/负例/故障/跨协议/CI矩阵仍缺，main CI已通过但不替代剩余feature验收。 |
+| 15 默认/TDD | 局部 | BootstrapManifest v5十二项feature rows、真实doctor/selftest映射、隔离Test Root；本批423项本地core测试 | 十二项不覆盖所有正式feature；partial/disabled只报告完成度、不关现有API。完整默认/样例/负例/故障/跨协议/CI矩阵仍缺，旧main CI不覆盖本批工作树，也不替代剩余feature验收。 |
+
+## 当前批次：协作、嵌套读取与标识（core 423，通过范围有限）
+
+需求修订：`2026-09-27T08:21:28.728Z`，ChatGPT 文件夹的权威项目设计。本批只更新实现事实，不修改需求。
+
+- **handoff**：create/get/list/decide，pending→accepted/rejected/cancelled，发送者取消、接收者接受/拒绝，generation 条件更新与并发决策；最多16条资源引用，读取逐项按当前权限过滤。Inbox只通知交接ID/状态，不复制被引用正文或私有目标。幂等写回执只给摘要，不回显失效引用。
+- **lease**：acquire/get/list/renew/release，TTL最多7天、generation条件更新，到期只读投影为expired，不在GET里改业务状态。不同主体可同时取得同目标lease；它不排他、不授写权、不替代数据库事务或base_revision。读取/续期继续验证目标权限；DM、系统规则、凭据、keystore等敏感引用拒绝。
+- **协作剩余差距**：当前使用专用持久事实表和既有Operation/通知，尚未达到完整Resource/Relation/Event协作契约；`/@user/handoffs/`、`leases/`等主体读取路径、专用CLI、默认/样例/doctor/selftest/CI映射仍缺。request/offer/proposal/工作checkpoint/watch等完整原语未完成，普通操作回执和同步checkpoint不能代替它们。手写message内容不等于系统已实现通用秘密识别。
+- **ReadQuery@2**：children/replies的一层集合展开，各集合独立pageInfo/endCursor/next；根页与子页分别续读并重查主体/父级/子项当前权限。HTTP query-string、短路径与QueryRef已有同契约测试；旧@1不接受新增expand字段。展开时根页最多10、nested_first为1–10，成本公式受限；这不是任意递归查询。完整GraphQL/CLI/MCP等价、全部深度/节点/字节/时间预算、投影/缓存/错误矩阵及客户端分页仍待验收。
+- **logo**：README与网站入口使用极简标识，源码包含明暗SVG与favicon；本地测试覆盖HTML/Markdown协商、无脚本CSP、favicon只读/HEAD及root托管样例。它是展示更新，不代表完整Web/TUI或生产可见性；本批构建通过，但未据此声明生产可见。
+
+最新云文档还有货币/BankRole/账本/Entitlement及相应并发、隐私、备份验收要求；当前未见完整实现，不以“免费服务”或早期不做钱包的记录排除这一需求。默认MSG等字段以最新权威正文为准，不能把logo/协作切片写成补齐货币功能。
 
 ## 影响公开发布的关键阻塞
 
@@ -44,6 +66,8 @@
 4. **协议/功能覆盖**：复杂文件编辑、多来源分享、完整读取/TUI与协作原语尚缺。若不改变权威需求，就只能按局部功能交付，不能称全量项目完成。
 
 ## 下一批可独立验收出口
+
+- 本批423 core/8 conformance/build已本地通过，先明确提交/CI归属；补handoff/lease主体只读路径与CLI，以无副作用/当前授权/分页/状态冲突为出口，不扩成工作流。再把ReadQuery@2推广到全部公共入口并验证相同预算、错误与续页语义。
 
 - 当前batch/分享已通过414项本地验证并合并main，main CI36302710481成功；继续保留失败整批不发布新引用、转授来源失效、DM/system旁路负例。Git不可达孤儿按引用保留/回收规则处理，不声称已自动清零。后续补历史generation映射及超出read/空constraints的分享能力时需新契约验收。
 - 对Manifest逐feature补默认/样例/doctor/selftest与CI映射，明确disabled/partial含义，不用API存在代替完成。

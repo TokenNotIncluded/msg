@@ -23,7 +23,7 @@ dev = ["pytest>=8.4", "pytest-asyncio>=1.1", "pytest-cov>=6", "ruff>=0.14", "bui
 where = ["src"]
 
 [tool.setuptools.package-data]
-msg = ["py.typed", "data/*.json", "data/*.txt", "data/*.md"]
+msg = ["py.typed", "data/*.json", "data/*.txt", "data/*.md", "data/*.svg", "data/*.png"]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

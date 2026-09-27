@@ -140,6 +140,17 @@ CREATE TABLE IF NOT EXISTS dm_blocks (
 CREATE TABLE IF NOT EXISTS dm_archives (
  subject TEXT NOT NULL, pair TEXT NOT NULL REFERENCES dm_conversations(pair),
  PRIMARY KEY(subject,pair));
+CREATE TABLE IF NOT EXISTS handoffs (
+ id TEXT PRIMARY KEY, from_subject TEXT NOT NULL, to_subject TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('pending','accepted','rejected','cancelled')),
+ generation INTEGER NOT NULL, body TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS handoffs_from ON handoffs(from_subject,id);
+CREATE INDEX IF NOT EXISTS handoffs_to ON handoffs(to_subject,id);
+CREATE TABLE IF NOT EXISTS collaboration_leases (
+ id TEXT PRIMARY KEY, holder TEXT NOT NULL, target TEXT NOT NULL REFERENCES resources(id),
+ status TEXT NOT NULL CHECK(status IN ('active','released')),
+ generation INTEGER NOT NULL, expires_at TEXT NOT NULL, body TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS collaboration_leases_holder ON collaboration_leases(holder,id);
 CREATE TABLE IF NOT EXISTS presence (
  subject TEXT PRIMARY KEY, expires_at TEXT NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS claims (

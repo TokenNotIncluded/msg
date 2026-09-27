@@ -829,5 +829,7 @@ def install(app):
                 'resync_required')
         return HandlerOutput(data={'items':items,'sync_cursor':token,'next':'/_r/s/'+token,
                                    'next_requires_auth':True})
+    from msg.plugins.collaboration import install as install_collaboration
+    install_collaboration(app, op)
     finish((ResourceTypeSpec(name='claim',version=1,container=False,content_schema=None,
                              operations=frozenset(),relations=frozenset()),))

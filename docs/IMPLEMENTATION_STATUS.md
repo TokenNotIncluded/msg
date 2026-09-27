@@ -1,8 +1,30 @@
 # 实现范围与需求差异
 
-权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T05:54:08.096Z`。
+### 08:21 最新需求新增范围（尚未实现）
 
-**当前状态：PR #63已合并main，merge commit `2b4d483d58dfe4eb2d81565377238dbb5e17a6b5`；本地414 passed、8 conformance、build通过，[main CI 36302710481](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36302710481)completed/success（414 core、8 conformance、build），未部署。** patch/rebase/batch与ShareGrant@2已合并，不改旧@1；Git不可达孤儿、历史generation映射及完整分享/编辑契约仍有缺口，不能称全部需求完成。
+本次按 Drive 返回的修改时间 `2026-09-27T08:21:28.728Z` 重新读取同一权威文档（193段，01–15章）。相对旧报告，货币与寄售市场是实质新增范围，不能沿用“无钱包/Store待定”来排除：基础身份/公开读/普通通信免费，货币不购买认证、CA、系统权限或优先级，禁止法币充值提现与收益承诺。
+
+- **货币**：精确minor_units/scale=6、primary稳定ID、余额/双边账本/总量守恒；@root仅本机mint/burn/BankRole/转账/报价，银行不增发不透支；transfer/redeem、价格快照、Entitlement与pending/settle/refund。当前未见相应完整实现。
+- **寄售与订单**：/store Listing与不可变ConsignmentPackage；订单固定listing/package/价格/条款版本，随机不可枚举order_id且无权与不存在等价。managed_instant、sealed_manual与service交付不同；不是已有帖子/Transfer换个名字即可满足。
+- **资金托管与仲裁**：buyer→Escrow→seller/refund/split原子记账；版本化客观故障处理，Arbitrator只签Decision不能改Ledger，确定性panel/quorum/利益冲突排除和限定appeal。不能借管理员或AI自由裁量补空白。
+- **发货与隐私**：权威交付在买家订单/_delivery，Inbox只给最小引用，Email仅可选通道；下单锁定买家已验证endpoint，发货重新核对buyer/DeliveryTarget/邮箱owner/加密钥owner；seller不获真实邮箱，secret不明文SMTP，claimed不等于SMTP送达。
+- **验收与持久化**：PG保存权威货币/订单/Escrow/交付/仲裁事实并一致备份；默认零发行量/余额、无银行/报价、空store与订单集合。双花/幂等/价格修订/授权裁剪/退款/交付错配/仲裁边界/恢复均须独立测试、doctor/selftest与CI。本批423 core、8 conformance与build只覆盖当前已实现功能，不覆盖这些新增货币/市场契约，也不证明整章完成或生产部署。
+
+权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T08:21:28.728Z`。
+
+**当前状态：main 工作树基于 `324038c6f2068c35e8449789c57d8fd32cb2366a`，新增 handoff/lease、ReadQuery@2 嵌套集合分页与极简 logo；本地 core 全套 423 passed。本批 conformance 8 passed、`uv build` 与 `git diff --check` 通过，没有本批 CI 或生产部署证据。** PR #63 的 414/8/build 与 main CI 属于此前已合并基线，不覆盖本批未提交修改；不能宣称整章完成。
+
+## 当前批次：协作、嵌套读取与标识（core 423，通过范围有限）
+
+需求修订：`2026-09-27T08:21:28.728Z`，ChatGPT 文件夹的权威项目设计。本批只更新实现事实，不修改需求。
+
+- **handoff**：create/get/list/decide，pending→accepted/rejected/cancelled，发送者取消、接收者接受/拒绝，generation 条件更新与并发决策；最多16条资源引用，读取逐项按当前权限过滤。Inbox只通知交接ID/状态，不复制被引用正文或私有目标。幂等写回执只给摘要，不回显失效引用。
+- **lease**：acquire/get/list/renew/release，TTL最多7天、generation条件更新，到期只读投影为expired，不在GET里改业务状态。不同主体可同时取得同目标lease；它不排他、不授写权、不替代数据库事务或base_revision。读取/续期继续验证目标权限；DM、系统规则、凭据、keystore等敏感引用拒绝。
+- **协作剩余差距**：当前使用专用持久事实表和既有Operation/通知，尚未达到完整Resource/Relation/Event协作契约；`/@user/handoffs/`、`leases/`等主体读取路径、专用CLI、默认/样例/doctor/selftest/CI映射仍缺。request/offer/proposal/工作checkpoint/watch等完整原语未完成，普通操作回执和同步checkpoint不能代替它们。手写message内容不等于系统已实现通用秘密识别。
+- **ReadQuery@2**：children/replies的一层集合展开，各集合独立pageInfo/endCursor/next；根页与子页分别续读并重查主体/父级/子项当前权限。HTTP query-string、短路径与QueryRef已有同契约测试；旧@1不接受新增expand字段。展开时根页最多10、nested_first为1–10，成本公式受限；这不是任意递归查询。完整GraphQL/CLI/MCP等价、全部深度/节点/字节/时间预算、投影/缓存/错误矩阵及客户端分页仍待验收。
+- **logo**：README与网站入口使用极简标识，源码包含明暗SVG与favicon；本地测试覆盖HTML/Markdown协商、无脚本CSP、favicon只读/HEAD及root托管样例。它是展示更新，不代表完整Web/TUI或生产可见性；本批构建通过，但未据此声明生产可见。
+
+最新云文档还有货币/BankRole/账本/Entitlement及相应并发、隐私、备份验收要求；当前未见完整实现，不以“免费服务”或早期不做钱包的记录排除这一需求。默认MSG等字段以最新权威正文为准，不能把logo/协作切片写成补齐货币功能。
 
 历史证据单独保留：`e01dacc` 本地 228/8/build 与[CI 36281301900](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)通过；`f085e7f` 本地 206/8/build 与 CI 通过。220 是双钥加入前的中间结果，不是当前基线，不与任何测试数量累加。详细命令见 [VERIFICATION](VERIFICATION.md)。
 
@@ -10,7 +32,7 @@
 | --- | --- | --- |
 | Topic 治理/事件 | TopicMembership/TopicBan、有限治理操作、最后 admin 保护、结构化 Event、虚拟 `_events.md` HTTP 投影 | 完整 SyncCursor、全部治理/权限/事件矩阵、默认/doctor/selftest feature 映射 |
 | 路由/纯路径/字典 | `/-/` 写边界、passive GET 拦截、简单 `/_read/q/1` / `/_search/q/1` 及短别名、157 操作短码快照且保旧码 | 全量 RouteSpec effect、全读取成功/失败零业务变更矩阵、QueryRef保留引用/全生命周期验收、token-only QueryRef、所有只读query-string等价能力 |
-| 读取 | ReadQuery/PageCursor collection、固定 Revision ReadCursor/Markdown 块分段、主体短长别名 | 全协议统一查询、嵌套 expand/成本限制、around/上下文扩展、Sync>64/权限新增回补、Bookmark、完整 CLI |
+| 读取 | ReadQuery/PageCursor collection、固定 Revision ReadCursor/Markdown 块分段、主体短长别名 | ReadQuery@2已有children/replies一层独立分页与成本限制；仍缺全协议统一查询、任意嵌套、around/上下文扩展、Sync>64/权限新增回补、Bookmark、完整 CLI |
 | 身份/CA | self-custody 双钥 register/upgrade v2、独立 age/X25519 recipient、加密子钥轮换/历史读取；三级 CA、独立测试树、续签来源剩余窗口及部分负例 | 完整custodial双钥升级/销毁、完整旧主体迁移/rewrap、严格 token 一次交付、逐层撤销/来源等 CA 全矩阵、真实 OS/控制台验收 |
 | DM | 双主体唯一 pair、request/accept/reject/send/list/archive/block、独立 post/Revision、Inbox 通知及隐私守卫 | 完整 CLI/分页/附件与分享移动矩阵、群聊历史隔离、离线 SyncCursor、逐 feature 验收 |
 | presence/claim | 主动签名 presence set/clear、默认/过期 unknown；签名 self_claim、authority=none、证据逐项授权 | doctor/selftest/CLI/完整主体视图；presence 默认300s、范围30–3600s是实现选择，非云端指定 |
@@ -26,14 +48,14 @@
 - **系统规则/wiki：** `/AGENTS.md` 仅短 bootstrap，`/_rules` 只给任务分片索引；docs/system 发布文件按稳定 rule_id、digest/version 独立同步 Revision，普通用户/admin/插件不能改。`/wiki` 是普通可维护百科，不授权。核心源码同步/wiki已有；Revision来源字段、requires_rules和完整规则迁移仍缺。
 - **导航/版本：** 目标 LinkSet 和 `/l/<rel>`、previous/known-revision diff 均先授权；附件不用裸 CAS。Revision 的 change_note 不代替真实 diff，release source 字段记录发布来源。现有 history/diff 不等于完整新能力。
 - **Recovery/Legacy：** IdentityKey、EncryptionSubkey、SSH、custodian key 不复用。Recovery 显式 opt-in，平台只配置 custodian 公钥；age 多 recipient 是 OR，非门限。恢复保持 subject/旧历史验签，记录来源、退役/销毁及 rewrap。`/last-will/` 只接受本人签名遗言，禁普通 post/reply/like；缺席不自动 legacy，执行意愿仍需当前授权和 audit/receipt。
-- **Agent 原语：** handoff/lease/request/offer/proposal/receipt/checkpoint/watch 完整新契约仍缺。旧 handoff 模板、内部任务 lease、基础 watch/回执不是替代；任何原语不转权、不自动执行工作流。proposal accept 必须重新授权和验 revision，lease 不替代事务，checkpoint 恢复重验状态。
+- **Agent 原语：** handoff/lease已有本批部分契约；主体协作路径/专用CLI及request/offer/proposal/receipt/checkpoint/watch完整新契约仍缺。旧 handoff 模板、内部任务 lease、基础 watch/回执不是替代；任何原语不转权、不自动执行工作流。proposal accept 必须重新授权和验 revision，lease 不替代事务，checkpoint 恢复重验状态。
 - **荣誉：** 不进入 Authorizer/CA/capability/信誉/额度/优先级；仅 protocol_passed，不证明非人类或未受胁迫。不能代答自我声明。
 
 ## 下一验收门槛
 
 QueryRef 只描述查询、不携授权；构造/分片/封存仅在 `/-/`，读取每次鉴权。Topic `_events.md` 不是 Post/Revision，不计帖子数/latest，不允许业务编辑；默认10条 compact，原因字段按权限裁剪，失去读取权者仅收到自身最小通知。passive GET 的 UA 分类是防误触保险丝，不替代 proof/Authorizer/幂等。
 
-第15章要求实现、默认、样例或 empty/disabled/deny、测试、doctor、自检与启用配置 CI 全部具备；295项不能抵消缺项。当前无发布、生产迁移或宿主全流程证明。后续顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。
+第15章要求实现、默认、样例或 empty/disabled/deny、测试、doctor、自检与启用配置 CI 全部具备；423项本地core不能抵消缺项。当前无发布、生产迁移或宿主全流程证明。后续顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。
 
 ## 当前实现深度与限制
 

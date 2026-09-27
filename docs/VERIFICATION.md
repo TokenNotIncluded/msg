@@ -1,5 +1,21 @@
 # 本地与 CI 验收记录
 
+### 08:21 最新需求新增范围（尚未实现）
+
+本次按 Drive 返回的修改时间 `2026-09-27T08:21:28.728Z` 重新读取同一权威文档（193段，01–15章）。相对旧报告，货币与寄售市场是实质新增范围，不能沿用“无钱包/Store待定”来排除：基础身份/公开读/普通通信免费，货币不购买认证、CA、系统权限或优先级，禁止法币充值提现与收益承诺。
+
+- **货币**：精确minor_units/scale=6、primary稳定ID、余额/双边账本/总量守恒；@root仅本机mint/burn/BankRole/转账/报价，银行不增发不透支；transfer/redeem、价格快照、Entitlement与pending/settle/refund。当前未见相应完整实现。
+- **寄售与订单**：/store Listing与不可变ConsignmentPackage；订单固定listing/package/价格/条款版本，随机不可枚举order_id且无权与不存在等价。managed_instant、sealed_manual与service交付不同；不是已有帖子/Transfer换个名字即可满足。
+- **资金托管与仲裁**：buyer→Escrow→seller/refund/split原子记账；版本化客观故障处理，Arbitrator只签Decision不能改Ledger，确定性panel/quorum/利益冲突排除和限定appeal。不能借管理员或AI自由裁量补空白。
+- **发货与隐私**：权威交付在买家订单/_delivery，Inbox只给最小引用，Email仅可选通道；下单锁定买家已验证endpoint，发货重新核对buyer/DeliveryTarget/邮箱owner/加密钥owner；seller不获真实邮箱，secret不明文SMTP，claimed不等于SMTP送达。
+- **验收与持久化**：PG保存权威货币/订单/Escrow/交付/仲裁事实并一致备份；默认零发行量/余额、无银行/报价、空store与订单集合。双花/幂等/价格修订/授权裁剪/退款/交付错配/仲裁边界/恢复均须独立测试、doctor/selftest与CI。本批423 core、8 conformance与build只覆盖当前已实现功能，不覆盖这些新增货币/市场契约，也不证明整章完成或生产部署。
+
+## 2026-09-27 handoff/lease、ReadQuery@2 与极简 logo（main 工作树）
+
+已重读权威需求最新修订 `2026-09-27T08:21:28.728Z`。代码基于 main `324038c6f2068c35e8449789c57d8fd32cb2366a` 的本批未提交修改；执行者报告完整本地 core **423 passed**。本批准确耗时/完整命令未在此重复补造；**conformance 8 passed，uv build 与 git diff --check 均通过**，此前414/8/build及其main CI不能充当本批证据。
+
+本批core包含 handoff权限过滤/状态决策并发/最小通知、lease TTL/generation/非排他/只读到期、ReadQuery@2独立子集合分页/当前授权/旧版本拒绝/成本边界，以及logo内容协商/静态只读/CSP检查。定向不重复累加为新的总数。源码可见不等于已发布包或生产部署；协作主体路径和CLI、完整feature默认/doctor/selftest、全协议嵌套读取及真实浏览器/宿主矩阵仍缺。
+
 ## 2026-09-27 text_patch@2/rebase/batch与ShareGrant@2（PR #63已合并main，CI成功）
 
 GIT_CONFIG_GLOBAL=/dev/null下全套 **414 passed**、conformance **8 passed**，`uv build -q`成功；PR #63已合并main，merge commit `2b4d483d58dfe4eb2d81565377238dbb5e17a6b5`；[main CI36302710481](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36302710481)completed/success（414 core、8 conformance、build），未部署。content.text_patch@2显式rebase及text_patch_batch、ShareGrant@2 group/read-only空constraints/受限reshare已纳入；旧@1不变。批量保证SQL引用原子发布，不保证Git/文件系统回滚，可留Git不可达孤儿；历史generation映射仍有缺口，分享@2不支持任意操作或非空constraints。

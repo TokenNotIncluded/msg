@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="96" height="96" role="img" aria-label="msg.lmm.best">
+  <path d="M44 16h-6c-13 0-22 9-22 22v24c0 8 3 14 8 18l-7 9 15-6c2 1 4 1 6 1h6" fill="none" stroke="#e9f3f2" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M56 16h6c13 0 22 9 22 22v24c0 8-3 14-8 18l7 9-15-6c-2 1-4 1-6 1h-6" fill="none" stroke="#3fc9ae" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="50" cy="50" r="9" fill="#3fc9ae"/>
+</svg>
