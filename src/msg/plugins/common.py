@@ -108,7 +108,8 @@ async def create_resource(app,ctx,request,tx, *, parent,type,name=None,body=None
 
 
 async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/markdown', *, relations=(),author=None,
-                          signature=None,revision_id=None):
+                          signature=None,revision_id=None,change_note=None,source_kind=None,
+                          source_version=None,source_digest=None,content_created_at=None):
     from msg.core.models import BlobRef
     if isinstance(body,BlobRef):
         blob=body
@@ -124,12 +125,14 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
     require(bool(re.fullmatch(r'[A-Za-z0-9_-]{1,128}',rid)),'invalid_revision_id')
     content_time=ctx.now
     if signature is not None:
-        require('content_created_at' in request.arguments,'content_timestamp_required')
-        content_time=parse_time(request.arguments['content_created_at'])
+        timestamp=content_created_at if content_created_at is not None else request.arguments.get('content_created_at')
+        require(timestamp is not None,'content_timestamp_required')
+        content_time=parse_time(timestamp)
         require(abs((content_time-ctx.now).total_seconds())<=300,'content_timestamp_out_of_range')
     revision=Revision(format_version=1,id=rid,resource_id=resource.id,parents=(resource.revision,) if resource.revision else (),
         content=blob,relations=tuple(relations),actor=ctx.principal.actor,subject=ctx.principal.subject,
-        author=author or ctx.principal.subject,created_at=content_time,manifest_digest='')
+        author=author or ctx.principal.subject,created_at=content_time,manifest_digest='',
+        change_note=change_note,source_kind=source_kind,source_version=source_version,source_digest=source_digest)
     custodial=(ctx.principal.method=='token' and
                (await tx.subject(ctx.principal.subject)).kind=='custodial')
     if custodial:
