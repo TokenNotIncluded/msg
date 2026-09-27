@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import os
 
+from msg.market.escrow import EscrowEngine, validate_policy
 from msg.core.codec import canonical, digest, loads, parse_time, wire
 from msg.core.errors import require
 from msg.core.models import HandlerOutput
@@ -99,6 +100,7 @@ def install(app):
         require(body['delivery_mode'] == 'managed_instant' and
                 body['item_kind'] in {'file','bundle'},
                 'order_delivery_mode_unsupported')
+        validate_policy(body['escrow_policy'],body['dispute_policy'])
         require(args['listing_revision'] == listing.revision,
                 'listing_revision_conflict')
         require(body['currency_id'] == args['currency_id'] == CURRENCY_ID,
@@ -167,27 +169,9 @@ def install(app):
         signature=True)
     async def cancel(ctx, request, tx):
         buyer = _subject(ctx)
-        row = _row(tx, request.arguments['order_id'], buyer)
-        require(row['buyer'] == buyer, 'order_not_found')
-        require(row['state'] == 'funded' and row['delivered_at'] is None,
-                'order_not_cancellable')
-        require(tx.one('SELECT 1 FROM store_deliveries WHERE order_id=?',
-                       (row['id'],)) is None, 'order_not_cancellable')
-        require(_balance(tx, row['escrow_subject']) == row['total_price_minor'],
-                'escrow_balance_mismatch')
-        refund = _post_transfer(tx, sender=row['escrow_subject'],
-            recipient=buyer, amount=row['total_price_minor'], actor=buyer,
-            request_id=request.request_id, now=ctx.now,
-            receipt_signer=app.receipt_signer,
-            reference='order_refund:' + row['id'], kind='refund')
-        refs = [*row['receipt_refs'], refund['body']['transaction_id']]
-        changed = tx.execute('''UPDATE store_orders SET state='refunded',receipt_refs=?
-            WHERE id=? AND buyer=? AND state='funded' AND delivered_at IS NULL
-              AND NOT EXISTS (SELECT 1 FROM store_deliveries WHERE order_id=?)''',
-            (canonical(refs).decode(), row['id'], buyer, row['id']), write=True)
-        require(changed.rowcount == 1, 'order_not_cancellable')
-        return HandlerOutput(data={'order': _view(_row(tx, row['id'], buyer), buyer),
-                                   'refund': refund})
+        refund,decision,_ = await EscrowEngine(app).settle(ctx,request,tx,reason='buyer_cancel')
+        return HandlerOutput(data={'order':_view(_row(tx,request.arguments['order_id'],buyer),buyer),
+                                   'refund':refund,'decision':decision})
 
     @op('orders.get', obj({'order_id': IDENTIFIER}, ('order_id',)), effect='read')
     async def get(ctx, request, tx):

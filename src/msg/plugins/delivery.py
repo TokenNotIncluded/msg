@@ -9,7 +9,8 @@ from msg.core.codec import b64, canonical, decode, digest, loads, wire
 from msg.core.errors import require
 from msg.core.models import BlobRef, HandlerOutput
 from msg.plugins.common import new_id, registration
-from msg.plugins.money import CURRENCY_ID, _balance, _post_transfer
+from msg.plugins.money import CURRENCY_ID, _balance
+from msg.market.escrow import EscrowEngine
 from msg.plugins.orders import _row as order_row, _subject
 from msg.plugins.schemas import IDENTIFIER, obj
 from msg.plugins.store import _package_row
@@ -162,36 +163,9 @@ def install(app):
         'delivery_digest': {'type': 'string', 'pattern': '^sha256:[a-f0-9]{64}$'}},
         ('order_id', 'delivery_digest')), signature=True)
     async def accept(ctx, request, tx):
-        buyer = _subject(ctx)
-        order = _buyer_order(tx, request.arguments['order_id'], buyer)
-        delivery = _delivery(tx, order['id'])
-        await _verified_delivery(app, tx, order, delivery)
-        require(delivery['delivery_digest'] == request.arguments['delivery_digest'],
-                'delivery_mismatch')
-        require(order['state'] == 'delivered' and order['delivered_at'] is not None and
-                delivery['state'] == 'prepared', 'delivery_not_acceptable')
-        require(order['delivery_target'] == {'subject_id': buyer, 'channel': 'site'},
-                'delivery_recipient_mismatch')
-        require(_balance(tx, order['escrow_subject']) == order['total_price_minor'],
-                'escrow_balance_mismatch')
-        receipt = _post_transfer(tx, sender=order['escrow_subject'],
-            recipient=order['seller'], amount=order['total_price_minor'],
-            actor=buyer, request_id=request.request_id, now=ctx.now,
-            receipt_signer=app.receipt_signer,
-            reference='order_release:' + order['id'])
-        receipt_id = receipt['body']['transaction_id']
-        changed = tx.execute('''UPDATE store_deliveries
-            SET state='claimed',claimed_at=?,receipt=?
-            WHERE order_id=? AND recipient_subject=? AND state='prepared' ''',
-            (wire(ctx.now), canonical(receipt).decode(), order['id'], buyer), write=True)
-        require(changed.rowcount == 1, 'delivery_not_acceptable')
-        changed = tx.execute('''UPDATE store_orders
-            SET state='settled',settled_at=?,receipt_refs=?
-            WHERE id=? AND buyer=? AND state='delivered' AND delivered_at IS NOT NULL''',
-            (wire(ctx.now), canonical([*order['receipt_refs'], receipt_id]).decode(),
-             order['id'], buyer), write=True)
-        require(changed.rowcount == 1, 'delivery_not_acceptable')
-        return HandlerOutput(data={'order_id': order['id'], 'state': 'settled',
-            'delivery_id': delivery['id'], 'receipt': receipt})
+        receipt,decision,delivery = await EscrowEngine(app).settle(
+            ctx,request,tx,reason='buyer_accept')
+        return HandlerOutput(data={'order_id':request.arguments['order_id'],'state':'settled',
+            'delivery_id':delivery['id'],'receipt':receipt,'decision':decision})
 
     finish()

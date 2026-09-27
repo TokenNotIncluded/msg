@@ -39,6 +39,11 @@ RULE_BYPASS_TEXT=re.compile(r'(?is)\b(?:ignore|override|bypass|disable|skip)\b.{
 
 
 def validate_personal_body(body, *, agents=False, limit=65536):
+    """Bounded known-format screening, not arbitrary-secret/NL detection.
+
+    Text is never an authorization source. The English phrase guard is a
+    convenience check; nonmatching prose cannot modify the platform rules.
+    """
     require(type(body) is str and len(body.encode('utf-8'))<=limit,'personal_text_too_large')
     require(SECRET_TEXT.search(body) is None,'plaintext_secret_forbidden')
     if agents:
@@ -462,25 +467,41 @@ def install(app):
         body=request.arguments['body']
         validate_personal_body(body,agents=kind=='agents',
                                limit=min(65536,app.settings.server.limits.max_request_bytes))
+        content_proof={}
+        if request.contract_version==2:
+            content_proof={'content_signature':request.arguments['content_signature'],
+                           'revision_id':request.arguments['revision_id']}
         existing=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',(parent,name))
         if existing is None:
             require('expected_revision' not in request.arguments,'personal_revision_not_found')
             resource=await create_resource(app,ctx,request,tx,parent=parent,type='file',name=name,
-                                           body=body,media_type='text/markdown',mode=0o600)
+                                           body=body,media_type='text/markdown',mode=0o600,
+                                           resource_id=request.arguments.get('resource_id'),**content_proof)
         else:
             resource=await tx.resource(existing[0])
+            require(request.arguments.get('resource_id',resource.id)==resource.id,
+                    'personal_resource_mismatch')
             require(resource.type=='file' and resource.owner==subject.resource_id and
                     resource.state=='active',
                     'personal_resource_conflict')
             require(request.arguments.get('expected_revision')==resource.revision,
                     'revision_conflict')
             await assert_generation(request,resource)
-            resource=await revise_resource(app,ctx,request,tx,resource,body,'text/markdown')
+            resource=await revise_resource(app,ctx,request,tx,resource,body,'text/markdown',
+                signature=content_proof.get('content_signature'),
+                revision_id=content_proof.get('revision_id'))
         save_personal_proof(tx,request,resource,subject.resource_id,kind,ctx.now)
-        return output_for(resource,signature_source='self-custody',proof_purpose='request')
+        return output_for(resource,signature_source='self-custody',
+                          proof_purpose='revision' if request.contract_version==2 else 'request')
+
+    personal_signature_fields={'resource_id':IDENTIFIER,'revision_id':IDENTIFIER,
+        'content_signature':SIGNATURE,'content_created_at':STRING}
 
     @op('identity.personal_put',obj({'kind':{'enum':['soul','agents']},'body':STRING,
         'expected_revision':IDENTIFIER},('kind','body')),signature=True)
+    @op('identity.personal_put',obj({'kind':{'enum':['soul','agents']},'body':STRING,
+        'expected_revision':IDENTIFIER,**personal_signature_fields},
+        ('kind','body',*personal_signature_fields)),signature=True,version=2)
     async def personal_put(ctx,request,tx):
         subject=ctx.principal.subject
         require(subject is not None,'authentication_required')
@@ -505,6 +526,9 @@ def install(app):
 
     @op('identity.note_put',obj({'name':STRING,'body':STRING,'expected_revision':IDENTIFIER},
                                 ('name','body')),signature=True)
+    @op('identity.note_put',obj({'name':STRING,'body':STRING,'expected_revision':IDENTIFIER,
+        **personal_signature_fields},('name','body',*personal_signature_fields)),
+        signature=True,version=2)
     async def note_put(ctx,request,tx):
         subject=await controlled_owner(app,ctx,request,tx)
         folder=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',

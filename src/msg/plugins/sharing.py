@@ -10,6 +10,7 @@ from msg.core.codec import b64, canonical, loads, parse_time, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import HandlerOutput, ResourceRef
 from msg.plugins.common import check_access, new_id, registration, resolve
+from msg.security.sharing_policy import share_target_error
 from msg.plugins.schemas import IDENTIFIER, STRING, obj
 
 
@@ -49,21 +50,9 @@ async def _owned_resource(app, ctx, request, tx, value, *, mutation, owner=True)
     else:
         await app.authorizer.require_base(ctx.principal,
             f'{request.operation}@{request.contract_version}',rid,tx)
-    # A grant cannot cross system policy, private conversation, tool, credential,
-    # last-will, or subject bootstrap boundaries. DM is also enforced at read time.
     chain = (*await tx.ancestors(rid), resource)
-    require(not any(item.id in {'r_agents', 'r_rules', 't_last_will'} or
-                    item.type in {'tool', 'csr', 'certificate', 'credential',
-                                  'legacy_directive', 'dm_conversation'}
-                    for item in chain), 'share_forbidden_resource')
-    require(not any(parent.type == 'user' and child.name in {'SOUL.md', 'AGENTS.md', 'todos'}
-                    for parent, child in zip(chain, chain[1:])), 'share_forbidden_resource')
-    require(tx.one('''SELECT 1 FROM dm_conversations WHERE resource_id IN ('''+
-                   ','.join('?' for _ in chain)+') LIMIT 1', tuple(item.id for item in chain)) is None,
-            'share_forbidden_resource')
-    require(not any(tx.setting('hosting_preview:'+item.id) or
-                    tx.setting('hosting_preview_file:'+item.id) for item in chain),
-            'share_forbidden_resource')
+    error = share_target_error(app.registry, resource, chain, tx)
+    require(error is None, error or 'share_forbidden_resource')
     return resource
 
 
