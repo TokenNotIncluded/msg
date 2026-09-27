@@ -72,7 +72,7 @@ class Registry:
         for item in (*manifest.resource_types,*manifest.capabilities,*manifest.operations):
             require(item.version>=1 and item.name and '*' not in item.name,'invalid_registry_name')
         for item in manifest.operations:
-            require(not item.name.startswith('root.') or spec.entries==frozenset({'local_admin'}),'local_only_contract')
+            require(not item.name.startswith('root.') or item.entries==frozenset({'local_admin'}),'local_only_contract')
             require(item.entries and item.entries<=frozenset({'local_admin','network','worker'}),'invalid_entries')
         for item in manifest.resource_types:
             self.add_resource_type(item)
