@@ -1,6 +1,7 @@
 """The CI gate must reject missing, duplicate, changed, skipped or failing evidence."""
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
@@ -23,7 +24,7 @@ def write_evidence(directory, count=4):
         for node in record['selected']:
             case = ET.SubElement(suite, 'testcase', name=node)
             props = ET.SubElement(case, 'properties')
-            ET.SubElement(props, 'property', name='msg_nodeid', value=node)
+            ET.SubElement(props, 'property', name='msg.nodeid', value=node)
         ET.ElementTree(suite).write(directory / f'tests-{index}.xml')
 
 
@@ -81,7 +82,7 @@ def test_gate_rejects_incomplete_or_inconsistent_evidence(tmp_path, damage):
         elif damage == 'missing_id':
             case.remove(case.find('properties'))
         elif damage == 'ambiguous_id':
-            ET.SubElement(case.find('properties'), 'property', name='msg_nodeid', value='other')
+            ET.SubElement(case.find('properties'), 'property', name='msg.nodeid', value='other')
         else:
             ET.SubElement(case, damage)
         tree.write(report)
@@ -101,3 +102,45 @@ def test_actual_pytest_shards_emit_verifiable_node_ids(tmp_path):
             cwd=tmp_path, capture_output=True, text=True, timeout=30, check=False)
         assert result.returncode == 0, result.stdout + result.stderr
     assert ci.verify(tmp_path / 'artifacts', 2) == 4
+
+
+@pytest.mark.parametrize('damage', ['renamed_node', 'duplicate_node', 'missing_identity', 'duplicate_identity'])
+def test_equal_test_counts_do_not_hide_wrong_execution_identities(tmp_path, damage):
+    write_evidence(tmp_path)
+    report = tmp_path / 'tests-1.xml'
+    tree = ET.parse(report)
+    cases = tree.getroot().findall('testcase')
+    if damage == 'renamed_node':
+        cases[0].find('./properties/property').set('value', 'tests/test_other.py::wrong')
+    elif damage == 'duplicate_node':
+        cases[0].find('./properties/property').set('value',
+            cases[1].find('./properties/property').get('value'))
+    elif damage == 'missing_identity':
+        cases[0].remove(cases[0].find('properties'))
+    else:
+        ET.SubElement(cases[0].find('properties'), 'property', name='msg.nodeid', value='extra')
+    tree.write(report)
+    with pytest.raises(ValueError):
+        ci.verify(tmp_path, 4)
+
+
+def test_real_pytest_reports_exact_nodeids_for_parameters_and_classes(tmp_path):
+    tests = tmp_path / 'tests'
+    tests.mkdir()
+    (tests / 'test_sample.py').write_text(
+        "import pytest\n"
+        "@pytest.mark.parametrize('value', ['normal', '::[x]', '中文'])\n"
+        "def test_parameter(value):\n    assert value\n"
+        "class TestNested:\n    def test_child(self):\n        assert True\n")
+    directory = tmp_path / 'reports'
+    completed = subprocess.run(
+        [sys.executable, ci.__file__, 'run', '0', '1', '--directory', str(directory)],
+        cwd=tmp_path, env={**os.environ, 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1'},
+        capture_output=True, text=True, timeout=30)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert ci.verify(directory, 1) == 4
+    manifest = json.loads((directory / 'shard-0.json').read_text())
+    tree = ET.parse(directory / 'tests-0.xml')
+    observed = [case.find('./properties/property[@name="msg.nodeid"]').get('value')
+                for case in tree.getroot().findall('.//testcase')]
+    assert sorted(observed) == manifest['selected']

@@ -24,7 +24,7 @@ def partition(nodeids, index, count):
 
 def evidence(nodeids, index, count):
     all_nodes = sorted(nodeids)
-    return {'version': 1, 'index': index, 'count': count, 'all': all_nodes,
+    return {'version': 2, 'index': index, 'count': count, 'all': all_nodes,
             'selected': partition(all_nodes, index, count)}
 
 
@@ -35,7 +35,7 @@ def report_nodes(path):
     nodes = []
     for case in root.findall('.//testcase'):
         ids = [p.get('value') for p in case.findall('./properties/property')
-               if p.get('name') == 'msg_nodeid']
+               if p.get('name') == 'msg.nodeid']
         if len(ids) != 1 or not ids[0]:
             raise ValueError('JUnit result is missing an unambiguous test node ID')
         nodes.append(ids[0])
@@ -82,7 +82,7 @@ def run(index, count, directory):
             rejected = [item for item in items if item.nodeid not in chosen]
             items[:] = [item for item in items if item.nodeid in chosen]
             for item in items:
-                item.user_properties.append(('msg_nodeid', item.nodeid))
+                item.user_properties.append(('msg.nodeid', item.nodeid))
             config.hook.pytest_deselected(items=rejected)
             (directory / f'shard-{index}.json').write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
