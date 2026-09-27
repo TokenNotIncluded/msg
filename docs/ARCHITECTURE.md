@@ -1,6 +1,6 @@
 # 架构与提交边界
 
-**当前状态：工作树本地274 passed、8 conformance、uv build成功，尚未提交，无对应远端CI，未发布部署。** 本批加入ReadQuery QueryRef、Revision来源/history分页、requires_rules类别映射及自托管Recovery Policy/Envelope。前一提交 `8fdfb85` 的262/8/build与CI已通过；更早befa5ee的249/8/CI属于历史证据，均不代替当前工作树验证。
+**当前状态：工作树本地284 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加custodial双钥vault核心、独立SyncCursor、QueryRef描述条件回收及客户端选定age条目rewrap。前一提交 `65acff3` 已推送，[CI 36285859198](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36285859198)已通过（274/8，age实际执行）；旧提交结果不替代本工作树验证。
 
 本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T00:35:34.164Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 
@@ -72,7 +72,7 @@ I AM NOT HUMAN 只证明本次 subject 完成规定的声明与完整机器输�
 
 Achievement 使用独立 grant/ceremony 表，已实现 self-custody 的五轮挑战、签名 Grant 与审计；安全证书/OnlineIssuer 不承载荣誉事实。通用 Event evaluator、完整 Spec/Issuer 注册、Profile pin/索引及 custodial 代签仍待实现，不能把已有插件称为完整成就系统。
 
-当前 GET ReadQuery/PageCursor 切片复用 discovery 授权与 MAC cursor；e01dacc已有固定 Revision ReadCursor 切片，但尚未完整验收；所有协议统一查询、嵌套 expand、完整上下文展开、独立 SyncCursor 与 Bookmark 尚缺。主配置为 /etc/msgd/msgd.toml。自检用临时数据库和文件目录，同时从 bootstrap 起把测试主体、CA、CSR、证书、资源置于 /_test/<run_id>/；namespace 只用于本机构造，不是网络可修改配置。三级正链及部分拒绝/撤销断言已具备，完整矩阵仍待补齐。
+当前 GET ReadQuery/PageCursor 切片复用 discovery 授权与 MAC cursor；e01dacc已有固定 Revision ReadCursor 切片，但尚未完整验收；所有协议统一查询、嵌套 expand、完整上下文展开、完整SyncCursor与Bookmark仍有缺口。主配置为 /etc/msgd/msgd.toml。自检用临时数据库和文件目录，同时从 bootstrap 起把测试主体、CA、CSR、证书、资源置于 /_test/<run_id>/；namespace 只用于本机构造，不是网络可修改配置。三级正链及部分拒绝/撤销断言已具备，完整矩阵仍待补齐。
 
 ## Direct conversation（e01dacc已有核心，完整feature待补）
 
@@ -124,20 +124,30 @@ Notes复用普通文本Resource/Revision，默认private，保存主体主动选
 
 /AGENTS.md只做短bootstrap，/_rules是唯一权威规则命名空间且根只给索引；规则分成任务域system-managed资源，稳定rule_id不随文件移动改变。源码docs/system随发行打包、按单文件digest/version同步新Revision并记录release来源；运行时拒绝普通用户、Topic admin和插件修改。/wiki是普通可治理百科，不同步源码、不改变Authorizer；主体AGENTS只能收紧/_rules，SOUL仍不参与继承。
 
-LinkSet只是已授权ResourceRef的导航投影，Markdown用普通href，HTML/TUI/JSON保持同目标；无权关系省略敏感细节，不增安全父链。Revision来源元数据和change_note辅助定位，真实diff仍由固定Revision计算。当前274项全套覆盖新增核心切片，不代表完整规则/导航/个人文本feature交付。
+LinkSet只是已授权ResourceRef的导航投影，Markdown用普通href，HTML/TUI/JSON保持同目标；无权关系省略敏感细节，不增安全父链。Revision来源元数据和change_note辅助定位，真实diff仍由固定Revision计算。历史274项全套覆盖当时核心切片，不代表完整规则/导航/个人文本feature交付。
 
-## 本批274项对应的实际切片
+## 规则/导航/恢复已有切片与剩余边界
 
 已有docs/system/AGENTS极短bootstrap、/_rules默认GET索引与8分片，源码digest/version在load幂等同步，指针漂移fail-closed，wiki是普通可维护内容。Revision/history可选来源字段与requires_rules类别映射已有；完整source/RuleSet精确映射、规则全文与删除迁移仍缺。
 
 已有LinkSet self/t/a/r/p/c/f/q/b/h/v/d、逐项授权的关系导航和精确历史diff；HTML/TUI/搜索LinkSet及全部表示/附件导航矩阵未完成。Notes/SOUL/主体AGENTS已有主体主动签名请求写入、默认private/SOUL显式公开、零自动Memory；客户端Revision manifest独立签名与Notes完整生命周期/Todos仍缺。自然语言继承和全秘密识别不是当前代码能够普遍保证的能力。
 
-上述核心随8fdfb85提交并通过CI；本批274/8/build覆盖后续增量，尚未提交/无对应CI。
+上述核心随8fdfb85提交并通过CI；前批274/8/build已提交65acff3并通过CI。
 
 ## 本批QueryRef、Revision与Recovery实现边界
 
-ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef，短路径续页逐次当前授权，撤权拒绝旧引用；构造仅走/-/，读取无业务副作用。描述File尚不自动清理，SearchQuery和token-only QueryRef分支未实现。引用签名不授权，也不证明描述内容可绕成本限制执行。
+ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef，短路径续页逐次当前授权，撤权拒绝旧引用；构造仅走/-/，读取无业务副作用。描述File已有过期+1h维护任务条件回收，SearchQuery和token-only纯路径QueryRef分支未实现。引用签名不授权，也不证明描述内容可绕成本限制执行。
 
 Revision可选change_note/source_kind/source_version/source_digest、release每文件来源、history PageCursor/精确diff已实现；requires_rules为类别映射，尚非完整精确RuleSet依赖，完整manifest签名仍缺。
 
-RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial、账号恢复、rewrap与Policy UI仍缺。以上是当前未提交274/8/build切片，不借用8fdfb85的已通过CI。
+RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial升级/账号恢复/Policy UI仍缺，选定age条目的客户端rewrap已有。其中Policy/Envelope随65acff3提交并通过CI，选定条目rewrap属于当前未提交284项增量。
+
+## 当前284项工作树切片
+
+identity.custodial_create/status使用独立双钥AES-GCM vault，受控token写已接操作并生成真实custodial Revision签名；未接写操作fail-closed。不得冒充self-custody；完整升级须新双钥证明、rewrap、撤销token、销毁旧vault与审计，现尚缺，网络代解密也未开放。严格token一次展示及丢响应恢复仍待完成。
+
+独立/_read/s=/_r/s的SyncCursor为15分钟MAC token，seen字段加密且最多64引用，每次当前授权；只对已知撤权发最小失效通知。更大seen范围、权限新增旧事件回补尚缺，cursor不授读权。
+
+QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变更业务状态。客户端明确选定age keystore条目以旧钥解密、新recipient加密，保留历史并拒绝版本冲突；不提供服务器代解密或全账户自动迁移。SearchQuery/token-only纯路径QueryRef仍缺。
+
+以上本地284/8/build通过，未提交/无本批CI；65acff3的274/8/age实际执行CI已成功。

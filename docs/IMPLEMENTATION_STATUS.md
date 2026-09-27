@@ -2,16 +2,16 @@
 
 权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T00:35:34.164Z`。
 
-**当前状态：工作树本地274 passed、8 conformance、uv build成功，尚未提交，无对应远端CI，未发布部署。** 本批加入ReadQuery QueryRef、Revision来源/history分页、requires_rules类别映射及自托管Recovery Policy/Envelope。前一提交 `8fdfb85` 的262/8/build与CI已通过；更早befa5ee的249/8/CI属于历史证据，均不代替当前工作树验证。
+**当前状态：工作树本地284 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加custodial双钥vault核心、独立SyncCursor、QueryRef描述条件回收及客户端选定age条目rewrap。前一提交 `65acff3` 已推送，[CI 36285859198](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36285859198)已通过（274/8，age实际执行）；旧提交结果不替代本工作树验证。
 
 历史证据单独保留：`e01dacc` 本地 228/8/build 与[CI 36281301900](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)通过；`f085e7f` 本地 206/8/build 与 CI 通过。220 是双钥加入前的中间结果，不是当前基线，不与任何测试数量累加。详细命令见 [VERIFICATION](VERIFICATION.md)。
 
 | 范围 | 已有源码切片 | 主要缺口 |
 | --- | --- | --- |
 | Topic 治理/事件 | TopicMembership/TopicBan、有限治理操作、最后 admin 保护、结构化 Event、虚拟 `_events.md` HTTP 投影 | 完整 SyncCursor、全部治理/权限/事件矩阵、默认/doctor/selftest feature 映射 |
-| 路由/纯路径/字典 | `/-/` 写边界、passive GET 拦截、简单 `/_read/q/1` / `/_search/q/1` 及短别名、145 操作短码快照且保旧码 | 全量 RouteSpec effect、全读取成功/失败零业务变更矩阵、QueryRef描述File清理、SearchQuery/token-only QueryRef、所有只读query-string等价能力 |
-| 读取 | ReadQuery/PageCursor collection、固定 Revision ReadCursor/Markdown 块分段、主体短长别名 | 全协议统一查询、嵌套 expand/成本限制、around/上下文扩展、独立 SyncCursor、Bookmark、完整 CLI |
-| 身份/CA | self-custody 双钥 register/upgrade v2、独立 age/X25519 recipient、加密子钥轮换/历史读取；三级 CA、独立测试树、续签来源剩余窗口及部分负例 | custodial 双钥 vault、完整旧主体迁移/rewrap、严格 token 一次交付、逐层撤销/来源等 CA 全矩阵、真实 OS/控制台验收 |
+| 路由/纯路径/字典 | `/-/` 写边界、passive GET 拦截、简单 `/_read/q/1` / `/_search/q/1` 及短别名、145 操作短码快照且保旧码 | 全量 RouteSpec effect、全读取成功/失败零业务变更矩阵、QueryRef保留引用/全生命周期验收、SearchQuery/token-only QueryRef、所有只读query-string等价能力 |
+| 读取 | ReadQuery/PageCursor collection、固定 Revision ReadCursor/Markdown 块分段、主体短长别名 | 全协议统一查询、嵌套 expand/成本限制、around/上下文扩展、Sync>64/权限新增回补、Bookmark、完整 CLI |
+| 身份/CA | self-custody 双钥 register/upgrade v2、独立 age/X25519 recipient、加密子钥轮换/历史读取；三级 CA、独立测试树、续签来源剩余窗口及部分负例 | 完整custodial双钥升级/销毁、完整旧主体迁移/rewrap、严格 token 一次交付、逐层撤销/来源等 CA 全矩阵、真实 OS/控制台验收 |
 | DM | 双主体唯一 pair、request/accept/reject/send/list/archive/block、独立 post/Revision、Inbox 通知及隐私守卫 | 完整 CLI/分页/附件与分享移动矩阵、群聊历史隔离、离线 SyncCursor、逐 feature 验收 |
 | presence/claim | 主动签名 presence set/clear、默认/过期 unknown；签名 self_claim、authority=none、证据逐项授权 | doctor/selftest/CLI/完整主体视图；presence 默认300s、范围30–3600s是实现选择，非云端指定 |
 | 成就 | self-custody R1–R5、zero-width strategy、60s/300s、独立 grant/ceremony、签名与审计 | custodial、通用 Event evaluator、完整 Spec/Issuer、Profile pin/索引、完整默认/doctor/selftest |
@@ -33,7 +33,7 @@
 
 QueryRef 只描述查询、不携授权；构造/分片/封存仅在 `/-/`，读取每次鉴权。Topic `_events.md` 不是 Post/Revision，不计帖子数/latest，不允许业务编辑；默认10条 compact，原因字段按权限裁剪，失去读取权者仅收到自身最小通知。passive GET 的 UA 分类是防误触保险丝，不替代 proof/Authorizer/幂等。
 
-第15章要求实现、默认、样例或 empty/disabled/deny、测试、doctor、自检与启用配置 CI 全部具备；274项不能抵消缺项。当前无发布、生产迁移或宿主全流程证明。后续顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。
+第15章要求实现、默认、样例或 empty/disabled/deny、测试、doctor、自检与启用配置 CI 全部具备；284项不能抵消缺项。当前无发布、生产迁移或宿主全流程证明。后续顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。
 
 ## 当前实现深度与限制
 
@@ -43,8 +43,16 @@ LinkSet self/t/a/r/p/c/f/q/b/h/v/d、单关系目标与精确历史diff逐项授
 
 ## 本批新增查询、版本与恢复切片
 
-ReadQuery经现有Transfer分片封存为私有描述File，再生成15分钟MAC opaque QueryRef；使用短续页，每次当前认证授权，撤权使旧引用失效。QueryRef不是授权凭据；open/put/seal在/-/，读取不隐式创建Transfer或业务事实。描述File目前不自动清理；SearchQuery和token-only QueryRef尚未实现。
+ReadQuery经现有Transfer分片封存为私有描述File，再生成15分钟MAC opaque QueryRef；使用短续页，每次当前认证授权，撤权使旧引用失效。QueryRef不是授权凭据；open/put/seal在/-/，读取不隐式创建Transfer或业务事实。描述File已有过期+1h维护任务条件回收；SearchQuery和token-only QueryRef尚未实现。
 
 Revision已有可选change_note/source_kind/source_version/source_digest，release按文件记录来源，history采用PageCursor并保留精确diff导航；requires_rules按类别映射。可选字段不代表每种业务Revision均有完整来源；精确source/RuleSet对应、完整客户端manifest签名仍缺。
 
-self-custody RecoveryPolicy由owner签名opt-in，RecoveryEnvelope绑定确切age keystore ResourceRef/Revision，标记owner_declared_unverified；平台custodian配置只收公开recipient/指纹等，拒绝私钥。客户端双recipient OR离线演练验证任一指定私钥可解，不是门限。服务器不能验证密文实际recipient集合，也不把加密或Policy当账号/CA授权。完整custodial、账号恢复、旧密文rewrap、Policy UI未实现；保存Envelope不等于完成账号灾难恢复。
+self-custody RecoveryPolicy由owner签名opt-in，RecoveryEnvelope绑定确切age keystore ResourceRef/Revision，标记owner_declared_unverified；平台custodian配置只收公开recipient/指纹等，拒绝私钥。客户端双recipient OR离线演练验证任一指定私钥可解，不是门限。服务器不能验证密文实际recipient集合，也不把加密或Policy当账号/CA授权。custodial核心已有，但完整升级/账号恢复/Policy UI仍缺；客户端选定age条目显式rewrap已有，不等于完整恢复迁移；保存Envelope不等于完成账号灾难恢复。
+
+## 当前custodial / Sync / 清理 / rewrap边界
+
+identity.custodial_create/status已实现两类独立私钥AES-GCM vault、server-signable/server-decryptable披露、受控token；已接写入产生真实custodial Revision签名，其余未接写fail-closed。它不等于客户端签名；完整custodial→self-custody还缺新双钥持有证明、密文迁移/rewrap、token撤销、vault旧钥销毁和全程审计。网络代解密未开放。严格token一次展示尚缺，不能忽略首次响应丢失后的安全恢复。
+
+/_read/s与/_r/s独立SyncCursor已有：MAC保护、seen加密、最多64引用、15分钟、每次当前授权；已知撤权只返最小通知，不泄漏此前不可见对象。>64引用扩展与权限新增后的旧事件回补未做，不声称完整增量同步。
+
+QueryRef私有描述File由维护任务在过期+1h后满足条件才回收；读取不执行清理，不把token过期当任意用户File可删依据。SearchQuery/token-only纯路径分支仍缺。客户端可显式选择age keystore条目old→new rewrap，保留历史、基线冲突拒绝；这不是全账号自动迁移/恢复。当前284/8/build仅本地工作树，65acff3成功CI属于前批。

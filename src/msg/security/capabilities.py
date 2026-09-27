@@ -9,7 +9,7 @@ from msg.plugins.schemas import NETWORK_CONSTRAINTS
 # Base capabilities route ordinary actions to mode/ownership checks. They never
 # stand in for a special capability or a trusted local execution entry.
 BASE_FAMILIES = {
-    'identity.basic': ('identity.register', 'identity.temporary', 'identity.upgrade',
+    'identity.basic': ('identity.register', 'identity.temporary', 'identity.custodial_create', 'identity.upgrade',
         'identity.token_rotate', 'identity.token_create', 'identity.key_add', 'identity.key_revoke',
         'identity.email_set', 'identity.email_verify', 'identity.email_get', 'identity.email_notifications',
         'identity.delegate', 'identity.delegation_revoke', 'identity.certificate_renew',
@@ -17,7 +17,7 @@ BASE_FAMILIES = {
         'identity.identity_key_get', 'identity.identity_key_list',
         'identity.encryption_key_get', 'identity.encryption_key_list',
         'identity.encryption_key_rotate',
-        'identity.personal_put','identity.soul_visibility','identity.note_put',
+        'identity.custodial_status','identity.personal_put','identity.soul_visibility','identity.note_put',
         'identity.note_list','identity.note_get',
         'identity.recovery_policy_get','identity.recovery_policy_set',
         'identity.recovery_envelope_register','identity.recovery_envelope_get',
@@ -37,7 +37,7 @@ BASE_FAMILIES = {
 }
 EXCLUDED_BASE = {'content.purge','content.chown','identity.recover'}
 TEMPORARY_OPERATIONS = frozenset({
-    'identity.temporary','identity.upgrade','identity.token_rotate',
+    'identity.temporary','identity.custodial_create','identity.upgrade','identity.token_rotate','identity.custodial_status',
     'content.topic_create','content.post_create','content.post_edit','content.archive',
     'content.restore','content.file_put','content.attach',
     'discussion.reply','discussion.quote','discussion.repost','discussion.like','discussion.unlike',

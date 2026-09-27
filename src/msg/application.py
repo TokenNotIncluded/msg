@@ -93,6 +93,7 @@ class Application:
         self.receipt_signer=Ed25519Signer.from_bytes((keys/'receipt.key').read_bytes())
         self._token_secret=(keys/'tokens.key').read_bytes()
         require(len(self._token_secret)==32,'invalid_service_key')
+        self._vault_key=hmac.digest(self._token_secret,b'custodial-vault-aesgcm-v1','sha256')
         self.cursors=CursorCodec(hmac.digest(self._token_secret,b'cursor-key-v1','sha256'))
         self.certificates=CertificateValidator(self.registry,root_certificate,root_public,self.settings.service_url,self.clock)
         async with self.metadata.transaction(write=False) as tx:
@@ -127,15 +128,17 @@ class Application:
             'subject':subject,'request_id':request.request_id,'nonce':request.arguments['nonce']}),'sha256')
 
     async def _secrets_for_caller(self,request,result):
-        if result.status!='ok' or request.operation not in {'identity.temporary','identity.token_rotate','identity.token_create'}:
+        if result.status!='ok' or request.operation not in {'identity.temporary','identity.custodial_create',
+                'identity.token_rotate','identity.token_create'}:
             return result
         token=self.issued_token(request,result.subject)
         async with self.metadata.transaction(write=False) as tx:
             credential=await tx.credential(result.data['credential_id'])
             require(credential.revoked_at is None and credential.expires_at>self.clock(),'credential_expired')
             require(hmac.compare_digest(credential.verifier,hashlib.sha256(token).digest()),'invalid_token_result')
-        # This one-time credential delivery is deliberately excluded from durable
-        # metadata and the signed business receipt. The verifier is in storage.
+        # Request-bound credential delivery is excluded from durable metadata and
+        # the signed receipt. An identical retry can recover the same token after
+        # a lost response; strict single-display delivery is not guaranteed.
         return replace(result,data=dict(result.data,token=b64(token)))
 
     async def close(self):

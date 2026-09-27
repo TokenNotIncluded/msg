@@ -119,6 +119,12 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
     revision=Revision(format_version=1,id=rid,resource_id=resource.id,parents=(resource.revision,) if resource.revision else (),
         content=blob,relations=tuple(relations),actor=ctx.principal.actor,subject=ctx.principal.subject,
         author=author or ctx.principal.subject,created_at=content_time,manifest_digest='')
+    custodial=(ctx.principal.method=='token' and
+               (await tx.subject(ctx.principal.subject)).kind=='custodial')
+    if custodial:
+        require(signature is None,'custodial_content_signature_forbidden')
+        revision=replace(revision,signature_source='custodial',source_kind='operation',
+                         source_version=request.contract_version,source_digest=request.payload_digest)
     body_to_sign={k:v for k,v in wire(revision).items() if k not in {'manifest_digest','signature'}}
     revision=replace(revision,manifest_digest=digest(body_to_sign))
     if signature is not None:
@@ -127,6 +133,13 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
         require(sig.key_id==credential.id,'content_signer_mismatch')
         verify(credential.verifier,canonical(body_to_sign),sig,purpose='revision')
         revision=replace(revision,signature=sig)
+    elif custodial:
+        from msg.security.vault import open_signer
+        signer=open_signer(app,tx,ctx.principal.subject)
+        primary=tx.one('SELECT key_id FROM identity_keys WHERE subject=? AND is_primary=1',
+                       (ctx.principal.subject,))
+        require(primary is not None and primary[0]==signer.key_id,'custodial_vault_key_mismatch')
+        revision=replace(revision,signature=signer.sign(canonical(body_to_sign),purpose='revision'))
     await app.contents.pin(blob,rid)
     ancestors=await tx.ancestors(resource.id)
     topic=next((p.id for p in reversed(ancestors) if p.type=='topic'),ROOT_SPACE)

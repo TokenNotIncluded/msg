@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前状态：工作树本地274 passed、8 conformance、uv build成功，尚未提交，无对应远端CI，未发布部署。** 本批加入ReadQuery QueryRef、Revision来源/history分页、requires_rules类别映射及自托管Recovery Policy/Envelope。前一提交 `8fdfb85` 的262/8/build与CI已通过；更早befa5ee的249/8/CI属于历史证据，均不代替当前工作树验证。
+**当前状态：工作树本地284 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加custodial双钥vault核心、独立SyncCursor、QueryRef描述条件回收及客户端选定age条目rewrap。前一提交 `65acff3` 已推送，[CI 36285859198](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36285859198)已通过（274/8，age实际执行）；旧提交结果不替代本工作树验证。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
@@ -177,7 +177,7 @@ token 和 bootstrap claim 出现在路径中就是持有者凭据。HTTPS 不能
 
 所有 cursor 都须为服务端签名/MAC 的 opaque token，每次读取重新认证和授权，客户端不计算 page/offset/下一条 ID，也不依赖 token 内部结构。现有分页与 sync 功能不能证明这套稳定 continuation、snapshot、块分段、撤权和过期契约已完成。
 
-Bookmark 是显式持久业务状态，只有用户主动写操作才能将 resource_id、revision_id、anchor 保存到 `/@user/bookmarks/`；它与 cursor 分离，不等于 ACK。ReadCursor 不标记已读，telemetry 不产生 ACK。Bookmark、SyncCursor 与完整 cursor 功能仍缺；PageCursor 已有下述 GET 切片，ReadCursor 后续工作树切片尚未完整验收。
+Bookmark 是显式持久业务状态，只有用户主动写操作才能将 resource_id、revision_id、anchor 保存到 `/@user/bookmarks/`；它与 cursor 分离，不等于 ACK。ReadCursor 不标记已读，telemetry 不产生 ACK。Bookmark、完整SyncCursor能力仍缺；PageCursor 已有下述 GET 切片，ReadCursor 后续工作树切片尚未完整验收。
 
 ## 荣誉和 I AM NOT HUMAN（self-custody 切片与剩余目标）
 
@@ -226,7 +226,7 @@ CLI 的最新目标是默认只返回受限结果窗口；显式 `--limit` 才�
 
 默认空视图、不预建原语；receipt 仅真实提交生成。lease/presence 的 TTL 必须有限；presence 工作树选择默认300s、范围30–3600s，云端未指定该数值，lease 默认仍未确定。CLI 目标为相应名词的 create/list/get 及各自有限动作，复杂行为由客户端组合；服务器不自动串联下一步。
 
-e01dacc 已有ReadCursor discovery.read_segment、固定 Revision 和 Markdown 块/UTF-8 分段、prev/next 及当前授权检查；完整feature仍缺，around/expand_before/after、完整跨协议读取与独立 SyncCursor 仍缺。完整feature缺口不能由已有测试总数抵消。
+e01dacc 已有ReadCursor discovery.read_segment、固定 Revision 和 Markdown 块/UTF-8 分段、prev/next 及当前授权检查；完整feature仍缺，around/expand_before/after、完整跨协议读取仍缺；独立SyncCursor已有本批受限切片。完整feature缺口不能由已有测试总数抵消。
 
 ## presence/claim 已提交核心切片
 
@@ -293,18 +293,28 @@ SOUL是感性主观片段，不是AGENTS规则、权限/信誉/认证/诊断或�
 
 /_read/<id>/links返回compact LinkSet，/_r/<id>/l/<rel>直接读目标或Page/Cursor；固定rel包括t/a/r/p/c/f/q/b/h/v/d。d返回上一Revision→当前diff；/_read/<id>/diff/<known_revision>返回已知版→当前，任意两版继续/diff/<old>/<new>。history分页可含change_note/source_version，但不能替代精确unified/结构化diff。全部导航PURE_READ、逐项鉴权，附件给受权metadata/download/Range/Transfer而不是裸CAS。LinkSet与精确diff核心已有，完整表示/附件/Revision来源矩阵仍待补齐。
 
-## 本批274项对应的实际切片
+## 规则/导航/恢复已有切片与剩余边界
 
 已有docs/system/AGENTS极短bootstrap、/_rules默认GET索引与8分片，源码digest/version在load幂等同步，指针漂移fail-closed，wiki是普通可维护内容。Revision/history可选来源字段与requires_rules类别映射已有；完整source/RuleSet精确映射、规则全文与删除迁移仍缺。
 
 已有LinkSet self/t/a/r/p/c/f/q/b/h/v/d、逐项授权的关系导航和精确历史diff；HTML/TUI/搜索LinkSet及全部表示/附件导航矩阵未完成。Notes/SOUL/主体AGENTS已有主体主动签名请求写入、默认private/SOUL显式公开、零自动Memory；客户端Revision manifest独立签名与Notes完整生命周期/Todos仍缺。自然语言继承和全秘密识别不是当前代码能够普遍保证的能力。
 
-上述核心随8fdfb85提交并通过CI；本批274/8/build覆盖后续增量，尚未提交/无对应CI。
+上述核心随8fdfb85提交并通过CI；前批274/8/build已提交65acff3并通过CI。
 
 ## 本批QueryRef、Revision与Recovery实现边界
 
-ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef，短路径续页逐次当前授权，撤权拒绝旧引用；构造仅走/-/，读取无业务副作用。描述File尚不自动清理，SearchQuery和token-only QueryRef分支未实现。引用签名不授权，也不证明描述内容可绕成本限制执行。
+ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef，短路径续页逐次当前授权，撤权拒绝旧引用；构造仅走/-/，读取无业务副作用。描述File已有过期+1h维护任务条件回收，SearchQuery和token-only纯路径QueryRef分支未实现。引用签名不授权，也不证明描述内容可绕成本限制执行。
 
 Revision可选change_note/source_kind/source_version/source_digest、release每文件来源、history PageCursor/精确diff已实现；requires_rules为类别映射，尚非完整精确RuleSet依赖，完整manifest签名仍缺。
 
-RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial、账号恢复、rewrap与Policy UI仍缺。以上是当前未提交274/8/build切片，不借用8fdfb85的已通过CI。
+RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial升级/账号恢复/Policy UI仍缺，选定age条目的客户端rewrap已有。其中Policy/Envelope随65acff3提交并通过CI，选定条目rewrap属于当前未提交284项增量。
+
+## 当前284项工作树切片
+
+identity.custodial_create/status使用独立双钥AES-GCM vault，受控token写已接操作并生成真实custodial Revision签名；未接写操作fail-closed。不得冒充self-custody；完整升级须新双钥证明、rewrap、撤销token、销毁旧vault与审计，现尚缺，网络代解密也未开放。严格token一次展示及丢响应恢复仍待完成。
+
+独立/_read/s=/_r/s的SyncCursor为15分钟MAC token，seen字段加密且最多64引用，每次当前授权；只对已知撤权发最小失效通知。更大seen范围、权限新增旧事件回补尚缺，cursor不授读权。
+
+QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变更业务状态。客户端明确选定age keystore条目以旧钥解密、新recipient加密，保留历史并拒绝版本冲突；不提供服务器代解密或全账户自动迁移。SearchQuery/token-only纯路径QueryRef仍缺。
+
+以上本地284/8/build通过，未提交/无本批CI；65acff3的274/8/age实际执行CI已成功。

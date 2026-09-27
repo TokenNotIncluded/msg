@@ -209,7 +209,7 @@ def error_status(code):
     if code=='range_not_satisfiable':return 416
     if code in {'not_found','resource_purged','revision_not_found','csr_not_found','certificate_not_found'}: return 404
     if code in {'authentication_required','invalid_token','invalid_signature','credential_revoked','credential_expired','request_expired'}: return 401
-    if code in {'permission_denied','local_only','credential_ceiling','certificate_gate','tool_certificate_required','forbidden_origin','forbidden_host','passive_client_forbidden','query_ref_principal_mismatch'}: return 403
+    if code in {'permission_denied','local_only','credential_ceiling','certificate_gate','tool_certificate_required','forbidden_origin','forbidden_host','passive_client_forbidden','query_ref_principal_mismatch','cursor_principal_mismatch'}: return 403
     if code in {'generation_conflict','revision_conflict','idempotency_conflict','chunk_conflict','constraint_conflict'}: return 409
     if code in {'request_too_large','path_too_large','response_too_large','use_transfer','part_too_large'}: return 413
     if code in {'method_not_allowed','effect_mismatch'}: return 405
@@ -364,6 +364,37 @@ def create_app(service):
             if path=='/healthz':
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 return json_response({'status':'ok' if service._loaded else 'not_ready'},200 if service._loaded else 503)
+            sync_path=re.fullmatch(rb'/_r(?:ead)?/s/(start|[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)'
+                rb'(?:/p/([A-Za-z0-9_-]+))?',raw_path)
+            if sync_path:
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                require(not request.url.query,'unknown_query_parameter')
+                cursor=sync_path.group(1).decode('ascii')
+                args={} if cursor=='start' else {'cursor':cursor}
+                operation='communication.sync'
+                proof=sync_path.group(2)
+                header=request.headers.get('x-msg-request')
+                require(not (proof and header),'ambiguous_proof')
+                if proof:
+                    packet=path_read_proof(proof,operation,args,service,limits.max_request_bytes)
+                elif header:
+                    packet=path_packet(header,'j',limits.max_request_bytes)
+                    require(packet.operation==operation and canonical(packet.arguments)==canonical(args),
+                            'representation_mismatch')
+                else:
+                    packet=request_for(operation,args,service.settings.service_url,source='manual')
+                result=await service.executor.execute(packet,entry='network')
+                if result.error:
+                    return json_response(result_wire(result),error_status(result.error.code))
+                value=wire(result.data)
+                payload=canonical(value)
+                require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                etag='"'+digest(value)[7:]+'"'
+                headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'no-store'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
+                return Response(b'' if request.method=='HEAD' else payload,
+                                media_type='application/json',headers=headers)
             query_ref_path=re.fullmatch(rb'/_r(?:ead)?/q/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)'
                 rb'(?:/c/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+))?'
                 rb'(?:/p/([A-Za-z0-9_-]+))?',raw_path)

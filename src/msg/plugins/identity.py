@@ -20,6 +20,9 @@ from msg.plugins.schemas import *
 from msg.core.requests import signing_bytes
 from msg.security.crypto import key_id,subject_id,verify
 from msg.security.age_keys import public_from_recipient,encryption_key_id
+from msg.security.age_keys import generate_age_key
+from msg.security.crypto import Ed25519Signer
+from msg.security.vault import store_keys
 from msg.security.certificates import ONLINE_ISSUABLE_CAPABILITIES,sign_certificate,csr_body,verify_csr
 from msg.security.policy import scope_subset,constraints_subset
 
@@ -54,7 +57,7 @@ async def make_user(app,tx,ctx,id,handle,kind):
         modified_at=ctx.now,modified_by=id)
     await tx.insert(resource)
     await tx.update_identity(Subject(resource_id=id,kind=kind,primary_group=PUBLIC_GROUP,auth_version=0),-1)
-    if kind=='registered':
+    if kind in {'registered','custodial'}:
         await set_member(tx,PUBLIC_GROUP,id,'member')
     for name,mode in (('keys',0o555),('certificates',0o555),('files',0o700),('keystore',0o700)):
         await tx.insert(Resource(id='r_'+digest((id,name))[7:39],type='topic',type_version=1,name=name,parent=id,
@@ -145,6 +148,49 @@ def install(app):
         # The v1 wire schema and shortcodes remain intact, but it cannot create
         # a compliant self-custody identity without a client-held age key.
         raise Failure('encryption_subkey_required',details={'contract_version':2})
+
+    @op('identity.custodial_create',obj({'handle':STRING,'nonce':BYTES},('handle','nonce')))
+    async def custodial_create(ctx,request,tx):
+        token=app.issued_token(request,ctx.principal.subject)
+        signer=Ed25519Signer.generate()
+        age_identity,recipient=generate_age_key()
+        age_public=public_from_recipient(recipient)
+        age_id=encryption_key_id(age_public)
+        user=await make_user(app,tx,ctx,ctx.principal.subject,
+                             request.arguments['handle'],'custodial')
+        signing_credential=Credential(id=signer.key_id,subject_id=user.id,kind='signing_key',
+            verifier=signer.public_key,ceiling=(),not_before=ctx.now,expires_at=None,revoked_at=None)
+        await tx.save_credential(signing_credential,0)
+        credential=Credential(id=ctx.principal.credential_id,subject_id=user.id,kind='token',
+            verifier=hashlib.sha256(token).digest(),ceiling=app.temporary_ceiling(),
+            not_before=ctx.now,expires_at=ctx.now+timedelta(seconds=app.settings.temporary_ttl),
+            revoked_at=None)
+        await tx.save_credential(credential,0)
+        tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
+                   (signer.key_id,user.id,b64(signer.public_key),wire(ctx.now),None,1),write=True)
+        tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,?,?)',
+                   (age_id,user.id,recipient,b64(age_public),wire(ctx.now),None,1),write=True)
+        store_keys(app,tx,user.id,signer,age_identity,age_id,ctx.now)
+        return HandlerOutput(resources=(ResourceRef(id=user.id),),data={
+            'subject_id':user.id,'credential_id':credential.id,
+            'identity_key_id':signer.key_id,'encryption_key_id':age_id,
+            'encryption_recipient':recipient,'expires_at':wire(credential.expires_at),
+            'signature_source':'custodial','server_signable':True,'server_decryptable':True})
+
+    @op('identity.custodial_status',obj(),effect='read')
+    async def custodial_status(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        require(subject.kind=='custodial','not_custodial')
+        row=tx.one('SELECT signing_key_id,encryption_key_id,status FROM custodial_vault WHERE subject=?',
+                   (subject.resource_id,))
+        require(row is not None and row[2]=='active','custodial_vault_unavailable')
+        from msg.security.vault import open_signer,open_age_identity
+        open_signer(app,tx,subject.resource_id)
+        open_age_identity(app,tx,subject.resource_id)
+        return HandlerOutput(data={'subject_id':subject.resource_id,
+            'identity_key_id':row[0],'encryption_key_id':row[1],
+            'signature_source':'custodial','server_signable':True,
+            'server_decryptable':True})
 
     @op('identity.register',obj({'handle':STRING,'public_key':BYTES,'encryption_recipient':STRING},
                                  ('handle','public_key','encryption_recipient')),signature=True,version=2)

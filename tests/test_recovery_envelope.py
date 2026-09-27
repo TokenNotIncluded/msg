@@ -9,8 +9,10 @@ import pytest
 
 from msg.client import ClientState, MsgClient
 from msg.client_recovery import (
-    create_recovery_envelope, restore_recovery_envelope, save_recovery_envelope,
+    _age, create_recovery_envelope, restore_recovery_envelope,
+    rewrap_age_keystore_entry, save_recovery_envelope,
 )
+from msg.core.codec import b64
 from msg.core.errors import Failure
 from msg.security.age_keys import (
     encryption_key_id, generate_age_key, public_from_recipient,
@@ -77,3 +79,38 @@ async def test_age_multi_recipient_backup_is_opt_in_and_offline(installed,tmp_pa
         assert not (tmp_path/'wrong-subject.agekey').exists()
         assert state.age_key_path.read_text().strip().encode() not in ciphertext.read_bytes()
         assert third!=first and third!=second
+
+
+@pytest.mark.asyncio
+async def test_selected_age_keystore_rewrap_keeps_old_revision_and_key(installed,tmp_path):
+    if shutil.which('age') is None:
+        pytest.skip('age CLI is unavailable')
+    app,_=installed
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url=app.settings.service_url) as http:
+        state=ClientState(tmp_path/'client',server=app.settings.service_url)
+        client=MsgClient(state,HTTPTransport(app.settings.service_url,http=http),clock=lambda:NOW)
+        await client.register('rewrap-owner')
+        old_recipient=state.encryption_recipient
+        plaintext=b'old ciphertext remains verifiable\n'
+        old_ciphertext=_age('--encrypt','--recipient',old_recipient,input_data=plaintext)
+        created=client.checked(await client.call('keystore.put',{
+            'name':'rotating-secret','format':'age','ciphertext':b64(old_ciphertext)}))
+        rid,old_revision=created.resources[0].id,created.resources[0].revision
+        rotated=client.checked(await client.rotate_encryption_key())
+        old_identity=state.directory/('encryption-'+rotated.data['previous_key_id']+'.agekey')
+        assert old_identity.is_file()
+        renewed=await rewrap_age_keystore_entry(client,rid,old_identity,
+                                                 expected_revision=old_revision)
+        assert renewed.resources[0].revision!=old_revision
+        assert old_identity.is_file()
+        with pytest.raises(Failure,match='revision_conflict'):
+            await rewrap_age_keystore_entry(client,rid,old_identity,
+                                            expected_revision=old_revision)
+        for revision,identity_path in ((old_revision,old_identity),
+                                       (renewed.resources[0].revision,state.age_key_path)):
+            entry=client.checked(await client.call('keystore.get',{'id':rid,'revision':revision}))
+            ciphertext=tmp_path/(revision+'.age')
+            await client.download(entry.output,ciphertext)
+            assert _age('--decrypt','--identity',str(identity_path),
+                        input_data=ciphertext.read_bytes())==plaintext

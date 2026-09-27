@@ -34,7 +34,7 @@ async def purge_revisions(app, tx, resource, *, actor, request_id, reason):
 
 
 async def _cleanup(app,tx, *, scheduled):
-    counts={'expired_resources':0,'expired_transfers':0}
+    counts={'expired_resources':0,'expired_transfers':0,'expired_query_sources':0}
     if not tx.setting('runtime_config',{}).get('cleanup_enabled',True):
         return counts
     now=app.clock()
@@ -73,6 +73,43 @@ async def _cleanup(app,tx, *, scheduled):
             await tx.save_transfer(replace(transfer,state='expired',generation=transfer.generation+1),transfer.generation)
             tx.execute('DELETE FROM chunks WHERE transfer_id=?',(transfer.id,),write=True)
             counts['expired_transfers']+=1
+    for key,raw in tx.rows("SELECT key,value FROM settings WHERE key LIKE 'query_ref_source:%'"):
+        marker=loads(raw)
+        if parse_time(marker['retain_until'])>now:
+            continue
+        rid=key.removeprefix('query_ref_source:')
+        try:
+            resource=await tx.resource(rid)
+        except Failure as exc:
+            if exc.code!='not_found':raise
+            tx.execute('DELETE FROM settings WHERE key=?',(key,),write=True)
+            continue
+        if resource.state=='purged':
+            tx.execute('DELETE FROM settings WHERE key=?',(key,),write=True)
+            continue
+        # A moved, shared or revised file has become ordinary user content.
+        if (resource.type!='file' or resource.owner!=marker['subject'] or
+                resource.parent!=marker['parent'] or resource.revision!=marker['revision'] or
+                resource.mode!=0o600):
+            tx.execute('DELETE FROM settings WHERE key=?',(key,),write=True)
+            continue
+        if tx.one('''SELECT 1 FROM relations rel JOIN resources source
+            ON source.id=rel.source_id AND source.revision=rel.revision_id
+            AND source.state<>'purged' WHERE rel.target_id=? LIMIT 1''',(rid,)):
+            continue
+        active_reference=False
+        for (transfer_raw,) in tx.execute('SELECT body FROM transfers'):
+            session=decode(TransferSession,loads(transfer_raw))
+            if session.expires_at>now and ((session.target and session.target.id==rid) or
+                                           (session.output and session.output.id==rid)):
+                active_reference=True
+                break
+        if active_reference:
+            continue
+        await purge_revisions(app,tx,resource,actor=ONLINE_CA,
+            request_id='query-ref-retention:'+rid+':'+wire(now),reason='query_ref_expired')
+        tx.execute('DELETE FROM settings WHERE key=?',(key,),write=True)
+        counts['expired_query_sources']+=1
     tx.execute('DELETE FROM email_challenges WHERE expires<=?',(wire(now),),write=True)
     return counts
 

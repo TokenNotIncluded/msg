@@ -154,6 +154,15 @@ def install(app):
         transfer=await tx.transfer(request.arguments['transfer_id'])
         ref,revision,_=await sealed_read_query(app,ctx,request,tx,transfer)
         expiry=min(transfer.expires_at,ctx.now+timedelta(minutes=15))
+        source=await tx.resource(ref.id)
+        marker_key='query_ref_source:'+ref.id
+        previous=tx.setting(marker_key)
+        retention=max(transfer.expires_at,expiry)+timedelta(hours=1)
+        if previous is not None:
+            retention=max(retention,parse_time(previous['retain_until']))
+        tx.set_setting(marker_key,{'transfer_id':transfer.id,'subject':ctx.principal.subject,
+            'revision':ref.revision,'digest':revision.content.digest,'parent':source.parent,
+            'retain_until':wire(retention)})
         token=app.cursors.encode('query-ref',
             {'service':app.settings.service_url,'transfer_id':transfer.id,
              'output':wire(ref),'digest':revision.content.digest},

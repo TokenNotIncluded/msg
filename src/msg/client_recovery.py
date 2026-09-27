@@ -118,3 +118,37 @@ def restore_recovery_envelope(ciphertext,custodian_identity_path,output_path, *,
     write_private(output_path,(payload['age_identity']+'\n').encode())
     return {'subject_id':expected_subject_id,'encryption_key_id':expected_encryption_key_id,
             'recipient':recipient,'restored_locally':True,'account_authority':'none'}
+
+
+async def rewrap_age_keystore_entry(client,resource_id,old_identity_path, *,
+                                    expected_revision):
+    """Re-encrypt one selected age entry for the current subkey, never scanning a vault."""
+    require(client.state.subject is not None and client.state.signer is not None and
+            client.state.encryption_recipient is not None,'signing_identity_required')
+    old_identity=_protected_file(old_identity_path)
+    old_recipient=recipient_from_identity(old_identity.read_text().strip())
+    recipient=client.state.encryption_recipient
+    require(old_recipient!=recipient,'encryption_key_unchanged')
+    public_from_recipient(recipient)
+    entry=client.checked(await client.call('keystore.get',{
+        'id':resource_id,'revision':expected_revision}))
+    require(entry.data['format']=='age' and entry.data['size']<=1048576,
+            'age_keystore_entry_required')
+    current=client.checked(await client.call('discovery.get',{'id':resource_id,'view':'meta'}))
+    require(current.data['owner']==client.state.subject,'keystore_owner_required')
+    require(current.data['revision']==expected_revision,'revision_conflict')
+    with tempfile.TemporaryDirectory(prefix='rewrap-',dir=client.state.directory) as folder:
+        directory=Path(folder)
+        prior=directory/'prior.age'
+        await client.download(entry.output,prior)
+        plaintext=_age('--decrypt','--identity',str(old_identity),input_data=prior.read_bytes())
+        ciphertext=_age('--encrypt','--recipient',recipient,input_data=plaintext)
+        require(ciphertext.startswith(b'age-encryption.org/v1\n'),'invalid_ciphertext_envelope')
+        renewed=directory/'renewed.age'
+        write_private(renewed,ciphertext)
+        uploaded=client.checked(await client.upload(renewed,media_type='application/octet-stream'))
+        result=client.checked(await client.call('keystore.put',{
+            'id':resource_id,'name':current.data['name'],'format':'age',
+            'source':wire(uploaded.output)},
+            expected=((resource_id,current.data['generation']),)))
+    return result

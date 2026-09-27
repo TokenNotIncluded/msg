@@ -11,6 +11,12 @@ from msg.core.requests import payload_fields,signing_bytes
 from msg.security.crypto import key_id,subject_id,verify
 
 
+CUSTODIAL_SIGNED_WRITES=frozenset({
+    'content.post_create','content.post_edit','content.file_put','content.attach',
+    'discussion.reply','discussion.quote','discussion.repost','identity.token_rotate',
+})
+
+
 class AuthenticationService:
     def __init__(self,registry,certificates,service,clock,primary_ceiling,temporary_ceiling):
         self.registry,self.certificates,self.service,self.clock=registry,certificates,service,clock
@@ -34,13 +40,14 @@ class AuthenticationService:
             verify(public,signing_bytes(request),proof.signature,purpose='request')
             return Principal(actor=request.subject,subject=request.subject,credential_id=key_id(public),
                              method='signature',certificates=(),ceiling=self.primary_ceiling())
-        if request.operation=='identity.temporary':
+        if request.operation in {'identity.temporary','identity.custodial_create'}:
             require(proof is None and request.subject is None,'invalid_bootstrap')
             nonce=unb64(request.arguments['nonce'],limit=64)
             require(len(nonce)>=24,'invalid_bootstrap_nonce')
             # The high-entropy claim defines the initial temporary subject; ordinary anonymous
             # reads cannot create it. The token itself is derived only by the server.
-            subject='u_tmp_'+hashlib.sha256(nonce).hexdigest()[:32]
+            prefix='u_cust_' if request.operation=='identity.custodial_create' else 'u_tmp_'
+            subject=prefix+hashlib.sha256(nonce).hexdigest()[:32]
             return Principal(actor=subject,subject=subject,credential_id='t_'+subject[2:],method='token',
                              certificates=(),ceiling=self.temporary_ceiling())
         if proof is None:
@@ -80,6 +87,8 @@ class AuthenticationService:
         require(entry in spec.entries,'entry_not_allowed')
         operation=f'{spec.name}@{spec.version}'
         require(any(operation in g.operations for g in credential.ceiling),'credential_ceiling')
+        if actor.kind=='custodial' and method=='token' and spec.effect!='read':
+            require(spec.name in CUSTODIAL_SIGNED_WRITES,'custodial_operation_not_supported')
         require(not spec.require_signature or method=='signature','signature_required')
         valid=[]
         for cid in ids:

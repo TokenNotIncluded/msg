@@ -44,7 +44,7 @@ class OperationExecutor:
                     await self.authorizer.require(context,request,visible,session)
                     result=replace(previous,replayed=True)
                 else:
-                    capacity_writes={'identity.register','identity.temporary','content.topic_create',
+                    capacity_writes={'identity.register','identity.temporary','identity.custodial_create','content.topic_create',
                         'content.post_create','content.post_edit','content.file_put','content.attach',
                         'content.template_put','discussion.reply','discussion.quote','discussion.repost',
                         'transfer.part_put','git.create','git.push','git.receive','hosting.deploy','keystore.put'}

@@ -1,8 +1,12 @@
 # 本地与 CI 验收记录
 
+## 2026-09-27 托管身份、SyncCursor 与显式 rewrap 批次
+
+权威 Google Drive `ChatGPT` 文件夹文档读取至 `2026-09-27T00:35:34.164Z`。当前未提交工作树在本地 Python 3.15/PostgreSQL 下 `uv run python -m pytest -q` 为 **284 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 与 `git diff --check` 通过。托管创建使用独立 Ed25519/age-X25519 私钥和域分离 AES-GCM vault；受控内容写入的 Revision 由 vault 签名并标明 custodial 来源，未接通代签的 token 写入明确拒绝。`/_read/s`/`/_r/s` 使用独立 SyncCursor，已见引用集合加密后由 MAC 保护，撤权只返回最小 ID，最多跟踪 64 个引用。QueryRef 的私有描述 File 由维护任务在有效期后按引用边界回收，GET 不清理。另有显式选定 age keystore 条目的旧钥→新 recipient rewrap，保留旧 Revision 和旧钥，stale base revision 拒绝。完整托管升级/网络代解密、严格 token 一次展示及丢响应恢复、超过 64 引用的长期同步和权限新增后的旧事件回补尚缺；本批尚无对应远端 CI 或线上验证。
+
 ## 2026-09-27 QueryRef、发行来源与自托管恢复备份批次
 
-权威 Google Drive `ChatGPT` 文件夹需求读取至 `2026-09-27T00:35:34.164Z`。当前未提交工作树在本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **274 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 与 `git diff --check` 通过。新增复杂 ReadQuery 的 Transfer 分片封存、15 分钟 QueryRef 和短续页，读取逐次重验当前主体/源文件 ACL/摘要；QueryRef 的查询描述目前保留为私有 File，未自动清理。发行规则 Revision 的可选来源字段、history 游标与 `requires_rules[]` 已有回归。恢复切片由本人签名 opt-in Policy、绑定私有 age keystore 确切 Revision 的 Envelope 元数据及客户端标准 age 多 recipient 离线演练组成；两把指定恢复钥分别可解，无关钥不能解，解密不授账号权限。服务端将 recipient 集合标为 `owner_declared_unverified`，不据密文头声称已验证。账号恢复授权、旧密文 rewrap、完整 Custodial 双钥、QueryRef 描述自动回收等仍缺。本批尚无远端 CI 或线上验证。
+权威 Google Drive `ChatGPT` 文件夹需求读取至 `2026-09-27T00:35:34.164Z`。提交 `65acff3` 前，本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **274 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 与 `git diff --check` 通过。新增复杂 ReadQuery 的 Transfer 分片封存、15 分钟 QueryRef 和短续页，读取逐次重验当前主体/源文件 ACL/摘要；QueryRef 的查询描述目前保留为私有 File，未自动清理。发行规则 Revision 的可选来源字段、history 游标与 `requires_rules[]` 已有回归。恢复切片由本人签名 opt-in Policy、绑定私有 age keystore 确切 Revision 的 Envelope 元数据及客户端标准 age 多 recipient 离线演练组成；两把指定恢复钥分别可解，无关钥不能解，解密不授账号权限。服务端将 recipient 集合标为 `owner_declared_unverified`，不据密文头声称已验证。账号恢复授权、旧密文 rewrap、完整 Custodial 双钥、QueryRef 描述自动回收等仍缺。提交已推送，其[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36285859198)已通过：Ubuntu/PG16/Valkey，age 1.1.1 安装成功，恢复互操作测试实际执行，274 tests、8 conformance 和构建成功。尚无线上验证。
 
 ## 2026-09-27 源码规则、LinkSet 与个人文档批次
 

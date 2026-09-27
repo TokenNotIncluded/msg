@@ -138,6 +138,11 @@ CREATE TABLE IF NOT EXISTS recovery_envelopes (
  body TEXT NOT NULL,
  UNIQUE(owner,ciphertext_resource,ciphertext_revision,purpose));
 CREATE INDEX IF NOT EXISTS recovery_envelopes_owner ON recovery_envelopes(owner,created_at,id);
+CREATE TABLE IF NOT EXISTS custodial_vault (
+ subject TEXT PRIMARY KEY, signing_key_id TEXT NOT NULL, encryption_key_id TEXT NOT NULL,
+ signing_nonce TEXT, signing_ciphertext TEXT, age_nonce TEXT, age_ciphertext TEXT,
+ status TEXT NOT NULL CHECK(status IN ('active','destroyed')),
+ created_at TEXT NOT NULL, destroyed_at TEXT);
 """
 
 

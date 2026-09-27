@@ -1,8 +1,12 @@
 """Reference delivery and durable change feeds, not a workflow engine."""
 from __future__ import annotations
+import hmac
+from datetime import UTC,datetime
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from msg.constants import ROOT_SPACE
 from datetime import timedelta
-from msg.core.codec import wire,canonical,loads,decode,digest,parse_time,b64
+from msg.core.codec import wire,canonical,loads,decode,digest,parse_time,b64,unb64
 from msg.core.errors import Failure,require
 from msg.core.models import HandlerOutput,ResourceRef,ResourceTypeSpec,EmailSettings,EffectJob
 from msg.core.requests import signing_bytes
@@ -13,6 +17,34 @@ from msg.plugins.discovery import visible
 
 def event_id(request,subject):
     return 'e_'+digest((subject,request.request_id))[7:39]
+
+
+def sync_seen_context(subject,sequence,expires_at):
+    return canonical({'subject':subject,'seq':sequence,'expires_at':expires_at})
+
+
+def seal_sync_seen(app,seen,context=b''):
+    require(len(seen)<=64,'resync_required')
+    raw=canonical(seen)
+    require(len(raw)<=4096,'resync_required')
+    key=hmac.digest(app.cursors.key,b'msg-sync-seen-v1','sha256')
+    nonce_key=hmac.digest(app.cursors.key,b'msg-sync-seen-nonce-v1','sha256')
+    nonce=hmac.digest(nonce_key,context+b'\0'+raw,'sha256')[:12]
+    return b64(nonce+AESGCM(key).encrypt(nonce,raw,context))
+
+
+def open_sync_seen(app,value,context=b''):
+    payload=unb64(value,limit=8192)
+    require(28<=len(payload)<=4124,'resync_required')
+    key=hmac.digest(app.cursors.key,b'msg-sync-seen-v1','sha256')
+    try:
+        seen=loads(AESGCM(key).decrypt(payload[:12],payload[12:],context))
+    except InvalidTag as exc:
+        raise Failure('invalid_cursor') from exc
+    require(type(seen) is list and len(seen)<=64 and
+            all(type(rid) is str and len(rid)<=160 for rid in seen) and
+            len(set(seen))==len(seen),'resync_required')
+    return seen
 
 
 def _signed_subject(ctx):
@@ -388,5 +420,96 @@ def install(app):
             if len(items)>=limit:
                 break
         return HandlerOutput(data={'items':items,'sync_cursor':app.cursors.encode('sync',subject,{'seq':position,'authorization_epoch':epoch,'watch_digest':watch_digest})})
+
+    @op('communication.sync',obj({'cursor':STRING,
+        'limit':{'type':'integer','minimum':1,'maximum':100}}),effect='read')
+    async def sync(ctx,request,tx):
+        subject=ctx.principal.subject
+        require(subject is not None,'authentication_required')
+        await app.authorizer.require_base(ctx.principal,operation_id(request),subject,tx)
+        principal={'actor':ctx.principal.actor,'subject':subject,
+                   'credential_id':ctx.principal.credential_id}
+        watches={row[0] for row in tx.rows('SELECT resource FROM watches WHERE subject=?',(subject,))}
+        watch_hash=digest(sorted(watches))
+        floor=tx.setting('sync_floor',0)
+        if request.arguments.get('cursor'):
+            saved=app.cursors.inspect(request.arguments['cursor'])
+            require(saved.get('kind')=='sync-v2','cursor_kind_mismatch')
+            require(saved.get('query')=={'subject':subject},'cursor_principal_mismatch')
+            position=saved['position']
+            require(position.get('principal')==principal,'cursor_principal_mismatch')
+            require(position.get('watch_digest')==watch_hash,'resync_required')
+            require(ctx.now<parse_time(position['expires_at']),'resync_required')
+            require(type(position.get('seq')) is int and position['seq']>=floor,
+                    'resync_required')
+            sequence=position['seq']
+            context=sync_seen_context(subject,position['seq'],position['expires_at'])
+            seen=open_sync_seen(app,position.get('seen_ciphertext',''),context)
+            expires_at=parse_time(position['expires_at'])
+        else:
+            sequence=floor
+            seen=[]
+            minute=int(ctx.now.timestamp()//60)
+            expires_at=datetime.fromtimestamp((minute+15)*60,UTC)
+        limit=request.arguments.get('limit',50)
+        items=[]
+        async def can_read(rid):
+            try:
+                return await visible(app,ctx,request,tx,rid)
+            except Failure as exc:
+                if exc.code in {'not_found','resource_purged','ancestor_inactive'}:
+                    return False
+                raise
+        for rid in tuple(seen):
+            if not await can_read(rid):
+                if len(items)==limit:break
+                items.append({'kind':'revoked','ref':{'id':rid}})
+                seen.remove(rid)
+        if len(items)<limit:
+            scanned=0
+            for seq,raw in tx.execute('SELECT seq,body FROM events WHERE seq>? ORDER BY seq',(sequence,)):
+                scanned+=1
+                require(scanned<=5000,'resync_required')
+                event=loads(raw)
+                candidates=[]
+                for ref in event['resources']:
+                    rid=ref['id']
+                    if not await can_read(rid):
+                        continue
+                    relevant=(event['subject']==subject or rid in watches or
+                              any(ancestor.id in watches for ancestor in await tx.ancestors(rid)))
+                    if not relevant:
+                        direct=await direct_ancestor(tx,rid)
+                        if direct is not None:
+                            pair=tx.one('SELECT participant_a,participant_b FROM dm_conversations '
+                                        'WHERE resource_id=?',(direct,))
+                            relevant=pair is not None and subject in pair
+                    if not relevant:
+                        continue
+                    kind=('archived' if event['type'] in {'content.archive','content.purge'} else
+                          'created' if event['type'] in {'content.post_create','content.topic_create',
+                                                        'discussion.reply','discussion.quote'} else 'modified')
+                    candidates.append({'seq':seq,'kind':kind,'event_type':event['type'],
+                                       'ref':ref})
+                require(len(candidates)<=limit,'resync_required')
+                if len(items)+len(candidates)>limit:
+                    break
+                for item in candidates:
+                    rid=item['ref']['id']
+                    if rid not in seen:
+                        require(len(seen)<64,'resync_required')
+                        seen.append(rid)
+                items.extend(candidates)
+                sequence=seq
+        expiration=wire(expires_at)
+        context=sync_seen_context(subject,sequence,expiration)
+        token=app.cursors.encode('sync-v2',{'subject':subject},
+            {'seq':sequence,'seen_ciphertext':seal_sync_seen(app,seen,context),
+             'principal':principal,'watch_digest':watch_hash,
+             'expires_at':expiration})
+        require(len('/_r/s/'+token)<=min(8192,app.settings.server.limits.max_path_bytes),
+                'resync_required')
+        return HandlerOutput(data={'items':items,'sync_cursor':token,'next':'/_r/s/'+token,
+                                   'next_requires_auth':True})
     finish((ResourceTypeSpec(name='claim',version=1,container=False,content_schema=None,
                              operations=frozenset(),relations=frozenset()),))

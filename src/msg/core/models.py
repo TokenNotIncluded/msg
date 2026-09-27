@@ -92,6 +92,7 @@ class Revision:
         default=None, metadata={'omit_if_none': True})
     source_version: int | None = field(default=None, metadata={'omit_if_none': True})
     source_digest: Digest | None = field(default=None, metadata={'omit_if_none': True})
+    signature_source: Literal['custodial'] | None = field(default=None,metadata={'omit_if_none':True})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -101,7 +102,7 @@ class Page[T]:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Subject:
     resource_id: ResourceId
-    kind: Literal['temporary', 'registered', 'system']
+    kind: Literal['temporary', 'registered', 'custodial', 'system']
     primary_group: ResourceId
     auth_version: int
     local_only: bool = False
