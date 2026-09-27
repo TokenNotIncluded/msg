@@ -39,7 +39,12 @@ def read_query_path_document(registry):
             'read_template':'/_read/q/1/r/{percent-encoded-root}/t/{type}/s/{sort-code}/f/{field-codes}/n/{first}',
             'search_template':'/_search/q/1/q/{percent-encoded-query}/n/{limit}',
             'proof_suffix':'/p/{short-lived-signed-OperationRequest}',
-            'continuation':'/_r/c/{opaque-cursor}'}
+            'continuation':'/_r/c/{opaque-cursor}',
+            'query_ref':{'description':'Sealed read-only descriptor; never an authorization credential',
+                         'upload':'/-/g/transfer.open -> transfer.part_put -> transfer.seal',
+                         'seal':'/-/g/transfer.query_seal/j/{signed-packet}',
+                         'descriptor':{'version':1,'kind':'read','arguments':'{ReadQuery arguments}'},
+                         'read':'/_r/q/{query_ref}/p/{short-lived-signed-query_get-packet}'}}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

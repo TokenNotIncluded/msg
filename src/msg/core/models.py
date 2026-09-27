@@ -87,6 +87,11 @@ class Revision:
     created_at: datetime
     manifest_digest: Digest
     signature: Signature | None = None
+    change_note: str | None = field(default=None, metadata={'omit_if_none': True})
+    source_kind: Literal['release','user','operation'] | None = field(
+        default=None, metadata={'omit_if_none': True})
+    source_version: int | None = field(default=None, metadata={'omit_if_none': True})
+    source_digest: Digest | None = field(default=None, metadata={'omit_if_none': True})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

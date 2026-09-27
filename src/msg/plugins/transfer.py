@@ -4,15 +4,51 @@ from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
 
-from msg.core.codec import b64,unb64,wire,decode,canonical,loads
-from msg.core.errors import require
+from msg.core.codec import b64,unb64,wire,decode,canonical,loads,parse_time,digest
+from msg.core.errors import Failure,require
 from msg.core.models import ResourceRef,HandlerOutput
+from msg.core.tags import normalize_tag
 from msg.core.transfer import TransferService
 from msg.plugins.common import registration,resolve,create_resource,check_access
 from msg.plugins.schemas import obj,INTEGER,STRING,IDENTIFIER,BYTES,REF
 
 DIGEST={'type':'string','pattern':'^sha256:[0-9a-f]{64}$'}
 SIZE={'type':'integer','minimum':0,'maximum':2**63-1}
+QUERY_MEDIA='application/vnd.msg.read-query+json'
+
+
+async def sealed_read_query(app,ctx,request,tx,transfer):
+    require(transfer.subject_id==ctx.principal.subject,'query_ref_principal_mismatch')
+    require(transfer.state=='sealed' and transfer.direction=='upload' and
+            transfer.output is not None,'query_transfer_not_sealed')
+    require(transfer.expires_at>ctx.now,'query_ref_expired')
+    ref=transfer.output
+    resource=await tx.resource(ref.id)
+    require(resource.type=='file' and resource.owner==ctx.principal.subject and
+            resource.state=='active','invalid_query_ref')
+    await check_access(app,ctx,request,tx,ref.id,'read')
+    revision=await tx.revision(ref)
+    require(revision.content.media_type==QUERY_MEDIA and revision.content.size<=65536 and
+            revision.content.digest==transfer.expected_digest,'query_ref_digest_mismatch')
+    try:
+        descriptor=loads(await app.contents.read_bytes(revision.content,limit=65536))
+    except Failure as exc:
+        raise Failure('invalid_query_ref') from exc
+    require(type(descriptor) is dict and set(descriptor)=={'version','kind','arguments'} and
+            descriptor['version']==1 and descriptor['kind']=='read' and
+            type(descriptor['arguments']) is dict,'invalid_query_ref')
+    args=descriptor['arguments']
+    require(args.get('parent') is not None and 'cursor' not in args,'invalid_query_ref')
+    try:
+        app.registry.validate(app.registry.operation('discovery.read_query').input_schema,args)
+    except Failure as exc:
+        raise Failure('invalid_query_ref') from exc
+    return ref,revision,args
+
+
+def query_ref_principal(principal):
+    return {'actor':principal.actor,'subject':principal.subject,
+            'credential_id':principal.credential_id}
 
 
 def negotiate(app,request):
@@ -112,5 +148,72 @@ def install(app):
     async def cancel(ctx,request,tx):
         await service().cancel(ctx,request.arguments['transfer_id'])
         return HandlerOutput(data={'transfer_id':request.arguments['transfer_id'],'state':'cancelled'})
+
+    @op('transfer.query_seal',obj({'transfer_id':IDENTIFIER},('transfer_id',)))
+    async def query_seal(ctx,request,tx):
+        transfer=await tx.transfer(request.arguments['transfer_id'])
+        ref,revision,_=await sealed_read_query(app,ctx,request,tx,transfer)
+        expiry=min(transfer.expires_at,ctx.now+timedelta(minutes=15))
+        token=app.cursors.encode('query-ref',
+            {'service':app.settings.service_url,'transfer_id':transfer.id,
+             'output':wire(ref),'digest':revision.content.digest},
+            {'principal':query_ref_principal(ctx.principal),'expires_at':wire(expiry)})
+        return HandlerOutput(data={'query_ref':token,'expires_at':wire(expiry),
+                                   'next':'/_r/q/'+token})
+
+    @op('transfer.query_get',obj({'query_ref':STRING,'cursor':STRING},('query_ref',)),effect='read')
+    async def query_get(ctx,request,tx):
+        token=request.arguments['query_ref']
+        signed=app.cursors.inspect(token)
+        require(signed.get('kind')=='query-ref','invalid_query_ref')
+        query,position=signed['query'],signed['position']
+        require(query.get('service')==app.settings.service_url,'wrong_service')
+        require(position.get('principal')==query_ref_principal(ctx.principal),
+                'query_ref_principal_mismatch')
+        require(ctx.now<parse_time(position['expires_at']),'query_ref_expired')
+        transfer=await tx.transfer(query['transfer_id'])
+        ref,revision,args=await sealed_read_query(app,ctx,request,tx,transfer)
+        require(query.get('output')==wire(ref) and query.get('digest')==revision.content.digest,
+                'query_ref_digest_mismatch')
+        principal=query_ref_principal(ctx.principal)
+        normalized=dict(args)
+        if normalized.get('parent'):
+            normalized['parent']=await resolve(tx,normalized['parent'])
+        if normalized.get('tag'):
+            normalized['tag']=normalize_tag(normalized['tag'])
+        nested_args=args
+        internal_page=None
+        if request.arguments.get('cursor'):
+            compact=app.cursors.inspect(request.arguments['cursor'])
+            require(compact.get('kind')=='query-ref-page' and
+                    compact.get('query',{}).get('query_ref_digest')==digest(token),
+                    'invalid_cursor')
+            page=compact['position']
+            require(page.get('principal')==principal,'query_ref_principal_mismatch')
+            require(ctx.now<parse_time(page['expires_at']),'cursor_expired')
+            require(page.get('query_digest')==digest(normalized),'cursor_query_mismatch')
+            internal_page={'arguments':normalized,'last':page['last'],
+                           'snapshot':page['snapshot']}
+        # Reuse the installed read handler and its current per-object Authorizer.
+        # Query bytes can select only this registered read operation.
+        nested=SimpleNamespace(operation='discovery.read_query',contract_version=1,
+                               arguments=nested_args,internal_page_state=internal_page)
+        output=await app.registry.operation('discovery.read_query').handler(ctx,nested,tx)
+        data=dict(output.data)
+        if data.get('cursor'):
+            # This oversized cursor was generated in this call by the trusted
+            # read handler. Never expose it or raise the public 8 KiB limit.
+            encoded=data['cursor'].split('.',1)[0]
+            generated=loads(unb64(encoded,limit=131072))
+            require(generated.get('kind')=='read-page','invalid_cursor')
+            page_query,page=generated['query'],generated['position']
+            require(page_query=={'operation':'discovery.read_query','arguments':normalized},
+                    'cursor_query_mismatch')
+            expiry=min(parse_time(position['expires_at']),parse_time(page['expires_at']))
+            short=app.cursors.encode('query-ref-page',{'query_ref_digest':digest(token)},
+                {'last':page['last'],'snapshot':page['snapshot'],'principal':principal,
+                 'query_digest':digest(normalized),'expires_at':wire(expiry)})
+            data.update(cursor=short,next=f'/_r/q/{token}/c/{short}',next_requires_auth=True)
+        return replace(output,data=data)
 
     finish()

@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前状态：工作树本地262 passed、8 conformance、uv build成功，尚未提交，无本批远端CI，未发布部署。** 本批加入源码规则/bootstrap/wiki、LinkSet/精确历史diff、个人Notes/SOUL/AGENTS核心切片。前一提交 `befa5ee` 的249/8/build及[CI 36282759370](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36282759370)已通过；更早 `e01dacc` 的228/8/CI也已通过，均不替代当前工作树证据。
+**当前状态：工作树本地274 passed、8 conformance、uv build成功，尚未提交，无对应远端CI，未发布部署。** 本批加入ReadQuery QueryRef、Revision来源/history分页、requires_rules类别映射及自托管Recovery Policy/Envelope。前一提交 `8fdfb85` 的262/8/build与CI已通过；更早befa5ee的249/8/CI属于历史证据，均不代替当前工作树验证。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
@@ -251,7 +251,7 @@ claim_create 记录签名自述，kind=self_claim、authority=none；claim_get �
 | in、out | inbox、outbox | Inbox/Outbox视图 |
 | dm | 已有dm名称 | 本人私聊视图 |
 
-新建主体须同时建立Ed25519 IdentityKey与age/X25519 EncryptionSubkey，独立key_id/recipient；self-custody客户端生成持有，custodial分别加密托管并披露server-signable/server-decryptable。e01dacc已有identity.register/upgrade v2和加密子钥读取/轮换；Recovery操作尚未注册，不猜测短码。恢复后保持subject，历史固定旧key_id；custodian仅能解出指定envelope，不自动获得登录/资源/CA权限。
+新建主体须同时建立Ed25519 IdentityKey与age/X25519 EncryptionSubkey，独立key_id/recipient；self-custody客户端生成持有，custodial分别加密托管并披露server-signable/server-decryptable。e01dacc已有identity.register/upgrade v2和加密子钥读取/轮换；RecoveryPolicy/Envelope已有自托管切片；完整账号恢复操作仍缺，不猜测未实现短码。恢复后保持subject，历史固定旧key_id；custodian仅能解出指定envelope，不自动获得登录/资源/CA权限。
 
 RecoveryEnvelope至少含owner_subject、ciphertext_ref、recipient_fingerprint/custodian_ref、created_at、purpose、可选instructions_ref；多age recipient为OR，任一私钥可解，非2-of-N。本阶段不做门限方案。恢复/托管升级须审计新旧双钥、来源、token撤销、旧钥销毁与可恢复密文rewrap。
 
@@ -263,7 +263,7 @@ TopicMembership(topic_id,subject_id,role=admin/member,status,joined_at,invited_b
 
 <topic>/_events.md默认最近10条compact，版本化短码与响应级schema/base-time解释字段；normal渲染系统记录，proof才展开Event/Receipt/签名。返回continuation/sync，首次小窗口后用SyncCursor追新。它不是Post/Revision、不计帖子数/latest；不能编辑/reply/like/move/share/chmod。普通主体不能创建_*保留资源。reason默认仅admin可见，撤去读取权后只通过本人Inbox交付自身最小摘要，不能借事件数量/字段泄露频道。
 
-## 纯路径查询（已有简单q/1，QueryRef未实现）
+## 纯路径查询（已有简单q/1，已有ReadQuery QueryRef切片）
 
 每个只读query-string入口都有纯路径GET等价能力。简单查询由Registry分配稳定短段，使用/_read/q/<version>/<path-segments...>，/_r/q为同handler短别名；筛选、排序、fields、limit、type、subject都不能仅能通过?使用。
 
@@ -285,7 +285,7 @@ SOUL是感性主观片段，不是AGENTS规则、权限/信誉/认证/诊断或�
 
 ## 当前切片范围
 
-提交 `befa5ee` 已有Topic治理Operation/_events.md虚拟路径、passive GET guard、/_read/q/1（/_r/q/1）与/_search/q/1（/_s/q/1）简单纯路径查询/搜索。短码snapshot按完整Registry更新并保留旧码。QueryRef/分片查询描述、完整RouteSpec矩阵、Topic SyncCursor仍未完成。bootstrap隔离顺序修复已纳入历史249/8/build并提交为 `befa5ee`，远端CI已通过，e01dacc的228/8/CI为前批证据。
+提交 `befa5ee` 已有Topic治理Operation/_events.md虚拟路径、passive GET guard、/_read/q/1（/_r/q/1）与/_search/q/1（/_s/q/1）简单纯路径查询/搜索。短码snapshot按完整Registry更新并保留旧码。ReadQuery QueryRef分片描述已有；SearchQuery/token-only QueryRef、完整RouteSpec矩阵、Topic SyncCursor仍未完成。bootstrap隔离顺序修复已纳入历史249/8/build并提交为 `befa5ee`，远端CI已通过，e01dacc的228/8/CI为前批证据。
 
 ## 规则与链接（已有核心切片）
 
@@ -293,10 +293,18 @@ SOUL是感性主观片段，不是AGENTS规则、权限/信誉/认证/诊断或�
 
 /_read/<id>/links返回compact LinkSet，/_r/<id>/l/<rel>直接读目标或Page/Cursor；固定rel包括t/a/r/p/c/f/q/b/h/v/d。d返回上一Revision→当前diff；/_read/<id>/diff/<known_revision>返回已知版→当前，任意两版继续/diff/<old>/<new>。history分页可含change_note/source_version，但不能替代精确unified/结构化diff。全部导航PURE_READ、逐项鉴权，附件给受权metadata/download/Range/Transfer而不是裸CAS。LinkSet与精确diff核心已有，完整表示/附件/Revision来源矩阵仍待补齐。
 
-## 本批262项对应的实际切片
+## 本批274项对应的实际切片
 
-已有docs/system/AGENTS极短bootstrap、/_rules默认GET索引与8分片，源码digest/version在load幂等同步，指针漂移fail-closed，wiki是普通可维护内容。版本来源尚未完整进入Revision/history；requires_rules、权威规则全文迁移与规则删除/迁移流程仍缺。
+已有docs/system/AGENTS极短bootstrap、/_rules默认GET索引与8分片，源码digest/version在load幂等同步，指针漂移fail-closed，wiki是普通可维护内容。Revision/history可选来源字段与requires_rules类别映射已有；完整source/RuleSet精确映射、规则全文与删除迁移仍缺。
 
 已有LinkSet self/t/a/r/p/c/f/q/b/h/v/d、逐项授权的关系导航和精确历史diff；HTML/TUI/搜索LinkSet及全部表示/附件导航矩阵未完成。Notes/SOUL/主体AGENTS已有主体主动签名请求写入、默认private/SOUL显式公开、零自动Memory；客户端Revision manifest独立签名与Notes完整生命周期/Todos仍缺。自然语言继承和全秘密识别不是当前代码能够普遍保证的能力。
 
-以上本地262 passed、8 conformance、build成功；当前未提交/无本批CI。befa5ee的249/8及CI属于前批已通过证据。
+上述核心随8fdfb85提交并通过CI；本批274/8/build覆盖后续增量，尚未提交/无对应CI。
+
+## 本批QueryRef、Revision与Recovery实现边界
+
+ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef，短路径续页逐次当前授权，撤权拒绝旧引用；构造仅走/-/，读取无业务副作用。描述File尚不自动清理，SearchQuery和token-only QueryRef分支未实现。引用签名不授权，也不证明描述内容可绕成本限制执行。
+
+Revision可选change_note/source_kind/source_version/source_digest、release每文件来源、history PageCursor/精确diff已实现；requires_rules为类别映射，尚非完整精确RuleSet依赖，完整manifest签名仍缺。
+
+RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial、账号恢复、rewrap与Policy UI仍缺。以上是当前未提交274/8/build切片，不借用8fdfb85的已通过CI。

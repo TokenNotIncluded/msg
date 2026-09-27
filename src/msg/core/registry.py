@@ -115,9 +115,28 @@ class Registry:
             raise Failure('schema_validation','.'.join(str(i) for i in errors[0].path) or 'arguments')
 
     def describe(self,spec):
+        name=spec.name
+        if name.startswith('identity.'):
+            rules=('identity','auth')
+        elif name.startswith('content.topic_') or name.startswith('discussion.'):
+            rules=('topics','read-write')
+        elif name.startswith('content.'):
+            rules=('read-write',)
+        elif name.startswith(('transfer.','keystore.','git.')):
+            rules=('files','protocol')
+        elif name.startswith(('cert.','group.')):
+            rules=('auth',)
+        elif name.startswith(('system.','tool.')):
+            rules=('security','protocol')
+        elif name.startswith('discovery.'):
+            rules=('read-write','protocol')
+        else:
+            rules=('protocol',)
         return {'name':spec.name,'version':spec.version,'effect':spec.effect,
                 'entries':sorted(spec.entries),'require_signature':spec.require_signature,
-                'input_schema':wire(spec.input_schema),'output_schema':wire(spec.output_schema)}
+                'input_schema':wire(spec.input_schema),'output_schema':wire(spec.output_schema),
+                'requires_rules':[{'rule_id':'msg.'+rule,'path':'/_rules/'+rule}
+                                  for rule in rules]}
 
     def catalog(self,entry='network'):
         values=[self.describe(s) for s in self.operations(entry)]

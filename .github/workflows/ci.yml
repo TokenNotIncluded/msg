@@ -46,6 +46,11 @@ jobs:
           python-version: '3.15'
           allow-prereleases: true
           cache: pip
+      - name: Install age for recovery interoperability tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          age --version
       - name: Install the complete dependency set
         run: python -m pip install -e '.[dev]'
       - name: Compile all new modules

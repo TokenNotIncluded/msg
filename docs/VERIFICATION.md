@@ -1,8 +1,12 @@
 # 本地与 CI 验收记录
 
+## 2026-09-27 QueryRef、发行来源与自托管恢复备份批次
+
+权威 Google Drive `ChatGPT` 文件夹需求读取至 `2026-09-27T00:35:34.164Z`。当前未提交工作树在本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **274 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 与 `git diff --check` 通过。新增复杂 ReadQuery 的 Transfer 分片封存、15 分钟 QueryRef 和短续页，读取逐次重验当前主体/源文件 ACL/摘要；QueryRef 的查询描述目前保留为私有 File，未自动清理。发行规则 Revision 的可选来源字段、history 游标与 `requires_rules[]` 已有回归。恢复切片由本人签名 opt-in Policy、绑定私有 age keystore 确切 Revision 的 Envelope 元数据及客户端标准 age 多 recipient 离线演练组成；两把指定恢复钥分别可解，无关钥不能解，解密不授账号权限。服务端将 recipient 集合标为 `owner_declared_unverified`，不据密文头声称已验证。账号恢复授权、旧密文 rewrap、完整 Custodial 双钥、QueryRef 描述自动回收等仍缺。本批尚无远端 CI 或线上验证。
+
 ## 2026-09-27 源码规则、LinkSet 与个人文档批次
 
-本批按 Google Drive `ChatGPT` 文件夹需求读取至 `2026-09-27T00:35:34.164Z`。本地 Python 3.15/PostgreSQL 下 `uv run python -m pytest -q` 为 **262 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功，`git diff --check` 通过。源码发行的短 `/AGENTS.md`、`/_rules` 索引和八个规则分片已打入 sdist/wheel，启动按文件 digest/version 幂等同步 Revision；`/wiki` 按普通签名资源治理。LinkSet、逐项授权的集合导航和真实 Revision diff，以及主动写入的私有 Notes/SOUL/主体 AGENTS 有定向回归。全套首轮曾因短 AGENTS 未列无凭据 `/-/p/<operation>` 模板失败；把源码规则版本升到 2 后，入口/规则定向与最终全套通过。发行来源字段的完整 Revision/history 投影、requires_rules、HTML/TUI 导航、个人文档独立 manifest 签名与完整秘密识别仍缺。本批尚未提交、没有对应远端 CI，也没有线上部署验证。
+本批按 Google Drive `ChatGPT` 文件夹需求读取至 `2026-09-27T00:35:34.164Z`。提交 `8fdfb85` 前，本地 Python 3.15/PostgreSQL 下 `uv run python -m pytest -q` 为 **262 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功，`git diff --check` 通过。源码发行的短 `/AGENTS.md`、`/_rules` 索引和八个规则分片已打入 sdist/wheel，启动按文件 digest/version 幂等同步 Revision；`/wiki` 按普通签名资源治理。LinkSet、逐项授权的集合导航和真实 Revision diff，以及主动写入的私有 Notes/SOUL/主体 AGENTS 有定向回归。全套首轮曾因短 AGENTS 未列无凭据 `/-/p/<operation>` 模板失败；把源码规则版本升到 2 后，入口/规则定向与最终全套通过。发行来源字段的完整 Revision/history 投影、requires_rules、HTML/TUI 导航、个人文档独立 manifest 签名与完整秘密识别仍缺。提交已推送，其[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36284478373)已通过；没有线上部署验证。
 
 ## 2026-09-27 Topic、被动 GET 与纯路径读取批次
 

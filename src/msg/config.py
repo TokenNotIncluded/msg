@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -9,6 +10,17 @@ from urllib.parse import urlsplit
 
 from msg.core.errors import require
 from msg.core.models import MailConfig, ServerConfig, TransportLimits
+from msg.security.age_keys import public_from_recipient,encryption_key_id
+
+
+@dataclass(frozen=True,slots=True)
+class RecoveryCustodian:
+    id: str
+    name: str
+    recipient: str
+    fingerprint: str
+    description: str | None = None
+    policy_ref: str | None = None
 
 
 def root_private_dir(config_dir: Path) -> Path:
@@ -43,6 +55,7 @@ class Settings:
     tool_max_response_bytes: int=4194304
     tool_methods: tuple[str,...]=('GET','HEAD')
     tool_ports: tuple[int,...]=(80,443)
+    recovery_custodians: tuple[RecoveryCustodian,...]=()
 
     @property
     def config_dir(self):
@@ -70,7 +83,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
     path=server_config_file(config_dir)
     require(path.is_file(),'configuration_missing')
     data=tomllib.loads(path.read_text())
-    require(set(data)<={'server','storage','limits','plugins','tools'},'unknown_configuration_section')
+    require(set(data)<={'server','storage','limits','plugins','tools','recovery'},'unknown_configuration_section')
     server=data.get('server',{})
     require(set(server)<={'service_url','listen','port','public_web_origin','temporary_ttl','transfer_ttl'},
             'unknown_server_configuration')
@@ -140,8 +153,29 @@ def load_settings(config_dir=Path('/etc/msgd')):
             require(raw.get('tls') in {'starttls','tls'},'mail_tls_required')
             mail=MailConfig(enabled=True,host=raw['host'],port=raw.get('port',587),tls=raw['tls'],sender=raw['sender'],
                 credential_file=Path(raw['credential_file']) if raw.get('credential_file') else None)
+    recovery=data.get('recovery',{})
+    require(isinstance(recovery,dict) and set(recovery)<={'custodians'},'unknown_recovery_configuration')
+    raw_custodians=recovery.get('custodians',[])
+    require(isinstance(raw_custodians,list) and len(raw_custodians)<=16,'invalid_recovery_custodians')
+    custodians=[]
+    for item in raw_custodians:
+        require(isinstance(item,dict) and set(item)<={'id','name','recipient','description','policy_ref'},
+                'unknown_recovery_custodian_field')
+        require(all(name in item for name in ('id','name','recipient')),
+                'invalid_recovery_custodian')
+        require(type(item['id']) is str and re.fullmatch(r'[a-z][a-z0-9-]{1,63}',item['id']) is not None and
+                type(item['name']) is str and 1<=len(item['name'])<=100,
+                'invalid_recovery_custodian')
+        require(all(value is None or (type(value) is str and len(value)<=500)
+                    for value in (item.get('description'),item.get('policy_ref'))),
+                'invalid_recovery_custodian')
+        public=public_from_recipient(item['recipient'])
+        custodians.append(RecoveryCustodian(id=item['id'],name=item['name'],
+            recipient=item['recipient'],fingerprint=encryption_key_id(public),
+            description=item.get('description'),policy_ref=item.get('policy_ref')))
+    require(len({item.id for item in custodians})==len(custodians),'duplicate_recovery_custodian')
     require(set(data.get('plugins',{}))<={'enabled'},'unknown_plugin_configuration')
-    plugins=tuple(data.get('plugins',{}).get('enabled',('identity','content','discussion','communication','discovery','achievements','transfer','extensions','system','batch')))
+    plugins=tuple(data.get('plugins',{}).get('enabled',('identity','content','discussion','communication','discovery','achievements','recovery','transfer','extensions','system','batch')))
     require(all(isinstance(name,str) for name in plugins) and len(set(plugins))==len(plugins),'invalid_plugin_list')
     require('identity' in plugins,'identity_plugin_required')
     tools=data.get('tools',{})
@@ -171,7 +205,8 @@ def load_settings(config_dir=Path('/etc/msgd')):
         temporary_ttl=server.get('temporary_ttl',3600),transfer_ttl=server.get('transfer_ttl',86400),
         max_part_bytes=limits.get('part_bytes',65536),tool_timeout_ms=tools.get('timeout_ms',10000),
         tool_max_response_bytes=tools.get('max_response_bytes',4194304),
-        tool_methods=tuple(tools.get('methods',('GET','HEAD'))),tool_ports=tuple(tools.get('ports',(80,443))))
+        tool_methods=tuple(tools.get('methods',('GET','HEAD'))),tool_ports=tuple(tools.get('ports',(80,443))),
+        recovery_custodians=tuple(custodians))
 
 
 def write_example(config_dir,data_dir,service_url='https://msg.lmm.best',*,postgres_dsn='service=msgd',valkey_url=None):

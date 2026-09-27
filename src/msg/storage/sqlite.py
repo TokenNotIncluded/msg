@@ -128,6 +128,16 @@ CREATE TABLE IF NOT EXISTS personal_revision_proofs (
  revision_id TEXT PRIMARY KEY REFERENCES revisions(id), subject TEXT NOT NULL,
  kind TEXT NOT NULL, signature TEXT NOT NULL, signed_envelope TEXT NOT NULL,
  created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS recovery_policies (
+ subject TEXT NOT NULL, version INTEGER NOT NULL, encryption_key_id TEXT NOT NULL,
+ created_at TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(subject,version));
+CREATE TABLE IF NOT EXISTS recovery_envelopes (
+ id TEXT PRIMARY KEY, owner TEXT NOT NULL, ciphertext_resource TEXT NOT NULL,
+ ciphertext_revision TEXT NOT NULL, policy_version INTEGER NOT NULL,
+ encryption_key_id TEXT NOT NULL, purpose TEXT NOT NULL, created_at TEXT NOT NULL,
+ body TEXT NOT NULL,
+ UNIQUE(owner,ciphertext_resource,ciphertext_revision,purpose));
+CREATE INDEX IF NOT EXISTS recovery_envelopes_owner ON recovery_envelopes(owner,created_at,id);
 """
 
 

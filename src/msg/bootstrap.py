@@ -57,6 +57,8 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
         require(header is not None and header.group(1)==expected_rule_id,
                 'system_source_invalid_header',relative)
         rule_id,version=header.group(1),int(header.group(2))
+        note_match=re.search(r'<!-- change_note: ([^\n<>]{1,240}) -->',text)
+        change_note=note_match.group(1) if note_match else None
         require(rule_id not in rule_ids,'duplicate_rule_id')
         rule_ids.add(rule_id)
         source_path='docs/system/'+relative
@@ -79,7 +81,8 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
         revision=Revision(format_version=1,id=revision_id,resource_id=rid,
             parents=(resource.revision,) if resource.revision else (),content=blob,relations=(),
             actor=ROOT_SUBJECT,subject=ROOT_SUBJECT,author=ROOT_SUBJECT,
-            created_at=now,manifest_digest='')
+            created_at=now,manifest_digest='',source_kind='release',source_version=version,
+            source_digest=source_digest,change_note=change_note)
         revision=replace(revision,manifest_digest=digest({k:v for k,v in wire(revision).items()
             if k not in {'signature','manifest_digest'}}))
         await contents.pin(blob,revision_id)

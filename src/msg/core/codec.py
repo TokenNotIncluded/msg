@@ -72,6 +72,8 @@ def wire(value, *, compact: bool = False):
         result = {}
         for field in dataclasses.fields(value):
             v = getattr(value, field.name)
+            if v is None and field.metadata.get('omit_if_none'):
+                continue
             if compact and (v is None or v == () or v == frozenset()):
                 continue
             result[field.name] = f"{v:04o}" if field.name == "mode" else wire(v, compact=compact)

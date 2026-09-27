@@ -1,6 +1,6 @@
 # 架构与提交边界
 
-**当前状态：工作树本地262 passed、8 conformance、uv build成功，尚未提交，无本批远端CI，未发布部署。** 本批加入源码规则/bootstrap/wiki、LinkSet/精确历史diff、个人Notes/SOUL/AGENTS核心切片。前一提交 `befa5ee` 的249/8/build及[CI 36282759370](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36282759370)已通过；更早 `e01dacc` 的228/8/CI也已通过，均不替代当前工作树证据。
+**当前状态：工作树本地274 passed、8 conformance、uv build成功，尚未提交，无对应远端CI，未发布部署。** 本批加入ReadQuery QueryRef、Revision来源/history分页、requires_rules类别映射及自托管Recovery Policy/Envelope。前一提交 `8fdfb85` 的262/8/build与CI已通过；更早befa5ee的249/8/CI属于历史证据，均不代替当前工作树验证。
 
 本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T00:35:34.164Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 
@@ -124,12 +124,20 @@ Notes复用普通文本Resource/Revision，默认private，保存主体主动选
 
 /AGENTS.md只做短bootstrap，/_rules是唯一权威规则命名空间且根只给索引；规则分成任务域system-managed资源，稳定rule_id不随文件移动改变。源码docs/system随发行打包、按单文件digest/version同步新Revision并记录release来源；运行时拒绝普通用户、Topic admin和插件修改。/wiki是普通可治理百科，不同步源码、不改变Authorizer；主体AGENTS只能收紧/_rules，SOUL仍不参与继承。
 
-LinkSet只是已授权ResourceRef的导航投影，Markdown用普通href，HTML/TUI/JSON保持同目标；无权关系省略敏感细节，不增安全父链。Revision来源元数据和change_note辅助定位，真实diff仍由固定Revision计算。当前262项全套覆盖新增核心切片，不代表完整规则/导航/个人文本feature交付。
+LinkSet只是已授权ResourceRef的导航投影，Markdown用普通href，HTML/TUI/JSON保持同目标；无权关系省略敏感细节，不增安全父链。Revision来源元数据和change_note辅助定位，真实diff仍由固定Revision计算。当前274项全套覆盖新增核心切片，不代表完整规则/导航/个人文本feature交付。
 
-## 本批262项对应的实际切片
+## 本批274项对应的实际切片
 
-已有docs/system/AGENTS极短bootstrap、/_rules默认GET索引与8分片，源码digest/version在load幂等同步，指针漂移fail-closed，wiki是普通可维护内容。版本来源尚未完整进入Revision/history；requires_rules、权威规则全文迁移与规则删除/迁移流程仍缺。
+已有docs/system/AGENTS极短bootstrap、/_rules默认GET索引与8分片，源码digest/version在load幂等同步，指针漂移fail-closed，wiki是普通可维护内容。Revision/history可选来源字段与requires_rules类别映射已有；完整source/RuleSet精确映射、规则全文与删除迁移仍缺。
 
 已有LinkSet self/t/a/r/p/c/f/q/b/h/v/d、逐项授权的关系导航和精确历史diff；HTML/TUI/搜索LinkSet及全部表示/附件导航矩阵未完成。Notes/SOUL/主体AGENTS已有主体主动签名请求写入、默认private/SOUL显式公开、零自动Memory；客户端Revision manifest独立签名与Notes完整生命周期/Todos仍缺。自然语言继承和全秘密识别不是当前代码能够普遍保证的能力。
 
-以上本地262 passed、8 conformance、build成功；当前未提交/无本批CI。befa5ee的249/8及CI属于前批已通过证据。
+上述核心随8fdfb85提交并通过CI；本批274/8/build覆盖后续增量，尚未提交/无对应CI。
+
+## 本批QueryRef、Revision与Recovery实现边界
+
+ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef，短路径续页逐次当前授权，撤权拒绝旧引用；构造仅走/-/，读取无业务副作用。描述File尚不自动清理，SearchQuery和token-only QueryRef分支未实现。引用签名不授权，也不证明描述内容可绕成本限制执行。
+
+Revision可选change_note/source_kind/source_version/source_digest、release每文件来源、history PageCursor/精确diff已实现；requires_rules为类别映射，尚非完整精确RuleSet依赖，完整manifest签名仍缺。
+
+RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial、账号恢复、rewrap与Policy UI仍缺。以上是当前未提交274/8/build切片，不借用8fdfb85的已通过CI。

@@ -41,7 +41,7 @@ class Application:
         self.executor=None
         self._loaded=False
         # Plugins are installed code, never resources, posts, or configuration expressions.
-        implemented=('identity','content','discussion','communication','discovery','achievements')
+        implemented=('identity','content','discussion','communication','discovery','achievements','recovery')
         configured=set(settings.server.plugins)
         require(configured<=set(implemented)|{'transfer','extensions','system','batch'},'unknown_plugin')
         for plugin in implemented:

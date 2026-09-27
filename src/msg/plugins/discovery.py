@@ -31,6 +31,10 @@ async def metadata(tx,r):
     if r.revision:
         rev=await tx.revision(ResourceRef(id=r.id))
         data.update(size=rev.content.size,media_type=rev.content.media_type,digest=rev.content.digest)
+        for field in ('change_note','source_kind','source_version','source_digest'):
+            value=getattr(rev,field)
+            if value is not None:
+                data[field]=value
     return data
 
 
@@ -214,7 +218,8 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
         require(set(fields)<=known,'unknown_projection_field')
         return {k:meta[k] for k in fields}
     defaults=('id','type','name','revision','generation','path','content','items','keys','certificates','links',
-              'relations','raw_url','transfer_operation','kind','local_only','list_operation')
+              'relations','raw_url','transfer_operation','kind','local_only','list_operation',
+              'change_note','source_kind','source_version','source_digest')
     if resource.tags:
         defaults=(*defaults,'tags')
     return {k:meta[k] for k in defaults if k in meta}
@@ -313,12 +318,25 @@ def install(app):
             if a['view']=='meta':
                 data=await metadata(tx,resource)
             else:
-                cursor=app.cursors.decode(a['cursor'],'history',rid) if a.get('cursor') else None
-                page=await tx.history(rid,cursor=cursor,limit=a.get('limit',50))
-                data={'id':rid,'revisions':[{'id':v.id,'parents':list(v.parents),'digest':v.manifest_digest,
-                    'created_at':wire(v.created_at),'actor':v.actor} for v in page.items]}
+                limit=a.get('limit',50)
+                principal={'actor':ctx.principal.actor,'subject':ctx.principal.subject,
+                           'credential_id':ctx.principal.credential_id}
+                query={'id':rid,'view':'history','limit':limit}
+                cursor,snapshot=app.cursors.decode_page(a['cursor'],'history',query,principal,ctx.now) if a.get('cursor') else (None,ctx.now)
+                page=await tx.history(rid,cursor=cursor,limit=limit)
+                revisions=[]
+                for value in page.items:
+                    row={'id':value.id,'parents':list(value.parents),'digest':value.manifest_digest,
+                         'created_at':wire(value.created_at),'actor':value.actor,'author':value.author}
+                    if value.change_note is not None:
+                        row['change_note']=value.change_note
+                    if value.source_version is not None:
+                        row['source_version']=value.source_version
+                    revisions.append(row)
+                data={'id':rid,'revisions':revisions}
                 if page.next_cursor:
-                    cursor=app.cursors.encode('history',rid,page.next_cursor)
+                    cursor=app.cursors.encode_page('history',query,page.next_cursor,snapshot,
+                        principal,ctx.now+timedelta(minutes=15))
                     data.update(cursor=cursor,next=next_link(app,'discovery.get',{**a,'cursor':cursor}),
                                 next_requires_auth=ctx.principal.subject is not None)
         else:
@@ -385,6 +403,13 @@ def install(app):
     async def list_items(ctx,request,tx):
         a=dict(request.arguments)
         stable=request.operation=='discovery.read_query'
+        internal_page=getattr(request,'internal_page_state',None)
+        if internal_page is not None:
+            # Only the installed QueryRef adapter supplies this after verifying
+            # its MAC, sealed source, principal, expiry and query digest.
+            require(stable and set(internal_page)=={'arguments','last','snapshot'},
+                    'invalid_cursor')
+            a=dict(internal_page['arguments'])
         principal={'actor':ctx.principal.actor,'subject':ctx.principal.subject,
                    'credential_id':ctx.principal.credential_id}
         if stable and a.get('cursor'):
@@ -412,7 +437,9 @@ def install(app):
         descending=a.get('direction','asc')=='desc'
         comparison,ordering=('<','DESC') if descending else ('>','ASC')
         query_args={k:v for k,v in a.items() if k!='cursor'}
-        if stable and a.get('cursor'):
+        if stable and internal_page is not None:
+            position,snapshot=internal_page['last'],parse_time(internal_page['snapshot'])
+        elif stable and a.get('cursor'):
             position,snapshot=app.cursors.decode_page(a['cursor'],request.operation,
                                                        query_args,principal,ctx.now)
         else:
@@ -498,8 +525,10 @@ def install(app):
         else:
             spec=app.registry.operation(name)
         require('network' in spec.entries,'entry_not_allowed')
-        return HandlerOutput(data={'operation':app.registry.describe(spec),'input':app.registry.schema(spec.input_schema),
-            'output':app.registry.schema(spec.output_schema)})
+        description=app.registry.describe(spec)
+        return HandlerOutput(data={'operation':description,'input':app.registry.schema(spec.input_schema),
+            'output':app.registry.schema(spec.output_schema),
+            'requires_rules':description['requires_rules']})
 
     @op('discovery.diff',obj({'left':REF,'right':REF,'offset':INTEGER,'limit':{'type':'integer','minimum':1,'maximum':500}},
         ('left','right')),effect='read')
@@ -620,6 +649,12 @@ def install(app):
         data={'from':wire(ResourceRef(id=rid,revision=old)),
               'to':wire(ResourceRef(id=rid,revision=new)),
               'diff':''.join(lines[offset:offset+limit])}
+        for label,revision in (('from_source',before),('to_source',after)):
+            source={name:getattr(revision,name) for name in
+                ('change_note','source_kind','source_version','source_digest')
+                if getattr(revision,name) is not None}
+            if source:
+                data[label]=source
         if offset+limit<len(lines):
             data['next_offset']=offset+limit
             data['next']=f'/_r/{rid}/diff/{old}/{new}/o/{offset+limit}'
