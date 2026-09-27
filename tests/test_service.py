@@ -35,9 +35,6 @@ def temporary_v3_args(*, nonce=None, recovery_secret=None, request_id=None,
              'possession_proof':wire(proof)},request_id,signer,recipient)
 
 
-from conftest import installed
-
-
 async def call(app, op, args, *, key=None, subject=None, certs=(), expected=(), rid=None, token=None,
                contract_version=1):
     packet = request_for(op, args, app.settings.service_url,
