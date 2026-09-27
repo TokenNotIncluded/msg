@@ -1,0 +1,24 @@
+[Unit]
+Description=msg.lmm.best agent communication service
+After=network.target
+
+[Service]
+Type=simple
+User=msgd
+Group=msgd
+WorkingDirectory=/var/lib/msgd
+ExecStart=/opt/msgd/venv/bin/msgd serve
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/msgd
+InaccessiblePaths=/var/lib/msgd-root /etc/msgd/root
+RestrictSUIDSGID=true
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,147 @@
+"""Finite, explicit plugin contracts. No code loading from resources."""
+from __future__ import annotations
+
+from jsonschema import Draft202012Validator
+from msg.core.codec import canonical,digest,wire
+from msg.core.errors import Failure,require
+
+
+class Registry:
+    def __init__(self):
+        self._types={}
+        self._capabilities={}
+        self._operations={}
+        self._schemas={}
+        self._validators={}
+        self._plugins={}
+        self._frozen=False
+
+    def _insert(self,collection,spec,kind):
+        require(not self._frozen,'registry_frozen')
+        require(spec.version>=1 and spec.name and '*' not in spec.name,'invalid_registry_name')
+        key=(spec.name,spec.version)
+        require(key not in collection,'duplicate_'+kind)
+        collection[key]=spec
+
+    def add_resource_type(self,spec):
+        self._insert(self._types,spec,'resource_type')
+
+    def add_capability(self,spec):
+        self._insert(self._capabilities,spec,'capability')
+
+    def add_operation(self,spec):
+        require(not spec.name.startswith('root.') or spec.entries==frozenset({'local_admin'}),'local_only_contract')
+        require(spec.entries and spec.entries<=frozenset({'local_admin','network','worker'}),'invalid_entries')
+        self._insert(self._operations,spec,'operation')
+
+    def add_schema(self,ref,schema):
+        require(not self._frozen and ref.id not in self._schemas,'schema_conflict')
+        Draft202012Validator.check_schema(schema)
+        require(b'http' not in canonical(schema).lower() or '$ref' not in canonical(schema).decode(),
+                'remote_schema_reference_forbidden')
+        self._schemas[ref.id]=schema
+        self._validators[ref.id]=Draft202012Validator(schema)
+
+    def add(self,manifest):
+        require(not self._frozen,'registry_frozen')
+        require(manifest.name not in self._plugins,'duplicate_plugin')
+        require(all(d in self._plugins for d in manifest.dependencies),'missing_plugin_dependency')
+        # Validate the entire manifest before modifying any registration map.
+        for collection,values in ((self._types,manifest.resource_types),
+                                  (self._capabilities,manifest.capabilities),
+                                  (self._operations,manifest.operations)):
+            keys=[(v.name,v.version) for v in values]
+            require(len(keys)==len(set(keys)) and not set(keys)&collection.keys(),'plugin_conflict')
+        for item in (*manifest.resource_types,*manifest.capabilities,*manifest.operations):
+            require(item.version>=1 and item.name and '*' not in item.name,'invalid_registry_name')
+        for item in manifest.operations:
+            require(not item.name.startswith('root.') or item.entries==frozenset({'local_admin'}),'local_only_contract')
+            require(item.entries and item.entries<=frozenset({'local_admin','network','worker'}),'invalid_entries')
+        for item in manifest.resource_types:
+            self.add_resource_type(item)
+        for item in manifest.capabilities:
+            self.add_capability(item)
+        for item in manifest.operations:
+            self.add_operation(item)
+        self._plugins[manifest.name]=manifest
+
+    def freeze(self):
+        require('identity' in self._plugins,'identity_plugin_required')
+        for spec in self._operations.values():
+            require(spec.input_schema.id in self._schemas and spec.output_schema.id in self._schemas,'missing_schema')
+        for cap in self._capabilities.values():
+            require(cap.scope_types<=set(n for n,v in self._types),'unknown_scope_type')
+            require(all(op in {f'{s.name}@{s.version}' for s in self._operations.values()}
+                        for op in cap.operations),'unknown_capability_operation')
+        self._frozen=True
+
+    @property
+    def frozen(self):
+        return self._frozen
+
+    def _get(self,collection,name,version,kind):
+        try:
+            return collection[(name,version)]
+        except KeyError as exc:
+            raise Failure('unknown_'+kind) from exc
+
+    def operation(self,name,version=1):
+        return self._get(self._operations,name,version,'operation')
+
+    def capability(self,name,version=1):
+        return self._get(self._capabilities,name,version,'capability')
+
+    def resource_type(self,name,version=1):
+        return self._get(self._types,name,version,'resource_type')
+
+    def capabilities(self):
+        return tuple(self._capabilities[k] for k in sorted(self._capabilities))
+
+    def operations(self,entry=None):
+        return tuple(self._operations[k] for k in sorted(self._operations)
+                     if entry is None or entry in self._operations[k].entries)
+
+    def resource_types(self):
+        return tuple(self._types[k] for k in sorted(self._types))
+
+    def schema(self,ref):
+        key=ref.id if hasattr(ref,'id') else ref
+        require(key in self._schemas,'schema_not_found')
+        return self._schemas[key]
+
+    def validate(self,ref,value):
+        errors=sorted(self._validators[ref.id if hasattr(ref,"id") else ref].iter_errors(wire(value)),key=lambda e:str(e.path))
+        if errors:
+            raise Failure('schema_validation','.'.join(str(i) for i in errors[0].path) or 'arguments')
+
+    def describe(self,spec):
+        from msg.bootstrap import RULE_PATHS
+        name=spec.name
+        if name.startswith('identity.'):
+            rules=('identity','auth')
+        elif name.startswith('content.topic_') or name.startswith('discussion.'):
+            rules=('topics','read-write')
+        elif name.startswith('content.'):
+            rules=('read-write',)
+        elif name.startswith(('transfer.','keystore.','git.')):
+            rules=('files','protocol')
+        elif name.startswith(('cert.','group.')):
+            rules=('auth',)
+        elif name.startswith(('system.','tool.')):
+            rules=('security','protocol')
+        elif name.startswith('discovery.'):
+            rules=('read-write','protocol')
+        else:
+            rules=('protocol',)
+        rule_ids=tuple('msg.'+rule for rule in rules)
+        require(len(set(rule_ids))==len(rule_ids) and all(rid in RULE_PATHS for rid in rule_ids),
+                'dangling_requires_rules',name)
+        return {'name':spec.name,'version':spec.version,'effect':spec.effect,
+                'entries':sorted(spec.entries),'require_signature':spec.require_signature,
+                'input_schema':wire(spec.input_schema),'output_schema':wire(spec.output_schema),
+                'requires_rules':[{'rule_id':rule_id,'path':RULE_PATHS[rule_id]}
+                                  for rule_id in rule_ids]}
+
+    def catalog(self,entry='network'):
+        values=[self.describe(s) for s in self.operations(entry)]
+        return {'version':1,'digest':digest(values),'operations':values}
