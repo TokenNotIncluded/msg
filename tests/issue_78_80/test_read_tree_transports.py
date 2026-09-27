@@ -12,7 +12,7 @@ from msg.transports.http import create_app
 from msg.transports.client import HTTPTransport,PathGETTransport,MCPHTTPTransport
 from msg.transports.dictionary import build_dictionary,read_query_path_document
 from msg.transports.read_tree_path import decode_read_tree_path
-from test_read_query_tree import tree,query
+from .test_read_query_tree import tree,query
 
 
 PATH='/_r/q/3/r/r_tree/n/1/f/i/x/children/n/1/f/i/x/children/n/1/f/i/up/1/up/1'
@@ -28,7 +28,7 @@ def test_path_tree_is_readable_and_round_trips_without_json_payload():
     args,proof=decode_read_tree_path(PATH.encode())
     assert args=={**query(),'query_version':3}
     assert proof is None
-    aliased,suffix=decode_read_tree_path(PATH.replace('/_r/','/_read/').encode()+b'/p/signed')
+    aliased,suffix=decode_read_tree_path(PATH.replace('/_r/','/_read/') .encode()+b'/p/signed')
     assert aliased==args and suffix==b'signed'
 
 
