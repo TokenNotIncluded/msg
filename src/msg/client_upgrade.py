@@ -35,6 +35,15 @@ def upgrade_lock(directory):
         os.close(fd)
 
 
+
+@contextmanager
+def locked_state(state):
+    """Refresh accepted credentials under the same lock used by every transition."""
+    with upgrade_lock(state.directory):
+        fresh = type(state)(state.directory, server=state.server)
+        state.__dict__.update(fresh.__dict__)
+        yield
+
 def read_intent(path):
     try:
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
@@ -101,7 +110,7 @@ def pending_upgrade(state):
 async def upgrade_identity(client, handle=None):
     state = client.state
     client._require_token_secret_transport()
-    with upgrade_lock(state.directory):
+    with locked_state(state):
         journal = state.directory/'identity-upgrade.json'
         resuming = journal.exists() or journal.is_symlink()
         pending = read_intent(journal) if resuming else None

@@ -3,7 +3,7 @@ from functools import wraps
 import os
 import stat
 
-from msg.client_upgrade import upgrade_lock
+from msg.client_upgrade import locked_state
 from msg.core.codec import b64, loads, unb64
 from msg.core.errors import Failure, require
 
@@ -29,15 +29,11 @@ def token_operation(method):
     @wraps(method)
     async def locked(self, *args, **kwargs):
         self._require_token_secret_transport()
-        with upgrade_lock(self.state.directory):
+        with locked_state(self.state):
             require(not any((self.state.directory/name).exists() or
                             (self.state.directory/name).is_symlink() for name in
                             ('identity-upgrade.json', 'custodial-upgrade.json')),
                     'identity_recovery_pending')
-            # Another process may have completed an operation since this client
-            # was constructed. Never overwrite its accepted credential or keys.
-            fresh = type(self.state)(self.state.directory, server=self.state.server)
-            self.state.__dict__.update(fresh.__dict__)
             self._token_journal()
             return await method(self, *args, **kwargs)
     return locked

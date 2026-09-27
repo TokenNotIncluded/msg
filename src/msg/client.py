@@ -448,6 +448,18 @@ class MsgClient:
         return await upgrade_identity(self,handle)
 
     async def upgrade_custodial(self,handle, *, external_ciphertexts_migrated: bool):
+        from msg.client_upgrade import locked_state
+        self._require_token_secret_transport()
+        with locked_state(self.state):
+            require(not any((self.state.directory/name).exists() or
+                            (self.state.directory/name).is_symlink() for name in
+                            ('identity-upgrade.json','temporary.json',
+                             'custodial-bootstrap.json','token-rotation.json')),
+                    'identity_recovery_pending')
+            return await self._upgrade_custodial(handle,
+                external_ciphertexts_migrated=external_ciphertexts_migrated)
+
+    async def _upgrade_custodial(self,handle, *, external_ciphertexts_migrated: bool):
         require(type(external_ciphertexts_migrated) is bool,'migration_statement_required')
         require(self.state.subject is not None and self.state.token is not None,
                 'custodial_token_required')
