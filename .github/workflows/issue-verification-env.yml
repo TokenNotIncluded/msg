@@ -10,36 +10,15 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.13'
-      - name: Download test dependencies and PostgreSQL tools
+      - name: Package PostgreSQL bootstrap catalog
         run: |
-          mkdir -p portable/wheels portable/lib portable/bin
-          python -m pip download --dest portable/wheels 'psycopg[binary]>=3.3,<4' 'valkey>=6.1,<7' 'graphql-core>=3.2.7,<3.3' 'tiktoken>=0.12,<1'
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-14 age nginx
-          cp -a /usr/lib/postgresql/14 portable/postgresql
-          cp /usr/bin/age /usr/bin/age-keygen portable/bin/
-          cp /usr/sbin/nginx portable/bin/
-          python - <<'PY'
-          import pathlib, subprocess, re, shutil
-          destination = pathlib.Path('portable/lib')
-          for path in pathlib.Path('portable').rglob('*'):
-              if not path.is_file() or 'wheels' in path.parts:
-                  continue
-              result = subprocess.run(['ldd', str(path)], capture_output=True, text=True)
-              for value in re.findall(r'=> (/\S+)', result.stdout):
-                  source = pathlib.Path(value)
-                  if source.name.startswith(('libc.so', 'libm.so', 'libpthread.so', 'libdl.so', 'librt.so', 'ld-linux')):
-                      continue
-                  target = destination / source.name
-                  if not target.exists():
-                      shutil.copy2(source, target)
-          PY
-          tar -czf verification-environment.tar.gz portable
+          sudo apt-get install -y -qq postgresql-14
+          mkdir -p portable
+          cp -a /usr/share/postgresql/14 portable/share
+          tar -czf verification-catalog.tar.gz portable
       - uses: actions/upload-artifact@v4
         with:
-          name: issue-verification-environment
-          path: verification-environment.tar.gz
+          name: issue-verification-catalog
+          path: verification-catalog.tar.gz
           retention-days: 1
