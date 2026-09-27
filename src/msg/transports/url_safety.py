@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
-from urllib.parse import unquote_to_bytes
+from urllib.parse import SplitResult, unquote_to_bytes, urlsplit
 
-from msg.core.errors import require
+from msg.core.errors import Failure, require
 
 MAX_DECODE_LAYERS = 8
 _SECRET_NAMES = frozenset({
@@ -105,3 +105,19 @@ def require_safe_relative_url(path: str, *, maximum: int) -> None:
     # them. The server can only validate fragment-like bytes actually received.
     raw_path, _, query = path.encode('utf-8').partition(b'?')
     require_safe_request_target(raw_path, query, maximum=maximum)
+
+
+def require_matching_host(values: list[str], expected: SplitResult) -> None:
+    """Check Host syntax before a URL parser can discard delimiters or controls."""
+    require(len(values) == 1 and re.fullmatch(
+        r'(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?', values[0])
+        is not None, 'forbidden_host')
+    try:
+        supplied = urlsplit('//' + values[0])
+        port = supplied.port
+        default = 443 if expected.scheme == 'https' else 80
+        require((port is None or port > 0) and supplied.hostname == expected.hostname and
+                (port if port is not None else default) == (expected.port or default),
+                'forbidden_host')
+    except ValueError:
+        raise Failure('forbidden_host') from None

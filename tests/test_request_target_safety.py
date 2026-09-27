@@ -209,3 +209,51 @@ async def test_client_does_not_follow_a_response_redirect():
                                body={'recovery_secret': 'nonlive'})
     assert len(calls) == 1
     assert calls[0].url.host == 'testserver'
+
+
+@pytest.mark.parametrize('host', ['@testserver', ':@testserver', 'testserver:0',
+    'testserver:', 'testserver\t', 'testserver\r\n', 'testserver?', 'testserver#'])
+async def test_host_parser_must_not_discard_ambiguous_bytes(host):
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(boundary_service())),
+                                 base_url='http://testserver') as http:
+        response = await http.get('/healthz', headers={'Host': host})
+    assert response.status_code == 403
+    assert response.json()['error']['code'] == 'forbidden_host'
+
+
+@pytest.mark.parametrize('headers', [[], [(b'host', b'testserver'), (b'host', b'testserver')]])
+async def test_host_must_be_present_exactly_once(headers):
+    response_messages = []
+    async def receive():
+        return {'type': 'http.request', 'body': b'', 'more_body': False}
+    async def send(message):
+        response_messages.append(message)
+    await create_app(boundary_service())({
+        'type': 'http', 'asgi': {'version': '3.0'}, 'http_version': '1.1',
+        'method': 'GET', 'scheme': 'http', 'path': '/healthz',
+        'raw_path': b'/healthz', 'query_string': b'', 'root_path': '',
+        'headers': headers, 'server': ('testserver', 80), 'client': ('127.0.0.1', 1),
+    }, receive, send)
+    assert response_messages[0]['status'] == 403
+    assert b'forbidden_host' in response_messages[1]['body']
+
+
+@pytest.mark.parametrize('service,host', [
+    ('http://testserver', 'testserver'), ('http://testserver', 'TESTSERVER:80'),
+    ('https://example.org', 'example.org:443'), ('https://example.org', 'EXAMPLE.ORG'),
+    ('http://testserver:8042', 'testserver:8042'), ('http://[::1]', '[::1]:80'),
+    ('https://[::1]:8443', '[::1]:8443'),
+])
+def test_host_check_keeps_matching_domains_ports_and_ipv6(service, host):
+    from urllib.parse import urlsplit
+    from msg.transports.url_safety import require_matching_host
+    require_matching_host([host], urlsplit(service))
+
+
+@pytest.mark.parametrize('host', ['[broken]', '[:::]', '[::1]:0', 'testserver:65536',
+                                   'testserver:443', 'testserver:80,other.example'])
+def test_host_check_rejects_invalid_literal_or_mismatching_port(host):
+    from urllib.parse import urlsplit
+    from msg.transports.url_safety import require_matching_host
+    with pytest.raises(Failure, match='forbidden_host'):
+        require_matching_host([host], urlsplit('http://testserver'))

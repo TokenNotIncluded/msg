@@ -21,7 +21,7 @@ from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, gunzip, path_packet, require_url_safe_packet
-from msg.transports.url_safety import require_safe_request_target
+from msg.transports.url_safety import require_matching_host, require_safe_request_target
 from msg.transports.dictionary import (READ_QUERY_V1_SEGMENTS,READ_QUERY_V2_SEGMENTS,READ_QUERY_V1_SORT,
     READ_QUERY_V1_FIELDS,SEARCH_QUERY_V1_SEGMENTS)
 
@@ -459,17 +459,7 @@ def create_app(service):
             require_safe_request_target(raw_path,request.scope.get('query_string',b''),
                                         maximum=limits.max_path_bytes)
             expected=urlsplit(service.settings.service_url)
-            try:
-                supplied=urlsplit('//'+request.headers.get('host',''))
-                host_matches=(len(request.headers.getlist('host'))==1 and
-                    not (supplied.username or supplied.password or supplied.path or
-                         supplied.query or supplied.fragment) and
-                    supplied.hostname==expected.hostname and
-                    (supplied.port or (443 if expected.scheme=='https' else 80))==
-                    (expected.port or (443 if expected.scheme=='https' else 80)))
-            except ValueError:
-                host_matches=False
-            require(host_matches,'forbidden_host')
+            require_matching_host(request.headers.getlist('host'),expected)
             require('x-http-method-override' not in request.headers and
                     'x-method-override' not in request.headers,'method_not_allowed')
             if request.url.path.startswith(('/@','/&')):
