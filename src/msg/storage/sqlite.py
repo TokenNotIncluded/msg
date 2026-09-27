@@ -349,8 +349,22 @@ class SqliteSession:
         return bool(row[0])
 
     async def memberships(self, subject):
-        return tuple(decode(Membership, loads(row[0])) for row in
-                     self.rows("SELECT body FROM memberships WHERE subject=? ORDER BY org", (subject,)))
+        if subject is None:
+            return ()
+        memberships=tuple(decode(Membership, loads(row[0])) for row in
+                          self.rows("SELECT body FROM memberships WHERE subject=? ORDER BY org", (subject,)))
+        active=tuple(member for member in memberships if member.status=='active'
+                     and member.organization_id!='g_public')
+        row=self.one("SELECT body FROM identities WHERE id=? AND kind='subject'",(subject,))
+        if row is None:
+            return active
+        identity=decode(Subject,loads(row[0]))
+        if identity.kind in {'registered','custodial','system'} and not identity.local_only:
+            # /&public is a virtual group for formal subjects. Historical rows
+            # may remain in storage, but never create a duplicate authorization.
+            return (Membership(organization_id='g_public',subject_id=subject,
+                               role='member',version=0),*active)
+        return active
 
     async def request_result(self, subject, id, digest):
         row = self.one("SELECT digest,body FROM results WHERE subject=? AND request_id=?", (subject,id))

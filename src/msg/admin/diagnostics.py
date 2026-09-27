@@ -65,6 +65,29 @@ class ReadOnlyStore:
             return await callback(session)
 
 
+def feature_results(features, observations, field):
+    """Link manifest entries to checks actually run; never synthesize a pass."""
+    result={}
+    for feature in features:
+        feature_id=feature['feature_id']
+        name=feature[field]
+        if not feature['enabled_by_default']:
+            result[feature_id]={'status':'disabled','check':name}
+        elif name is None:
+            result[feature_id]={'status':'skip','check':None}
+        elif name not in observations:
+            result[feature_id]={'status':'fail','check':name,'reason':'check_missing'}
+        else:
+            value=observations[name]
+            if isinstance(value,dict):
+                status=('skip' if value.get('status')=='disabled' else
+                        'pass' if value.get('ok') is True else 'fail')
+            else:
+                status='pass' if value is True else 'fail'
+            result[feature_id]={'status':status,'check':name}
+    return result
+
+
 async def authority_snapshot_drift(app, root, online, tx):
     """Show signed authority missing from this installation's current vocabulary.
 
@@ -110,7 +133,7 @@ def doctor(config_dir=Path('/etc/msgd'), *, clock=None):
 async def _doctor(config_dir,clock):
     from msg.application import Application
     from msg.config import load_settings
-    from msg.bootstrap import manifest
+    from msg.bootstrap import manifest,feature_manifest
     from msg.security.certificates import CertificateValidator
     checks={}
     warnings=[]
@@ -223,7 +246,10 @@ async def _doctor(config_dir,clock):
             pass
         success('root_private_boundary')
     except (Failure,OSError) as exc:failed('root_private_boundary',getattr(exc,'code','root_material_missing'))
-    return {'ok':all(c['ok'] for c in checks.values()),'root_id':ROOT_SUBJECT,'checks':checks,'warnings':warnings}
+    features=feature_results(feature_manifest(),checks,'doctor_check')
+    return {'ok':all(c['ok'] for c in checks.values()) and
+            all(row['status']!='fail' for row in features.values()),
+            'root_id':ROOT_SUBJECT,'checks':checks,'features':features,'warnings':warnings}
 
 
 async def _selftest_ca_chain(app,root,call,register,now):
@@ -426,6 +452,7 @@ async def selftest():
     from msg.core.models import CertificateRequest,Signature,Scope
     from msg.security.certificates import csr_body
     from msg.security.capabilities import grant_for
+    from msg.bootstrap import feature_manifest
     checks={}
     with tempfile.TemporaryDirectory(prefix='msg-selftest-') as temporary, temporary_postgres() as dsn:
         folder=Path(temporary)
@@ -555,4 +582,7 @@ async def selftest():
             checks['failure']={'code':exc.code}
         finally:
             await app.close()
-    return {'ok':bool(checks) and all(value is True for value in checks.values()),'checks':checks,'cleaned_up':not folder.exists()}
+    features=feature_results(feature_manifest(),checks,'selftest_case')
+    return {'ok':bool(checks) and all(value is True for value in checks.values()) and
+            all(row['status']!='fail' for row in features.values()),
+            'checks':checks,'features':features,'cleaned_up':not folder.exists()}

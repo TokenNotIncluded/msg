@@ -2,7 +2,7 @@
 
 权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T05:54:08.096Z`。
 
-**当前状态：第十一批在GIT_CONFIG_GLOBAL=/dev/null下本地全套392 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码196→200保旧义；权威修订05:54:08.096Z、185段仅压缩去重、不减验收范围。前批e89b972的CI36298075880已completed/success（379/8/build），不覆盖当前增量。
+**当前状态：第十二批在GIT_CONFIG_GLOBAL=/dev/null下本地全套408 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码200→215保旧义。前批2a80a95的[CI 36300451977](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36300451977)completed/success（392/8/build），仅对应旧提交。
 
 历史证据单独保留：`e01dacc` 本地 228/8/build 与[CI 36281301900](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)通过；`f085e7f` 本地 206/8/build 与 CI 通过。220 是双钥加入前的中间结果，不是当前基线，不与任何测试数量累加。详细命令见 [VERIFICATION](VERIFICATION.md)。
 
@@ -178,3 +178,11 @@ content.text_patch支持exact/context唯一匹配，正文上限1MiB，歧义拒
 本批392/8/build只证明当前局部代码。backup v4及recovery-drill硬闸是本地实现选择，权威要求是一致数据库快照/引用内容验证与根秘密另备，并未指定v4兼容版本。生产在线备份/外部Git并发仍未演练。text_patch只覆盖exact/context唯一匹配、1MiB；完整file/post命名契约、unified/heading/block patch、rebase/batch仍缺。Domain Event仍要求capability：当前owner签名/manage约束仅是受限切片，独立webhook.domain capability及无权/撤销回归已补，完整公网矩阵仍待验收，公网未验。
 
 本批Domain Event Webhook已加独立webhook.domain capability，Basic OnlineIssuer普通issue_grants白名单不含该能力；订阅及每次投递复核owner/ACL与当前证书，无cap拒绝、证书撤销后停止投递。当前仅post_create/reply/post_edit，公网端到端仍未验。备份v4仅接v4、恢复drill写/worker硬闸及text_patch exact/context局部边界不变；392/8/build为未提交本地证据，无本批CI。
+
+## 第十二批治理与验收映射切片
+
+BootstrapManifest v5提供12个feature rows及真实doctor/selftest映射；disabled/partial是完成度报告，不关闭现有API，也不意味着整套第15章TDD矩阵已完成。新增feature必须继续补确定默认、样例、正常/拒绝/并发/恢复与CI证据。
+
+Organization已有open/approval/invite/managed四策略、owner/maintainer/member角色、旧组织兼容与/&public虚拟成员；默认invite，不直接授予未确认成员权限。完整跨入口、转授/分享、退组与边界组合仍按feature验收，不用角色名推导资源/CA权。
+
+post metadata/rollback及post_write/patch alias已有局部切片，旧契约短码不改义；rebase、atomic batch和完整file/post操作族仍缺，rollback也不能绕过当前权限/版本前置条件。本地408/8/build不等于完整产品或生产交付。

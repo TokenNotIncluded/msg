@@ -113,14 +113,18 @@ class Organization:
     resource_id: ResourceId
     membership_version: int
     builtin: Literal['public', 'admins'] | None = None
+    membership_policy: Literal['open', 'approval', 'invite', 'managed'] = 'invite'
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Membership:
     organization_id: ResourceId
     subject_id: ResourceId
-    role: Literal['member', 'admin']
+    role: Literal['owner', 'maintainer', 'member', 'admin']
     version: int
+    status: Literal['active', 'pending', 'invited', 'rejected'] = 'active'
+    joined_at: datetime | None = None
+    invited_by: ResourceId | None = None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

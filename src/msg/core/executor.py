@@ -69,7 +69,7 @@ class OperationExecutor:
                     audited=(spec.name in {'content.chmod','content.chgrp','content.chown','content.purge','content.move',
                         'identity.key_add','identity.key_revoke','identity.recover','identity.delegate','identity.delegation_revoke',
                         'identity.ssh_key_add','identity.ssh_key_revoke','identity.ssh_certificates','cert.publish','cert.request'}
-                        or spec.name.startswith(('group.member.','group.admin.')))
+                        or (spec.name.startswith('group.') and spec.effect!='read'))
                     before=[]
                     if audited:
                         ids={c.resource_id for c in checks}|{principal.subject}

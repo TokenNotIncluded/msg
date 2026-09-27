@@ -77,8 +77,6 @@ async def make_user(app,tx,ctx,id,handle,kind):
         modified_at=ctx.now,modified_by=id)
     await tx.insert(resource)
     await tx.update_identity(Subject(resource_id=id,kind=kind,primary_group=PUBLIC_GROUP,auth_version=0),-1)
-    if kind in {'registered','custodial'}:
-        await set_member(tx,PUBLIC_GROUP,id,'member')
     for name,mode in (('keys',0o555),('certificates',0o555),('files',0o700),('keystore',0o700)):
         await tx.insert(Resource(id='r_'+digest((id,name))[7:39],type='topic',type_version=1,name=name,parent=id,
             owner=id,group=PUBLIC_GROUP,mode=mode,generation=0,revision=None,state='active',
@@ -86,12 +84,27 @@ async def make_user(app,tx,ctx,id,handle,kind):
     return resource
 
 
-async def set_member(tx,org,subject,role):
+async def set_member(tx,org,subject,role, *, status='active', joined_at=None, invited_by=None):
     organization=await tx.organization(org)
     member=tx.one('SELECT generation FROM memberships WHERE org=? AND subject=?',(org,subject))
     generation=member[0] if member else -1
-    await tx.update_identity(Membership(organization_id=org,subject_id=subject,role=role,version=generation+1),generation)
+    await tx.update_identity(Membership(organization_id=org,subject_id=subject,role=role,version=generation+1,
+                                       status=status,joined_at=joined_at,invited_by=invited_by),generation)
     await tx.update_identity(replace(organization,membership_version=organization.membership_version+1),organization.membership_version)
+
+
+def group_member(tx,org,subject):
+    row=tx.one('SELECT body FROM memberships WHERE org=? AND subject=?',(org,subject))
+    return decode(Membership,loads(row[0])) if row else None
+
+
+async def remove_group_member(tx,org,subject):
+    organization=await tx.organization(org)
+    deleted=tx.execute('DELETE FROM memberships WHERE org=? AND subject=?',(org,subject),write=True)
+    require(deleted.rowcount==1,'group_membership_not_found')
+    tx.set_setting('authorization_epoch',tx.setting('authorization_epoch',0)+1)
+    await tx.update_identity(replace(organization,membership_version=organization.membership_version+1),
+                             organization.membership_version)
 
 
 async def certificate_resource(tx,cert,now):
@@ -1027,7 +1040,6 @@ def install(app):
         updated=replace(resource,name='@'+a['handle'],generation=resource.generation+1,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.replace(updated,resource.generation)
         await tx.update_identity(replace(subject,kind='registered',auth_version=subject.auth_version+1),subject.auth_version)
-        await set_member(tx,PUBLIC_GROUP,subject.resource_id,'member')
         credential=Credential(id=key_id(public),subject_id=subject.resource_id,kind='signing_key',verifier=public,
             ceiling=app.primary_ceiling(),not_before=ctx.now,expires_at=None,revoked_at=None)
         await tx.save_credential(credential,subject.auth_version+1)
@@ -1149,35 +1161,194 @@ def install(app):
             created_at=ctx.now,created_by=ctx.principal.actor,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.insert(r)
         await tx.update_identity(Organization(resource_id=rid,membership_version=0),-1)
-        await set_member(tx,rid,ctx.principal.subject,'admin')
+        await set_member(tx,rid,ctx.principal.subject,'owner',joined_at=ctx.now)
         return output_for(r)
 
-    async def group_change(ctx,request,tx):
+    async def group_context(ctx,request,tx):
         org=await resolve(tx,request.arguments['group'])
         resource=await tx.resource(org)
+        require(resource.type=='organization','group_not_found')
         organization=await tx.organization(org)
-        member=tx.one('SELECT body FROM memberships WHERE org=? AND subject=?',(org,ctx.principal.subject))
-        role=decode(Membership,loads(member[0])).role if member else None
-        allowed=(resource.owner==ctx.principal.subject or role=='admin') and await app.authorizer.ordinary(ctx.principal,operation_id(request),org,tx)
-        if not allowed:
-            allowed=await app.authorizer.has(ctx.principal,'group.manage_override',operation_id(request),org,tx)
-        require(allowed,'group_admin_required')
+        require(organization.builtin!='public','protected_group')
+        member=group_member(tx,org,ctx.principal.subject)
+        role=('owner' if resource.owner==ctx.principal.subject else
+              'maintainer' if member and member.status=='active' and member.role in {'admin','maintainer'} else
+              'member' if member and member.status=='active' else None)
+        return org,resource,organization,member,role
+
+    async def group_manager(ctx,request,tx,org,role, *, owner=False):
+        operation=operation_id(request)
+        await app.authorizer._ceiling(ctx.principal,operation,org,tx)
+        ordinary=await app.authorizer.ordinary(ctx.principal,operation,org,tx)
+        override=await app.authorizer.has(ctx.principal,'group.manage_override',operation,org,tx)
+        require((ordinary and (role=='owner' if owner else role in {'owner','maintainer'})) or
+                (override and not owner),'group_admin_required')
+        return role=='owner' or override
+
+    async def group_change(ctx,request,tx):
+        org,resource,organization,_,role=await group_context(ctx,request,tx)
+        manager_is_owner=await group_manager(ctx,request,tx,org,role)
         target=await resolve(tx,request.arguments['subject'])
         await tx.subject(target)
-        if organization.builtin=='public':
-            require(await app.authorizer.has(ctx.principal,'system.namespace',operation_id(request),org,tx),'protected_group')
-        await app.authorizer._ceiling(ctx.principal,operation_id(request),org,tx)
         action=request.operation
+        previous=group_member(tx,org,target)
+        require(target!=resource.owner,'cannot_remove_group_owner')
+        if previous and previous.status=='active' and previous.role in {'owner','maintainer','admin'}:
+            require(manager_is_owner,'group_owner_required')
         if action=='group.member.remove':
-            require(target!=resource.owner,'cannot_remove_group_owner')
-            tx.execute('DELETE FROM memberships WHERE org=? AND subject=?',(org,target),write=True)
-            tx.set_setting('authorization_epoch',tx.setting('authorization_epoch',0)+1)
-            await tx.update_identity(replace(organization,membership_version=organization.membership_version+1),organization.membership_version)
+            await remove_group_member(tx,org,target)
         else:
-            await set_member(tx,org,target,'admin' if action=='group.admin.add' else 'member')
-        return HandlerOutput(resources=(ResourceRef(id=org),),data={'subject_id':target,'action':action})
+            if action=='group.admin.add':
+                require(manager_is_owner,'group_owner_required')
+            if action=='group.admin.remove':
+                require(previous is not None and previous.status=='active'
+                        and previous.role in {'admin','maintainer'},'group_membership_not_active')
+            stored=tx.one("SELECT body FROM identities WHERE id=? AND kind='organization'",(org,))
+            legacy_policy=stored is not None and 'membership_policy' not in loads(stored[0])
+            needs_acceptance=(organization.builtin is None and not legacy_policy and
+                              organization.membership_policy in {'invite','approval'} and
+                              (previous is None or previous.status!='active'))
+            if action=='group.admin.add':
+                require(not needs_acceptance,'group_membership_not_active')
+            status='invited' if action=='group.member.add' and needs_acceptance else 'active'
+            await set_member(tx,org,target,'maintainer' if action=='group.admin.add' else 'member',
+                             status=status,
+                             joined_at=(previous.joined_at if previous and previous.joined_at else ctx.now)
+                             if status=='active' else None,
+                             invited_by=previous.invited_by if previous else ctx.principal.subject)
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'subject_id':target,'action':action,
+            'status':'removed' if action=='group.member.remove' else status})
     for name in ('group.member.add','group.member.remove','group.admin.add','group.admin.remove'):
         op(name,obj({'group':IDENTIFIER,'subject':IDENTIFIER},('group','subject')),signature=True)(group_change)
+
+    @op('group.policy_get',obj({'group':IDENTIFIER},('group',)),effect='read')
+    async def group_policy_get(ctx,request,tx):
+        org,_,organization,_,_=await group_context(ctx,request,tx)
+        await check_access(app,ctx,request,tx,org,'read')
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={
+            'membership_policy':organization.membership_policy,
+            'membership_version':organization.membership_version})
+
+    @op('group.members',obj({'group':IDENTIFIER},('group',)),effect='read',signature=True)
+    async def group_members(ctx,request,tx):
+        org,resource,_,_,role=await group_context(ctx,request,tx)
+        await app.authorizer.require_base(ctx.principal,operation_id(request),org,tx)
+        require(role is not None,'group_membership_required')
+        rows=tx.rows('SELECT body FROM memberships WHERE org=? ORDER BY subject',(org,))
+        members=[wire(decode(Membership,loads(row[0]))) for row in rows]
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'members':members,
+            'owner':resource.owner})
+
+    @op('group.policy_set',obj({'group':IDENTIFIER,'policy':{'enum':['open','approval','invite','managed']}},
+                               ('group','policy')),signature=True)
+    async def group_policy_set(ctx,request,tx):
+        org,_,organization,_,role=await group_context(ctx,request,tx)
+        await group_manager(ctx,request,tx,org,role,owner=True)
+        policy=request.arguments['policy']
+        if policy!=organization.membership_policy:
+            await tx.update_identity(replace(organization,membership_policy=policy,
+                                             membership_version=organization.membership_version+1),
+                                     organization.membership_version)
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'membership_policy':policy})
+
+    @op('group.join',obj({'group':IDENTIFIER},('group',)),signature=True)
+    async def group_join(ctx,request,tx):
+        org,_,organization,member,_=await group_context(ctx,request,tx)
+        await app.authorizer.require_base(ctx.principal,operation_id(request),org,tx)
+        require(organization.membership_policy in {'open','approval','invite'},'group_managed')
+        require(member is None or member.status!='active','already_group_member')
+        if organization.membership_policy=='invite':
+            require(member is not None and member.status=='invited','group_invitation_required')
+        status=('pending' if organization.membership_policy=='approval' and
+                (member is None or member.status!='invited') else 'active')
+        await set_member(tx,org,ctx.principal.subject,'member',status=status,
+                         joined_at=ctx.now if status=='active' else None,
+                         invited_by=member.invited_by if member else None)
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'status':status})
+
+    @op('group.invite',obj({'group':IDENTIFIER,'subject':IDENTIFIER},('group','subject')),signature=True)
+    async def group_invite(ctx,request,tx):
+        org,_,_,_,role=await group_context(ctx,request,tx)
+        await group_manager(ctx,request,tx,org,role)
+        target=await resolve(tx,request.arguments['subject'])
+        subject=await tx.subject(target)
+        require(subject.kind in {'registered','custodial'} and not subject.local_only,'invalid_group_subject')
+        previous=group_member(tx,org,target)
+        require(previous is None or previous.status!='active','already_group_member')
+        await set_member(tx,org,target,'member',status='invited',invited_by=ctx.principal.subject)
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'subject_id':target,'status':'invited'})
+
+    @op('group.approve',obj({'group':IDENTIFIER,'subject':IDENTIFIER},('group','subject')),signature=True)
+    async def group_approve(ctx,request,tx):
+        org,_,_,_,role=await group_context(ctx,request,tx)
+        await group_manager(ctx,request,tx,org,role)
+        target=await resolve(tx,request.arguments['subject'])
+        previous=group_member(tx,org,target)
+        require(previous is not None and previous.status=='pending','group_request_not_pending')
+        await set_member(tx,org,target,'member',joined_at=ctx.now,invited_by=ctx.principal.subject)
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'subject_id':target,'status':'active'})
+
+    @op('group.reject',obj({'group':IDENTIFIER,'subject':IDENTIFIER},('group','subject')),signature=True)
+    async def group_reject(ctx,request,tx):
+        org,_,_,_,role=await group_context(ctx,request,tx)
+        await group_manager(ctx,request,tx,org,role)
+        target=await resolve(tx,request.arguments['subject'])
+        previous=group_member(tx,org,target)
+        require(previous is not None and previous.status=='pending','group_request_not_pending')
+        await set_member(tx,org,target,'member',status='rejected')
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'subject_id':target,'status':'rejected'})
+
+    @op('group.leave',obj({'group':IDENTIFIER},('group',)),signature=True)
+    async def group_leave(ctx,request,tx):
+        org,resource,_,member,_=await group_context(ctx,request,tx)
+        await app.authorizer.require_base(ctx.principal,operation_id(request),org,tx)
+        require(ctx.principal.subject!=resource.owner,'cannot_remove_group_owner')
+        require(member is not None,'group_membership_not_found')
+        await remove_group_member(tx,org,ctx.principal.subject)
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'status':'left'})
+
+    @op('group.remove',obj({'group':IDENTIFIER,'subject':IDENTIFIER},('group','subject')),signature=True)
+    async def group_remove(ctx,request,tx):
+        org,resource,_,_,role=await group_context(ctx,request,tx)
+        manager_is_owner=await group_manager(ctx,request,tx,org,role)
+        target=await resolve(tx,request.arguments['subject'])
+        require(target!=resource.owner,'cannot_remove_group_owner')
+        member=group_member(tx,org,target)
+        require(member is not None,'group_membership_not_found')
+        if member.status=='active' and member.role in {'owner','maintainer','admin'}:
+            require(manager_is_owner,'group_owner_required')
+        await remove_group_member(tx,org,target)
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'subject_id':target,'status':'removed'})
+
+    @op('group.role_set',obj({'group':IDENTIFIER,'subject':IDENTIFIER,
+                              'role':{'enum':['member','maintainer']}},('group','subject','role')),signature=True)
+    async def group_role_set(ctx,request,tx):
+        org,resource,_,_,role=await group_context(ctx,request,tx)
+        await group_manager(ctx,request,tx,org,role,owner=True)
+        target=await resolve(tx,request.arguments['subject'])
+        require(target!=resource.owner,'cannot_demote_group_owner')
+        member=group_member(tx,org,target)
+        require(member is not None and member.status=='active','group_membership_not_active')
+        await set_member(tx,org,target,request.arguments['role'],joined_at=member.joined_at,
+                         invited_by=member.invited_by)
+        return HandlerOutput(resources=(ResourceRef(id=org),),data={'subject_id':target,'role':request.arguments['role']})
+
+    @op('group.owner_transfer',obj({'group':IDENTIFIER,'subject':IDENTIFIER},('group','subject')),signature=True)
+    async def group_owner_transfer(ctx,request,tx):
+        org,resource,_,current,role=await group_context(ctx,request,tx)
+        await group_manager(ctx,request,tx,org,role,owner=True)
+        target=await resolve(tx,request.arguments['subject'])
+        require(target!=resource.owner,'already_group_owner')
+        member=group_member(tx,org,target)
+        require(member is not None and member.status=='active','group_membership_not_active')
+        require(current is not None and current.status=='active','group_owner_missing')
+        await set_member(tx,org,resource.owner,'maintainer',joined_at=current.joined_at,
+                         invited_by=current.invited_by)
+        await set_member(tx,org,target,'owner',joined_at=member.joined_at,invited_by=member.invited_by)
+        updated=replace(resource,owner=target,generation=resource.generation+1,
+                        modified_at=ctx.now,modified_by=ctx.principal.actor)
+        await tx.replace(updated,resource.generation)
+        return output_for(updated,owner=target)
 
     @op('cert.request',obj({'requested_issuer':IDENTIFIER,'public_key':BYTES,'kind':{'enum':['identity','capability','ca']},
         'grants':GRANTS,'issuance':ISSUANCE,'requested_ttl_seconds':{'type':'integer','minimum':1},

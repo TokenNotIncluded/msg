@@ -168,6 +168,32 @@ def manifest():
     return loads(files('msg.data').joinpath('bootstrap.json').read_bytes())
 
 
+def feature_manifest(definition=None):
+    """Validate the release inventory; a row is not proof that a feature works."""
+    definition=manifest() if definition is None else definition
+    resources={row['id'] for row in definition['resources']}
+    features=definition.get('features',())
+    require(isinstance(features,list) and bool(features),'feature_manifest_invalid')
+    seen=set()
+    fields={'feature_id','enabled_by_default','default_config','sample_resource',
+            'doctor_check','selftest_case'}
+    for feature in features:
+        require(isinstance(feature,dict) and set(feature)==fields,'feature_manifest_invalid')
+        feature_id=feature['feature_id']
+        require(isinstance(feature_id,str) and
+                re.fullmatch(r'[a-z][a-z0-9_]*',feature_id) is not None and
+                feature_id not in seen,'feature_manifest_invalid')
+        seen.add(feature_id)
+        require(type(feature['enabled_by_default']) is bool and
+                isinstance(feature['default_config'],dict),'feature_manifest_invalid')
+        require(feature['sample_resource'] is None or
+                feature['sample_resource'] in resources,'feature_manifest_invalid')
+        require(all(feature[name] is None or
+                    (isinstance(feature[name],str) and bool(feature[name]))
+                    for name in ('doctor_check','selftest_case')),'feature_manifest_invalid')
+    return tuple(features)
+
+
 async def seed_resource(tx,contents,data,now,body=None,media_type='text/markdown'):
     mode=data['mode']
     resource=Resource(**dict(data,mode=int(mode,8) if isinstance(mode,str) else mode,
@@ -200,6 +226,7 @@ async def seed_resource(tx,contents,data,now,body=None,media_type='text/markdown
 
 async def bootstrap(store,contents,registry,now, *, selftest_run_id=None):
     definition=manifest()
+    feature_manifest(definition)
     namespace_root='t_selftest_'+selftest_run_id if selftest_run_id is not None else ROOT_SPACE
     async with store.transaction(write=True) as tx:
         for data in definition['resources']:

@@ -1,6 +1,7 @@
 """Topics, posts, files and templates all use Resource + immutable Revision."""
 from __future__ import annotations
 from dataclasses import replace
+from hashlib import sha256
 from msg.constants import ROOT_SPACE,ROOT_SUBJECT
 from msg.core.codec import canonical,decode,loads,wire,unb64,digest,parse_time
 from msg.core.errors import Failure,require
@@ -461,9 +462,11 @@ def install(app):
         await tx.replace(updated,resource.generation)
         return output_for(updated,tags=tags)
 
-    @op('content.post_edit',obj({'id':IDENTIFIER,'expected_revision':IDENTIFIER,'body':STRING,
+    post_write_schema=obj({'id':IDENTIFIER,'expected_revision':IDENTIFIER,'body':STRING,
         'template':post_fields['template'],'values':{'type':'object'},'source':REF,'content_created_at':STRING,'revision_id':IDENTIFIER,'content_signature':SIGNATURE},
-        ('id','expected_revision')),requirements=requirement('id','write'))
+        ('id','expected_revision'))
+    @op('content.post_write',post_write_schema,requirements=requirement('id','write'))
+    @op('content.post_edit',post_write_schema,requirements=requirement('id','write'))
     async def post_edit(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))
         require(resource.type=='post' and resource.state=='active','not_editable')
@@ -487,15 +490,85 @@ def install(app):
             signature=request.arguments.get('content_signature'),revision_id=request.arguments.get('revision_id'))
         return output_for(updated)
 
-    @op('content.text_patch',obj({'id':IDENTIFIER,'base_revision':IDENTIFIER,
+    @op('content.post_edit_metadata',obj({'id':IDENTIFIER,'name':STRING,
+        'tags':{'type':'array','items':STRING,'maxItems':16}},('id',)),
+        requirements=requirement('id','write'))
+    async def post_edit_metadata(ctx,request,tx):
+        a=request.arguments
+        require('name' in a or 'tags' in a,'metadata_change_required')
+        resource=await tx.resource(await resolve(tx,a['id']))
+        require(resource.type=='post' and resource.state=='active','not_editable')
+        await require_unmanaged_personal(tx,resource)
+        await assert_generation(request,resource)
+        require((await topic_policy(tx,resource)).get('editable',True),'content_frozen')
+        name=resource.name
+        if 'name' in a:
+            # Names are path metadata. Keep the canonical .md post path and the
+            # same protected-namespace/sticky checks as an explicit move.
+            await removable(app,ctx,request,tx,resource)
+            name=validate_name(a['name'] if a['name'].endswith('.md') else a['name']+'.md')
+            await protect_namespace(app,ctx,request,tx,resource.parent,name)
+        tags=normalize_tags(a['tags']) if 'tags' in a else resource.tags
+        if name==resource.name and tags==resource.tags:
+            return output_for(resource,name=name,tags=tags)
+        updated=replace(resource,name=name,tags=tags,generation=resource.generation+1,
+                        modified_at=ctx.now,modified_by=ctx.principal.actor)
+        await tx.replace(updated,resource.generation)
+        return output_for(updated,name=name,tags=tags)
+
+    @op('content.post_rollback',obj({'id':IDENTIFIER,'base_revision':IDENTIFIER,
+        'target_revision':IDENTIFIER,'content_created_at':STRING,
+        'revision_id':IDENTIFIER,'content_signature':SIGNATURE},
+        ('id','base_revision','target_revision')),requirements=requirement('id','write'))
+    async def post_rollback(ctx,request,tx):
+        a=request.arguments
+        resource=await tx.resource(await resolve(tx,a['id']))
+        require(resource.type=='post' and resource.state=='active','not_editable')
+        await require_unmanaged_personal(tx,resource)
+        await assert_generation(request,resource)
+        require(resource.revision==a['base_revision'],'revision_conflict',
+                details={'revision':resource.revision})
+        require(a['target_revision']!=resource.revision,'rollback_target_current')
+        require((await topic_policy(tx,resource)).get('editable',True),'content_frozen')
+        current=await tx.revision(ResourceRef(id=resource.id,revision=resource.revision))
+        historical=await tx.revision(ResourceRef(id=resource.id,revision=a['target_revision']))
+        require(historical.author==current.author,'rollback_author_mismatch')
+        manifest={k:v for k,v in wire(historical).items() if k not in {'manifest_digest','signature'}}
+        require(digest(manifest)==historical.manifest_digest,'revision_manifest_mismatch')
+        if historical.signature is not None:
+            credential=await tx.credential(historical.signature.key_id)
+            require(credential.subject_id==historical.subject and credential.kind=='signing_key',
+                    'revision_signer_mismatch')
+            verify(credential.verifier,canonical(manifest),historical.signature,purpose='revision')
+        hasher=sha256()
+        size=0
+        async for chunk in app.contents.read(historical.content):
+            size+=len(chunk)
+            hasher.update(chunk)
+        require(size==historical.content.size and
+                'sha256:'+hasher.hexdigest()==historical.content.digest,
+                'content_digest_mismatch')
+        # Revalidate every historical relation under present-day authorization.
+        # revise_resource creates a new manifest and signature; it never edits
+        # or adopts the historical signature as proof of the new revision.
+        updated=await revise_resource(app,ctx,request,tx,resource,historical.content,
+            historical.content.media_type,relations=historical.relations,author=current.author,
+            signature=a.get('content_signature'),revision_id=a.get('revision_id'))
+        return output_for(updated,rolled_back_from=historical.id)
+
+    post_patch_schema=obj({'id':IDENTIFIER,'base_revision':IDENTIFIER,
         'exact':{'type':'string','minLength':1,'maxLength':PATCH_LIMIT},
         'replacement':{'type':'string','maxLength':PATCH_LIMIT},
         'before':{'type':'string','maxLength':PATCH_CONTEXT_LIMIT},
         'after':{'type':'string','maxLength':PATCH_CONTEXT_LIMIT}},
-        ('id','base_revision','exact','replacement')),requirements=requirement('id','write'))
+        ('id','base_revision','exact','replacement'))
+    @op('content.post_patch',post_patch_schema,requirements=requirement('id','write'))
+    @op('content.text_patch',post_patch_schema,requirements=requirement('id','write'))
     async def text_patch(ctx,request,tx):
         a=request.arguments
         resource=await tx.resource(await resolve(tx,a['id']))
+        if request.operation=='content.post_patch':
+            require(resource.type=='post','not_editable')
         require(resource.type in {'post','file'} and resource.state=='active','not_editable')
         chain=(*await tx.ancestors(resource.id),resource)
         require(not any(item.id=='t_last_will' for item in chain),'legacy_directive_only')

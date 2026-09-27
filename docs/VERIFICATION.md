@@ -1,8 +1,15 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 backup v4、text_patch与Domain Event Webhook（未提交，本地全套通过）
+## 2026-09-27 BootstrapManifest v5、组织治理与post操作（未提交，本地全套通过）
 
-GIT_CONFIG_GLOBAL=/dev/null下全套 **392 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；短码196→200旧义保留。未提交、无本批CI。backup v4验证PG/Git/CAS/LFS引用，隔离restore写暂停及worker/daemon禁外发marker，需显式人工提升；只接v4，root秘密另备。生产在线备份仍未演练，外部Git写可能导致fail-closed。
+GIT_CONFIG_GLOBAL=/dev/null下全套 **408 passed**、conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；短码200→215旧义保留。未提交、无本批CI。Manifest v5的12项feature及doctor/selftest真实映射、组织四策略/三角色/旧组织兼容/虚拟public、post metadata/rollback与write/patch别名已纳入。disabled/partial只标完成度，不关现有API。
+
+完整TDD feature矩阵、rebase、atomic batch等未完成。前批2a80a95的CI36300451977已completed/success（392/8/build），不覆盖本批。
+
+
+## 2026-09-27 backup v4、text_patch与Domain Event Webhook（2a80a95已推送、CI成功）
+
+GIT_CONFIG_GLOBAL=/dev/null下全套 **392 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；短码196→200旧义保留。已提交2a80a95，CI36300451977 completed/success（392/8/build）。backup v4验证PG/Git/CAS/LFS引用，隔离restore写暂停及worker/daemon禁外发marker，需显式人工提升；只接v4，root秘密另备。生产在线备份仍未演练，外部Git写可能导致fail-closed。
 
 content.text_patch为exact/context唯一匹配、1MiB上限，无rebase/batch。Domain Event Webhook只允许post_create/reply/post_edit的owner显式订阅，公网实测未做。旧e89b972的379/8/成功CI不覆盖本批。
 
