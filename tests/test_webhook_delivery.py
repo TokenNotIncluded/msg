@@ -6,7 +6,7 @@ import socket
 
 import pytest
 
-from msg.core.codec import b64, wire
+from msg.core.codec import b64, canonical, wire
 from msg.core.errors import Failure
 from msg.workers.effects import EffectWorker
 from msg.workers.webhook import PublicResolver, sign_delivery, verify_delivery, validate_endpoint
@@ -65,7 +65,8 @@ async def test_inbox_webhook_opt_in_dedupe_disable_and_bounded_payload(installed
     assert 'private words' not in body.decode() and payload['subject_id']==recipient
     wire_headers={'Msg-Timestamp':headers['timestamp'],
                   'Msg-Signature':'sha256='+sign_delivery(secret,headers['timestamp'],body),
-                  'Msg-Delivery-Id':headers['delivery_id']}
+                  'Msg-Delivery-Id':headers['delivery_id'],
+                  'Msg-Event-Id':headers['event_id']}
     seen=set()
     assert verify_delivery(wire_headers,body,secret,now=NOW,seen=seen)==payload['delivery_id']
     with pytest.raises(Failure,match='webhook_replay'):
@@ -123,9 +124,9 @@ def test_webhook_rejects_unsafe_endpoint(url):
 
 def test_webhook_signature_covers_raw_body_and_timestamp():
     secret=secrets.token_bytes(32)
-    body=b'{"event_id":"e_a"}'
     timestamp=str(int(NOW.timestamp()))
-    headers={'Msg-Timestamp':timestamp,'Msg-Delivery-Id':'job_a',
+    body=canonical({'event_id':'e_a','delivery_id':'job_a','timestamp':timestamp})
+    headers={'Msg-Timestamp':timestamp,'Msg-Delivery-Id':'job_a','Msg-Event-Id':'e_a',
              'Msg-Signature':'sha256='+sign_delivery(secret,timestamp,body)}
     assert verify_delivery(headers,body,secret,now=NOW)=='job_a'
     with pytest.raises(Failure,match='invalid_webhook_signature'):
