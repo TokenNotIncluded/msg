@@ -41,7 +41,7 @@ jobs:
         run: |
           case "$SUITE" in
             checkout) tests=(tests/test_managed_checkout.py tests/test_delivery_target_regression.py) ;;
-            market) tests=(tests/test_orders.py tests/test_delivery.py tests/test_escrow_decisions.py tests/test_order_paths.py tests/test_store.py tests/test_bounty.py) ;;
+            market) tests=(tests/test_orders.py tests/test_delivery.py tests/test_escrow_decisions.py tests/test_order_paths.py tests/test_store_foundation.py tests/test_bounty.py) ;;
             sharing) tests=(tests/test_share_grants.py tests/test_share_grants_v2.py tests/test_share_source_boundaries.py tests/test_share_links.py) ;;
             effects) tests=(tests/test_extensions.py tests/test_webhook_delivery.py tests/test_webhook_domain_events.py tests/test_webhook_identity.py) ;;
             *) exit 2 ;;
