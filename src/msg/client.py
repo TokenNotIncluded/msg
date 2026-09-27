@@ -251,11 +251,11 @@ class MsgClient:
         # These envelopes contain a recovery secret. A path transport would put
         # it in URL history and access logs, including when it compresses paths.
         require(type(self.transport) in {HTTPTransport,GraphQLTransport,MCPHTTPTransport},
-                'token_secret_transport_required')
+                'secure_channel_required')
         host=urlsplit(self.state.server).hostname
         require(self.state.server.startswith('https://') or host in {
             'testserver','localhost','127.0.0.1','::1'},
-            'token_secret_tls_required')
+            'secure_channel_required')
 
     async def _send_token_secret(self, packet):
         self._require_token_secret_transport()

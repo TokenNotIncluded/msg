@@ -166,6 +166,21 @@ async def test_path_client_and_hand_built_server_packet_refuse_secret_issuance(i
 
 
 @pytest.mark.parametrize('operation', tuple(SECRET_DELIVERY_MIN_VERSION))
+@pytest.mark.parametrize('transport_type', TRANSPORTS)
+async def test_plain_http_refuses_secret_before_any_network_request(operation, transport_type):
+    transport = transport_type('http://example.invalid')
+    packet = request_for(operation, {}, transport.server,
+        contract_version=SECRET_DELIVERY_MIN_VERSION[operation],
+        expires_at=NOW+timedelta(seconds=120))
+    try:
+        with pytest.raises(Failure, match='secure_channel_required'):
+            await transport.call(packet)
+        assert transport.calls == 0
+    finally:
+        await transport.close()
+
+
+@pytest.mark.parametrize('operation', tuple(SECRET_DELIVERY_MIN_VERSION))
 @pytest.mark.parametrize('batch', ('batch.atomic', 'batch.independent'))
 async def test_every_secret_operation_is_excluded_from_both_batches(installed, operation, batch):
     app, _ = installed

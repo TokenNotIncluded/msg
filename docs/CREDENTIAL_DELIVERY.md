@@ -22,8 +22,8 @@ HTTP, GraphQL and MCP use request bodies. No batch may issue a credential.
 PathGET rejects these operations and TokenProof with `secure_channel_required`,
 including hand-built JSON/gzip packets. A caller unable to provide a secure
 channel can still use public and secret-free GET reads. The client convenience
-methods retain their existing `token_secret_transport_required` and
-`token_secret_tls_required` local error codes; neither falls back to a URL.
+methods and raw HTTP/GraphQL/MCP transports use the same `secure_channel_required`
+error before any network request; none falls back to a URL.
 
 ## State transitions
 
