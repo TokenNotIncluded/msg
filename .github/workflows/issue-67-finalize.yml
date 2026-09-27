@@ -1,0 +1,152 @@
+name: Finalize issue 67 shared local state
+on:
+  push:
+    branches: [fix/issue-67-durable-token-delivery]
+    paths: [.github/workflows/issue-67-finalize.yml]
+permissions:
+  contents: read
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: fix/issue-67-durable-token-delivery
+          fetch-depth: 2
+      - name: Apply and verify the tested incremental patch
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD^)" = 8f2e1629db99ec2f1eb5f8d55755ee64b78541db
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('src/msg/client_upgrade.py'); s=p.read_text()
+          needle='\ndef read_intent(path):\n'
+          addition='''
+          @contextmanager
+          def locked_state(state):
+              """Refresh accepted credentials under the same lock used by every transition."""
+              with upgrade_lock(state.directory):
+                  fresh = type(state)(state.directory, server=state.server)
+                  state.__dict__.update(fresh.__dict__)
+                  yield
+
+          '''
+          assert s.count(needle)==1
+          s=s.replace(needle,'\n'+addition+'def read_intent(path):\n')
+          assert s.count('    with upgrade_lock(state.directory):')==2
+          s=s.replace('    client._require_token_secret_transport()\n    with upgrade_lock(state.directory):',
+                      '    client._require_token_secret_transport()\n    with locked_state(state):')
+          p.write_text(s)
+          p=Path('src/msg/client_tokens.py');s=p.read_text().replace('from msg.client_upgrade import upgrade_lock','from msg.client_upgrade import locked_state')
+          s=s.replace('        with upgrade_lock(self.state.directory):','        with locked_state(self.state):')
+          remove='''            # Another process may have completed an operation since this client
+                      # was constructed. Never overwrite its accepted credential or keys.
+                      fresh = type(self.state)(self.state.directory, server=self.state.server)
+                      self.state.__dict__.update(fresh.__dict__)
+          '''
+          assert remove in s;s=s.replace(remove,'');p.write_text(s)
+          p=Path('src/msg/client.py');s=p.read_text()
+          needle='    async def upgrade_custodial(self,handle, *, external_ciphertexts_migrated: bool):\n'
+          repl='''    async def upgrade_custodial(self,handle, *, external_ciphertexts_migrated: bool):
+                  from msg.client_upgrade import locked_state
+                  self._require_token_secret_transport()
+                  with locked_state(self.state):
+                      require(not any((self.state.directory/name).exists() or
+                                      (self.state.directory/name).is_symlink() for name in
+                                      ('identity-upgrade.json','temporary.json',
+                                       'custodial-bootstrap.json','token-rotation.json')),
+                              'identity_recovery_pending')
+                      return await self._upgrade_custodial(handle,
+                          external_ciphertexts_migrated=external_ciphertexts_migrated)
+
+              async def _upgrade_custodial(self,handle, *, external_ciphertexts_migrated: bool):
+          '''
+          assert s.count(needle)==1;s=s.replace(needle,repl);p.write_text(s)
+          PY
+          cat > tests/test_credential_upgrade_interleave.py <<'TEST'
+          """Token transactions and upgrades must share one fresh local identity state."""
+          import asyncio
+
+          import pytest
+
+          from msg.core.codec import wire
+          from msg.core.errors import Failure
+          from test_credential_delivery_matrix import connect, TRANSPORTS
+          from test_service import NOW
+
+
+          @pytest.mark.parametrize('transport_type', TRANSPORTS)
+          async def test_stale_upgrade_uses_durably_rotated_token(installed, tmp_path, transport_type):
+              app, _ = installed
+              client, http = connect(app, tmp_path/'client', transport_type, lambda: NOW)
+              stale_http = None
+              try:
+                  assert (await client.temporary()).status == 'ok'
+                  stale, stale_http = connect(app, client.state.directory, transport_type, lambda: NOW)
+                  assert (await client.rotate_token()).status == 'ok'
+                  result = await stale.upgrade('fresh-local-state')
+                  assert result.status == 'ok', wire(result)
+                  assert stale.state.subject == client.state.subject
+                  assert stale.state.token is None
+                  assert not (client.state.directory/'identity-upgrade.json').exists()
+              finally:
+                  if stale_http is not None:
+                      await stale_http.aclose()
+                  await http.aclose()
+
+
+          @pytest.mark.parametrize('transport_type', TRANSPORTS)
+          async def test_custodial_upgrade_cannot_interrupt_token_rotation(installed, tmp_path, transport_type):
+              app, _ = installed
+              client, http = connect(app, tmp_path/'client', transport_type, lambda: NOW)
+              stale_http = None
+              entered, release = asyncio.Event(), asyncio.Event()
+              task = None
+              try:
+                  assert (await client.custodial('custody-local-state')).status == 'ok'
+                  stale, stale_http = connect(app, client.state.directory, transport_type, lambda: NOW)
+                  original = client.transport.call
+
+                  async def paused(packet):
+                      entered.set()
+                      await release.wait()
+                      return await original(packet)
+
+                  client.transport.call = paused
+                  task = asyncio.create_task(client.rotate_token())
+                  await entered.wait()
+                  with pytest.raises(Failure, match='identity_upgrade_busy'):
+                      await stale.upgrade_custodial('self-local-state', external_ciphertexts_migrated=True)
+                  assert stale.transport.calls == 0
+                  assert not stale.state.key_path.exists()
+                  assert not (client.state.directory/'custodial-upgrade.json').exists()
+                  release.set()
+                  assert (await task).status == 'ok'
+              finally:
+                  release.set()
+                  if task is not None:
+                      await task
+                  if stale_http is not None:
+                      await stale_http.aclose()
+                  await http.aclose()
+          TEST
+          python - <<'PY'
+          import hashlib,pathlib
+          expected={
+            'src/msg/client.py':'c8a5fab4fac577b3f3bdfcd7e7d1a2b2181e9670455a693316f1e9153449e6f9',
+            'src/msg/client_upgrade.py':'a767dd17b918bac1244eb15790f7c33fdc99b084b729aefe69bacefbcdf96a4e',
+            'src/msg/client_tokens.py':'2fa45f067daf03152f20a991d36528f0dcbbba27b7aa2d603c515a1d2856560d',
+            'tests/test_credential_upgrade_interleave.py':'2572cb343bf5f875276ed98d928c6f68896b393e35dca09d9d913eda2adf396d'}
+          for name,digest in expected.items():
+              assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()==digest,name
+          PY
+          rm .github/workflows/issue-67-finalize.yml
+          git diff --check
+          git add src/msg/client.py src/msg/client_upgrade.py src/msg/client_tokens.py tests/test_credential_upgrade_interleave.py .github/workflows/issue-67-finalize.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Serialize fresh local state across token and identity transitions' -m 'Refs #67. Six new regressions failed before the fix; all six plus existing custodial upgrade and inventory tests passed afterward (12 total). Remove temporary publishing workflow. Final-head full CI still required.'
+          git push origin HEAD:refs/heads/fix/issue-67-durable-token-delivery
