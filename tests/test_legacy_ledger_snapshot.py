@@ -26,10 +26,19 @@ HISTORY_TABLES = ('money_accounts', 'money_ledger', 'money_bank_roles', 'store_o
     'credentials', 'certificates', 'memberships', 'messages', 'jobs')
 
 
-def snapshot(dsn):
+def snapshot(dsn, *, columns=None):
     with psycopg.connect(dsn) as conn:
-        facts = {table: conn.execute(sql.SQL('SELECT * FROM {} ORDER BY 1').format(
+        # Capture every column of the pinned old schema, then compare those
+        # exact fields after an additive migration. SELECT * after an upgrade
+        # would mistake a new column for a changed historical value.
+        if columns is None:
+            columns = {table: tuple(column.name for column in conn.execute(
+                sql.SQL('SELECT * FROM {} LIMIT 0').format(sql.Identifier(table))).description)
+                for table in HISTORY_TABLES}
+        facts = {table: conn.execute(sql.SQL('SELECT {} FROM {} ORDER BY 1').format(
+            sql.SQL(',').join(map(sql.Identifier, columns[table])),
             sql.Identifier(table))).fetchall() for table in HISTORY_TABLES}
+        facts['columns'] = columns
         facts['ledger_sequence'] = conn.execute('SELECT last_value,is_called FROM money_ledger_seq_seq').fetchone()
         facts['total_supply'] = conn.execute("""SELECT COALESCE(SUM(CASE kind
             WHEN 'mint' THEN amount_minor WHEN 'burn' THEN -amount_minor ELSE 0 END),0)
@@ -92,13 +101,20 @@ def restored_legacy(tmp_path, pg_dsn, legacy_market_archive):
 
 
 def assert_migrated(dsn, before, escrows, identities):
-    assert snapshot(dsn) == before
+    assert snapshot(dsn, columns=before['columns']) == before
     with psycopg.connect(dsn) as conn:
         assert conn.execute('SELECT * FROM identities ORDER BY id').fetchall() == [row for row in identities if row[0] not in escrows]
         actual = conn.execute("""SELECT id,kind,subject_id,source_id FROM ledger_accounts
             WHERE kind<>'subject'""").fetchall()
         assert len(actual) == 5 and {row[0] for row in actual} == escrows
         assert all(row[2] is None and row[3] is not None for row in actual)
+        # New metadata must preserve v1 semantics without fabricating signed
+        # receipt fields, order quotes, delivery deadlines or transition events.
+        assert conn.execute('SELECT DISTINCT entry_key FROM money_ledger').fetchall() == [('primary',)]
+        assert conn.execute('''SELECT DISTINCT delivery_mode,deadline_at,quote_digest
+            FROM store_orders''').fetchall() == [('managed_instant', None, None)]
+        assert conn.execute('SELECT COUNT(*) FROM store_order_events').fetchone() == (0,)
+        assert conn.execute('SELECT COUNT(*) FROM money_purchases').fetchone() == (0,)
         for table, _, current, _ in ledger_migration._LEDGER_ACCOUNT_FKS:
             assert conn.execute('SELECT confrelid::regclass::text FROM pg_constraint WHERE conrelid=%s::regclass AND conname=%s',
                                 (table, current)).fetchone() == ('ledger_accounts',)
@@ -125,7 +141,7 @@ def test_real_old_backup_twice_and_two_concurrent_startups_keep_all_history(rest
         with pytest.raises(psycopg.errors.CheckViolation, match='append_only_money_ledger'):
             with psycopg.connect(dsn) as conn:
                 conn.execute(statement)
-    assert snapshot(dsn) == before
+    assert snapshot(dsn, columns=before['columns']) == before
 
 
 @pytest.mark.parametrize('stage', ['_install_accounts', '_switch_account_foreign_keys',
