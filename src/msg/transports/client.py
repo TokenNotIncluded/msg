@@ -9,6 +9,7 @@ from msg.core.codec import canonical, b64, loads, wire, decode
 from msg.core.errors import Failure, require
 from msg.core.models import TransportLimits
 from msg.transports.packet import decode_result, require_url_safe_packet
+from msg.transports.url_safety import require_safe_relative_url
 
 
 class HTTPTransport:
@@ -30,7 +31,7 @@ class HTTPTransport:
         self.bytes_sent = 0
 
     async def _json(self, method, path, *, body=None, headers=None, maximum=None):
-        require(path.startswith('/') and not path.startswith('//'), 'invalid_relative_endpoint')
+        require_safe_relative_url(path, maximum=self.max_path_bytes)
         limit = maximum or self.max_response_bytes
         raw = canonical(body) if body is not None else None
         headers = dict(headers or {})

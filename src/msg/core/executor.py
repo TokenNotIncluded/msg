@@ -134,8 +134,9 @@ class OperationExecutor:
                 error=OperationError(code=exc.code,retryable=exc.retryable,field_path=exc.field),
                 data=exc.details)
         except Exception:
-            # Do not log input arguments, proof values, or path-GET request URLs.
-            log.exception('operation_failed operation=%s request_id=%s',request.operation,request.request_id)
+            # Neither exception text/tracebacks nor caller-selected IDs are safe
+            # log fields. The stable event remains countable without secrets.
+            log.error('operation_failed')
             return OperationResult(request_id=request.request_id,operation=request.operation,status='error',
                 actor=principal.actor if principal else None,subject=principal.subject if principal else None,
                 error=OperationError(code='internal_error',retryable=False))
