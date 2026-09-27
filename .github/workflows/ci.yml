@@ -39,8 +39,15 @@ jobs:
     env:
       MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
       MSG_TEST_VALKEY_URL: redis://127.0.0.1:6379/0
+      MSG_TEST_LEGACY_SOURCE: ${{ github.workspace }}/.legacy-ledger
     steps:
       - uses: actions/checkout@v7
+      - name: Check out the pinned legacy schema for migration tests
+        uses: actions/checkout@v7
+        with:
+          ref: ac083b3666b1b5268d90115129e2cc4e0dd11521
+          path: .legacy-ledger
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'
