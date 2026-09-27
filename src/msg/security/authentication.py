@@ -16,7 +16,8 @@ CUSTODIAL_SIGNED_WRITES=frozenset({
     'content.post_create','content.post_edit','content.file_put','content.attach',
     'discussion.reply','discussion.quote','discussion.repost','identity.token_rotate',
     'identity.custodial_upgrade_start','identity.custodial_upgrade_finish',
-    'identity.custodial_rewrap_entry','identity.custodial_rewrap_ack',
+    'identity.custodial_rewrap_entry','identity.custodial_rewrap_revision',
+    'identity.custodial_rewrap_ack',
 })
 
 

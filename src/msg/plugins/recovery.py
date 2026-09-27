@@ -6,7 +6,7 @@ from msg.core.errors import Failure,require
 from msg.core.models import HandlerOutput,ResourceRef,Event,AuditEvent,Signature
 from msg.core.requests import signing_bytes
 from msg.plugins.common import (registration,check_access,new_id,resolve,operation_id,
-                                revise_resource,assert_generation)
+                                create_resource,revise_resource,assert_generation)
 from msg.plugins.schemas import IDENTIFIER,INTEGER,REF,STRING,obj
 from msg.security.age_keys import encryption_key_id,public_from_recipient
 from msg.security.vault import open_age_identity,rewrap_owned_age_ciphertext
@@ -23,6 +23,17 @@ def _current_policy(tx,subject):
 def _owner(app,ctx,request,tx):
     from msg.plugins.identity import controlled_owner
     return controlled_owner(app,ctx,request,tx)
+
+
+async def _inventory_matches(tx,subject_id,details):
+    from msg.plugins.identity import custodial_age_inventory
+    frozen=details.get('age_inventory')
+    require(frozen is not None,'custodial_inventory_required')
+    current=await custodial_age_inventory(tx,subject_id)
+    expected=frozen+[item['new'] for item in details.get('rewrap_mappings',{}).values()]
+    require(current==sorted(expected,key=lambda item:(item['id'],item['revision'])),
+            'custodial_inventory_changed')
+    return frozen
 
 
 def install(app):
@@ -47,11 +58,29 @@ def install(app):
         acks=details.get('rewrap_acks',{})
         expected=frozen+[mapping['new'] for mapping in mappings.values()]
         drift=current!=sorted(expected,key=lambda item:(item['id'],item['revision']))
+        source_by_revision={item['revision']:item for item in frozen}
+        mapped_complete=(set(mappings)==set(source_by_revision) and
+            all(mapping.get('old')==source_by_revision[revision] and
+                mapping.get('recipient')==loads(row[2])['encryption_recipient']
+                for revision,mapping in mappings.items()) and
+            len({(item['new']['id'],item['new']['revision'])
+                 for item in mappings.values()})==len(mappings))
+        acked_complete=(mapped_complete and set(acks)==set(source_by_revision) and
+            all(acks[revision].get('new_revision')==mappings[revision]['new']['revision'] and
+                acks[revision].get('ciphertext_digest')==mappings[revision]['new']['ciphertext_digest']
+                for revision in acks))
+        policy=_current_policy(tx,subject.resource_id)
+        policy_review=bool(policy and policy.get('opted_in'))
         return HandlerOutput(data={'challenge_id':request.arguments['challenge_id'],
             'status':row[1],'recipient':loads(row[2])['encryption_recipient'],
             'frozen':frozen,'frozen_digest':digest(frozen),
             'mappings':mappings,'acks':acks,'inventory_changed':drift,
-            'historical_revisions_require_migration':bool(frozen),
+            'mapped_count':len(mappings),'acked_count':len(acks),
+            'known_ciphertexts_migrated':acked_complete and not drift,
+            'recovery_policy_requires_review':policy_review,
+            'external_ciphertexts_migrated_owner_claim':details.get(
+                'external_ciphertexts_migrated',False),
+            'historical_revisions_require_migration':not acked_complete,
             'finalize_ready':False,'vault_remains_active':True})
 
     @op('identity.custodial_rewrap_entry',obj({
@@ -140,6 +169,116 @@ def install(app):
                   'ciphertext_digest':digest(new_ciphertext),
                   'mapping':mapping,
                   'client_decryption_verified':False,'upgrade_status':'pending_rewrap'})
+
+    @op('identity.custodial_rewrap_revision',obj({
+        'challenge_id':IDENTIFIER,'ciphertext_ref':REF,
+        'old_encryption_key_id':IDENTIFIER,'new_recipient':STRING},
+        ('challenge_id','ciphertext_ref','old_encryption_key_id','new_recipient')))
+    async def custodial_rewrap_revision(ctx,request,tx):
+        """Preserve an old Revision and create a separately addressable age copy."""
+        subject=await _owner(app,ctx,request,tx)
+        require(subject.kind=='custodial' and ctx.principal.method=='token',
+                'custodial_token_required')
+        args=request.arguments
+        row=tx.one('''SELECT credential_id,status,challenge,body FROM custodial_upgrades
+            WHERE id=? AND subject=?''',(args['challenge_id'],subject.resource_id))
+        require(row is not None and row[0]==ctx.principal.credential_id and
+                row[1]=='pending_rewrap','custodial_upgrade_not_pending_rewrap')
+        challenge=loads(row[2]);details=loads(row[3])
+        frozen=await _inventory_matches(tx,subject.resource_id,details)
+        require(challenge['encryption_recipient']==args['new_recipient'] and
+                details['old_encryption_key_id']==args['old_encryption_key_id'],
+                'custodial_rewrap_key_mismatch')
+        primary=tx.one('SELECT key_id FROM encryption_subkeys WHERE subject=? AND is_primary=1',
+                       (subject.resource_id,))
+        vault=tx.one('SELECT encryption_key_id,status FROM custodial_vault WHERE subject=?',
+                     (subject.resource_id,))
+        require(primary is not None and vault is not None and vault[1]=='active' and
+                primary[0]==vault[0]==args['old_encryption_key_id'],
+                'custodial_rewrap_unknown_old_key')
+        ref=decode(ResourceRef,args['ciphertext_ref'])
+        require(ref.revision is not None,'custodial_rewrap_revision_required')
+        resource=await tx.resource(ref.id)
+        folder=tx.one("SELECT id FROM resources WHERE parent=? AND name='keystore'",
+                      (subject.resource_id,))
+        require(folder is not None and resource.parent==folder[0] and
+                resource.type=='keystore' and resource.owner==subject.resource_id and
+                resource.state=='active','custodial_rewrap_not_owned')
+        await check_access(app,ctx,request,tx,ref.id,'read')
+        await check_access(app,ctx,request,tx,folder[0],'create')
+        revision=await tx.revision(ref)
+        old={'id':ref.id,'revision':revision.id,
+             'ciphertext_digest':revision.content.digest}
+        require(old in frozen,'custodial_rewrap_not_in_frozen_inventory')
+        require(revision.id not in details.get('rewrap_mappings',{}),
+                'custodial_rewrap_already_mapped')
+        require(tx.setting('keystore_format:'+revision.id)=='age' and
+                revision.content.size<=1048576,'custodial_rewrap_age_required')
+        old_ciphertext=await app.contents.read_bytes(revision.content,limit=1048576)
+        new_ciphertext=rewrap_owned_age_ciphertext(
+            open_age_identity(app,tx,subject.resource_id),args['new_recipient'],old_ciphertext)
+        name='migration-'+digest((args['challenge_id'],revision.id))[7:31]+'.age'
+        copy=await create_resource(app,ctx,request,tx,parent=folder[0],type='keystore',
+            name=name,body=new_ciphertext,media_type='application/octet-stream',mode=0o600)
+        tx.set_setting('keystore_format:'+copy.revision,'age')
+        new={'id':copy.id,'revision':copy.revision,
+             'ciphertext_digest':digest(new_ciphertext)}
+        mapping={'old':old,'new':new,'recipient':args['new_recipient'],
+                 'created_at':wire(ctx.now),'copy_kind':'historical_revision'}
+        details.setdefault('rewrap_mappings',{})[revision.id]=mapping
+        tx.execute('UPDATE custodial_upgrades SET body=? WHERE id=?',
+                   (canonical(details).decode(),args['challenge_id']),write=True)
+        event=Event(id=new_id('audit'),type='identity.custodial_rewrap_revision',
+            time=ctx.now,request_id=request.request_id,actor=ctx.principal.actor,
+            subject=subject.resource_id,resources=(ref,ResourceRef(id=copy.id,
+                revision=copy.revision)),data={'challenge_id':args['challenge_id'],
+                'old':old,'new':new,'plaintext_exposed':False})
+        await tx.append_audit(AuditEvent(event=event,
+            authority=(ResourceRef(id=subject.resource_id),),
+            before_digest=digest(old),after_digest=digest(new),
+            previous_digest=None,entry_digest='',result='historical_copy'))
+        return HandlerOutput(resources=(ResourceRef(id=copy.id,revision=copy.revision),),
+            data={'mapping':mapping,'old_revision_unchanged':True,
+                  'client_decryption_acked':False,'vault_remains_active':True})
+
+    @op('identity.custodial_migration_get',obj({
+        'challenge_id':IDENTIFIER,'old_revision':IDENTIFIER},
+        ('challenge_id','old_revision')),effect='read')
+    async def custodial_migration_get(ctx,request,tx):
+        """Resolve a historical Revision to its explicitly audited new-key copy."""
+        subject=await _owner(app,ctx,request,tx)
+        row=tx.one('''SELECT credential_id,status,body FROM custodial_upgrades
+            WHERE id=? AND subject=?''',(request.arguments['challenge_id'],subject.resource_id))
+        require(row is not None and row[1] in {'pending_rewrap','completed'},
+                'custodial_migration_not_found')
+        if subject.kind=='custodial':
+            require(ctx.principal.method=='token' and ctx.principal.credential_id==row[0],
+                    'custodial_token_required')
+        else:
+            require(subject.kind=='registered' and ctx.principal.method=='signature',
+                    'self_custody_signature_required')
+        details=loads(row[2])
+        mapping=details.get('rewrap_mappings',{}).get(request.arguments['old_revision'])
+        require(mapping is not None,'custodial_migration_not_found')
+        ack=details.get('rewrap_acks',{}).get(request.arguments['old_revision'])
+        require(row[1]!='completed' or ack is not None,
+                'custodial_migration_ack_required')
+        require(mapping['old'] in details.get('age_inventory',[]),
+                'custodial_migration_source_mismatch')
+        old=await tx.revision(ResourceRef(id=mapping['old']['id'],
+                                        revision=mapping['old']['revision']))
+        new=await tx.revision(ResourceRef(id=mapping['new']['id'],
+                                        revision=mapping['new']['revision']))
+        require(old.content.digest==mapping['old']['ciphertext_digest'] and
+                new.content.digest==mapping['new']['ciphertext_digest'],
+                'custodial_migration_digest_mismatch')
+        await check_access(app,ctx,request,tx,mapping['old']['id'],'read')
+        await check_access(app,ctx,request,tx,mapping['new']['id'],'read')
+        return HandlerOutput(output=ResourceRef(id=mapping['new']['id'],
+                revision=mapping['new']['revision']),data={
+            'status':row[1],'source':mapping['old'],'mapped':mapping['new'],
+            'recipient':mapping['recipient'],'client_ack':ack,
+            'old_revision_unchanged':True})
 
     @op('identity.custodial_rewrap_ack',obj({
         'challenge_id':IDENTIFIER,'old_revision':IDENTIFIER,

@@ -139,9 +139,13 @@ class ShortCodeDictionary:
                                "constraints": {key: value for key, value in field_schema.items()
                                                if key not in {"type", "enum"}},
                                "enum": enums})
-            direct = (spec.effect == "read" and schema.get("type") == "object" and
+            direct = (spec.name != "sharing.link_read" and spec.effect == "read" and
+                      schema.get("type") == "object" and
                       all(name in properties and _is_scalar(properties[name]) for name in required))
-            if direct:
+            if spec.name == "sharing.link_read":
+                template = "/-/p/sharing.link_read"
+                example = None
+            elif direct:
                 template = "/-/g/" + op_code + "".join("/{" + name + "}" for name in required)
                 example = "/-/g/" + op_code + "".join(
                     "/" + quote(

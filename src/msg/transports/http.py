@@ -397,7 +397,9 @@ def create_app(service):
                     return await NativeGitStore(service).http_lfs(request,native.group(1),
                                                                   native.group(2)[9:])
                 return await NativeGitStore(service).http(request,native.group(1),native.group(2))
-            lfs_write=re.fullmatch(r'/-/git/([A-Za-z0-9_-]{1,128})/info/lfs/(objects(?:/batch|/[0-9a-f]{64}/[0-9]+))',path)
+            # git-lfs derives <remote>.git/info/lfs even when the advertised
+            # push URL is /-/git/<id>; both spellings remain inside /-/.
+            lfs_write=re.fullmatch(r'/-/git/([A-Za-z0-9_-]{1,128})(?:\.git)?/info/lfs/(objects(?:/batch|/[0-9a-f]{64}/[0-9]+))',path)
             if lfs_write:
                 require(raw_path==path.encode('ascii'),'not_found')
                 from msg.extensions.repositories import NativeGitStore
@@ -925,6 +927,8 @@ def create_app(service):
                     return json_response({'operation':service.registry.describe(spec),
                                           'input':service.registry.schema(spec.input_schema),
                                           'output':service.registry.schema(spec.output_schema)})
+                require(not (transport=='g' and name=='sharing.link_read'),
+                        'method_not_allowed')
                 if (transport=='g' and request.method=='GET' and
                         operation_route(spec).effect in {RouteEffect.BUSINESS_WRITE,
                                                          RouteEffect.EXTERNAL_EFFECT} and
@@ -953,6 +957,7 @@ def create_app(service):
                     code=parts[3].decode('ascii')
                     require(bool(code),'invalid_path')
                     spec=short_codes.resolve_operation(code)
+                    require(spec.name!='sharing.link_read','method_not_allowed')
                     if (request.method=='GET' and
                             operation_route(spec).effect in {RouteEffect.BUSINESS_WRITE,
                                                              RouteEffect.EXTERNAL_EFFECT} and

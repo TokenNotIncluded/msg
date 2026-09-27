@@ -20,7 +20,8 @@ BASE_FAMILIES = {
         'identity.encryption_key_rotate',
         'identity.custodial_status','identity.custodial_upgrade_start',
         'identity.custodial_upgrade_finish','identity.personal_put','identity.soul_visibility','identity.note_put',
-        'identity.custodial_rewrap_entry','identity.custodial_rewrap_ack',
+        'identity.custodial_rewrap_entry','identity.custodial_rewrap_revision',
+        'identity.custodial_rewrap_ack','identity.custodial_migration_get',
         'identity.custodial_upgrade_result','identity.custodial_upgrade_inventory',
         'identity.note_list','identity.note_get',
         'identity.note_archive','identity.note_restore','identity.todo_put',
@@ -47,7 +48,8 @@ EXCLUDED_BASE = {'content.purge','content.chown','identity.recover'}
 TEMPORARY_OPERATIONS = frozenset({
     'identity.temporary','identity.custodial_create','identity.upgrade','identity.token_rotate','identity.custodial_status',
     'identity.custodial_upgrade_start','identity.custodial_upgrade_finish',
-    'identity.custodial_rewrap_entry','identity.custodial_upgrade_inventory',
+    'identity.custodial_rewrap_entry','identity.custodial_rewrap_revision',
+    'identity.custodial_migration_get','identity.custodial_upgrade_inventory',
     'identity.custodial_rewrap_ack',
     'content.topic_create','content.post_create','content.post_edit','content.archive',
     'content.restore','content.file_put','content.attach',
@@ -103,7 +105,7 @@ def install_capabilities(registry):
         'cert.revoke': (_selected(operations,('cert.revoke',)),()),
         'cert.ca.issue': (_selected(operations,('cert.publish',)),()),
         'system.inspect': (_selected(operations,('system.inspect',)),()),
-        'system.config': (_selected(operations,('system.config',)),()),
+        'system.config': (_selected(operations,('system.config','system.share_links_set')),()),
         'system.maintenance': (_selected(operations,('system.maintenance',)),()),
     }
     for name,(names,replaces) in rules.items():

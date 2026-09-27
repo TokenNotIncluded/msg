@@ -320,6 +320,10 @@ def install(app):
                           (subject.resource_id,))
         policy_opted_in=bool(policy_row and loads(policy_row[0]).get('opted_in'))
         if tracked or policy_opted_in or not args['external_ciphertexts_migrated']:
+            details=dict(details,
+                external_ciphertexts_migrated=args['external_ciphertexts_migrated'],
+                migration_ack=wire(args['migration_ack']),
+                age_possession_digest=digest(args['age_proof']))
             state={'status':'pending_rewrap','challenge_id':args['challenge_id'],
                    'server_tracked_age_revisions':tracked,
                    'age_inventory_digest':digest(frozen),
@@ -329,8 +333,8 @@ def install(app):
                    else 'owner_declared_only',
                    'token_remains_active':True,'vault_remains_active':True}
             tx.execute('''UPDATE custodial_upgrades SET status='pending_rewrap',
-                ephemeral_nonce=NULL,ephemeral_ciphertext=NULL WHERE id=?''',
-                (args['challenge_id'],),write=True)
+                ephemeral_nonce=NULL,ephemeral_ciphertext=NULL,body=? WHERE id=?''',
+                (canonical(details).decode(),args['challenge_id']),write=True)
             return HandlerOutput(data=state)
         old_signing=await tx.credential(details['old_identity_key_id'])
         old_key_id=old_signing.id

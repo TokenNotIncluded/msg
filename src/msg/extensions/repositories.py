@@ -175,13 +175,42 @@ class NativeGitStore:
             rid=await self._lfs_authorize(request,'git.lfs_read',{'id':repo_id,'oid':oid})
             path=self.lfs(rid).path(oid)
             require(path.is_file(),'not_found')
-            headers={'Content-Length':str(path.stat().st_size),'Cache-Control':'private, no-store',
-                     'X-Content-Type-Options':'nosniff','Content-Disposition':'attachment'}
-            if request.method=='HEAD':return Response(status_code=200,headers=headers)
+            size=path.stat().st_size
+            etag='"sha256:'+oid+'"'
+            begin,end,status=0,size,200
+            requested=request.headers.get('range')
+            if requested and request.headers.get('if-range') in {None,etag}:
+                match=re.fullmatch(r'bytes=(\d*)-(\d*)',requested) if len(requested)<=128 else None
+                if match and any(match.groups()):
+                    left,right=match.groups()
+                    if left:
+                        begin=int(left)
+                        end=min(size,int(right)+1) if right else size
+                        valid=begin<size and begin<end
+                    else:
+                        suffix=int(right)
+                        begin=max(0,size-suffix);end=size
+                        valid=suffix>0 and begin<end
+                    if valid:status=206
+                else:valid=False
+                if not valid:
+                    return Response(status_code=416,headers={'Content-Range':f'bytes */{size}',
+                                    'Accept-Ranges':'bytes','Cache-Control':'private, no-store'})
+            headers={'Content-Length':str(end-begin),'Cache-Control':'private, no-store',
+                     'X-Content-Type-Options':'nosniff','Content-Disposition':'attachment',
+                     'Accept-Ranges':'bytes','ETag':etag}
+            if status==206:headers['Content-Range']=f'bytes {begin}-{end-1}/{size}'
+            if request.method=='HEAD':return Response(status_code=status,headers=headers)
             async def stream():
                 with path.open('rb') as source:
-                    while chunk:=await asyncio.to_thread(source.read,65536):yield chunk
-            return StreamingResponse(stream(),media_type='application/octet-stream',headers=headers)
+                    source.seek(begin)
+                    remaining=end-begin
+                    while remaining:
+                        chunk=await asyncio.to_thread(source.read,min(65536,remaining))
+                        require(bool(chunk),'content_truncated')
+                        remaining-=len(chunk)
+                        yield chunk
+            return StreamingResponse(stream(),status_code=status,media_type='application/octet-stream',headers=headers)
         require(suffix=='objects/batch' and request.method=='POST','not_found')
         require(request.headers.get('content-type','').split(';',1)[0]=='application/vnd.git-lfs+json',
                 'invalid_lfs_content_type')

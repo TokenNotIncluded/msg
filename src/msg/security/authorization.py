@@ -80,6 +80,49 @@ class AuthorizationService:
         return bool(row and row[0]==resource.owner and parse_time(row[1])>now
                     and resource.state=='active')
 
+    async def share_link_read_allowed(self,grantor,credential_id,resource,chain,now,session):
+        """Recheck one bearer source without creating a principal or granting traversal.
+
+        The original signed owner's credential is a revocation boundary. A link
+        cannot borrow that principal for other reads or outlive its current scope.
+        """
+        if resource.owner!=grantor or resource.state!='active' or any(
+                item.state!='active' for item in chain):
+            return False
+        if self.registry.resource_type(resource.type,resource.type_version).container:
+            return False
+        if any(item.id in {'r_agents','r_rules','t_last_will'} or
+               item.type in {'tool','csr','certificate','credential','legacy_directive',
+                             'dm_conversation'} for item in chain):
+            return False
+        if any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','todos'}
+               for parent,child in zip(chain,chain[1:])):
+            return False
+        if any(session.setting('hosting_preview:'+item.id) or
+               session.setting('hosting_preview_file:'+item.id) for item in chain):
+            return False
+        if session.one('''SELECT 1 FROM dm_conversations WHERE resource_id IN ('''+
+                       ','.join('?' for _ in chain)+') LIMIT 1',
+                       tuple(item.id for item in chain)) is not None:
+            return False
+        memberships={m.organization_id for m in await session.memberships(grantor)}
+        if not allows(resource,grantor,memberships,'read') or any(
+                not allows(ancestor,grantor,memberships,'traverse') for ancestor in chain[:-1]):
+            return False
+        try:
+            credential=await session.credential(credential_id)
+        except Failure as exc:
+            if exc.code=='credential_not_found':
+                return False
+            raise
+        if (credential.subject_id!=grantor or credential.kind!='signing_key' or
+                credential.revoked_at is not None or credential.not_before>now or
+                (credential.expires_at is not None and credential.expires_at<=now)):
+            return False
+        return any([('sharing.link_create@1' in grant.operations and
+                     await scope_contains(grant.scope,resource.id,session))
+                    for grant in credential.ceiling])
+
     async def require_base(self,principal,operation,resource,session):
         await self._ceiling(principal,operation,resource,session)
         require(await self.ordinary(principal,operation,resource,session),'credential_ceiling')
@@ -110,7 +153,8 @@ class AuthorizationService:
             if check.check in _WRITE_CHECKS and any(
                     parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes','todos'}
                     for parent,child in zip(chain,chain[1:])):
-                sharing_notes=(operation in {'sharing.grant@1','sharing.revoke@1'} and
+                sharing_notes=(operation in {'sharing.grant@1','sharing.revoke@1',
+                                             'sharing.link_create@1','sharing.link_revoke@1'} and
                     all(child.name not in {'SOUL.md','AGENTS.md','todos'}
                         for parent,child in zip(chain,chain[1:]) if parent.type=='user'))
                 require((sharing_notes or operation in {'identity.personal_put@1','identity.note_put@1',

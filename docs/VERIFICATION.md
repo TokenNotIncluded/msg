@@ -1,6 +1,15 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 持久Sync checkpoint与最小LFS（未提交，本地全套通过）
+## 2026-09-27 真实LFS、ShareLink与托管历史副本（未提交，本地全套通过）
+
+GIT_CONFIG_GLOBAL=/dev/null环境全套 **351 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；未提交、无本批CI。联合定向24包含在全套内，不累加；短码183→190旧义保留。真实git-lfs **3.8.0**以 **1.3MB** 对象完成push/clone/pull，Range与/-/.git兼容已有。未完成跨worker配额、共用BlobStore/GC生命周期。
+
+ShareLink默认off，受控system.share_links_set开关；token仅POST body，GET长短路径均拒绝，不是裸URL分享。托管历史age Revision仅创建显式私有新钥副本+mapping，原历史不变、finalize继续fail-closed；外部密文不可证明。以上不借用8480589的CI。
+
+
+ShareLink长短GET token URL封禁与system.share_links_set签名开关已有回归。历史密文只形成显式私有副本与mapping，finalize仍关闭，不声称全账号迁移或服务器能证明外部密文可恢复。8480589的CI36294545663已success，属于前批345/8/build。
+
+## 2026-09-27 持久Sync checkpoint与最小LFS（8480589已推送、CI成功）
 
 权威设计修订仍为00:35:34.164Z。当前Sync定向 **10 passed**、LFS定向 **8 passed**，随后GIT_CONFIG_GLOBAL=/dev/null环境全套 **345 passed**、conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；此前定向不额外累加，仍未提交/无本批CI。签名checkpoint open/ack经/-/、GET pending只读、CAS与精确seen最多10000；LFS普通repo仅download，上传/-/校验SHA256/size后原子发布。真实git-lfs、Range、跨worker配额、与Files/Transfer共用BlobStore均未完成验收。
 
@@ -9,6 +18,9 @@
 
 
 失败根因：默认Git 1MiB postBuffer先发送b'0000'探测，再同request_id发送真实包，原处理造成409。本批probe改为只读鉴权、不建job或业务幂等结果；GIT_CONFIG_GLOBAL=/dev/null联合定向 **27 passed**。短码175→183、旧义保留。本批最终GIT_CONFIG_GLOBAL=/dev/null全套345/8/build已通过，真实默认buffer两POST回归通过；仍未提交/无本批CI，不能把c965385失败CI改写为成功。LFS签名PUT与托管冻结清单ACK同属本批未提交切片。
+
+
+提交8480589已推送，[CI 36294545663](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36294545663)completed/success（345 core、8 conformance、build）。c965385的失败仍是历史事实，默认Git探测修复在8480589获得远端验证；未部署。
 
 ## 2026-09-27 Todo due、custodial rewrap与Git流式限制（c965385已推送，CI失败）
 

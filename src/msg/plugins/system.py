@@ -44,6 +44,21 @@ def install(app):
             before_digest=digest(before), after_digest=digest(after), previous_digest=None, entry_digest='', result='configured'))
         return HandlerOutput(data={'runtime':after})
 
+    @op('system.share_links_set',obj({'enabled':BOOLEAN},('enabled',)),signature=True)
+    async def share_links_set(ctx,request,tx):
+        await authorized(ctx,request,tx,'system.config')
+        before=bool(tx.setting('share_links_enabled',False))
+        after=request.arguments['enabled']
+        tx.set_setting('share_links_enabled',after)
+        event=Event(id=new_id('audit'),type='system.share_links_set',time=ctx.now,
+            request_id=request.request_id,actor=ctx.principal.actor,subject=ctx.principal.subject,
+            resources=(ResourceRef(id=ROOT_SPACE),),data={'enabled':after})
+        await tx.append_audit(AuditEvent(event=event,
+            authority=tuple(ResourceRef(id=cid) for cid in ctx.principal.certificates),
+            before_digest=digest({'enabled':before}),after_digest=digest({'enabled':after}),
+            previous_digest=None,entry_digest='',result='configured'))
+        return HandlerOutput(data={'enabled':after})
+
     @op('system.maintenance', obj({'action':{'enum':list(MAINTENANCE_ACTIONS_V1)}},('action',)),
         effect='external', signature=True)
     @op('system.maintenance', obj({'action':{'enum':list(MAINTENANCE_ACTIONS)}},('action',)),

@@ -2,10 +2,14 @@
 import base64
 import hashlib
 import os
+import asyncio
+import subprocess
+import shutil
 from datetime import timedelta
 
 import httpx
 import pytest
+import uvicorn
 
 from msg.core.codec import b64,canonical,wire
 from msg.core.requests import request_for
@@ -59,8 +63,28 @@ async def test_lfs_upload_only_under_execution_boundary_and_current_repo_acl(ins
         assert done.status_code==200,done.text
         downloaded=await http.get(read+'/info/lfs/objects/'+oid)
         assert downloaded.status_code==200 and downloaded.content==data
+        assert downloaded.headers['accept-ranges']=='bytes'
+        ranged=await http.get(read+'/info/lfs/objects/'+oid,headers={'Range':'bytes=1-5'})
+        assert ranged.status_code==206 and ranged.content==data[1:6]
+        assert ranged.headers['content-range']==f'bytes 1-5/{len(data)}'
+        suffix=await http.get(read+'/info/lfs/objects/'+oid,headers={'Range':'bytes=-4'})
+        assert suffix.status_code==206 and suffix.content==data[-4:]
+        head=await http.head(read+'/info/lfs/objects/'+oid,headers={'Range':'bytes=1-5'})
+        assert head.status_code==206 and head.headers['content-length']=='5'
+        assert head.content==b''
+        stale=await http.get(read+'/info/lfs/objects/'+oid,
+                             headers={'Range':'bytes=1-5','If-Range':'"different"'})
+        assert stale.status_code==200 and stale.content==data
+        invalid=await http.get(read+'/info/lfs/objects/'+oid,
+                               headers={'Range':f'bytes={len(data)}-'})
+        assert invalid.status_code==416 and invalid.headers['content-range']==f'bytes */{len(data)}'
         missing_auth=await http.put(path,content=data)
         assert missing_auth.status_code==401
+        archived=await call(app,'content.archive',{'id':rid},key=key,subject=user,
+                            expected=((rid,created.data['generation']),))
+        assert archived.status=='ok',wire(archived)
+        denied=await http.get(read+'/info/lfs/objects/'+oid)
+        assert denied.status_code!=200
 
 
 @pytest.mark.asyncio
@@ -113,3 +137,82 @@ async def test_lfs_signed_put_uses_one_publish_proof(installed):
         fetched=await http.get(created.data['read_url'].removeprefix(app.settings.service_url.rstrip('/'))+
                                '/info/lfs/objects/'+oid)
         assert fetched.status_code==200 and fetched.content==body
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(shutil.which('git-lfs') is None,reason='git-lfs CLI unavailable')
+async def test_real_git_lfs_push_and_pull(installed,tmp_path):
+    app,_=installed
+    key,user,_=await register(app,'lfs-real')
+    created=await call(app,'git.create',{'parent':'/@lfs-real','name':'code.git'},
+                       key=key,subject=user)
+    rid=created.resources[0].id
+    issued=await call(app,'identity.token_create',{'nonce':b64(os.urandom(32)),
+        'ceiling':wire((grant_for(app.registry.capability('git.basic')),)),'ttl':3600},
+        key=key,subject=user)
+    basic='Basic '+base64.b64encode((issued.data['credential_id']+':'+issued.data['token']).encode()).decode()
+    application=create_app(app)
+    port_holder=[0]
+    async def host_bridge(scope,receive,send):
+        if scope['type']=='http':
+            scope={**scope,'headers':[(name,b'testserver' if name==b'host' else value)
+                                       for name,value in scope['headers']]}
+        if scope['type']!='http' or not scope['path'].endswith('/info/lfs/objects/batch'):
+            return await application(scope,receive,send)
+        messages=[]
+        async def collect(message):messages.append(message)
+        await application(scope,receive,collect)
+        source=b'http://testserver'
+        destination=f'http://127.0.0.1:{port_holder[0]}'.encode()
+        for message in messages:
+            if message['type']=='http.response.body':
+                message={**message,'body':message.get('body',b'').replace(source,destination)}
+            elif message['type']=='http.response.start':
+                message={**message,'headers':[(name,value) for name,value in message['headers']
+                                            if name.lower()!=b'content-length']}
+            await send(message)
+    server=uvicorn.Server(uvicorn.Config(host_bridge,host='127.0.0.1',port=0,
+                                         log_level='error',lifespan='off'))
+    task=asyncio.create_task(server.serve())
+    try:
+        for _ in range(100):
+            if server.started and server.servers:break
+            await asyncio.sleep(0.05)
+        assert server.started and server.servers
+        port_holder[0]=server.servers[0].sockets[0].getsockname()[1]
+        work=tmp_path/'work';work.mkdir()
+        env={**os.environ,'GIT_CONFIG_GLOBAL':'/dev/null','GIT_TERMINAL_PROMPT':'0'}
+        def git(folder,*args):
+            return subprocess.run(['git','-C',str(folder),*args],capture_output=True,text=True,
+                                  timeout=90,env=env)
+        assert git(work,'init','--initial-branch=main').returncode==0
+        assert git(work,'config','user.name','Test').returncode==0
+        assert git(work,'config','user.email','test@example.invalid').returncode==0
+        assert git(work,'lfs','install','--local').returncode==0
+        assert git(work,'lfs','track','*.bin').returncode==0
+        body=os.urandom(1_300_000)
+        (work/'payload.bin').write_bytes(body)
+        assert git(work,'add','.').returncode==0
+        assert git(work,'commit','-m','LFS file').returncode==0
+        write_url=f'http://127.0.0.1:{port_holder[0]}/-/git/{rid}'
+        pushed=await asyncio.to_thread(git,work,'-c','http.extraHeader=Authorization: '+basic,
+                                       '-c','http.extraHeader=X-Msg-Request-Id: lfs-real-push',
+                                       '-c','http.postBuffer=1048576','push',write_url,'main')
+        assert pushed.returncode==0,pushed.stderr
+        oid=hashlib.sha256(body).hexdigest()
+        assert app.settings.server.repositories_dir.joinpath(rid+'.git','lfs','objects',
+                                                             oid[:2],oid[2:4],oid).is_file()
+        read_url=f'http://127.0.0.1:{port_holder[0]}/@lfs-real/code.git'
+        clone=tmp_path/'clone'
+        cloned=await asyncio.to_thread(subprocess.run,['git','-c','http.extraHeader=Authorization: '+basic,
+            'clone',read_url,str(clone)],capture_output=True,text=True,timeout=90,env={**env,'GIT_LFS_SKIP_SMUDGE':'1'})
+        assert cloned.returncode==0,cloned.stderr
+        assert git(clone,'lfs','install','--local').returncode==0
+        pulled=await asyncio.to_thread(git,clone,'-c','http.extraHeader=Authorization: '+basic,
+                                       'lfs','pull')
+        assert pulled.returncode==0,pulled.stderr
+        assert (clone/'payload.bin').read_bytes()==body,(pulled.stdout,pulled.stderr,
+            git(clone,'lfs','ls-files').stdout)
+    finally:
+        server.should_exit=True
+        await task

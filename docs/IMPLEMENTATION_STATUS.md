@@ -2,7 +2,7 @@
 
 权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T00:35:34.164Z`。
 
-**当前状态：第六批未提交、无本批CI；在GIT_CONFIG_GLOBAL=/dev/null模拟CI默认Git环境下，全套345 passed、conformance 8 passed、uv build成功。** 联合定向27及真实两POST探测回归已纳入验证，不累加；短码175→183旧义保留。前批c965385远端CI36293461291失败历史不变，本批修复尚无远端CI结果。历史Revision依赖旧vault的升级仍fail-closed，未部署。
+**当前状态：第七批本地在GIT_CONFIG_GLOBAL=/dev/null下全套351 passed、conformance 8 passed、uv build成功；尚未提交、无本批CI，未部署。** 短码183→190保旧义；联合定向24已包含在全套内，不累加。真实git-lfs3.8.0 push/clone/pull、ShareLink长短GET封禁与系统签名开关均有回归。前批8480589的CI36294545663成功（345/8/build），仅对应旧提交。
 
 历史证据单独保留：`e01dacc` 本地 228/8/build 与[CI 36281301900](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)通过；`f085e7f` 本地 206/8/build 与 CI 通过。220 是双钥加入前的中间结果，不是当前基线，不与任何测试数量累加。详细命令见 [VERIFICATION](VERIFICATION.md)。
 
@@ -123,7 +123,7 @@ Git /-/receive-pack独立32MiB硬上限、每worker最多2并发、上传120秒d
 
 communication.sync_checkpoint_open/ack为签名/-/写，持久checkpoint用CAS版本更新；GET只计算pending与ACK描述，不推进已提交状态。seen精确记录最多10000引用，定向10 passed。它与旧64引用短cursor并存，不是无限容量或自动已读；checkpoint ACK仅同步进度确认，不是内容ACK。超过上限、并发ACK、旧版本及撤权仍需明确失败/重同步，完整生命周期与长期部署验收尚缺。
 
-LFS最小上传/下载切片定向8 passed：普通repo路径仅download，上传仅/-/；SHA256/size校验后原子发布。尚未验证真实git-lfs客户端、Range、跨worker配额，也未共用Files/Transfer的BlobStore；不能称完整Git/LFS feature完成。SHA256不是读取权限，普通路径不得签发上传或隐式发布。
+LFS最小上传/下载切片定向8 passed：普通repo路径仅download，上传仅/-/；SHA256/size校验后原子发布。尚未验证真实git-lfs/Range已有第七批证据，跨worker配额尚缺，也未共用Files/Transfer的BlobStore；不能称完整Git/LFS feature完成。SHA256不是读取权限，普通路径不得签发上传或隐式发布。
 
 托管冻结清单/映射/新钥签名ACK已有，但历史Revision依赖旧vault、finalize_ready=false，完整升级仍未完成；本批本地345/8/build通过，仍未提交/无本批CI；c965385远端失败不能作为通过证据。
 
@@ -131,4 +131,12 @@ LFS最小上传/下载切片定向8 passed：普通repo路径仅download，上�
 
 Sync checkpoint签名open/ack、GET pending只读、CAS及seen<=10000已有；LFS basic upload/download与签名PUT已有。托管升级已冻结迁移清单、记录映射并接受新钥签名ACK，但历史Revision仍依赖旧vault，finalize_ready=false；旧vault/token不能据此销毁，不称完整升级完成。
 
-c965385 CI36293461291失败源于Git默认1MiB postBuffer的0000探测请求占用相同request_id，后续真实包409。当前修复将该probe限定为只读鉴权、不创建job/幂等业务结果；真实包仍按原授权/摘要/幂等执行。GIT_CONFIG_GLOBAL=/dev/null联合定向27 passed，短码175→183旧义保留。本批本地345/8/build通过，仍未提交/无本批CI；真实git-lfs、Range、跨worker配额与共用BlobStore仍缺。
+c965385 CI36293461291失败源于Git默认1MiB postBuffer的0000探测请求占用相同request_id，后续真实包409。当前修复将该probe限定为只读鉴权、不创建job/幂等业务结果；真实包仍按原授权/摘要/幂等执行。GIT_CONFIG_GLOBAL=/dev/null联合定向27 passed，短码175→183旧义保留。本批本地345/8/build通过，仍未提交/无本批CI；真实git-lfs/Range已有第七批证据，跨worker配额与共用BlobStore仍缺。
+
+## 第七批局部实现与证据
+
+真实git-lfs 3.8.0使用1.3MB对象完成push/clone/pull；LFS Range及/-/.git兼容已有，联合定向24已纳入最终351项全套。跨worker配额、与Files/Transfer共用BlobStore及GC/引用生命周期仍待完成，不能据单对象成功宣称全量LFS运维完备。
+
+ShareLink默认off，system.share_links_set为受控开关；token仅POST body，长短GET token路径均已拒绝。它不是裸URL可直接浏览器打开的分享能力；仍须当前授权/期限/撤销边界，不把token写入普通页面、日志或可点击执行URL。
+
+托管历史age Revision迁移已有显式私有新钥副本与mapping，旧原文/历史不改写；finalize仍fail-closed，不因副本存在就销毁旧vault或撤销最后入口。外部密文和实际recipient集合无法由服务器证明，完整升级仍缺。这些增量本地351/8/build已通过，仍未提交/无本批CI；历史密文仅显式副本mapping，finalize仍关闭，不借用8480589的CI。
