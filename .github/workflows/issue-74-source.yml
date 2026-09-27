@@ -1,22 +1,47 @@
-name: Issue 74 source snapshot
+name: Issue 74 isolated verification
 on:
   push:
     branches: [work/issues-74-76-continuation]
-    paths: [.github/workflows/issue-74-source.yml]
 permissions:
   contents: read
 jobs:
-  snapshot:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+          cache: pip
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq age
+      - run: python -m pip install -e '.[dev]'
+      - name: Targeted real-database regression
+        run: python -m pytest tests/test_delivery_target_regression.py -q --junitxml=artifacts/targeted.xml
       - name: Archive tracked source only
+        if: always()
         run: git archive --format=tar.gz --output=issue-74-source.tar.gz HEAD
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
-          name: issue-74-source
-          path: issue-74-source.tar.gz
+          name: issue-74-verification
+          path: |
+            issue-74-source.tar.gz
+            artifacts/
           retention-days: 1
