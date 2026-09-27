@@ -152,7 +152,7 @@ def _write_restored_config(source, settings, postgres_dsn):
              'staging':str(settings.server.staging_dir),
              'service_keys':str(settings.service_keys)}
     sections={'server':server,'storage':storage}
-    for name in ('identity','limits','plugins','tools'):
+    for name in ('identity','money','limits','plugins','tools'):
         if name in raw:
             sections[name]=raw[name]
     lines=[]
