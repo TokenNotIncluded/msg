@@ -390,7 +390,18 @@ def create_app(service):
             if native:
                 require(service.registry.operation('git.refs').effect=='read','effect_mismatch')
                 from msg.extensions.repositories import NativeGitStore
+                if native.group(2).startswith('info/lfs/'):
+                    require(service.registry.operation('git.lfs_read').effect=='read' and
+                            service.registry.operation('git.lfs_read_batch').effect=='read',
+                            'effect_mismatch')
+                    return await NativeGitStore(service).http_lfs(request,native.group(1),
+                                                                  native.group(2)[9:])
                 return await NativeGitStore(service).http(request,native.group(1),native.group(2))
+            lfs_write=re.fullmatch(r'/-/git/([A-Za-z0-9_-]{1,128})/info/lfs/(objects(?:/batch|/[0-9a-f]{64}/[0-9]+))',path)
+            if lfs_write:
+                require(raw_path==path.encode('ascii'),'not_found')
+                from msg.extensions.repositories import NativeGitStore
+                return await NativeGitStore(service).http_lfs(request,*lfs_write.groups(),write=True)
             git_push=re.fullmatch(r'/-/git/([A-Za-z0-9_-]{1,128})/(info/refs|git-receive-pack)',path)
             if git_push:
                 require(raw_path==path.encode('ascii'),'not_found')

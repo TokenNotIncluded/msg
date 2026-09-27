@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 from msg.client_secrets import write_private
 from msg.core.codec import canonical, digest, loads, wire
@@ -170,7 +171,36 @@ async def verify_custodial_rewrap_entry(client,resource_id,revision,new_identity
         ciphertext=path.read_bytes()
         require(digest(ciphertext)==expected_ciphertext_digest,
                 'custodial_rewrap_ciphertext_mismatch')
-        _age('--decrypt','--identity',str(identity),input_data=ciphertext)
+        plaintext=_age('--decrypt','--identity',str(identity),input_data=ciphertext)
     return {'id':resource_id,'revision':revision,'recipient':expected_recipient,
             'ciphertext_digest':expected_ciphertext_digest,'decrypted_locally':True,
-            'upgrade_finalized':False}
+            'plaintext_digest':digest(plaintext),'upgrade_finalized':False}
+
+
+async def ack_custodial_rewrap_entry(client,challenge_id,old_revision,
+                                    new_identity_path):
+    """Decrypt the mapped ciphertext locally, then sign an exact mapping ACK."""
+    require(client.state.token is not None and client.state.signer is not None and
+            client.state.subject is not None,'custodial_upgrade_identity_required')
+    inventory=client.checked(await client.call('identity.custodial_upgrade_inventory',
+                                               {'challenge_id':challenge_id})).data
+    require(inventory['status']=='pending_rewrap' and not inventory['inventory_changed'],
+            'custodial_inventory_changed')
+    mapping=inventory['mappings'].get(old_revision)
+    require(mapping is not None,'custodial_rewrap_mapping_missing')
+    require(mapping['old'] in inventory['frozen'],'custodial_rewrap_mapping_mismatch')
+    new=mapping['new']
+    verified=await verify_custodial_rewrap_entry(client,new['id'],new['revision'],
+        new_identity_path,expected_recipient=inventory['recipient'],
+        expected_ciphertext_digest=new['ciphertext_digest'])
+    request_id=uuid4().hex
+    signed={'subject_id':client.state.subject,'challenge_id':challenge_id,
+        'old':mapping['old'],'new':new,
+        'plaintext_digest':verified['plaintext_digest'],'request_id':request_id}
+    ack=client.state.signer.sign(canonical(signed),purpose='custodial-rewrap-ack')
+    return client.checked(await client.call('identity.custodial_rewrap_ack',{
+        'challenge_id':challenge_id,'old_revision':old_revision,
+        'new_revision':new['revision'],
+        'ciphertext_digest':new['ciphertext_digest'],
+        'plaintext_digest':verified['plaintext_digest'],
+        'decryption_ack':wire(ack)},request_id=request_id))

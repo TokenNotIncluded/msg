@@ -100,12 +100,8 @@ async def test_git_http_receive_requires_explicit_request_id(installed):
         assert oversized.status_code==413
         assert oversized.json()['error']['code']=='request_too_large'
     async with app.metadata.transaction(write=False) as tx:
-        row=tx.one("SELECT id FROM jobs WHERE kind='git.receive' ORDER BY id LIMIT 1")
-        assert row is not None
-        job=await tx.job(row[0])
-        assert job.state=='done'
-        assert tx.setting('job_status:'+job.id)['refs_changed'] is False
-        assert tx.setting('git_http_result:'+job.id) is not None
+        assert tx.one("SELECT COUNT(*) FROM jobs WHERE kind='git.receive'")[0]==0
+        assert tx.one("SELECT COUNT(*) FROM results WHERE request_id='noop-one'")[0]==0
 
 
 @pytest.mark.asyncio
@@ -154,6 +150,7 @@ async def test_standard_git_push_uses_guarded_http_endpoint_once(installed,tmp_p
     basic=base64.b64encode((issued.data['credential_id']+':'+issued.data['token']).encode()).decode()
     application=create_app(app)
     captured=[]
+    observed=[]
     async def host_bridge(scope,receive,send):
         if scope['type']=='http':
             scope={**scope,'headers':[(name,b'testserver' if name==b'host' else value)
@@ -164,7 +161,13 @@ async def test_standard_git_push_uses_guarded_http_endpoint_once(installed,tmp_p
             if scope['type']=='http' and scope['path'].endswith('/git-receive-pack'):
                 chunks.append(message.get('body',b''))
             return message
-        await application(scope,record,send)
+        async def report(message):
+            if scope['type']=='http' and scope['path'].endswith('/git-receive-pack') and message['type']=='http.response.start':
+                observed.append({'status':message['status'],'headers':{
+                    name.decode():value.decode() for name,value in scope['headers']
+                    if name in {b'content-length',b'transfer-encoding',b'expect',b'git-protocol'}}})
+            await send(message)
+        await application(scope,record,report)
         if chunks:
             captured.append(b''.join(chunks))
     server=uvicorn.Server(uvicorn.Config(host_bridge,host='127.0.0.1',port=0,
@@ -189,11 +192,16 @@ async def test_standard_git_push_uses_guarded_http_endpoint_once(installed,tmp_p
         assert git('add','.').returncode==0
         assert git('commit','-m','initial').returncode==0
         command=['git','-C',str(work),'-c','http.extraHeader=Authorization: Basic '+basic,
-                 '-c','http.extraHeader=X-Msg-Request-Id: real-push-once','push',
+                 '-c','http.extraHeader=X-Msg-Request-Id: real-push-once',
+                 '-c','http.postBuffer=1048576','push',
                  f'http://127.0.0.1:{port}/-/git/{rid}','main']
         pushed=await asyncio.to_thread(subprocess.run,command,capture_output=True,text=True,timeout=60)
-        assert pushed.returncode==0,pushed.stderr
-        assert len(captured)==1 and len(captured[0])>app.settings.server.limits.max_request_bytes
+        assert pushed.returncode==0,(pushed.stderr,observed,[len(c) for c in captured])
+        assert len(captured)==2 and captured[0]==b'0000'
+        assert len(captured[1])>app.settings.server.limits.max_request_bytes
+        assert [item['status'] for item in observed]==[200,200]
+        assert observed[0]['headers'].get('content-length')=='4'
+        assert observed[1]['headers'].get('transfer-encoding')=='chunked'
         refs=await call(app,'git.refs',{'id':rid})
         assert refs.status=='ok' and refs.data['refs'][0]['name']=='refs/heads/main',wire(refs)
         async with app.metadata.transaction(write=False) as tx:
@@ -204,10 +212,10 @@ async def test_standard_git_push_uses_guarded_http_endpoint_once(installed,tmp_p
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                      base_url='http://testserver') as http:
             replay=await http.post(f'/-/git/{rid}/git-receive-pack',
-                                   content=captured[0],headers=headers)
+                                   content=captured[1],headers=headers)
             assert replay.status_code==200,replay.text
             conflict=await http.post(f'/-/git/{rid}/git-receive-pack',
-                                     content=captured[0]+b'x',headers=headers)
+                                     content=captured[1]+b'x',headers=headers)
             assert conflict.status_code==409,conflict.text
             assert conflict.json()['error']['code']=='idempotency_conflict'
         async with app.metadata.transaction(write=False) as tx:

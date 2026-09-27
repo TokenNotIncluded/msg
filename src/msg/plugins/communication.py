@@ -1,6 +1,7 @@
 """Reference delivery and durable change feeds, not a workflow engine."""
 from __future__ import annotations
 import hmac
+from dataclasses import replace
 from datetime import UTC,datetime
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -45,6 +46,36 @@ def open_sync_seen(app,value,context=b''):
             all(type(rid) is str and len(rid)<=160 for rid in seen) and
             len(set(seen))==len(seen),'resync_required')
     return seen
+
+
+def sync_checkpoint_token(app,subject,checkpoint_id,version):
+    return app.cursors.encode('sync-checkpoint',{'subject':subject},
+                              {'id':checkpoint_id,'version':version})
+
+
+def sync_checkpoint_record(app,tx,ctx,token):
+    saved=app.cursors.inspect(token)
+    require(saved.get('kind')=='sync-checkpoint','cursor_kind_mismatch')
+    subject=ctx.principal.subject
+    require(saved.get('query')=={'subject':subject},'cursor_principal_mismatch')
+    position=saved.get('position')
+    require(isinstance(position,dict) and type(position.get('version')) is int and
+            isinstance(position.get('id'),str),'invalid_cursor')
+    row=tx.one('SELECT subject,credential_id,version,expires_at,body FROM sync_checkpoints WHERE id=?',
+               (position['id'],))
+    require(row is not None,'resync_required')
+    require(row[0]==subject and row[1]==ctx.principal.credential_id and
+            ctx.principal.actor==subject and ctx.principal.method=='signature',
+            'cursor_principal_mismatch')
+    require(row[2]==position['version'],'checkpoint_conflict')
+    require(ctx.now<parse_time(row[3]),'resync_required')
+    body=loads(row[4])
+    require(type(body.get('seq')) is int and type(body.get('seen')) is list and
+            len(body['seen'])<=10000 and len(set(body['seen']))==len(body['seen']) and
+            all(type(rid) is str and len(rid)<=160 for rid in body['seen']),
+            'resync_required')
+    require(body['seq']>=tx.setting('sync_floor',0),'resync_required')
+    return position['id'],row[2],body
 
 
 def _signed_subject(ctx):
@@ -423,12 +454,151 @@ def install(app):
                 break
         return HandlerOutput(data={'items':items,'sync_cursor':app.cursors.encode('sync',subject,{'seq':position,'authorization_epoch':epoch,'watch_digest':watch_digest})})
 
+    def sync_authority(tx,subject):
+        watches={row[0] for row in tx.rows('SELECT resource FROM watches WHERE subject=?',(subject,))}
+        return (watches,digest(sorted(watches)),tx.setting('authorization_epoch',0),
+                digest([tuple(row) for row in tx.rows(
+                    'SELECT topic,role,status FROM topic_memberships WHERE subject=? ORDER BY topic',(subject,))]))
+
+    @op('communication.sync_checkpoint_open',obj({'cursor':STRING},('cursor',)),signature=True)
+    async def sync_checkpoint_open(ctx,request,tx):
+        subject=_signed_subject(ctx)
+        await app.authorizer.require_base(ctx.principal,operation_id(request),subject,tx)
+        saved=app.cursors.inspect(request.arguments['cursor'])
+        require(saved.get('kind')=='sync-v2' and saved.get('query')=={'subject':subject},
+                'cursor_kind_mismatch')
+        position=saved.get('position')
+        require(position.get('principal')=={'actor':subject,'subject':subject,
+                'credential_id':ctx.principal.credential_id},'cursor_principal_mismatch')
+        watches,watch_hash,epoch,topic_hash=sync_authority(tx,subject)
+        require(position.get('watch_digest')==watch_hash and
+                position.get('authorization_epoch')==epoch and
+                position.get('topic_membership_digest')==topic_hash and
+                ctx.now<parse_time(position['expires_at']) and
+                type(position.get('seq')) is int and
+                position['seq']>=tx.setting('sync_floor',0),'resync_required')
+        seen=open_sync_seen(app,position.get('seen_ciphertext',''),
+                            sync_seen_context(subject,position['seq'],position['expires_at']))
+        checkpoint_id=new_id('sync')
+        expires_at=wire(ctx.now+timedelta(days=30))
+        body={'seq':position['seq'],'seen':seen,'watch_digest':watch_hash,
+              'authorization_epoch':epoch,'topic_membership_digest':topic_hash}
+        tx.execute('INSERT INTO sync_checkpoints VALUES (?,?,?,?,?,?)',
+                   (checkpoint_id,subject,ctx.principal.credential_id,0,expires_at,
+                    canonical(body).decode()),write=True)
+        cursor=sync_checkpoint_token(app,subject,checkpoint_id,0)
+        return HandlerOutput(data={'sync_cursor':cursor,'next':'/_r/s/'+cursor,
+                                   'next_requires_auth':True,'expires_at':expires_at})
+
+    async def checkpoint_delta(ctx,request,tx,body,limit):
+        subject=ctx.principal.subject
+        # ACK must recompute precisely the same visibility decision as GET.
+        request=replace(request,operation='communication.sync')
+        watches,watch_hash,epoch,topic_hash=sync_authority(tx,subject)
+        require(body['watch_digest']==watch_hash,'resync_required')
+        stale=(body['authorization_epoch']!=epoch or
+               body['topic_membership_digest']!=topic_hash)
+        sequence=body['seq']
+        seen=list(body['seen'])
+        items=[]
+        async def can_read(rid):
+            try:
+                return await visible(app,ctx,request,tx,rid)
+            except Failure as exc:
+                if exc.code in {'not_found','resource_purged','ancestor_inactive'}:
+                    return False
+                raise
+        for rid in tuple(seen):
+            if not await can_read(rid):
+                items.append({'kind':'revoked','ref':{'id':rid}})
+                seen.remove(rid)
+                if len(items)>=limit:
+                    break
+        if stale:
+            # Known losses can be drained over several acknowledged pages. A
+            # permission gain may expose older events, so no event sequence is
+            # advanced until the client rebuilds a fresh visible baseline.
+            if not items:
+                raise Failure('resync_required')
+        elif len(items)<limit:
+            scanned=0
+            for seq,raw in tx.execute('SELECT seq,body FROM events WHERE seq>? ORDER BY seq',(sequence,)):
+                scanned+=1
+                require(scanned<=5000,'resync_required')
+                event=loads(raw)
+                candidates=[]
+                for ref in event['resources']:
+                    rid=ref['id']
+                    if not await can_read(rid):
+                        continue
+                    relevant=(event['subject']==subject or rid in watches or
+                              any(ancestor.id in watches for ancestor in await tx.ancestors(rid)))
+                    if not relevant:
+                        direct=await direct_ancestor(tx,rid)
+                        if direct is not None:
+                            pair=tx.one('SELECT participant_a,participant_b FROM dm_conversations '
+                                        'WHERE resource_id=?',(direct,))
+                            relevant=pair is not None and subject in pair
+                    if not relevant:
+                        continue
+                    kind=('archived' if event['type'] in {'content.archive','content.purge'} else
+                          'created' if event['type'] in {'content.post_create','content.topic_create',
+                                                        'discussion.reply','discussion.quote'} else 'modified')
+                    candidates.append({'seq':seq,'kind':kind,'event_type':event['type'],'ref':ref})
+                require(len(candidates)<=limit,'resync_required')
+                if len(items)+len(candidates)>limit:
+                    break
+                for item in candidates:
+                    rid=item['ref']['id']
+                    if rid not in seen:
+                        require(len(seen)<10000,'resync_required')
+                        seen.append(rid)
+                items.extend(candidates)
+                sequence=seq
+        return items,{**body,'seq':sequence,'seen':seen},stale
+
+    @op('communication.sync_checkpoint_ack',obj({'ack':STRING},('ack',)),signature=True)
+    async def sync_checkpoint_ack(ctx,request,tx):
+        subject=_signed_subject(ctx)
+        await app.authorizer.require_base(ctx.principal,operation_id(request),subject,tx)
+        proof=app.cursors.inspect(request.arguments['ack'])
+        require(proof.get('kind')=='sync-checkpoint-ack' and
+                proof.get('query')=={'subject':subject},'invalid_cursor')
+        position=proof.get('position')
+        require(isinstance(position,dict) and type(position.get('limit')) is int and
+                1<=position['limit']<=100,'invalid_cursor')
+        current=sync_checkpoint_token(app,subject,position['id'],position['version'])
+        checkpoint_id,version,body=sync_checkpoint_record(app,tx,ctx,current)
+        items,updated,stale=await checkpoint_delta(ctx,request,tx,body,position['limit'])
+        require(digest({'items':items,'state':updated,'stale':stale})==position['digest'],
+                'checkpoint_stale')
+        expires_at=wire(ctx.now+timedelta(days=30))
+        result=tx.execute('UPDATE sync_checkpoints SET version=?,expires_at=?,body=? WHERE id=? AND version=?',
+                          (version+1,expires_at,canonical(updated).decode(),checkpoint_id,version),write=True)
+        require(result.rowcount==1,'checkpoint_conflict')
+        cursor=sync_checkpoint_token(app,subject,checkpoint_id,version+1)
+        return HandlerOutput(data={'sync_cursor':cursor,'next':'/_r/s/'+cursor,
+                                   'next_requires_auth':True,'resync_required':stale,
+                                   'expires_at':expires_at})
+
     @op('communication.sync',obj({'cursor':STRING,
         'limit':{'type':'integer','minimum':1,'maximum':100}}),effect='read')
     async def sync(ctx,request,tx):
         subject=ctx.principal.subject
         require(subject is not None,'authentication_required')
         await app.authorizer.require_base(ctx.principal,operation_id(request),subject,tx)
+        if request.arguments.get('cursor'):
+            kind=app.cursors.inspect(request.arguments['cursor']).get('kind')
+            if kind=='sync-checkpoint':
+                token=request.arguments['cursor']
+                checkpoint_id,version,body=sync_checkpoint_record(app,tx,ctx,token)
+                limit=request.arguments.get('limit',50)
+                items,updated,stale=await checkpoint_delta(ctx,request,tx,body,limit)
+                ack=app.cursors.encode('sync-checkpoint-ack',{'subject':subject},
+                    {'id':checkpoint_id,'version':version,'limit':limit,
+                     'digest':digest({'items':items,'state':updated,'stale':stale})})
+                return HandlerOutput(data={'items':items,'sync_cursor':token,
+                    'checkpoint_ack':ack,'resync_required':stale})
         principal={'actor':ctx.principal.actor,'subject':subject,
                    'credential_id':ctx.principal.credential_id}
         watches={row[0] for row in tx.rows('SELECT resource FROM watches WHERE subject=?',(subject,))}

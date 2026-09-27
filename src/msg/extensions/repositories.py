@@ -12,18 +12,20 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
+from uuid import uuid4
 from urllib.parse import urlsplit
 
 from starlette.requests import ClientDisconnect
 from starlette.responses import Response,StreamingResponse
 from msg.core.codec import canonical,decode,wire,unb64,b64
 from msg.core.errors import Failure,require
-from msg.core.models import HandlerOutput,ResourceRef,EffectJob
+from msg.core.models import HandlerOutput,ResourceRef,EffectJob,ExecutionContext
 from msg.core.requests import request_for
 from msg.plugins.common import check_access,create_resource,resolve,output_for,new_id,operation_id
 from msg.plugins.communication import event_id
 from msg.plugins.schemas import obj,STRING,IDENTIFIER,REF,BOOLEAN
-from msg.storage.git import durable_write
+from msg.storage.git import durable_write,LFSObjectStore
 
 OID={'type':['string','null'],'pattern':'^[0-9a-f]{40}$'}
 CHANGE=obj({'ref':{'type':'string','pattern':'^refs/(heads|tags)/[^\\s]+$'},'old':OID,'new':OID},('ref','old','new'))
@@ -34,6 +36,9 @@ _HTTP_RECEIVE=ContextVar('msg_git_http_receive',default=False)
 MAX_GIT_PACK_BYTES=32*1024*1024
 MAX_GIT_UPLOAD_SECONDS=120
 _GIT_UPLOAD_SLOTS=asyncio.Semaphore(2)
+MAX_LFS_OBJECT_BYTES=256*1024*1024
+_LFS_UPLOAD_SLOTS=asyncio.Semaphore(2)
+_LFS_STAGED=ContextVar('msg_lfs_staged',default=None)
 
 
 async def spool_git_pack(request,path):
@@ -57,6 +62,24 @@ async def spool_git_pack(request,path):
     return 'sha256:'+hasher.hexdigest(),size
 
 
+async def spool_lfs_object(request,path,expected_size):
+    require(request.headers.get('content-encoding','identity')=='identity','unknown_encoding')
+    length=request.headers.get('content-length')
+    if length is not None:
+        require(length.isdecimal() and int(length)==expected_size,'lfs_size_mismatch')
+    hasher=hashlib.sha256();size=0
+    try:
+        with path.open('xb') as stream:
+            async for chunk in request.stream():
+                size+=len(chunk)
+                require(size<=expected_size,'lfs_size_mismatch')
+                hasher.update(chunk);stream.write(chunk)
+            stream.flush();os.fsync(stream.fileno())
+    except ClientDisconnect as exc:raise Failure('request_incomplete') from exc
+    require(size==expected_size,'lfs_size_mismatch')
+    return hasher.hexdigest(),size
+
+
 class NativeGitStore:
     def __init__(self,app):
         self.app=app
@@ -68,6 +91,138 @@ class NativeGitStore:
     def path(self,id):
         require(bool(re.fullmatch(r'[A-Za-z0-9_-]{1,128}',id)),'invalid_repository_id')
         return self.root/(id+'.git')
+
+    def lfs(self,id):
+        return LFSObjectStore(self.path(id))
+
+    def _lfs_packet(self,request,operation,arguments):
+        from msg.transports.packet import path_packet
+        limits=self.app.settings.server.limits
+        signed=request.headers.get('x-msg-request')
+        authorization=request.headers.get('authorization','')
+        require(not (signed and authorization),'ambiguous_proof')
+        if signed:
+            packet=path_packet(signed,'j',limits.max_request_bytes)
+            require(packet.operation==operation and canonical(packet.arguments)==canonical(arguments),
+                    'representation_mismatch')
+            return packet
+        if authorization:
+            require(authorization.startswith('Basic '),'authentication_required')
+            try:
+                user,password=base64.b64decode(authorization[6:],validate=True).decode('ascii').split(':',1)
+                token=unb64(password)
+            except (ValueError,UnicodeDecodeError,Failure) as exc:
+                raise Failure('invalid_token') from exc
+            return request_for(operation,arguments,self.app.settings.service_url,token=(user,token),
+                               request_id=uuid4().hex if operation=='git.lfs_publish' else None,
+                               expires_at=self.app.clock()+timedelta(seconds=120))
+        return request_for(operation,arguments,self.app.settings.service_url)
+
+    async def _lfs_authorize(self,request,operation,arguments):
+        result=await self.app.executor.execute(self._lfs_packet(request,operation,arguments),entry='network')
+        require(result.status=='ok',result.error.code if result.error else 'permission_denied')
+        return result.data['resource_id']
+
+    async def _lfs_preflight_publish(self,request,arguments):
+        """Validate the exact signed publish envelope without committing it."""
+        packet=self._lfs_packet(request,'git.lfs_publish',arguments)
+        spec=self.app.registry.operation(packet.operation,packet.contract_version)
+        require('network' in spec.entries,'entry_not_allowed')
+        self.app.registry.validate(spec.input_schema,packet.arguments)
+        async with self.app.metadata.transaction(write=False) as tx:
+            principal=await self.app.authenticator.authenticate(packet,tx,entry='network')
+            require(principal.method=='signature','authentication_required')
+            context=ExecutionContext(request_id=packet.request_id,principal=principal,entry='network',
+                                     now=self.app.clock(),deadline_monotonic=time.monotonic()+30)
+            rid=await resolve(tx,arguments['id'])
+            await check_access(self.app,context,packet,tx,rid,'write')
+            resource=await tx.resource(rid)
+            require(resource.type=='repo' and resource.state=='active','not_a_repository')
+        return rid
+
+    async def http_lfs(self,request,repo_id,suffix,*,write=False):
+        """LFS batch is a read/planning query; only /-/ object PUT commits bytes."""
+        from msg.transports.http import body_bytes,json_response
+        require(not request.query_params,'invalid_lfs_query')
+        object_match=re.fullmatch(r'objects/([0-9a-f]{64})(?:/([0-9]+))?',suffix)
+        if object_match:
+            oid,size_text=object_match.groups()
+            if write:
+                require(request.method=='PUT' and size_text is not None,'method_not_allowed')
+                size=int(size_text)
+                require(size<=MAX_LFS_OBJECT_BYTES,'request_too_large')
+                publish_args={'id':repo_id,'oid':oid,'size':size}
+                if request.headers.get('x-msg-request'):
+                    await self._lfs_preflight_publish(request,publish_args)
+                else:
+                    await self._lfs_authorize(request,'git.lfs_write_authorize',{'id':repo_id})
+                self.app.settings.server.staging_dir.mkdir(parents=True,exist_ok=True)
+                async with _LFS_UPLOAD_SLOTS:
+                    with tempfile.TemporaryDirectory(prefix='msg-lfs-',dir=self.app.settings.server.staging_dir) as temp:
+                        staged=Path(temp)/'object'
+                        try:
+                            async with asyncio.timeout(MAX_GIT_UPLOAD_SECONDS):
+                                digest,actual=await spool_lfs_object(request,staged,size)
+                        except TimeoutError as exc:
+                            raise Failure('request_incomplete') from exc
+                        require(digest==oid,'lfs_digest_mismatch')
+                        marker=_LFS_STAGED.set(staged)
+                        try:
+                            await self._lfs_authorize(request,'git.lfs_publish',publish_args)
+                        finally:_LFS_STAGED.reset(marker)
+                return Response(status_code=200,headers={'Cache-Control':'no-store'})
+            require(request.method in {'GET','HEAD'} and size_text is None,'method_not_allowed')
+            rid=await self._lfs_authorize(request,'git.lfs_read',{'id':repo_id,'oid':oid})
+            path=self.lfs(rid).path(oid)
+            require(path.is_file(),'not_found')
+            headers={'Content-Length':str(path.stat().st_size),'Cache-Control':'private, no-store',
+                     'X-Content-Type-Options':'nosniff','Content-Disposition':'attachment'}
+            if request.method=='HEAD':return Response(status_code=200,headers=headers)
+            async def stream():
+                with path.open('rb') as source:
+                    while chunk:=await asyncio.to_thread(source.read,65536):yield chunk
+            return StreamingResponse(stream(),media_type='application/octet-stream',headers=headers)
+        require(suffix=='objects/batch' and request.method=='POST','not_found')
+        require(request.headers.get('content-type','').split(';',1)[0]=='application/vnd.git-lfs+json',
+                'invalid_lfs_content_type')
+        import json
+        try:body=json.loads(await body_bytes(request,self.app.settings.server.limits.max_request_bytes))
+        except (ValueError,UnicodeDecodeError) as exc:raise Failure('invalid_lfs_batch') from exc
+        require(type(body) is dict and body.get('operation') in {'download','upload'} and
+                type(body.get('objects')) is list and len(body['objects'])<=100,'invalid_lfs_batch')
+        upload=body['operation']=='upload'
+        require(not upload or write,'method_not_allowed')
+        require(not write or upload,'method_not_allowed')
+        require(set(body)<={'operation','objects','transfers','ref','hash_algo'},'invalid_lfs_batch')
+        rid=await self._lfs_authorize(request,'git.lfs_write_authorize' if upload else 'git.lfs_read_batch',
+                                      {'id':repo_id})
+        read_url=self.app.settings.service_url.rstrip('/')+await self._repo_read_path(rid)
+        write_url=self.app.settings.service_url.rstrip('/')+'/-/git/'+rid+'/info/lfs'
+        objects=[]
+        for item in body['objects']:
+            require(type(item) is dict and set(item)=={'oid','size'} and
+                    type(item['oid']) is str and re.fullmatch(r'[0-9a-f]{64}',item['oid']) and
+                    type(item['size']) is int and 0<=item['size']<=MAX_LFS_OBJECT_BYTES,
+                    'invalid_lfs_object')
+            oid,size=item['oid'],item['size']
+            actual=self.lfs(rid).size(oid)
+            if actual is not None and actual!=size:
+                objects.append({'oid':oid,'size':size,'error':{'code':422,'message':'size mismatch'}})
+            elif upload:
+                action={} if actual is not None else {'upload':{'href':write_url+'/objects/'+oid+'/'+str(size),
+                            'header':{'Authorization':request.headers.get('authorization','')}}}
+                objects.append({'oid':oid,'size':size,'actions':action})
+            elif actual is None:
+                objects.append({'oid':oid,'size':size,'error':{'code':404,'message':'object missing'}})
+            else:
+                objects.append({'oid':oid,'size':size,'actions':{'download':{
+                    'href':read_url+'/info/lfs/objects/'+oid}}})
+        return json_response({'transfer':'basic','objects':objects},headers={'Cache-Control':'no-store',
+                             'Content-Type':'application/vnd.git-lfs+json'})
+
+    async def _repo_read_path(self,rid):
+        async with self.app.metadata.transaction(write=False) as tx:
+            return await tx.path(rid)
 
     def _run(self,id,*args,input=None,stdout=None):
         command=['git','--git-dir',str(self.path(id)),'-c','core.hooksPath=/dev/null',
@@ -308,6 +463,30 @@ class NativeGitStore:
                 else:
                     packet=request_for(operation,arguments,self.app.settings.service_url,token=(user,token),
                                        request_id=request_id,expires_at=self.app.clock()+timedelta(seconds=120))
+                if pack_size==4 and pack_path.read_bytes()==b'0000':
+                    # Git's remote-curl probe_rpc sends a complete 0000 flush
+                    # before a large chunked upload. The probe is not a ref
+                    # update: authenticate and recheck write ACL, but leave its
+                    # request ID unused for the real receive-pack POST.
+                    if signed:
+                        spec=self.app.registry.operation(packet.operation,packet.contract_version)
+                        self.app.registry.validate(spec.input_schema,packet.arguments)
+                        async with self.app.metadata.transaction(write=False) as tx:
+                            principal=await self.app.authenticator.authenticate(packet,tx,entry='network')
+                            context=ExecutionContext(request_id=packet.request_id,principal=principal,entry='network',
+                                                     now=self.app.clock(),deadline_monotonic=time.monotonic()+30)
+                            resource=await tx.resource(rid)
+                            require(resource.type=='repo' and resource.state=='active','not_a_repository')
+                            await check_access(self.app,context,packet,tx,rid,'write')
+                    else:
+                        preflight=request_for('git.http_advertise',{'id':rid},self.app.settings.service_url,
+                                              token=(user,token),expires_at=self.app.clock()+timedelta(seconds=120))
+                        checked=await self.app.executor.execute(preflight,entry='network')
+                        if checked.error:
+                            return json_response({'status':'error','error':wire(checked.error)},
+                                                 error_status(checked.error.code))
+                    return Response(b'0000',media_type='application/x-git-receive-pack-result',
+                                    headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
                 marker=_HTTP_RECEIVE.set(True)
                 try:
                     result=await self.app.executor.execute(packet,entry='network')
@@ -340,6 +519,47 @@ class NativeGitStore:
 
 
 def register(app,op):
+    @op('git.lfs_read_batch',obj({'id':IDENTIFIER},('id',)),effect='read')
+    async def lfs_read_batch(ctx,request,tx):
+        rid=await resolve(tx,request.arguments['id'])
+        await check_access(app,ctx,request,tx,rid,'read')
+        resource=await tx.resource(rid)
+        require(resource.type=='repo' and resource.state=='active','not_a_repository')
+        return HandlerOutput(data={'resource_id':rid})
+
+    @op('git.lfs_read',obj({'id':IDENTIFIER,'oid':{'type':'string','pattern':'^[0-9a-f]{64}$'}},
+        ('id','oid')),effect='read')
+    async def lfs_read(ctx,request,tx):
+        rid=await resolve(tx,request.arguments['id'])
+        await check_access(app,ctx,request,tx,rid,'read')
+        resource=await tx.resource(rid)
+        require(resource.type=='repo' and resource.state=='active','not_a_repository')
+        return HandlerOutput(data={'resource_id':rid})
+
+    @op('git.lfs_write_authorize',obj({'id':IDENTIFIER},('id',)),effect='read')
+    async def lfs_write_authorize(ctx,request,tx):
+        require(ctx.principal.method in {'signature','token'},'authentication_required')
+        rid=await resolve(tx,request.arguments['id'])
+        await check_access(app,ctx,request,tx,rid,'write')
+        resource=await tx.resource(rid)
+        require(resource.type=='repo' and resource.state=='active','not_a_repository')
+        return HandlerOutput(data={'resource_id':rid})
+
+    @op('git.lfs_publish',obj({'id':IDENTIFIER,'oid':{'type':'string','pattern':'^[0-9a-f]{64}$'},
+        'size':{'type':'integer','minimum':0,'maximum':MAX_LFS_OBJECT_BYTES}},('id','oid','size')))
+    async def lfs_publish(ctx,request,tx):
+        staged=_LFS_STAGED.get()
+        require(staged is not None and staged.is_file(),'lfs_transport_required')
+        require(ctx.principal.method in {'signature','token'},'authentication_required')
+        rid=await resolve(tx,request.arguments['id'])
+        await check_access(app,ctx,request,tx,rid,'write')
+        resource=await tx.resource(rid)
+        require(resource.type=='repo' and resource.state=='active','not_a_repository')
+        await asyncio.to_thread(NativeGitStore(app).lfs(rid).publish,request.arguments['oid'],
+                                staged,request.arguments['size'])
+        return HandlerOutput(data={'resource_id':rid,'oid':request.arguments['oid'],
+                                   'size':request.arguments['size']})
+
     @op('git.create',obj({'parent':IDENTIFIER,'name':STRING},('parent','name')),signature=True)
     async def create(ctx,request,tx):
         parent=await tx.resource(await resolve(tx,request.arguments['parent']))

@@ -397,6 +397,9 @@ class MsgClient:
             pending['challenge']=dict(started.data)
             durable_write(journal,canonical(pending),mode=0o600)
         challenge=pending['challenge']
+        if pending.get('status')=='pending_rewrap':
+            return await self.call('identity.custodial_upgrade_inventory',
+                                   {'challenge_id':challenge['challenge_id']})
         age_identity=self.state.age_key_path.read_text().strip()
         require(recipient_from_identity(age_identity)==recipient,'encryption_identity_mismatch')
         age_proof=client_upgrade_proof(age_identity,challenge)
@@ -430,10 +433,11 @@ class MsgClient:
             self.state.accept_identity(result)
             journal.unlink(missing_ok=True)
         elif result.status=='ok' and result.data['status']=='pending_rewrap':
-            # A verified challenge is consumed; keep the new private keys but
-            # start a fresh proof after the client migrates its ciphertexts.
-            pending['challenge']=None
-            pending['start_request_id']=uuid4().hex
+            # Preserve the bound challenge and new private keys for the
+            # per-entry rewrap inventory and signed client acknowledgements.
+            # A later finish attempt has its own request ID; replaying this
+            # one would only retrieve the original pending result.
+            pending['status']='pending_rewrap'
             pending['finish_request_id']=uuid4().hex
             durable_write(journal,canonical(pending),mode=0o600)
         return result

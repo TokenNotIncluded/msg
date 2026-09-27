@@ -52,6 +52,24 @@ def save_personal_proof(tx,request,resource,subject,kind,now):
          b64(signing_bytes(request)),wire(now)),write=True)
 
 
+async def custodial_age_inventory(tx,subject_id):
+    """Freeze every owned age revision, including history, by exact blob digest."""
+    folder=tx.one("SELECT id FROM resources WHERE parent=? AND name='keystore'",
+                  (subject_id,))
+    if folder is None:
+        return []
+    items=[]
+    for resource_id,revision_id in tx.rows('''SELECT r.id,v.id FROM revisions v
+        JOIN resources r ON r.id=v.resource_id WHERE r.parent=? AND r.owner=?
+        AND r.type='keystore' ORDER BY r.id,v.id''',(folder[0],subject_id)):
+        if tx.setting('keystore_format:'+revision_id)!='age':
+            continue
+        revision=await tx.revision(ResourceRef(id=resource_id,revision=revision_id))
+        items.append({'id':resource_id,'revision':revision_id,
+                      'ciphertext_digest':revision.content.digest})
+    return items
+
+
 async def make_user(app,tx,ctx,id,handle,kind):
     require(re.fullmatch(r'[a-z][a-z0-9-]{1,40}',handle) is not None and handle not in {'root','online-ca'},'invalid_handle')
     resource=Resource(id=id,type='user',type_version=1,name='@'+handle,parent=app.namespace_root,owner=id,group=PUBLIC_GROUP,
@@ -241,6 +259,8 @@ def install(app):
               'old_encryption_key_id':old_age[0],
               'new_identity_key_id':key_id(public),
               'new_encryption_key_id':encryption_key_id(age_public),
+              'age_inventory':await custodial_age_inventory(tx,subject.resource_id),
+              'rewrap_mappings':{},'rewrap_acks':{},
               'signing_possession_digest':digest(args['possession_proof']),
               'server_signature':wire(vault_signature)}
         tx.execute('''INSERT INTO custodial_upgrades
@@ -291,20 +311,19 @@ def install(app):
                        (args['challenge_id'],),write=True)
             return HandlerOutput(data={'challenge_id':args['challenge_id'],'status':'failed',
                                        'reason':'migration_ack_failed'})
-        folder=tx.one("SELECT id FROM resources WHERE parent=? AND name='keystore'",
-                      (subject.resource_id,))
-        tracked=0
-        if folder is not None:
-            for (revision_id,) in tx.rows('''SELECT v.id FROM revisions v JOIN resources r
-                ON r.id=v.resource_id WHERE r.parent=? AND r.type='keystore' ''',(folder[0],)):
-                if tx.setting('keystore_format:'+revision_id)=='age':
-                    tracked+=1
+        inventory=await custodial_age_inventory(tx,subject.resource_id)
+        frozen=details.get('age_inventory')
+        require(frozen is not None,'custodial_inventory_required')
+        require(inventory==frozen,'custodial_inventory_changed')
+        tracked=len(inventory)
         policy_row=tx.one('SELECT body FROM recovery_policies WHERE subject=? ORDER BY version DESC LIMIT 1',
                           (subject.resource_id,))
         policy_opted_in=bool(policy_row and loads(policy_row[0]).get('opted_in'))
         if tracked or policy_opted_in or not args['external_ciphertexts_migrated']:
             state={'status':'pending_rewrap','challenge_id':args['challenge_id'],
                    'server_tracked_age_revisions':tracked,
+                   'age_inventory_digest':digest(frozen),
+                   'age_inventory':frozen,
                    'recovery_policy_requires_review':policy_opted_in,
                    'external_migration':'owner_not_confirmed' if not args['external_ciphertexts_migrated']
                    else 'owner_declared_only',

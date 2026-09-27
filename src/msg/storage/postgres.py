@@ -181,6 +181,10 @@ CREATE TABLE IF NOT EXISTS legacy_directive_versions (
 CREATE TABLE IF NOT EXISTS legacy_states (
  subject TEXT PRIMARY KEY, state TEXT NOT NULL
  CHECK(state IN ('active','unreachable','recovery_requested','legacy')));
+CREATE TABLE IF NOT EXISTS sync_checkpoints (
+ id TEXT PRIMARY KEY, subject TEXT NOT NULL, credential_id TEXT NOT NULL,
+ version INTEGER NOT NULL, expires_at TEXT NOT NULL, body TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS sync_checkpoints_subject ON sync_checkpoints(subject,expires_at);
 """
 
 

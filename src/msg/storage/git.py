@@ -5,6 +5,7 @@ import asyncio
 import hashlib
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -32,6 +33,44 @@ def durable_write(path: Path, data: bytes, mode: int = 0o600):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+class LFSObjectStore:
+    """Repository-scoped, immutable LFS objects; the caller enforces repo ACL."""
+    def __init__(self, repo: Path):
+        self.root=Path(repo)/'lfs'/'objects'
+
+    def path(self, oid: str) -> Path:
+        require(re.fullmatch(r'[0-9a-f]{64}',oid) is not None,'invalid_lfs_oid')
+        return self.root/oid[:2]/oid[2:4]/oid
+
+    def size(self, oid: str) -> int | None:
+        path=self.path(oid)
+        return path.stat().st_size if path.is_file() else None
+
+    def publish(self, oid: str, staged: Path, size: int):
+        destination=self.path(oid)
+        require(staged.stat().st_size==size,'lfs_size_mismatch')
+        destination.parent.mkdir(parents=True,exist_ok=True)
+        if destination.is_file():
+            require(destination.stat().st_size==size,'lfs_object_conflict')
+            return
+        # Staging may be on another filesystem. Copy to a private file in the
+        # destination directory, then link it into the immutable object name.
+        # A partial copy is never visible, and concurrent uploads converge.
+        fd,temporary=tempfile.mkstemp(prefix='.pending-',dir=destination.parent)
+        try:
+            with os.fdopen(fd,'wb') as target,staged.open('rb') as source:
+                shutil.copyfileobj(source,target,1024*1024)
+                target.flush();os.fsync(target.fileno())
+            try:os.link(temporary,destination)
+            except FileExistsError:
+                require(destination.stat().st_size==size,'lfs_object_conflict')
+        finally:
+            os.unlink(temporary)
+        directory=os.open(destination.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(directory)
+        finally:os.close(directory)
 
 
 class GitContentStore:

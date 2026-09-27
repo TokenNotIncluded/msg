@@ -53,6 +53,9 @@ async def test_pending_rewrap_converts_only_selected_revision_and_keeps_vault(in
     ciphertext=_age('--encrypt','--recipient',created.data['encryption_recipient'],
                     input_data=plaintext)
     rid,revision=await _trusted_age_entry(app,subject,ciphertext)
+    unrelated_identity,unrelated_recipient=generate_age_key()
+    unrelated=_age('--encrypt','--recipient',unrelated_recipient,input_data=b'external')
+    other_id,other_revision=await _trusted_age_entry(app,subject,unrelated,suffix='unrelated')
     signer=Ed25519Signer.generate()
     new_identity,new_recipient=generate_age_key()
     challenge=await begin(app,subject,token,signer,new_recipient)
@@ -77,9 +80,6 @@ async def test_pending_rewrap_converts_only_selected_revision_and_keeps_vault(in
                       subject=outsider.data['subject_id'],token=other_token,expected=((rid,1),))
     assert denied.status=='error' and denied.error.code in {
         'permission_denied','custodial_upgrade_not_pending_rewrap'}
-    unrelated_identity,unrelated_recipient=generate_age_key()
-    unrelated=_age('--encrypt','--recipient',unrelated_recipient,input_data=b'external')
-    other_id,other_revision=await _trusted_age_entry(app,subject,unrelated,suffix='unrelated')
     arbitrary=dict(args,ciphertext_ref={'id':other_id,'revision':other_revision})
     denied=await call(app,'identity.custodial_rewrap_entry',arbitrary,
                       subject=subject,token=token,expected=((other_id,1),))

@@ -16,7 +16,7 @@ CUSTODIAL_SIGNED_WRITES=frozenset({
     'content.post_create','content.post_edit','content.file_put','content.attach',
     'discussion.reply','discussion.quote','discussion.repost','identity.token_rotate',
     'identity.custodial_upgrade_start','identity.custodial_upgrade_finish',
-    'identity.custodial_rewrap_entry',
+    'identity.custodial_rewrap_entry','identity.custodial_rewrap_ack',
 })
 
 
@@ -119,7 +119,10 @@ class AuthenticationService:
         operation=f'{spec.name}@{spec.version}'
         require(any(operation in g.operations for g in credential.ceiling),'credential_ceiling')
         if actor.kind=='custodial' and method=='token' and spec.effect!='read':
-            require(spec.name in CUSTODIAL_SIGNED_WRITES,'custodial_operation_not_supported')
+            download_only=(spec.name=='transfer.open' and
+                           request.arguments.get('direction')=='download')
+            require(spec.name in CUSTODIAL_SIGNED_WRITES or download_only,
+                    'custodial_operation_not_supported')
         require(not spec.require_signature or method=='signature','signature_required')
         valid=[]
         for cid in ids:

@@ -1,9 +1,9 @@
 """Owner-declared recovery metadata. No account recovery or decryption authority."""
 from __future__ import annotations
 
-from msg.core.codec import b64,canonical,decode,loads,wire
+from msg.core.codec import b64,canonical,decode,loads,unb64,wire
 from msg.core.errors import Failure,require
-from msg.core.models import HandlerOutput,ResourceRef,Event,AuditEvent
+from msg.core.models import HandlerOutput,ResourceRef,Event,AuditEvent,Signature
 from msg.core.requests import signing_bytes
 from msg.plugins.common import (registration,check_access,new_id,resolve,operation_id,
                                 revise_resource,assert_generation)
@@ -11,6 +11,7 @@ from msg.plugins.schemas import IDENTIFIER,INTEGER,REF,STRING,obj
 from msg.security.age_keys import encryption_key_id,public_from_recipient
 from msg.security.vault import open_age_identity,rewrap_owned_age_ciphertext
 from msg.core.codec import digest
+from msg.security.crypto import verify
 
 
 def _current_policy(tx,subject):
@@ -26,6 +27,32 @@ def _owner(app,ctx,request,tx):
 
 def install(app):
     op,finish=registration(app,'recovery',('identity',))
+
+    @op('identity.custodial_upgrade_inventory',obj({'challenge_id':IDENTIFIER},
+        ('challenge_id',)),effect='read')
+    async def custodial_upgrade_inventory(ctx,request,tx):
+        subject=await _owner(app,ctx,request,tx)
+        require(subject.kind=='custodial' and ctx.principal.method=='token',
+                'custodial_token_required')
+        row=tx.one('''SELECT credential_id,status,challenge,body FROM custodial_upgrades
+            WHERE id=? AND subject=?''',(request.arguments['challenge_id'],subject.resource_id))
+        require(row is not None and row[0]==ctx.principal.credential_id and
+                row[1] in {'pending','pending_rewrap'},'custodial_upgrade_not_pending')
+        from msg.plugins.identity import custodial_age_inventory
+        details=loads(row[3])
+        frozen=details.get('age_inventory')
+        require(frozen is not None,'custodial_inventory_required')
+        current=await custodial_age_inventory(tx,subject.resource_id)
+        mappings=details.get('rewrap_mappings',{})
+        acks=details.get('rewrap_acks',{})
+        expected=frozen+[mapping['new'] for mapping in mappings.values()]
+        drift=current!=sorted(expected,key=lambda item:(item['id'],item['revision']))
+        return HandlerOutput(data={'challenge_id':request.arguments['challenge_id'],
+            'status':row[1],'recipient':loads(row[2])['encryption_recipient'],
+            'frozen':frozen,'frozen_digest':digest(frozen),
+            'mappings':mappings,'acks':acks,'inventory_changed':drift,
+            'historical_revisions_require_migration':bool(frozen),
+            'finalize_ready':False,'vault_remains_active':True})
 
     @op('identity.custodial_rewrap_entry',obj({
         'challenge_id':IDENTIFIER,'ciphertext_ref':REF,
@@ -43,6 +70,14 @@ def install(app):
                 row[1]=='pending_rewrap','custodial_upgrade_not_pending_rewrap')
         challenge=loads(row[2])
         details=loads(row[3])
+        frozen=details.get('age_inventory')
+        require(frozen is not None,'custodial_inventory_required')
+        from msg.plugins.identity import custodial_age_inventory
+        expected=frozen+[mapping['new'] for mapping in
+                         details.get('rewrap_mappings',{}).values()]
+        current=await custodial_age_inventory(tx,subject.resource_id)
+        require(current==sorted(expected,key=lambda item:(item['id'],item['revision'])),
+                'custodial_inventory_changed')
         require(challenge['encryption_recipient']==args['new_recipient'] and
                 details['old_encryption_key_id']==args['old_encryption_key_id'],
                 'custodial_rewrap_key_mismatch')
@@ -66,6 +101,11 @@ def install(app):
         await check_access(app,ctx,request,tx,resource.id,'read')
         await check_access(app,ctx,request,tx,resource.id,'write')
         revision=await tx.revision(ref)
+        frozen_entry={'id':resource.id,'revision':revision.id,
+                      'ciphertext_digest':revision.content.digest}
+        require(frozen_entry in frozen,'custodial_rewrap_not_in_frozen_inventory')
+        require(revision.id not in details.get('rewrap_mappings',{}),
+                'custodial_rewrap_already_mapped')
         require(tx.setting('keystore_format:'+revision.id)=='age' and
                 revision.content.size<=1048576,'custodial_rewrap_age_required')
         old_ciphertext=await app.contents.read_bytes(revision.content,limit=1048576)
@@ -79,6 +119,12 @@ def install(app):
         after={'resource_id':updated.id,'revision':updated.revision,
                'ciphertext_digest':digest(new_ciphertext),
                'recipient':args['new_recipient']}
+        mapping={'old':frozen_entry,'new':{'id':updated.id,
+            'revision':updated.revision,'ciphertext_digest':digest(new_ciphertext)},
+            'recipient':args['new_recipient'],'created_at':wire(ctx.now)}
+        details.setdefault('rewrap_mappings',{})[revision.id]=mapping
+        tx.execute('UPDATE custodial_upgrades SET body=? WHERE id=?',
+                   (canonical(details).decode(),args['challenge_id']),write=True)
         event=Event(id=new_id('audit'),type='identity.custodial_rewrap_entry',time=ctx.now,
             request_id=request.request_id,actor=ctx.principal.actor,subject=subject.resource_id,
             resources=(ref,ResourceRef(id=updated.id,revision=updated.revision)),data={
@@ -92,7 +138,78 @@ def install(app):
             data={'id':updated.id,'revision':updated.revision,'generation':updated.generation,
                   'old_revision':revision.id,'new_recipient':args['new_recipient'],
                   'ciphertext_digest':digest(new_ciphertext),
+                  'mapping':mapping,
                   'client_decryption_verified':False,'upgrade_status':'pending_rewrap'})
+
+    @op('identity.custodial_rewrap_ack',obj({
+        'challenge_id':IDENTIFIER,'old_revision':IDENTIFIER,
+        'new_revision':IDENTIFIER,'ciphertext_digest':IDENTIFIER,
+        'plaintext_digest':IDENTIFIER,'decryption_ack':{'type':'object'}},
+        ('challenge_id','old_revision','new_revision','ciphertext_digest',
+         'plaintext_digest','decryption_ack')))
+    async def custodial_rewrap_ack(ctx,request,tx):
+        """Bind a new-key signature to one client-decrypted immutable mapping."""
+        subject=await _owner(app,ctx,request,tx)
+        require(subject.kind=='custodial' and ctx.principal.method=='token',
+                'custodial_token_required')
+        args=request.arguments
+        row=tx.one('''SELECT credential_id,status,challenge,body FROM custodial_upgrades
+            WHERE id=? AND subject=?''',(args['challenge_id'],subject.resource_id))
+        require(row is not None and row[0]==ctx.principal.credential_id and
+                row[1]=='pending_rewrap','custodial_upgrade_not_pending_rewrap')
+        challenge=loads(row[2])
+        details=loads(row[3])
+        from msg.plugins.identity import custodial_age_inventory
+        frozen=details.get('age_inventory')
+        require(frozen is not None,'custodial_inventory_required')
+        expected=frozen+[item['new'] for item in details.get('rewrap_mappings',{}).values()]
+        current=await custodial_age_inventory(tx,subject.resource_id)
+        require(current==sorted(expected,key=lambda item:(item['id'],item['revision'])),
+                'custodial_inventory_changed')
+        mapping=details.get('rewrap_mappings',{}).get(args['old_revision'])
+        require(mapping is not None and mapping['new']['revision']==args['new_revision'] and
+                mapping['new']['ciphertext_digest']==args['ciphertext_digest'],
+                'custodial_rewrap_mapping_mismatch')
+        new=await tx.revision(ResourceRef(id=mapping['new']['id'],
+                                        revision=args['new_revision']))
+        require(new.content.digest==args['ciphertext_digest'],
+                'custodial_rewrap_mapping_mismatch')
+        require(args['plaintext_digest'].startswith('sha256:') and
+                len(args['plaintext_digest'])==71 and
+                all(char in '0123456789abcdef' for char in args['plaintext_digest'][7:]),
+                'invalid_plaintext_digest')
+        signed={'subject_id':subject.resource_id,'challenge_id':args['challenge_id'],
+            'old':mapping['old'],'new':mapping['new'],
+            'plaintext_digest':args['plaintext_digest'],
+            'request_id':request.request_id}
+        verify(unb64(challenge['public_key'],limit=32),canonical(signed),
+               decode(Signature,args['decryption_ack']),purpose='custodial-rewrap-ack')
+        require(args['old_revision'] not in details.get('rewrap_acks',{}),
+                'custodial_rewrap_already_acked')
+        ack={'old_revision':args['old_revision'],'new_revision':args['new_revision'],
+            'ciphertext_digest':args['ciphertext_digest'],
+            'plaintext_digest':args['plaintext_digest'],
+            'signature':args['decryption_ack'],'request_id':request.request_id,
+            'verified_at':wire(ctx.now)}
+        details.setdefault('rewrap_acks',{})[args['old_revision']]=ack
+        tx.execute('UPDATE custodial_upgrades SET body=? WHERE id=?',
+                   (canonical(details).decode(),args['challenge_id']),write=True)
+        event=Event(id=new_id('audit'),type='identity.custodial_rewrap_ack',time=ctx.now,
+            request_id=request.request_id,actor=ctx.principal.actor,
+            subject=subject.resource_id,resources=(ResourceRef(id=new.resource_id,
+                revision=new.id),),data={'challenge_id':args['challenge_id'],
+                'old_revision':args['old_revision'],'new_revision':args['new_revision'],
+                'ciphertext_digest':args['ciphertext_digest'],
+                'plaintext_digest':args['plaintext_digest'],
+                'signature':args['decryption_ack'],'vault_remains_active':True})
+        await tx.append_audit(AuditEvent(event=event,
+            authority=(ResourceRef(id=subject.resource_id),),
+            before_digest=digest(mapping),after_digest=digest(ack),
+            previous_digest=None,entry_digest='',result='client_acked'))
+        return HandlerOutput(data={'challenge_id':args['challenge_id'],
+            'old_revision':args['old_revision'],'new_revision':args['new_revision'],
+            'client_decryption_acked':True,'vault_remains_active':True,
+            'finalize_ready':False})
 
     @op('identity.recovery_custodians',obj(),effect='read')
     async def custodians(ctx,request,tx):

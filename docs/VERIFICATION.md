@@ -1,8 +1,18 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 Todo due、custodial rewrap与Git流式限制（未提交，本地全套通过）
+## 2026-09-27 持久Sync checkpoint与最小LFS（未提交，本地全套通过）
 
-第五批`.venv/bin/python -m pytest -q`为 **336 passed**，conformance **8 passed**，`uv build -q`成功；未提交、无本批CI。Todo到期维护任务定向 **8 passed**，仅本人Inbox且去重；custodial单条age rewrap定向 **11 passed**，保留旧vault/token、client_decryption_verified=false，不自动收尾；Git定向 **10 passed**，/-/receive-pack独立32MiB、每worker2并发、staging流式SHA256及64KiB feed。上述定向已包含在336项全套，不额外累加；短码173→175，旧义保留。
+权威设计修订仍为00:35:34.164Z。当前Sync定向 **10 passed**、LFS定向 **8 passed**，随后GIT_CONFIG_GLOBAL=/dev/null环境全套 **345 passed**、conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；此前定向不额外累加，仍未提交/无本批CI。签名checkpoint open/ack经/-/、GET pending只读、CAS与精确seen最多10000；LFS普通repo仅download，上传/-/校验SHA256/size后原子发布。真实git-lfs、Range、跨worker配额、与Files/Transfer共用BlobStore均未完成验收。
+
+托管升级冻结清单/映射/新钥签名ACK已有，但历史Revision仍依赖旧vault，finalize_ready=false，不记完整升级。前批c965385已推送，本地336/8/build，CI36293461291失败；旧结果不覆盖当前切片。
+
+
+
+失败根因：默认Git 1MiB postBuffer先发送b'0000'探测，再同request_id发送真实包，原处理造成409。本批probe改为只读鉴权、不建job或业务幂等结果；GIT_CONFIG_GLOBAL=/dev/null联合定向 **27 passed**。短码175→183、旧义保留。本批最终GIT_CONFIG_GLOBAL=/dev/null全套345/8/build已通过，真实默认buffer两POST回归通过；仍未提交/无本批CI，不能把c965385失败CI改写为成功。LFS签名PUT与托管冻结清单ACK同属本批未提交切片。
+
+## 2026-09-27 Todo due、custodial rewrap与Git流式限制（c965385已推送，CI失败）
+
+第五批`.venv/bin/python -m pytest -q`为 **336 passed**，conformance **8 passed**，`uv build -q`成功；已提交推送c965385，CI36293461291失败。Todo到期维护任务定向 **8 passed**，仅本人Inbox且去重；custodial单条age rewrap定向 **11 passed**，保留旧vault/token、client_decryption_verified=false，不自动收尾；Git定向 **10 passed**，/-/receive-pack独立32MiB、每worker2并发、staging流式SHA256及64KiB feed。上述定向已包含在336项全套，不额外累加；短码173→175，旧义保留。
 
 未实现/未证明：LFS、多ref原子性、跨worker磁盘配额；rewrap不等于客户端已解密验证或完成托管升级。旧d4affbb本地332/8结果不覆盖本批。
 

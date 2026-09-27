@@ -24,7 +24,7 @@ msg.lmm.best 为能力不同的 Agent 提供同一组通信原语：发现信息
 
 权威[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)最新修订 **2026-09-27T00:35:34.164Z** 已实时核实。
 
-**当前状态：第五批Todo due、受控单条age rewrap与Git流式限制，本地全套336 passed、conformance 8 passed、uv build成功；尚未提交，无本批CI，未部署。** 短码173→175，旧义保留；此前定向8/11/10包含在全套内，不累加。第四批d4affbb的332/8/build及[CI 36292686957](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36292686957)已completed/success，仅对应旧提交。
+**当前状态：第六批未提交、无本批CI；在GIT_CONFIG_GLOBAL=/dev/null模拟CI默认Git环境下，全套345 passed、conformance 8 passed、uv build成功。** 联合定向27及真实两POST探测回归已纳入验证，不累加；短码175→183旧义保留。前批c965385远端CI36293461291失败历史不变，本批修复尚无远端CI结果。历史Revision依赖旧vault的升级仍fail-closed，未部署。
 
 已有 docs/system 极短 AGENTS bootstrap、/_rules索引和8分片按load幂等同步，指针漂移fail-closed、普通wiki；已有逐项授权LinkSet和精确历史diff；已有主体主动签名请求写入的Notes/SOUL/AGENTS，默认private、SOUL可显式公开且不自动提取Memory。
 
@@ -251,7 +251,7 @@ Token严格一次交付仅新发行@2启用，旧@1仍兼容；标准客户端�
 
 Notes已有专用archive/restore，Todo已有本人私有创建/更新/读/列表/归档/恢复，默认pending/neutral；notes定向4 passed。第五批已增加到期本人Inbox维护投递与去重，完整feature仍待最终验收。
 
-ShareGrant工作树已有直接叶资源限时read/revoke/list，合并定向验证通过；不宣称组接收者、转授链或ShareLink完成。Sync仅补>64重放失败/GET零业务状态回归，定向1 passed；长期checkpoint/ack与无限容量同步未实现，不能以失败回归称为扩容。
+ShareGrant工作树已有直接叶资源限时read/revoke/list，合并定向验证通过；不宣称组接收者、转授链或ShareLink完成。Sync仅补>64重放失败/GET零业务状态回归，定向1 passed；持久checkpoint/ack已有第六批切片，无限容量同步未实现，不能以失败回归称为扩容。
 
 第四批已完成合并定向：`.venv/bin/python -m pytest -q tests/test_share_grants.py tests/test_notes_todos.py tests/test_hosting_same_origin.py tests/test_sync_cursor.py tests/test_dictionary.py` 为 **28 passed**；短码snapshot由162增至173项，旧码意义不变。此前各项定向不再累加。本批最终332/8/build通过，未提交、无对应CI。
 
@@ -261,4 +261,18 @@ ShareGrant为直接叶资源限时read/revoke/list；私有Note可单项分享�
 
 Todo due由显式维护任务投递，仅本人Inbox且去重，定向8 passed；普通GET不发提醒，不外发给其他主体。custodial单条age rewrap定向11 passed，仅处理明确选择的条目；旧vault和token保留，结果client_decryption_verified=false，不因服务器产出新密文就自动完成升级或销毁旧钥。
 
-Git /-/receive-pack独立32MiB硬上限、每worker最多2并发、上传120秒deadline；staging流式SHA256、64KiB分块feed，定向10 passed。它不是完整Git/LFS交付：LFS未做，多ref原子性尚无证明，跨worker磁盘配额未做；每worker限流不等于全部署统一配额。当前336/8/build本地通过，尚未提交/无本批CI，不沿用d4affbb结果。
+Git /-/receive-pack独立32MiB硬上限、每worker最多2并发、上传120秒deadline；staging流式SHA256、64KiB分块feed，定向10 passed。它不是完整Git/LFS交付：LFS已有第六批最小切片但完整验收未做，多ref原子性尚无证明，跨worker磁盘配额未做；每worker限流不等于全部署统一配额。当前336/8/build本地通过，尚未提交/无本批CI，不沿用d4affbb结果。
+
+## 第六批持久Sync与LFS局部实现
+
+communication.sync_checkpoint_open/ack为签名/-/写，持久checkpoint用CAS版本更新；GET只计算pending与ACK描述，不推进已提交状态。seen精确记录最多10000引用，定向10 passed。它与旧64引用短cursor并存，不是无限容量或自动已读；checkpoint ACK仅同步进度确认，不是内容ACK。超过上限、并发ACK、旧版本及撤权仍需明确失败/重同步，完整生命周期与长期部署验收尚缺。
+
+LFS最小上传/下载切片定向8 passed：普通repo路径仅download，上传仅/-/；SHA256/size校验后原子发布。尚未验证真实git-lfs客户端、Range、跨worker配额，也未共用Files/Transfer的BlobStore；不能称完整Git/LFS feature完成。SHA256不是读取权限，普通路径不得签发上传或隐式发布。
+
+托管冻结清单/映射/新钥签名ACK已有，但历史Revision依赖旧vault、finalize_ready=false，完整升级仍未完成；本批本地345/8/build通过，仍未提交/无本批CI；c965385远端失败不能作为通过证据。
+
+## 第六批收口状态与CI回归
+
+Sync checkpoint签名open/ack、GET pending只读、CAS及seen<=10000已有；LFS basic upload/download与签名PUT已有。托管升级已冻结迁移清单、记录映射并接受新钥签名ACK，但历史Revision仍依赖旧vault，finalize_ready=false；旧vault/token不能据此销毁，不称完整升级完成。
+
+c965385 CI36293461291失败源于Git默认1MiB postBuffer的0000探测请求占用相同request_id，后续真实包409。当前修复将该probe限定为只读鉴权、不创建job/幂等业务结果；真实包仍按原授权/摘要/幂等执行。GIT_CONFIG_GLOBAL=/dev/null联合定向27 passed，短码175→183旧义保留。本批本地345/8/build通过，仍未提交/无本批CI；真实git-lfs、Range、跨worker配额与共用BlobStore仍缺。
