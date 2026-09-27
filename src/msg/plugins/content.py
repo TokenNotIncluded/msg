@@ -1,12 +1,15 @@
 """Topics, posts, files and templates all use Resource + immutable Revision."""
 from __future__ import annotations
 from dataclasses import replace
+import time
 from hashlib import sha256
 from msg.constants import ROOT_SPACE,ROOT_SUBJECT
 from msg.core.codec import canonical,decode,loads,wire,unb64,digest,parse_time
 from msg.core.errors import Failure,require
 from msg.core.models import HandlerOutput,ResourceRef,Relation,EffectJob,BlobRef,Event
 from msg.core.tags import normalize_tags
+from msg.core.text_patch import (PATCH_LIMIT,PATCH_CONTEXT_LIMIT,PATCH_CANDIDATE_LIMIT,
+    PATCH_SCHEMA,apply_text_patch,apply_patch,validate_patch)
 from msg.core.template_dsl import parse_template,normalize_values
 from msg.plugins.common import *
 from msg.plugins.schemas import *
@@ -172,37 +175,8 @@ async def ensure_public_repositories(tx,resource, *, mode=None,parent=None):
         require(p.mode&1 and all(a.mode&1 for a in await tx.ancestors(parent)),'repo_public_read_required')
 
 
-PATCH_LIMIT=1048576
-PATCH_CONTEXT_LIMIT=256
-PATCH_CANDIDATE_LIMIT=4096
-
-
-def apply_text_patch(source,exact,replacement,before='',after=''):
-    """Apply one contextual replacement, never guessing between identical matches."""
-    require(bool(exact),'patch_exact_required')
-    match=None
-    start=0
-    candidates=0
-    while True:
-        index=source.find(exact,start)
-        if index<0:
-            break
-        candidates+=1
-        require(candidates<=PATCH_CANDIDATE_LIMIT,'patch_too_complex')
-        end=index+len(exact)
-        if index>=len(before) and source.startswith(before,index-len(before)) and source.startswith(after,end):
-            require(match is None,'patch_ambiguous')
-            match=index
-        start=index+1
-    require(match is not None,'patch_no_match')
-    index=match
-    result=source[:index]+replacement+source[index+len(exact):]
-    require(len(result.encode('utf-8'))<=PATCH_LIMIT,'patch_too_large')
-    return result
-
-
 async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
-    """Validate an exact or explicitly rebased patch before publishing a Revision."""
+    """Prepare an authorized edit without publishing any content or SQL reference."""
     resource=await tx.resource(await resolve(tx,args['id']))
     if post_only:
         require(resource.type=='post','not_editable')
@@ -218,8 +192,13 @@ async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
     current=await tx.revision(ResourceRef(id=resource.id,revision=resource.revision))
     media=current.content.media_type
     require(media in {'text/plain','text/markdown'},'text_patch_required')
-    pieces=(args['exact'],args['replacement'],args.get('before',''),args.get('after',''))
-    require(sum(len(piece.encode('utf-8')) for piece in pieces)<=PATCH_LIMIT,'patch_too_large')
+    patch=args.get('patch')
+    if patch is not None:
+        validate_patch(patch)
+    else:
+        pieces=(args['exact'],args['replacement'],args.get('before',''),args.get('after',''))
+        require(sum(len(piece.encode('utf-8')) for piece in pieces)<=PATCH_LIMIT,'patch_too_large')
+    base_source=None
     require(current.content.size<=PATCH_LIMIT,'patch_too_large')
     try:
         source=(await app.contents.read_bytes(current.content,limit=PATCH_LIMIT)).decode('utf-8')
@@ -235,6 +214,7 @@ async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
         ancestor=current
         seen=set()
         while ancestor.id!=base.id:
+            require(len(seen)<4096 and time.monotonic()<ctx.deadline_monotonic,'patch_too_complex')
             require(ancestor.id not in seen and len(ancestor.parents)==1,'revision_conflict')
             seen.add(ancestor.id)
             ancestor=await tx.revision(ResourceRef(id=resource.id,revision=ancestor.parents[0]))
@@ -244,11 +224,13 @@ async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
         except UnicodeError as exc:
             raise Failure('invalid_utf8') from exc
         # A unique anchor must have selected exactly one block in the base.
-        apply_text_patch(base_source,*pieces)
+        if patch is None:
+            apply_text_patch(base_source,*pieces)
     else:
         require('base_generation' not in args or args['base_generation']==resource.generation,
                 'base_generation_conflict')
-    patched=apply_text_patch(source,*pieces)
+    patched=(apply_patch(source,patch,base_source=base_source) if patch is not None
+             else apply_text_patch(source,*pieces))
     return resource,current,patched,media
 
 
@@ -615,34 +597,59 @@ def install(app):
     post_patch_schema=obj(patch_fields,('id','base_revision','exact','replacement'))
     rebase_patch_fields={**patch_fields,'base_generation':INTEGER,'rebase':BOOLEAN}
     rebase_patch_schema=obj(rebase_patch_fields,('id','base_revision','base_generation','exact','replacement'))
+    structured_patch_schema=obj({'id':IDENTIFIER,'base_revision':IDENTIFIER,
+        'base_generation':INTEGER,'rebase':BOOLEAN,'patch':PATCH_SCHEMA,
+        'change_note':{'type':'string','maxLength':2048},
+        'content_created_at':STRING,'revision_id':IDENTIFIER,'content_signature':SIGNATURE},
+        ('id','base_revision','base_generation','patch'))
+
+    async def publish_patch(ctx,request,tx,args,prepared):
+        resource,old,body,media=prepared
+        extra={}
+        if 'patch' in args:
+            # Bind provenance to the precise patch, not to the signed request
+            # containing this signature (which would create a digest cycle).
+            extra={'change_note':args.get('change_note'),'source_kind':'user',
+                   'source_version':1,'source_digest':digest(args['patch']),
+                   'signature':args.get('content_signature'),'revision_id':args.get('revision_id'),
+                   'content_created_at':args.get('content_created_at')}
+        return await revise_resource(app,ctx,request,tx,resource,body,media,
+            relations=old.relations,author=old.author,**extra)
+
     @op('content.post_patch',post_patch_schema,requirements=requirement('id','write'))
+    @op('content.post_patch',structured_patch_schema,requirements=requirement('id','write'),version=2)
     @op('content.text_patch',post_patch_schema,requirements=requirement('id','write'))
     @op('content.text_patch',rebase_patch_schema,requirements=requirement('id','write'),version=2)
+    @op('content.text_patch',structured_patch_schema,requirements=requirement('id','write'),version=3)
     async def text_patch(ctx,request,tx):
-        resource,old,patched,media=await prepare_text_patch(app,ctx,request,tx,request.arguments,
+        args=request.arguments
+        prepared=await prepare_text_patch(app,ctx,request,tx,args,
             post_only=request.operation=='content.post_patch')
-        updated=await revise_resource(app,ctx,request,tx,resource,patched,media,
-            relations=old.relations,author=old.author)
+        updated=await publish_patch(ctx,request,tx,args,prepared)
         return output_for(updated)
 
     @op('content.text_patch_batch',obj({'patches':{'type':'array','minItems':1,'maxItems':16,
-        'items':rebase_patch_schema}},
-        ('patches',)))
+        'items':rebase_patch_schema}},('patches',)))
+    @op('content.text_patch_batch',obj({'patches':{'type':'array','minItems':1,'maxItems':16,
+        'items':structured_patch_schema}},('patches',)),version=2)
     async def text_patch_batch(ctx,request,tx):
         patches=request.arguments['patches']
         resolved=[await resolve(tx,item['id']) for item in patches]
         require(len(set(resolved))==len(resolved),'duplicate_patch_target')
-        # Every target is checked against its current authorization and packet
-        # generation before the first Revision or content ref is created.
+        # Validate every target before the first content put. The executor owns
+        # the surrounding SQL transaction; a later signature/storage failure
+        # rolls back all published references, leaving only reclaimable blobs.
         prepared=[]
         for item,rid in zip(patches,resolved):
             prepared.append(await prepare_text_patch(app,ctx,request,tx,{**item,'id':rid}))
         updated=[]
-        for resource,old,body,media in prepared:
-            updated.append(await revise_resource(app,ctx,request,tx,resource,body,media,
-                relations=old.relations,author=old.author))
+        for args,item in zip(patches,prepared):
+            updated.append(await publish_patch(ctx,request,tx,args,item))
+        data={'generations':{r.id:r.generation for r in updated}}
+        if request.contract_version>=2:
+            data['items']=[{'id':r.id,'revision':r.revision,'generation':r.generation} for r in updated]
         return HandlerOutput(resources=tuple(ResourceRef(id=r.id,revision=r.revision) for r in updated),
-            data={'generations':{r.id:r.generation for r in updated}})
+            data=data)
 
     async def lifecycle(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))

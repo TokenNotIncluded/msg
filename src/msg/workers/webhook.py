@@ -8,6 +8,7 @@ import asyncio
 import hashlib
 import hmac
 import ipaddress
+import re
 import secrets
 import socket
 from datetime import datetime
@@ -16,7 +17,7 @@ from urllib.parse import urlsplit
 import aiohttp
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-from msg.core.codec import b64, unb64
+from msg.core.codec import b64, loads, unb64
 from msg.core.errors import Failure, require
 from msg.security.network import normalized_host, validate_addresses
 
@@ -82,20 +83,49 @@ def sign_delivery(secret: bytes, timestamp: str, body: bytes) -> str:
     return hmac.new(secret, timestamp.encode('ascii') + b'.' + body, hashlib.sha256).hexdigest()
 
 
+def _delivery_header(headers, name, code):
+    # HTTP field names are case-insensitive. Reject duplicates instead of making
+    # the proxy, signature verifier and replay ledger pick different values.
+    values = [value for key, value in headers.items()
+              if isinstance(key, str) and key.lower() == name.lower()]
+    require(len(values) == 1 and type(values[0]) is str, code)
+    return values[0]
+
+
 def verify_delivery(headers: dict, body: bytes, secret: bytes, *, now: datetime,
                     seen: set[str] | None = None, window_seconds: int = 300) -> str:
-    """Validate HMAC and freshness; persistent callers must dedupe the returned ID."""
-    timestamp = headers.get('Msg-Timestamp', '')
-    signature = headers.get('Msg-Signature', '')
-    delivery_id = headers.get('Msg-Delivery-Id', '')
-    require(timestamp.isascii() and timestamp.isdecimal() and len(timestamp) <= 16,
+    """Authenticate the raw body *and* the identity used for persistent dedupe.
+
+    Header identifiers alone are not signed. They must match the authenticated
+    envelope before a receiver looks up or inserts a delivery in its replay log.
+    ``seen`` is an in-process convenience; production receivers must atomically
+    persist the returned ID together with their own business effect.
+    """
+    timestamp = _delivery_header(headers, 'Msg-Timestamp', 'invalid_webhook_timestamp')
+    signature = _delivery_header(headers, 'Msg-Signature', 'invalid_webhook_signature')
+    delivery_id = _delivery_header(headers, 'Msg-Delivery-Id', 'invalid_webhook_delivery')
+    event_id = _delivery_header(headers, 'Msg-Event-Id', 'invalid_webhook_event')
+    require(timestamp.isascii() and timestamp.isdecimal() and 0 < len(timestamp) <= 16,
             'invalid_webhook_timestamp')
+    require(type(window_seconds) is int and window_seconds >= 0,
+            'invalid_webhook_window')
     require(abs(int(now.timestamp()) - int(timestamp)) <= window_seconds,
             'webhook_replay_window')
-    require(len(delivery_id) <= 160 and delivery_id.startswith('job_'),
+    require(re.fullmatch(r'job_[A-Za-z0-9_-]{1,156}', delivery_id) is not None,
             'invalid_webhook_delivery')
-    require(signature.startswith('sha256=') and hmac.compare_digest(
-        signature[7:], sign_delivery(secret, timestamp, body)), 'invalid_webhook_signature')
+    require(re.fullmatch(r'sha256=[0-9a-f]{64}', signature) is not None and
+            hmac.compare_digest(signature[7:], sign_delivery(secret, timestamp, body)),
+            'invalid_webhook_signature')
+    try:
+        envelope = loads(body)
+    except Failure as exc:
+        # Never echo signed content or parser field names: the envelope may have
+        # been supplied by an untrusted sender, even when a shared key matches.
+        raise Failure('invalid_webhook_payload') from exc
+    require(isinstance(envelope, dict), 'invalid_webhook_payload')
+    require(envelope.get('delivery_id') == delivery_id, 'invalid_webhook_delivery')
+    require(envelope.get('event_id') == event_id and bool(event_id), 'invalid_webhook_event')
+    require(envelope.get('timestamp') == timestamp, 'invalid_webhook_timestamp')
     if seen is not None:
         require(delivery_id not in seen, 'webhook_replay')
         seen.add(delivery_id)

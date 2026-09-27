@@ -79,12 +79,13 @@ def require_sshd_process():
                 # Linux may hide /proc/<root-pid>/exe from an unprivileged
                 # child. The root-owned process identity cannot be forged by
                 # the dedicated service account; arbitrary ancestor names can.
-                if directory.stat().st_uid == 0 and int(status['Uid'].split()[0]) == 0:
+                uids = [int(value) for value in status['Uid'].split()]
+                if directory.stat().st_uid == 0 and len(uids) == 4 and all(uid == 0 for uid in uids):
                     return
-                executable = (directory / 'exe').resolve(strict=True)
-                require(executable.stat().st_uid == 0 and not executable.stat().st_mode & 0o022,
-                        'ssh_os_isolation_required')
-                return
+                # A root-owned executable proves nothing: an unprivileged
+                # Python/shell process can set its comm to "sshd". Continue to
+                # the privileged monitor/listener instead of trusting that
+                # process, including a user-launched OpenSSH daemon.
             pid = int(status['PPid'].strip())
         except (OSError, ValueError, KeyError):
             break
