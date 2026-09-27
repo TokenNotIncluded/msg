@@ -51,10 +51,14 @@ def _supply(tx):
 
 
 def _post_transfer(tx, *, sender, recipient, amount, actor, request_id, now,
-                   receipt_signer, reference=None, kind='transfer'):
+                   receipt_signer, reference=None, kind='transfer', escrow_authority=None):
     """Called only within the executor's serialized write transaction."""
     require(kind in {'transfer', 'refund'}, 'invalid_money_kind')
     amount = _amount(amount)
+    account = tx.one('SELECT kind FROM ledger_accounts WHERE id=?', (sender,))
+    if account and account[0] == 'order_escrow':
+        from msg.market.escrow import _ESCROW_WRITE
+        require(escrow_authority is _ESCROW_WRITE, 'escrow_release_forbidden')
     require(sender != recipient, 'self_transfer_forbidden')
     require(sender not in {ROOT_SUBJECT,'@root'}, 'root_local_only')
     require(_balance(tx, sender) >= amount, 'insufficient_funds')

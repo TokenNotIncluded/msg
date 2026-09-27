@@ -142,6 +142,9 @@ def install(app):
 
     @op('delivery.get', obj({'order_id': IDENTIFIER}, ('order_id',)), effect='read')
     async def get(ctx, request, tx):
+        if tx.one('SELECT 1 FROM order_contracts WHERE order_id=?', (request.arguments['order_id'],)):
+            from msg.market.delivery import read
+            return await read(app, tx, ctx, request)
         buyer = ctx.principal.subject
         require(buyer is not None and ctx.principal.actor == buyer,
                 'order_not_found')
@@ -162,6 +165,9 @@ def install(app):
         'delivery_digest': {'type': 'string', 'pattern': '^sha256:[a-f0-9]{64}$'}},
         ('order_id', 'delivery_digest')), signature=True)
     async def accept(ctx, request, tx):
+        if tx.one('SELECT 1 FROM order_contracts WHERE order_id=?', (request.arguments['order_id'],)):
+            from msg.market.delivery import accept as market_accept
+            return await market_accept(app, tx, ctx, request)
         buyer = _subject(ctx)
         order = _buyer_order(tx, request.arguments['order_id'], buyer)
         delivery = _delivery(tx, order['id'])
@@ -174,24 +180,16 @@ def install(app):
                 'delivery_recipient_mismatch')
         require(_balance(tx, order['escrow_subject']) == order['total_price_minor'],
                 'escrow_balance_mismatch')
-        receipt = _post_transfer(tx, sender=order['escrow_subject'],
-            recipient=order['seller'], amount=order['total_price_minor'],
-            actor=buyer, request_id=request.request_id, now=ctx.now,
-            receipt_signer=app.receipt_signer,
-            reference='order_release:' + order['id'])
-        receipt_id = receipt['body']['transaction_id']
-        changed = tx.execute('''UPDATE store_deliveries
-            SET state='claimed',claimed_at=?,receipt=?
-            WHERE order_id=? AND recipient_subject=? AND state='prepared' ''',
-            (wire(ctx.now), canonical(receipt).decode(), order['id'], buyer), write=True)
-        require(changed.rowcount == 1, 'delivery_not_acceptable')
-        changed = tx.execute('''UPDATE store_orders
-            SET state='settled',settled_at=?,receipt_refs=?
-            WHERE id=? AND buyer=? AND state='delivered' AND delivered_at IS NOT NULL''',
-            (wire(ctx.now), canonical([*order['receipt_refs'], receipt_id]).decode(),
-             order['id'], buyer), write=True)
-        require(changed.rowcount == 1, 'delivery_not_acceptable')
+        from msg.market.escrow import settle, transition
+        await transition(tx, order, 'accepted', now=ctx.now, actor=buyer,
+                         request_id=request.request_id, reason='buyer_acceptance')
+        receipt = (await settle(app, tx, order, now=ctx.now, actor=buyer,
+            request_id=request.request_id, reason='buyer_acceptance'))[0]
+        tx.execute("UPDATE store_deliveries SET state='claimed',claimed_at=?,receipt=? WHERE order_id=?",
+            (wire(ctx.now), canonical(receipt).decode(), order['id']), write=True)
         return HandlerOutput(data={'order_id': order['id'], 'state': 'settled',
             'delivery_id': delivery['id'], 'receipt': receipt})
 
+    from msg.market.delivery import install as install_market
+    install_market(app, op)
     finish()

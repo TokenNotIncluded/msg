@@ -169,6 +169,14 @@ async def _doctor(config_dir,clock):
         async def inspect(tx):
             require(tx.one('SELECT version FROM schema_version')[0]==1,'schema_version_unknown')
             success('storage')
+            if 'orders' in settings.server.plugins:
+                try:
+                    from msg.admin.market_check import inspect_market
+                    success('market',**(await inspect_market(tx)))
+                except (Failure,KeyError,ValueError,psycopg.Error) as exc:
+                    failed('market',getattr(exc,'code','market_inspection_failed'))
+            else:
+                checks['market']={'ok':True,'status':'disabled'}
             try:
                 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
                 columns={row[0] for row in tx.rows("SELECT column_name FROM information_schema.columns "
@@ -600,6 +608,8 @@ async def selftest():
             checks['identity_upgrade_recovery']=await check_upgrade_recovery(app,now)
             from msg.admin.token_delivery_check import check_token_delivery
             checks['credential_delivery_recovery']=await check_token_delivery(app,now)
+            from msg.admin.market_check import check_market
+            checks['market_lifecycle']=await check_market(app,root,call,register,now)
         except Failure as exc:
             checks['failure']={'code':exc.code}
         finally:

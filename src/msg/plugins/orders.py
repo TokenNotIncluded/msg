@@ -173,27 +173,19 @@ def install(app):
                 'order_not_cancellable')
         require(tx.one('SELECT 1 FROM store_deliveries WHERE order_id=?',
                        (row['id'],)) is None, 'order_not_cancellable')
-        require(_balance(tx, row['escrow_subject']) == row['total_price_minor'],
-                'escrow_balance_mismatch')
-        refund = _post_transfer(tx, sender=row['escrow_subject'],
-            recipient=buyer, amount=row['total_price_minor'], actor=buyer,
-            request_id=request.request_id, now=ctx.now,
-            receipt_signer=app.receipt_signer,
-            reference='order_refund:' + row['id'], kind='refund')
-        refs = [*row['receipt_refs'], refund['body']['transaction_id']]
-        changed = tx.execute('''UPDATE store_orders SET state='refunded',receipt_refs=?
-            WHERE id=? AND buyer=? AND state='funded' AND delivered_at IS NULL
-              AND NOT EXISTS (SELECT 1 FROM store_deliveries WHERE order_id=?)''',
-            (canonical(refs).decode(), row['id'], buyer, row['id']), write=True)
-        require(changed.rowcount == 1, 'order_not_cancellable')
+        from msg.market.escrow import settle
+        refunds = await settle(app, tx, row, now=ctx.now, actor=buyer,
+            request_id=request.request_id, reason='buyer_cancelled',
+            refund_minor=row['total_price_minor'])
+        refund = refunds[0]
         return HandlerOutput(data={'order': _view(_row(tx, row['id'], buyer), buyer),
                                    'refund': refund})
 
     @op('orders.get', obj({'order_id': IDENTIFIER}, ('order_id',)), effect='read')
     async def get(ctx, request, tx):
         viewer = _viewer(ctx)
-        return HandlerOutput(data={'order': _view(_row(tx, request.arguments['order_id'],
-                                                       viewer), viewer)})
+        from msg.market.orders import view
+        return HandlerOutput(data={'order': view(tx, _row(tx, request.arguments['order_id'], viewer), viewer)})
 
     @op('orders.list', obj({'role': {'enum': ['buy', 'sell']},
         'status': {'enum': ['open', 'completed', 'disputed']},
@@ -210,7 +202,7 @@ def install(app):
             where = ('buyer=?' if role == 'buy' else 'seller=?')
             values = [viewer]
         if status:
-            where += (' AND state IN (\'funded\',\'delivered\',\'accepted\')'
+            where += (' AND state IN (\'created\',\'funded\',\'delivered\',\'accepted\')'
                       if status == 'open' else
                       ' AND state IN (\'settled\',\'cancelled\',\'refunded\')'
                       if status == 'completed' else
@@ -242,4 +234,8 @@ def install(app):
             result['escrow_balance_minor'] = _balance(tx, row['escrow_subject'])
         return HandlerOutput(data={'payment': result})
 
+    from msg.market.orders import install as install_market
+    install_market(app, op)
+    from msg.market.arbitration import install as install_arbitration
+    install_arbitration(app, op)
     finish()

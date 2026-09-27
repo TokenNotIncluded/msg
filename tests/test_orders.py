@@ -301,7 +301,7 @@ async def test_cancel_refuses_delivery_and_rolls_back_after_refund_post(installe
                         key=buyer_key, subject=buyer)
     assert first.status == second.status == 'ok'
     first_id, second_id = first.data['order']['id'], second.data['order']['id']
-    from msg.plugins import orders
+    from msg.market import escrow as orders
     original = orders._post_transfer
 
     def abort_after_refund(*args, **kwargs):
