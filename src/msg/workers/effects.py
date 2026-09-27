@@ -246,14 +246,25 @@ class EffectWorker:
     async def _mail(self, job):
         from msg.core.codec import loads, parse_time
         # Disabled means not even connecting, regardless of historical jobs.
-        require(self.app.settings.server.mail is not None, 'mail_disabled')
+        require(self.app.settings.server.mail is not None and
+                self.app.settings.server.mail.enabled, 'mail_disabled')
+        if job.arguments.get('order_notification'):
+            from msg.market.delivery_notifications import project_notification
+            async with self.app.metadata.transaction(write=False) as tx:
+                principal = await current_principal(self.app, job.principal, tx)
+                projected = await project_notification(self.app, tx, job, principal)
+            state = await self.mail_sender.send(projected)
+            require(state in {'sent', 'uncertain'}, 'invalid_delivery_result')
+            await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
+            return
         async with self.app.metadata.transaction(write=False) as tx:
             await current_principal(self.app, job.principal, tx)
             subject = job.arguments['recipient_subject']
             row = tx.one('SELECT body FROM emails WHERE subject=?', (subject,))
             require(row is not None, 'email_not_set')
             email = decode(EmailSettings, loads(row[0]))
-            require(email.address == job.arguments['recipient'], 'email_changed')
+            require(email.subject_id == subject and email.address == job.arguments['recipient'],
+                    'email_changed')
             if job.arguments.get('verification'):
                 challenge = tx.one('SELECT expires FROM email_challenges WHERE subject=?', (subject,))
                 require(challenge is not None and parse_time(challenge[0]) > self.app.clock(), 'email_challenge_expired')

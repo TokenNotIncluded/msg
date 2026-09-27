@@ -10,11 +10,11 @@ from msg.core.errors import Failure
 from test_service import call, register
 
 
-async def _sale(app, seller_key, seller, *, price=5_000_000, quantity=2):
+async def _sale(app, seller_key, seller, *, price=5_000_000, quantity=2, escrow_policy='escrow-v1'):
     listing = await call(app, 'store.listing_create', {
         'name': 'bundle', 'item_kind': 'bundle', 'price_minor': price,
         'currency_id': 'primary', 'quantity': quantity,
-        'delivery_mode': 'managed_instant', 'escrow_policy': 'escrow-v1',
+        'delivery_mode': 'managed_instant', 'escrow_policy': escrow_policy,
         'dispute_policy': 'dispute-v1', 'terms': 'Two immutable items.'},
         key=seller_key, subject=seller)
     assert listing.status == 'ok', wire(listing)

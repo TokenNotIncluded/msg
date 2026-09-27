@@ -1,7 +1,8 @@
 """Buyer-only in-site delivery of an immutable managed package.
 
-Preparing and accepting are explicit signed operations. The latter is the only
-path here that releases escrow, after rechecking the order and delivery facts.
+The versioned checkout can prepare a package atomically. A signed acceptance
+or an explicit, digest-bound checkout policy controls settlement; merely reading
+or sending an email never claims a delivery.
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from msg.core.models import BlobRef, HandlerOutput
 from msg.plugins.common import new_id, registration
 from msg.plugins.money import CURRENCY_ID, _balance
 from msg.market.escrow import EscrowEngine
+from msg.market.delivery_targets import validate_target
 from msg.plugins.orders import _row as order_row, _subject
 from msg.plugins.schemas import IDENTIFIER, obj
 from msg.plugins.store import _package_row
@@ -42,6 +44,7 @@ def _buyer_order(tx, order_id, buyer):
 
 
 async def _verified_delivery(app, tx, order, delivery):
+    validate_target(order, delivery)
     require(delivery is not None and
             delivery['recipient_subject'] == order['buyer'] and
             delivery['package_digest'] == order['package_digest'] and
@@ -102,6 +105,43 @@ async def _payload(app, delivery):
     return files
 
 
+async def prepare_managed(app, ctx, tx, order):
+    """Prepare inside the caller's transaction; never authenticate or commit here."""
+    buyer = order['buyer']
+    require(order['state'] == 'funded' and order['delivered_at'] is None,
+            'order_not_deliverable')
+    validate_target(order)
+    require(order['currency_id'] == CURRENCY_ID and
+            _balance(tx, order['escrow_subject']) == order['total_price_minor'],
+            'escrow_balance_mismatch')
+    kind, manifest, refs = await _package(app, tx, order)
+    delivery_id = new_id('dlv')
+    body = {'delivery_id': delivery_id, 'order_id': order['id'],
+            'recipient_subject': buyer, 'kind': kind,
+            'manifest': manifest, 'payload_refs': refs,
+            'package_digest': order['package_digest'], 'channel': 'site'}
+    delivery_digest = digest(body)
+    tx.execute('''INSERT INTO store_deliveries
+        (id,order_id,recipient_subject,kind,payload_refs,manifest,
+         package_digest,delivery_digest,channel,state,prepared_at,claimed_at,receipt)
+        VALUES (?,?,?,?,?,?,?,?,?,'prepared',?,NULL,NULL)''',
+        (delivery_id, order['id'], buyer, kind, canonical(refs).decode(),
+         canonical(manifest).decode(), order['package_digest'],
+         delivery_digest, 'site', wire(ctx.now)), write=True)
+    changed = tx.execute('''UPDATE store_orders SET state='delivered',delivered_at=?
+        WHERE id=? AND buyer=? AND state='funded' AND delivered_at IS NULL''',
+        (wire(ctx.now), order['id'], buyer), write=True)
+    require(changed.rowcount == 1, 'order_not_deliverable')
+    return _delivery(tx, order['id'])
+
+
+def delivery_summary(delivery):
+    return {'delivery_id': delivery['id'], 'order_id': delivery['order_id'],
+            'state': delivery['state'], 'channel': delivery['channel'],
+            'package_digest': delivery['package_digest'],
+            'delivery_digest': delivery['delivery_digest']}
+
+
 def install(app):
     op, finish = registration(app, 'delivery', ('orders',))
 
@@ -110,36 +150,8 @@ def install(app):
     async def prepare(ctx, request, tx):
         buyer = _subject(ctx)
         order = _buyer_order(tx, request.arguments['order_id'], buyer)
-        require(order['state'] == 'funded' and order['delivered_at'] is None,
-                'order_not_deliverable')
-        target = order['delivery_target']
-        require(target == {'subject_id': buyer, 'channel': 'site'},
-                'delivery_recipient_mismatch')
-        require(order['currency_id'] == CURRENCY_ID and
-                _balance(tx, order['escrow_subject']) == order['total_price_minor'],
-                'escrow_balance_mismatch')
-        kind, manifest, refs = await _package(app, tx, order)
-        delivery_id = new_id('dlv')
-        body = {'delivery_id': delivery_id, 'order_id': order['id'],
-                'recipient_subject': buyer, 'kind': kind,
-                'manifest': manifest, 'payload_refs': refs,
-                'package_digest': order['package_digest'], 'channel': 'site'}
-        delivery_digest = digest(body)
-        tx.execute('''INSERT INTO store_deliveries
-            (id,order_id,recipient_subject,kind,payload_refs,manifest,
-             package_digest,delivery_digest,channel,state,prepared_at,claimed_at,receipt)
-            VALUES (?,?,?,?,?,?,?,?,?,'prepared',?,NULL,NULL)''',
-            (delivery_id, order['id'], buyer, kind, canonical(refs).decode(),
-             canonical(manifest).decode(), order['package_digest'],
-             delivery_digest, 'site', wire(ctx.now)), write=True)
-        changed = tx.execute('''UPDATE store_orders SET state='delivered',delivered_at=?
-            WHERE id=? AND buyer=? AND state='funded' AND delivered_at IS NULL''',
-            (wire(ctx.now), order['id'], buyer), write=True)
-        require(changed.rowcount == 1, 'order_not_deliverable')
-        return HandlerOutput(data={'delivery': {'delivery_id': delivery_id,
-            'order_id': order['id'], 'state': 'prepared', 'channel': 'site',
-            'package_digest': order['package_digest'],
-            'delivery_digest': delivery_digest}})
+        delivery = await prepare_managed(app, ctx, tx, order)
+        return HandlerOutput(data={'delivery': delivery_summary(delivery)})
 
     @op('delivery.get', obj({'order_id': IDENTIFIER}, ('order_id',)), effect='read')
     async def get(ctx, request, tx):
@@ -150,6 +162,7 @@ def install(app):
         delivery = _delivery(tx, order['id'])
         require(delivery is not None, 'delivery_not_found')
         await _verified_delivery(app, tx, order, delivery)
+        from msg.market.delivery_notifications import notification_status
         return HandlerOutput(data={'delivery': {
             'delivery_id': delivery['id'], 'order_id': order['id'],
             'recipient_subject': buyer, 'kind': delivery['kind'],
@@ -157,7 +170,8 @@ def install(app):
             'delivery_digest': delivery['delivery_digest'], 'channel': 'site',
             'state': delivery['state'], 'prepared_at': delivery['prepared_at'],
             'claimed_at': delivery['claimed_at'],
-            'payloads': await _payload(app, delivery)}})
+            'payloads': await _payload(app, delivery),
+            'notification': await notification_status(app, tx, order['id'])}})
 
     @op('delivery.accept', obj({'order_id': IDENTIFIER,
         'delivery_digest': {'type': 'string', 'pattern': '^sha256:[a-f0-9]{64}$'}},
@@ -167,5 +181,37 @@ def install(app):
             ctx,request,tx,reason='buyer_accept')
         return HandlerOutput(data={'order_id':request.arguments['order_id'],'state':'settled',
             'delivery_id':delivery['id'],'receipt':receipt,'decision':decision})
+
+    @op('delivery.claim', obj({'order_id': IDENTIFIER,
+        'delivery_digest': {'type': 'string', 'pattern': '^sha256:[a-f0-9]{64}$'}},
+        ('order_id', 'delivery_digest')), signature=True)
+    async def claim(ctx, request, tx):
+        # Checkout settlement is not evidence of receipt by the buyer. This
+        # later signed ACK only changes the delivery; it cannot debit escrow.
+        buyer = _subject(ctx)
+        order = _buyer_order(tx, request.arguments['order_id'], buyer)
+        delivery = _delivery(tx, order['id'])
+        await _verified_delivery(app, tx, order, delivery)
+        require(delivery['delivery_digest'] == request.arguments['delivery_digest'],
+                'delivery_mismatch')
+        await EscrowEngine(app).verify_checkout_release(tx, order, delivery)
+        require(delivery['state'] == 'prepared', 'delivery_not_acceptable')
+        changed = tx.execute("""UPDATE store_deliveries SET state='claimed',claimed_at=?
+            WHERE order_id=? AND recipient_subject=? AND state='prepared'""",
+            (wire(ctx.now), order['id'], buyer), write=True)
+        require(changed.rowcount == 1, 'delivery_not_acceptable')
+        return HandlerOutput(data={'order_id': order['id'],
+            'delivery_id': delivery['id'], 'state': 'claimed'})
+
+    @op('delivery.notify', obj({'order_id': IDENTIFIER,
+        'enabled': {'type': 'boolean'}}, ('order_id',)), signature=True)
+    async def notify(ctx, request, tx):
+        from msg.market.delivery_notifications import queue_notification
+        buyer = _subject(ctx)
+        order = _buyer_order(tx, request.arguments['order_id'], buyer)
+        await _verified_delivery(app, tx, order, _delivery(tx, order['id']))
+        status = await queue_notification(app, ctx, request, tx, order,
+                                          enabled=request.arguments.get('enabled', True))
+        return HandlerOutput(data={'order_id': order['id'], 'notification': status})
 
     finish()
