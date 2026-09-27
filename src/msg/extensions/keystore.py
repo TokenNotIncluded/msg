@@ -1,5 +1,5 @@
 """Opaque encrypted records reuse the same resource, revision and ACL machinery."""
-from msg.core.codec import decode, unb64, wire
+from msg.core.codec import decode, unb64, wire, loads
 from msg.core.errors import require
 from msg.core.models import HandlerOutput, ResourceRef
 from msg.plugins.common import check_access, create_resource, revise_resource, resolve, output_for, assert_generation
@@ -8,7 +8,7 @@ from msg.plugins.schemas import obj,STRING,IDENTIFIER,BYTES,REF
 
 def register(app,op):
     @op('keystore.put',obj({'name':STRING,'format':{'enum':['msg-x25519-v1','age','openpgp']},
-        'ciphertext':BYTES,'source':REF,'id':IDENTIFIER},('name','format')),signature=True)
+        'ciphertext':BYTES,'source':REF,'id':IDENTIFIER,'encryption_key_id':IDENTIFIER},('name','format')),signature=True)
     async def put(ctx,request,tx):
         a=request.arguments
         parent=tx.one("SELECT id FROM resources WHERE parent=? AND name='keystore'",(ctx.principal.subject,))
@@ -33,6 +33,13 @@ def register(app,op):
                 content=await app.contents.read_bytes(body,limit=app.settings.server.limits.max_request_bytes)
             validate_envelope(content)
         elif a['format']=='age':
+            active=tx.one('''SELECT u.body FROM custodial_upgrades u JOIN custodial_vault v
+                ON v.subject=u.subject WHERE u.subject=? AND
+                (u.status='pending_rewrap' OR (u.status='completed' AND v.status='decrypt_only'))''',
+                (ctx.principal.subject,))
+            if active:
+                target=loads(active[0])['new_encryption_key_id']
+                require(a.get('encryption_key_id')==target,'custodial_new_encryption_key_required')
             require(content.startswith((b'age-encryption.org/v1\n',b'-----BEGIN AGE ENCRYPTED FILE-----')), 'invalid_ciphertext_envelope')
         else:
             require(content.startswith(b'-----BEGIN PGP MESSAGE-----') or bool(content and content[0]&0x80),
@@ -47,6 +54,13 @@ def register(app,op):
             resource=await create_resource(app,ctx,request,tx,parent=parent[0],type='keystore',name=a['name'],
                 body=body,media_type='application/octet-stream',mode=0o600)
         tx.set_setting('keystore_format:'+resource.revision,a['format'])
+        if a['format']=='age' and a.get('encryption_key_id'):
+            key=tx.one('SELECT subject,is_primary FROM encryption_subkeys WHERE key_id=?',
+                       (a['encryption_key_id'],))
+            require(key==(ctx.principal.subject,1),'keystore_encryption_key_mismatch')
+            # Recipient metadata is an owner declaration; migration completion
+            # still requires a fresh, locally decrypted inventory ACK.
+            tx.set_setting('keystore_key:'+resource.revision,a['encryption_key_id'])
         return output_for(resource,format=a['format'])
 
     @op('keystore.get',obj({'id':IDENTIFIER,'revision':IDENTIFIER},('id',)),effect='read')

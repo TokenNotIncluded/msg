@@ -334,8 +334,12 @@ CREATE INDEX IF NOT EXISTS recovery_envelopes_owner ON recovery_envelopes(owner,
 CREATE TABLE IF NOT EXISTS custodial_vault (
  subject TEXT PRIMARY KEY, signing_key_id TEXT NOT NULL, encryption_key_id TEXT NOT NULL,
  signing_nonce TEXT, signing_ciphertext TEXT, age_nonce TEXT, age_ciphertext TEXT,
- status TEXT NOT NULL CHECK(status IN ('active','destroyed')),
- created_at TEXT NOT NULL, destroyed_at TEXT);
+ status TEXT NOT NULL,
+ created_at TEXT NOT NULL, destroyed_at TEXT,
+ CONSTRAINT custodial_vault_lifecycle_check CHECK (
+ status IN ('active','decrypt_only','destroyed') AND
+ (status <> 'decrypt_only' OR (signing_nonce IS NULL AND signing_ciphertext IS NULL
+ AND age_nonce IS NOT NULL AND age_ciphertext IS NOT NULL))));
 CREATE TABLE IF NOT EXISTS custodial_upgrades (
  id TEXT PRIMARY KEY, subject TEXT NOT NULL, credential_id TEXT NOT NULL,
  status TEXT NOT NULL CHECK(status IN ('pending','pending_rewrap','failed','completed')),
@@ -460,6 +464,8 @@ class PostgresMetadataStore:
                 conn.execute('SELECT pg_advisory_xact_lock(725274758, 1886265951)')
                 conn.execute(_SCHEMA)
                 _migrate_ledger_accounts(conn)
+                from msg.storage.custodial_migration import migrate_custodial_vault
+                migrate_custodial_vault(conn)
 
     def _connect(self):
         return psycopg.connect(self.dsn, autocommit=False)
