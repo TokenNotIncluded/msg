@@ -6,19 +6,22 @@ on:
 permissions:
   contents: read
 jobs:
-  bundle:
-    runs-on: ubuntu-22.04
-    timeout-minutes: 10
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - name: Package PostgreSQL bootstrap catalog
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Export immutable source snapshots
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-14
-          mkdir -p portable
-          cp -a /usr/share/postgresql/14 portable/share
-          tar -czf verification-catalog.tar.gz portable
+          mkdir -p snapshots
+          git archive --format=tar.gz --output=snapshots/main.tar.gz 2dd6a0d0260f8c230a1d5b2f4ff75241113835b2
+          git archive --format=tar.gz --output=snapshots/market-pr102.tar.gz bfcf55d6567459c6a777cccaf9382eea316bd28c
+          printf '%s\n' 'main 2dd6a0d0260f8c230a1d5b2f4ff75241113835b2' 'market-pr102 bfcf55d6567459c6a777cccaf9382eea316bd28c' > snapshots/commits.txt
+          sha256sum snapshots/*.tar.gz > snapshots/checksums.txt
       - uses: actions/upload-artifact@v4
         with:
-          name: issue-verification-catalog
-          path: verification-catalog.tar.gz
+          name: pinned-source-review
+          path: snapshots
           retention-days: 1
