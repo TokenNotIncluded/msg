@@ -86,3 +86,39 @@ def test_nonblocking_upgrade_reader_preserves_regular_intent(tmp_path):
     before = journal.read_bytes()
     assert read_intent(journal) == pending
     assert journal.read_bytes() == before
+
+
+@pytest.mark.parametrize('kind', ('upgrade', 'token'))
+def test_directory_journal_rejection_closes_descriptor(tmp_path, monkeypatch, kind):
+    import errno
+    from msg.client_tokens import read_journal
+    from msg.core.errors import Failure
+
+    state = ClientState(tmp_path / 'client', server='https://example.invalid')
+    journal = state.directory / ('identity-upgrade.json' if kind == 'upgrade' else 'temporary.json')
+    journal.mkdir(mode=0o700)
+    opened = []
+    original_open = os.open
+
+    def tracked_open(path, flags, *args, **kwargs):
+        fd = original_open(path, flags, *args, **kwargs)
+        opened.append(fd)
+        return fd
+
+    monkeypatch.setattr(os, 'open', tracked_open)
+    try:
+        with pytest.raises(Failure, match=f'unsafe_{kind}_journal'):
+            read_intent(journal) if kind == 'upgrade' else read_journal(state)
+        assert len(opened) == 1
+        with pytest.raises(OSError) as closed:
+            os.fstat(opened[0])
+        assert closed.value.errno == errno.EBADF
+        assert journal.is_dir()
+    finally:
+        # Clean leaked descriptors when this regression runs against old code.
+        for fd in opened:
+            try:
+                os.close(fd)
+            except OSError as error:
+                if error.errno != errno.EBADF:
+                    raise
