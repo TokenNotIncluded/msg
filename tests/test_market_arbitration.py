@@ -8,7 +8,7 @@ from test_market_lifecycle import buy, market
 from test_service import NOW, call, register
 
 from msg.admin.market import apply_market
-from msg.core.codec import canonical, digest, unb64, wire
+from msg.core.codec import b64, canonical, digest, unb64, wire
 from msg.core.errors import Failure
 from msg.market.policy import DEFAULT_POLICY
 from msg.plugins.money import _balance
@@ -41,6 +41,22 @@ async def details(app, key, subject, case_id):
     return result.data
 
 
+async def reasoned_base(app, key, subject, case_id, *, text='The signed allocation follows the case evidence.'):
+    data = await details(app, key, subject, case_id)
+    async with app.metadata.transaction(write=False) as tx:
+        parent = tx.one("SELECT id FROM resources WHERE parent=? AND name='files'", (subject,))[0]
+    from uuid import uuid4
+    source = await call(app, 'content.file_put', {'parent':parent,
+        'name':'reason-'+uuid4().hex+'.txt', 'media_type':'text/plain', 'data':b64(text.encode())},
+        key=key, subject=subject)
+    assert source.status == 'ok', wire(source)
+    pinned = await call(app, 'orders.dispute_rationale',
+        {'case_id':case_id, 'ref':wire(source.resources[0])}, key=key, subject=subject)
+    assert pinned.status == 'ok', wire(pinned)
+    return {**data['proposal_base'], **{name:pinned.data[name]
+        for name in ('rationale_ref', 'rationale_digest')}}
+
+
 async def vote(app, key, subject, base, *, refund=2_000_000, outcome='split'):
     proposal = {**base, 'refund_minor':refund, 'outcome':outcome}
     return await call(app,'orders.dispute_vote',{'proposal':proposal,
@@ -56,7 +72,7 @@ async def test_fixed_panel_split_quorum_and_concurrent_execution(installed):
     expected = sorted(members,key=lambda uid:(digest({'version':1,'order_id':order['id'],
         'policy_digest':opened['policy_digest'],'round':0,'subject':uid}),uid))[:3]
     assert panel == expected and data['panel_valid']
-    base = data['proposal_base']
+    base = await reasoned_base(app,members[panel[0]],panel[0],opened['case_id'])
     # The second signed statement by the same member cannot create a new vote.
     first = await vote(app,members[panel[0]],panel[0],base)
     assert first.status=='ok' and first.data['decision'] is None
@@ -117,7 +133,7 @@ async def test_invalidated_decision_never_releases_funds(installed,invalidation)
     app, root, members, _sk, seller, bk, buyer, order, opened = await configured(
         installed,panel_size=1,count=2)
     cid, arb=opened['case_id'],opened['panel'][0]
-    base=(await details(app,bk,buyer,cid))['proposal_base']
+    base=await reasoned_base(app,members[arb],arb,cid)
     result=await vote(app,members[arb],arb,base,refund=0,outcome='release')
     decision=result.data['decision']
     if invalidation in {'revoke','regrant'}:
@@ -148,7 +164,7 @@ async def test_one_appeal_disjoint_panel_and_old_decision_is_unusable(installed)
     app, _root, members, sk, seller, bk, buyer, _order, opened=await configured(
         installed,panel_size=1,count=2,appeal=True)
     cid,arb=opened['case_id'],opened['panel'][0]
-    base=(await details(app,bk,buyer,cid))['proposal_base']
+    base=await reasoned_base(app,members[arb],arb,cid)
     result=await vote(app,members[arb],arb,base,refund=0,outcome='release')
     old=result.data['decision']['id']
     premature=await call(app,'orders.dispute_execute',{'case_id':cid,'decision_id':old},key=bk,subject=buyer)
@@ -160,8 +176,8 @@ async def test_one_appeal_disjoint_panel_and_old_decision_is_unusable(installed)
     assert again.error.code=='appeal_not_available'
     old_attempt=await call(app,'orders.dispute_execute',{'case_id':cid,'decision_id':old},key=bk,subject=buyer)
     assert old_attempt.error.code=='decision_not_current'
-    current=(await details(app,bk,buyer,cid))['proposal_base']
     reviewer=appealed.data['panel'][0]
+    current=await reasoned_base(app,members[reviewer],reviewer,cid)
     appeal_vote=await vote(app,members[reviewer],reviewer,current,refund=5_000_000,outcome='refund')
     assert appeal_vote.status=='ok',wire(appeal_vote)
     final=await call(app,'orders.dispute_execute',{'case_id':cid,
@@ -175,7 +191,8 @@ async def test_one_appeal_disjoint_panel_and_old_decision_is_unusable(installed)
 async def test_split_rollback_restores_escrow_decision_and_retry(installed,monkeypatch):
     app, _root, members, _sk, _seller, bk, buyer, order, opened=await configured(installed,panel_size=1,count=1)
     cid,arb=opened['case_id'],opened['panel'][0]
-    result=await vote(app,members[arb],arb,(await details(app,bk,buyer,cid))['proposal_base'])
+    base=await reasoned_base(app,members[arb],arb,cid)
+    result=await vote(app,members[arb],arb,base)
     args={'case_id':cid,'decision_id':result.data['decision']['id']}
     from msg.market import escrow
     original=escrow._post_transfer

@@ -2,7 +2,7 @@
 import asyncio
 
 import pytest
-from test_market_arbitration import configured, details, vote
+from test_market_arbitration import configured, details, reasoned_base, vote
 from test_service import NOW, call
 
 from msg.admin.backups import backup, restore
@@ -28,9 +28,12 @@ async def test_restart_and_backup_preserve_private_case_decision_without_reexecu
     stored=await call(app,'orders.dispute_statement',{'case_id':cid,'visibility':'panel','text':text},key=bk,subject=buyer)
     assert stored.status=='ok',wire(stored)
     eid=stored.data['evidence_id']
+    arb=opened['panel'][0]
+    reason=await reasoned_base(app,members[arb],arb,cid)
     data=await details(app,bk,buyer,cid)
+    reason_id=next(row['id'] for row in data['evidence'] if row['kind']=='rationale')
     for uid in opened['panel'][:2]:
-        cast=await vote(app,members[uid],uid,data['proposal_base'])
+        cast=await vote(app,members[uid],uid,reason)
     assert cast.status=='ok' and cast.data['decision'],wire(cast)
     args={'case_id':cid,'decision_id':cast.data['decision']['id']}
     # A new Application reads the same authoritative metadata; no in-memory panel.
@@ -63,6 +66,11 @@ async def test_restart_and_backup_preserve_private_case_decision_without_reexecu
         assert evidence.status=='ok' and unb64(evidence.data['data']).decode()==text,wire(evidence)
         other=await call(restored,'orders.dispute_evidence_get',{'case_id':cid,'evidence_id':eid},key=sk,subject=seller)
         assert other.error.code=='evidence_not_found'
+        rationale=await call(restored,'orders.dispute_evidence_get',
+            {'case_id':cid,'evidence_id':reason_id},key=sk,subject=seller)
+        assert rationale.status=='ok',wire(rationale)
+        assert rationale.data['digest']==reason['rationale_digest']
+        assert unb64(rationale.data['data'])==b'The signed allocation follows the case evidence.'
         assert await EffectWorker(restored).run_once() is False
         rejected=await call(restored,'orders.dispute_execute',args,key=bk,subject=buyer)
         assert rejected.error.code=='writes_paused'

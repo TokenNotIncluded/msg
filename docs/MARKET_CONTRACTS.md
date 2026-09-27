@@ -170,3 +170,25 @@ Existing credentials' finite ceilings do not expand merely because operations
 were installed. Follow the existing local authority review/reissuance procedure
 before allowing new operations. Test success is not production deployment,
 real-SMTP acceptance, a production schema rehearsal or permission to mint money.
+
+## Signed arbitration reasons
+
+Before voting, a current panel member writes a nonempty UTF-8 `text/plain` or
+`text/markdown` File (at most 64 KiB), then signs `orders.dispute_rationale@1`
+with `{case_id, ref: {id, revision}}`. This pins exactly that immutable revision
+as case evidence visible to both parties and the current authorized panel. It
+does not share the author's file tree or disclose the reason in public summaries.
+
+The returned `rationale_ref` and `rationale_digest` are required fields in the
+canonical proposal signed with purpose `arbitration-decision`, alongside the
+case/order/round/policy, allocation and expiry. Every quorum member must sign the
+same reason and allocation. A later draft, another case/round, a different digest
+or signature substitution cannot replace the committed reason. Both voting and
+escrow execution verify the pinned bytes. Missing/corrupt reasons stop payment;
+the due worker holds the case rather than inventing a replacement ruling.
+
+Reason blobs use the existing case-evidence retention/backup roots. Restoring a
+case retains its exact reason and visibility without executing it again. The
+market doctor checks bindings without writing or retroactively applying current
+role grants to an already-executed historical decision. This completes the new
+arbitration contract in this unreleased PR; legacy `orders.buy@1` is unchanged.

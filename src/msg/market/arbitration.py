@@ -12,6 +12,8 @@ from msg.core.errors import Failure, require
 from msg.core.models import BlobRef, HandlerOutput, Principal, ResourceRef, Signature
 from msg.market.orders import HASH, view
 from msg.market.policy import contract
+from msg.market.rationale import PINNED_REF
+from msg.market.rationale import verified as verify_rationale
 from msg.plugins.common import check_access, new_id
 from msg.plugins.orders import _row, _subject
 from msg.plugins.schemas import IDENTIFIER, REF, SIGNATURE, obj
@@ -25,8 +27,10 @@ PROPOSAL = obj({'case_id': IDENTIFIER, 'order_id': IDENTIFIER,
     'round': {'type':'integer','minimum':0,'maximum':1}, 'policy_digest': HASH,
     'outcome': {'enum':['release','refund','split']},
     'refund_minor': {'type':'integer','minimum':0,'maximum':2**63-1},
-    'expires_at': {'type':'string','maxLength':40}},
-    ('case_id','order_id','round','policy_digest','outcome','refund_minor','expires_at'))
+    'expires_at': {'type':'string','maxLength':40},
+    'rationale_ref': PINNED_REF, 'rationale_digest': HASH},
+    ('case_id','order_id','round','policy_digest','outcome','refund_minor','expires_at',
+     'rationale_ref','rationale_digest'))
 
 
 def _read(tx, case_id):
@@ -96,7 +100,7 @@ def proposal_base(case):
 
 def proposal_valid(case, proposal, total):
     base = proposal_base(case)
-    require(set(proposal) == {*base,'outcome','refund_minor'} and
+    require(set(proposal) == {*base,'outcome','refund_minor','rationale_ref','rationale_digest'} and
             all(proposal[k] == v for k,v in base.items()), 'decision_context_mismatch')
     refund, outcome = proposal['refund_minor'], proposal['outcome']
     require(type(refund) is int and ((outcome=='release' and refund==0) or
@@ -132,6 +136,10 @@ async def validate_decision(app, tx, order, decision, now):
     require(parse_time(decision['expires_at']) > now, 'decision_expired')
     require(parse_time(decision['not_before']) <= now, 'appeal_window_open')
     require(await panel_valid(tx, case), 'decision_panel_invalid')
+    require(decision['rationale_ref'] == decision['proposal']['rationale_ref'] and
+            decision['rationale_digest'] == decision['proposal']['rationale_digest'],
+            'decision_rationale_mismatch')
+    await verify_rationale(app, tx, case, decision['proposal'])
     quorum = case['policy']['policy']['quorum']
     require(len(decision['voters']) == quorum and len(set(decision['voters'])) == quorum and
             set(decision['voters']) <= set(case['panels'][str(case['round'])]), 'decision_quorum_invalid')
@@ -229,7 +237,8 @@ async def resolve_cases(app, *, limit=100):
                         'decision_panel_invalid','decision_member_invalid','credential_revoked',
                         'credential_expired','invalid_signature','permission_denied',
                         'credential_ceiling','decision_not_current','decision_quorum_invalid',
-                        'decision_signer_mismatch','decision_conflicting_vote','decision_context_mismatch'}:
+                        'decision_signer_mismatch','decision_conflicting_vote','decision_context_mismatch',
+                        'decision_rationale_missing','decision_rationale_mismatch'}:
                         raise
                     reason = exc.code
             tx.execute("UPDATE arbitration_cases SET state='held' WHERE id=?", (case_id,), write=True)
@@ -240,6 +249,9 @@ async def resolve_cases(app, *, limit=100):
 
 
 def install(app, op):
+    from msg.market.rationale import install as install_rationale
+    install_rationale(app, op)
+
     @op('orders.dispute_open', obj({'order_id': IDENTIFIER,
         'reason': {'enum': list(REASONS)}}, ('order_id','reason')), signature=True)
     async def open_case(ctx, request, tx):
@@ -285,7 +297,9 @@ def install(app, op):
             if panel or viewer == author or visibility == 'parties':
                 record = loads(body)
                 evidence.append({'id': eid,'author': author,'visibility': visibility,
-                    'kind': record['kind'],'digest': record['blob']['digest'],'size': record['blob']['size']})
+                    'kind': record['kind'],'round': record['round'],
+                    'digest': record['blob']['digest'],'size': record['blob']['size'],
+                    **({'rationale_ref': record['source']} if record['kind']=='rationale' else {})})
         decisions = [loads(row[0]) for row in tx.rows(
             'SELECT body FROM arbitration_decisions WHERE case_id=? ORDER BY round', (case['id'],))]
         votes = [loads(row[0]) for row in tx.rows(
@@ -375,6 +389,7 @@ def install(app, op):
                 ctx.now < parse_time(case['round_deadlines'][str(case['round'])]), 'case_voting_closed')
         order = _row(tx, case['order_id'], case['buyer'])
         proposal_valid(case, proposal, order['total_price_minor'])
+        await verify_rationale(app, tx, case, proposal)
         record = {'arbitrator': actor, 'proposal': proposal, 'signature': wire(request.arguments['signature']),
                   'principal': wire(ctx.principal), 'cast_at': wire(ctx.now)}
         await verify_vote(app, tx, case, record)
@@ -401,6 +416,7 @@ def install(app, op):
             decision = {'id': 'dec_'+digest(proposal)[7:39], 'case_id': case['id'],
                 'order_id': order['id'], 'round': case['round'], 'proposal': proposal,
                 'refund_minor': proposal['refund_minor'], 'policy_digest': proposal['policy_digest'],
+                'rationale_ref': proposal['rationale_ref'], 'rationale_digest': proposal['rationale_digest'],
                 'voters': [v['arbitrator'] for v in voters], 'expires_at': proposal['expires_at'],
                 'not_before': wire(max(parse_time(v['cast_at']) for v in voters)+timedelta(seconds=delay))}
             tx.execute('INSERT INTO arbitration_decisions(id,case_id,round,body) VALUES (?,?,?,?)',

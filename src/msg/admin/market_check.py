@@ -41,10 +41,19 @@ async def inspect_market(tx):
     for raw,expected in tx.rows('SELECT body,digest FROM arbitration_policies'):
         policy = loads(raw); validate(policy)
         require(digest(policy)==expected,'arbitration_policy_corrupt')
-    for order_id,state in tx.rows('SELECT order_id,state FROM arbitration_cases'):
+    for case_id,order_id,state in tx.rows('SELECT id,order_id,state FROM arbitration_cases'):
         settlement = tx.one('SELECT decision_id FROM order_settlements WHERE order_id=?',(order_id,))
         if state=='executed':
             require(settlement is not None and settlement[0] is not None,'market_decision_unfunded')
+            from msg.market.arbitration import _read
+            from msg.market.rationale import record
+            row=tx.one('SELECT body FROM arbitration_decisions WHERE id=? AND case_id=?',
+                       (settlement[0],case_id))
+            require(row is not None,'market_decision_missing')
+            decision=loads(row[0])
+            require(all(decision.get(k)==decision['proposal'].get(k)
+                    for k in ('rationale_ref','rationale_digest')),'decision_rationale_mismatch')
+            record(tx,_read(tx,case_id),decision['proposal'])
     return {'orders':count,'held_cases':tx.one("SELECT COUNT(*) FROM arbitration_cases WHERE state='held'")[0],
             'escrow_invariants':True,'private_reads_only':True}
 
@@ -129,7 +138,15 @@ async def check_market(app,root,call,register,now):
         'quantity':1,'total_price_minor':1_000_000,'currency_id':'primary'},contract_version=2)
     opened=await invoke('orders.dispute_open',{'order_id':bought.data['order']['id'],'reason':'quality'})
     case=await invoke('orders.dispute_get',{'case_id':opened.data['case_id']})
-    proposal={**case.data['proposal_base'],'outcome':'refund','refund_minor':1_000_000}
+    author=opened.data['panel'][0]
+    async with app.metadata.transaction(write=False) as tx:
+        parent=tx.one("SELECT id FROM resources WHERE parent=? AND name='files'",(author,))[0]
+    reason=await invoke('content.file_put',{'parent':parent,'name':'case-reason.txt',
+        'media_type':'text/plain','data':b64(b'Selftest evidence warrants a full refund.')},members[author],author)
+    bound=await invoke('orders.dispute_rationale',{'case_id':opened.data['case_id'],
+        'ref':wire(reason.resources[0])},members[author],author)
+    proposal={**case.data['proposal_base'],'outcome':'refund','refund_minor':1_000_000,
+        **{name:bound.data[name] for name in ('rationale_ref','rationale_digest')}}
     for uid in opened.data['panel'][:2]:
         voted=await invoke('orders.dispute_vote',{'proposal':proposal,
             'signature':wire(members[uid].sign(canonical(proposal),purpose='arbitration-decision'))},members[uid],uid)

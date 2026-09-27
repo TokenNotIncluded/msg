@@ -28,7 +28,7 @@ def test_path_tree_is_readable_and_round_trips_without_json_payload():
     args,proof=decode_read_tree_path(PATH.encode())
     assert args=={**query(),'query_version':3}
     assert proof is None
-    aliased,suffix=decode_read_tree_path(PATH.replace('/_r/','/_read/') .encode()+b'/p/signed')
+    aliased,suffix=decode_read_tree_path(PATH.replace('/_r/','/_read/').encode()+b'/p/signed')
     assert aliased==args and suffix==b'signed'
 
 
