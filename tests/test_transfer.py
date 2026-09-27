@@ -6,7 +6,7 @@ import pytest
 
 from msg.core.codec import b64,unb64,digest,wire
 from msg.core.models import ResourceRef
-from test_service import installed,call,register,NOW
+from test_service import call,register,NOW
 
 
 @pytest.mark.asyncio
