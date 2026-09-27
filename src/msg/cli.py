@@ -95,6 +95,38 @@ def parser():
     for action in ('accept','reject','archive'):
         dm_actions.add_parser(action).add_argument('conversation')
     dm_actions.add_parser('block').add_argument('subject')
+    handoff=commands.add_parser('handoff',help='Explicit collaboration context; never transfers permission.')
+    handoff_actions=handoff.add_subparsers(dest='action',required=True)
+    handoff_create=handoff_actions.add_parser('create')
+    handoff_create.add_argument('recipient')
+    handoff_create.add_argument('--ref',action='append',default=[])
+    handoff_create.add_argument('--message')
+    handoff_create.add_argument('--next-action')
+    handoff_list=handoff_actions.add_parser('list')
+    handoff_list.add_argument('--limit',type=int)
+    handoff_list.add_argument('--after')
+    handoff_actions.add_parser('get').add_argument('id')
+    for action in ('accept','reject','cancel'):
+        decision=handoff_actions.add_parser(action)
+        decision.add_argument('id')
+        decision.add_argument('--generation',type=int,required=True)
+    lease=commands.add_parser('lease',help='Expiring coordination hint; never a security lock.')
+    lease_actions=lease.add_subparsers(dest='action',required=True)
+    lease_acquire=lease_actions.add_parser('acquire')
+    lease_acquire.add_argument('target')
+    lease_acquire.add_argument('--purpose',required=True)
+    lease_acquire.add_argument('--expires-at',required=True)
+    lease_list=lease_actions.add_parser('list')
+    lease_list.add_argument('--limit',type=int)
+    lease_list.add_argument('--after')
+    lease_actions.add_parser('get').add_argument('id')
+    lease_renew=lease_actions.add_parser('renew')
+    lease_renew.add_argument('id')
+    lease_renew.add_argument('--expires-at',required=True)
+    lease_renew.add_argument('--generation',type=int,required=True)
+    lease_release=lease_actions.add_parser('release')
+    lease_release.add_argument('id')
+    lease_release.add_argument('--generation',type=int,required=True)
     ack=commands.add_parser('ack');ack.add_argument('resource');ack.add_argument('revision')
     upload=commands.add_parser('upload');upload.add_argument('file',type=Path);upload.add_argument('--resume')
     upload.add_argument('--part-bytes',type=int,default=65536);upload.add_argument('--media-type',default='application/octet-stream')
@@ -283,6 +315,42 @@ async def run(args):
                                                                {'subject_id':args.subject})
             else:result=await client.call('communication.dm_'+args.action,
                                           {'conversation_id':args.conversation})
+        elif command=='handoff':
+            if args.action=='create':
+                params={'to_subject':args.recipient,'resource_refs':args.ref}
+                if args.message is not None:params['message']=args.message
+                if args.next_action is not None:params['next_action']=args.next_action
+                result=await client.call('communication.handoff_create',params)
+            elif args.action=='list':
+                params={}
+                if args.limit is not None:params['limit']=args.limit
+                if args.after is not None:params['after']=args.after
+                result=await client.call('communication.handoff_list',params)
+            elif args.action=='get':
+                result=await client.call('communication.handoff_get',{'id':args.id})
+            else:
+                result=await client.call('communication.handoff_decide',
+                    {'id':args.id,'decision':args.action,
+                     'expected_generation':args.generation})
+        elif command=='lease':
+            if args.action=='acquire':
+                result=await client.call('communication.lease_acquire',
+                    {'target':args.target,'purpose':args.purpose,
+                     'expires_at':args.expires_at})
+            elif args.action=='list':
+                params={}
+                if args.limit is not None:params['limit']=args.limit
+                if args.after is not None:params['after']=args.after
+                result=await client.call('communication.lease_list',params)
+            elif args.action=='get':
+                result=await client.call('communication.lease_get',{'id':args.id})
+            elif args.action=='renew':
+                result=await client.call('communication.lease_renew',
+                    {'id':args.id,'expires_at':args.expires_at,
+                     'expected_generation':args.generation})
+            else:
+                result=await client.call('communication.lease_release',
+                    {'id':args.id,'expected_generation':args.generation})
         elif command=='ack': result=await client.ack(ResourceRef(id=args.resource,revision=args.revision))
         elif command=='upload': result=await client.upload(args.file,transfer_id=args.resume,
             part_bytes=args.part_bytes,media_type=args.media_type,target=args.target)

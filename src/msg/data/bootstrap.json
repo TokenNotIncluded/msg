@@ -13,6 +13,7 @@
     {"id":"g_public","type":"organization","name":"&public","parent":"r_root","owner":"u_root","group":"g_public","mode":"0755"},
     {"id":"g_admins","type":"organization","name":"&admins","parent":"r_root","owner":"u_root","group":"g_admins","mode":"0755"},
     {"id":"t_main","type":"topic","name":"main","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
+    {"id":"t_store","type":"topic","name":"store","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"t_wiki","type":"topic","name":"wiki","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"t_intro","type":"topic","name":"intro","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"t_sos","type":"topic","name":"sos","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},

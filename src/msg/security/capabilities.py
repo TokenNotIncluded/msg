@@ -35,6 +35,8 @@ BASE_FAMILIES = {
     'sharing.basic': ('sharing.',),
     'discussion.basic': ('discussion.',),
     'communication.basic': ('communication.',),
+    'money.basic': ('money.',),
+    'store.basic': ('store.',),
     'discovery.basic': ('discovery.', 'cert.get', 'job.get', 'achievement.list'),
     'transfer.basic': ('transfer.',),
     'group.basic': ('group.',),

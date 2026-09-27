@@ -1182,6 +1182,57 @@ def create_app(service):
             ssh_key_id=None
             if subject_alias:
                 handle,name,remainder=subject_alias.groups()
+                if name in {'handoffs','leases'}:
+                    require(request.method in {'GET','HEAD'},'method_not_allowed')
+                    require(raw_path.decode('utf-8')==request.url.path and b'%' not in raw_path,
+                            'not_found')
+                    tail=(remainder or '').strip('/')
+                    listing=tail in {'','json'}
+                    if not listing:
+                        require(re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}(?:/json)?',tail)
+                                is not None,'not_found')
+                    singular='handoff' if name=='handoffs' else 'lease'
+                    operation='communication.'+singular+('_list' if listing else '_get')
+                    pairs=request.query_params.multi_items()
+                    require(len(pairs)==len({key for key,_ in pairs}),
+                            'duplicate_query_parameter')
+                    query=dict(pairs)
+                    require(not query or listing,'unknown_query_parameter')
+                    require(set(query)<={'limit','after'},'unknown_query_parameter')
+                    args={} if listing else {'id':tail.removesuffix('/json')}
+                    if 'limit' in query:
+                        require(query['limit'].isdecimal(),'invalid_limit')
+                        args['limit']=int(query['limit'])
+                    if 'after' in query: args['after']=query['after']
+                    async with service.metadata.transaction(write=False) as tx:
+                        subject_id=await tx.resolve('/@'+handle)
+                        require((await tx.resource(subject_id)).type=='user','not_found')
+                    require(service.registry.operation(operation).effect=='read',
+                            'effect_mismatch')
+                    header=request.headers.get('x-msg-request')
+                    if header:
+                        packet=path_packet(header,'j',limits.max_request_bytes)
+                        require(packet.operation==operation and
+                                canonical(packet.arguments)==canonical(args),
+                                'representation_mismatch')
+                    else:
+                        packet=request_for(operation,args,service.settings.service_url,
+                                           source='manual')
+                    result=await service.executor.execute(packet,entry='network')
+                    if result.error:
+                        return json_response(result_wire(result),error_status(result.error.code))
+                    require(result.subject==subject_id,'permission_denied')
+                    value=wire(result.data)
+                    value['path']='/@'+handle+'/'+name+('/'+args['id'] if not listing else '')
+                    etag='"'+digest(value)[7:]+'"'
+                    headers={**BASE_HEADERS,'ETag':etag,
+                             'Cache-Control':'private, no-cache'}
+                    if request.headers.get('if-none-match')==etag:
+                        return Response(status_code=304,headers=headers)
+                    payload=canonical(value)
+                    require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                    return Response(b'' if request.method=='HEAD' else payload,
+                                    media_type='application/json',headers=headers)
                 certificate_detail=(name in {'cert','certificates'} and
                                     remainder not in {None,'/','/json','/meta','/history'})
                 if name in SUBJECT_KEY_ALIASES or name in SUBJECT_OPERATION_ALIASES or certificate_detail:

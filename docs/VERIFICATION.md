@@ -1,20 +1,62 @@
 # 本地与 CI 验收记录
 
-### 08:21 最新需求新增范围（尚未实现）
+## 当前权威文档、迁移与验证归属
 
-本次按 Drive 返回的修改时间 `2026-09-27T08:21:28.728Z` 重新读取同一权威文档（193段，01–15章）。相对旧报告，货币与寄售市场是实质新增范围，不能沿用“无钱包/Store待定”来排除：基础身份/公开读/普通通信免费，货币不购买认证、CA、系统权限或优先级，禁止法币充值提现与收益承诺。
+已实时读取[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)迁移后修订 `ANLCKQmFOHtA75…`，196个非空段；以本节和当前正文为准，以下08:51等记录属于修订沿革，不再是最新基线。
 
-- **货币**：精确minor_units/scale=6、primary稳定ID、余额/双边账本/总量守恒；@root仅本机mint/burn/BankRole/转账/报价，银行不增发不透支；transfer/redeem、价格快照、Entitlement与pending/settle/refund。当前未见相应完整实现。
+用户要求的瘦身已由主执行者完成：迁移前201非空段、迁移后196；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)保存Todo、handoff、lease、presence、claim五个整段，及LinkSet入口、GraphQL读写分离、短码不复用、atomic batch四句。已读回归档内容；主执行者报告逐段期望变换完全匹配。归档依据e126539与[成功CI36306888836](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36306888836)，仅表示这些条款完成，未迁出的条件和所有回归要求仍有效。
+
+当前未提交下一批（协作路径/CLI、货币基础、sale Listing/固定文件寄售包）此前完整本地 **432 core passed、8 conformance passed、uv build成功**；这发生在Listing mode小修之前。其后显式mode=sale、旧记录按sale兼容、bounty返回listing_mode_unsupported，store定向5 passed、综合定向40 passed；未声称修后全套再次通过。9/38/16定向组已包含在全套，不累加。e126539的423/8/build及成功CI归旧提交，不能当作432项工作树CI；没有本批生产部署或market_e2e完整闭环证据。
+
+### 新规范已生效、实现仍需补齐
+
+DCR-01/02/03主要建议已写入权威正文并进一步扩充，详见[变更记录](DESIGN_CHANGE_REQUESTS.md)，不再统称待批准。
+
+1. 所有等价可重放秘密禁止URL；私有纯路径proof需绑定查询/主体/ID/expiry且重验授权。机密发行无安全通道返回secure_channel_required；接收者绑定密文、敏感查询保密、遗留服务端token URL分支与全入口/日志拒绝矩阵尚需验收。
+2. 一次释放先原子消费资格、再发送响应；默认15m从业务提交起算，配置有界且重试不续期。@2/journal已有切片，旧@1重复秘密仍是实现缺口；可配置窗口、恢复再次丢失、原谱系撤销/不扩权全矩阵不能仅凭现有测试称完成。
+3. 历史A类rewrap副本与B类仅退役EncryptionSubkey的RecoveryEnvelope均须明确边界；冻结全保留历史、并发增量、新写入新钥、实际逐项解密ACK、identity_switched/history_recoverable/server_key_retired及online_retired/backup_retired、旧备份防复活仍未完整实现。旧vault仍可解密时不能宣称完整退役。
+
+bounty、完整清算/托管、Order/Delivery/仲裁和官方market_e2e仍缺；本地432项覆盖既有切片，不把sale基础或归档条款扩写为整章完成。
+
+## 08:51 新增 bounty 与官方闭环（未实现）
+
+权威基线更新为 `2026-09-27T08:51:45.979Z`（198段，01–15章）。当前未提交Listing/寄售包只对应sale基础，不能视为Listing mode=sale|bounty完整支持。货币相关38、store相关16、协作9项定向是局部证据，core全套已432 passed、conformance8 passed、build通过；e126539的CI36306888836已success（仅覆盖旧提交），不冒称本批完整通过。
+
+- **Bounty**：publisher在激活前将budget原子转入BountyEscrow；它是无私钥系统LedgerAccount。固定reward/claim_limit（默认1）/max_claims/eligibility/verifier版本，预算不足自动paused/out_of_budget，可显式top-up；publisher离线仍发奖，不依赖事后手动付款。
+- **signature_pop_v1**：服务端随机challenge绑定listing、claimant、nonce、issued/expiry与verifier版本，当前IdentityKey签名；校验签名/TTL/nonce单次消费/状态/eligibility/次数。只证明控制该主体当前签名钥，不证明真人/唯一自然人或反女巫身份。BountyClaim成功与奖励转账、receipt/Event/通知同事务，最后一份预算并发只成功一次，不得先记paid再转账。
+- **checkout邮箱**：新未验证地址最多收到不含订单号、用户名、商品或提货能力的验证消息；站内交付照常完成，Email pending，验证后才能绑定。已验证且属于buyer的地址方可直接作为目标；worker继续复核四方主体/撤销/订单状态。邮件关闭或失败不阻止订单；不得把现有email验证功能当作该订单绑定流程已经完成。
+- **market_e2e固定出口**：隔离Test Root mint 20 MSG并bank fund 20；bank预托管10奖励，buyer完成PoP得10，余额bank=10/buyer=10/bounty escrow=0；再买5 MSG固定bundle（指定文本与hello.txt内容），完成buyer→OrderEscrow→bank及自动Delivery、settled、摘要核对，最终buyer=5/bank=15/全部escrow=0/总量20。重复、过期、错主体/错key、重放、最后一份预算竞争均须拒绝且不重复扣款。SMTP sink/FakeNotificationSender验证最小邮件，默认不发真实外部地址；真实SMTP另验。
+
+上述预算账户、挑战状态、Claim与订单/交付都必须作为PG权威事实一致备份恢复。当前没有该官方fixture完整闭环通过证据；普通签名transfer、sale寄售包或旧成就挑战均不能替代它。
+
+**当前状态：`e126539981508cf25cda6ab9bbc9b3531449d203` 已提交推送，包含此前423 core / 8 conformance / build通过的协作底座、ReadQuery@2与logo；[CI 36306888836](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36306888836)已completed/success（仅覆盖e126539）。当前main工作树另有未提交增量：协作主体路径/CLI联合定向9 passed；货币基础相关定向38 passed、/store Listing/寄售包相关定向16 passed；当前core432、conformance8、build通过；尚无432项工作树CI或部署证据。**
+
+## 最新修订与下一批进度
+
+已实时重读权威设计 `2026-09-27T08:51:45.979Z`（198段，01–15章）。本轮进一步明确ClearingEngine为msgd内置确定性程序：不是subject，无账户/余额/私钥/主动交易或自由裁量；同输入、账本状态、ClearingPolicy版本必须同结果。货币receipt含policy_version/digest与ledger_sequence，纠错只能追加refund/reversal。EscrowAccount是系统LedgerAccount而非用户；EscrowEngine只按订单状态和有效决议执行，仲裁员不能写Ledger。
+
+- **已推送基线**：e126539的423 core、8 conformance、build为此前本地结果；CI 36306888836已success，不借旧main CI证明本提交成功，也不覆盖当前增量。
+- **协作入口增量**：`/@user/handoffs/`、`leases/`及单项只读视图、专用CLI已有工作树实现，联合定向9 passed。读路径复用已有Operation/授权，不能以该切片宣称全部协作原语、全部客户端/路径、feature默认/doctor/selftest或整章已完成；尚未提交，已纳入432项本地全套。
+- **货币基础增量**：money.state/banks/balance/ledger/transfer与PG账本字段已有源码；可见policy_version/digest/ledger_sequence等初步记录。相关定向38 passed，覆盖普通签名转账、不可变PG账本、零发行/余额/总量、并发双花/幂等、签名收据和root网络拒绝；不等于完整ClearingEngine或全部货币验收。本机msgd money发行/销毁/BankRole/报价、redeem/Entitlement与完整恢复矩阵仍缺。
+- **/store sale基础增量**：sale Listing create/update/get与package_deposit/get已有工作树代码，相关定向16 passed，覆盖空/store、Listing修订/价格/条款、seller-only固定文件ConsignmentPackage与通用操作绕过拒绝。它们不是完整购买/结算/交付：Order、PaymentIntent/ClearingEngine完整契约、EscrowAccount/EscrowEngine、DeliveryTarget/Delivery、纠纷/仲裁及相关CLI/只读路径仍缺。
+
+下一步本批432/8/build已本地通过，下一步明确提交/CI归属；9/38/16定向组可能重叠，不累加为独立总数；货币按精确账本和确定性ClearingPolicy→本机中央银行/BankRole→报价兑换→Listing/不可变寄售包→Order/PaymentIntent/Escrow→买家交付/权限视图→客观退款和确定性仲裁推进。每步分别验证并发幂等、权限/失效、默认/doctor/selftest与一致备份，不把进行中的代码计作完成，也不自动启用生产交易。
+
+### 08:51 权威需求与仍缺范围
+
+本次按 Drive 返回的修改时间 `2026-09-27T08:51:45.979Z` 重新读取同一权威文档（198段，01–15章）。相对旧报告，货币与寄售市场是实质新增范围，不能沿用“无钱包/Store待定”来排除：基础身份/公开读/普通通信免费，货币不购买认证、CA、系统权限或优先级，禁止法币充值提现与收益承诺。
+
+- **货币**：精确minor_units/scale=6、primary稳定ID、余额/双边账本/总量守恒；@root仅本机mint/burn/BankRole/转账/报价，银行不增发不透支；transfer/redeem、价格快照、Entitlement与pending/settle/refund。当前货币基础已有未提交38项相关定向通过；全套432 core/8 conformance/build已本地通过，其余契约仍缺。
 - **寄售与订单**：/store Listing与不可变ConsignmentPackage；订单固定listing/package/价格/条款版本，随机不可枚举order_id且无权与不存在等价。managed_instant、sealed_manual与service交付不同；不是已有帖子/Transfer换个名字即可满足。
 - **资金托管与仲裁**：buyer→Escrow→seller/refund/split原子记账；版本化客观故障处理，Arbitrator只签Decision不能改Ledger，确定性panel/quorum/利益冲突排除和限定appeal。不能借管理员或AI自由裁量补空白。
 - **发货与隐私**：权威交付在买家订单/_delivery，Inbox只给最小引用，Email仅可选通道；下单锁定买家已验证endpoint，发货重新核对buyer/DeliveryTarget/邮箱owner/加密钥owner；seller不获真实邮箱，secret不明文SMTP，claimed不等于SMTP送达。
-- **验收与持久化**：PG保存权威货币/订单/Escrow/交付/仲裁事实并一致备份；默认零发行量/余额、无银行/报价、空store与订单集合。双花/幂等/价格修订/授权裁剪/退款/交付错配/仲裁边界/恢复均须独立测试、doctor/selftest与CI。本批423 core、8 conformance与build只覆盖当前已实现功能，不覆盖这些新增货币/市场契约，也不证明整章完成或生产部署。
+- **验收与持久化**：PG保存权威货币/订单/Escrow/交付/仲裁事实并一致备份；默认零发行量/余额、无银行/报价、空store与订单集合。双花/幂等/价格修订/授权裁剪/退款/交付错配/仲裁边界/恢复均须独立测试、doctor/selftest与CI。此前e126539的423 core、8 conformance与build只覆盖该提交已有功能，不覆盖当前未提交货币/市场契约，也不证明整章完成或生产部署。
 
-## 2026-09-27 handoff/lease、ReadQuery@2 与极简 logo（main 工作树）
+## 2026-09-27 handoff/lease、ReadQuery@2 与极简 logo（e126539已推送，CI进行中）
 
-已重读权威需求最新修订 `2026-09-27T08:21:28.728Z`。代码基于 main `324038c6f2068c35e8449789c57d8fd32cb2366a` 的本批未提交修改；执行者报告完整本地 core **423 passed**。本批准确耗时/完整命令未在此重复补造；**conformance 8 passed，uv build 与 git diff --check 均通过**，此前414/8/build及其main CI不能充当本批证据。
+已重读权威需求最新修订 `2026-09-27T08:51:45.979Z`。代码已提交推送为 `e126539981508cf25cda6ab9bbc9b3531449d203`，CI36306888836已success；执行者报告完整本地 core **423 passed**。该批准确耗时/完整命令未在此重复补造；**conformance 8 passed，uv build 与 git diff --check 均通过**，此前414/8/build及其main CI不能充当本批证据。
 
-本批core包含 handoff权限过滤/状态决策并发/最小通知、lease TTL/generation/非排他/只读到期、ReadQuery@2独立子集合分页/当前授权/旧版本拒绝/成本边界，以及logo内容协商/静态只读/CSP检查。定向不重复累加为新的总数。源码可见不等于已发布包或生产部署；协作主体路径和CLI、完整feature默认/doctor/selftest、全协议嵌套读取及真实浏览器/宿主矩阵仍缺。
+本批core包含 handoff权限过滤/状态决策并发/最小通知、lease TTL/generation/非排他/只读到期、ReadQuery@2独立子集合分页/当前授权/旧版本拒绝/成本边界，以及logo内容协商/静态只读/CSP检查。定向不重复累加为新的总数。源码可见不等于已发布包或生产部署；协作主体路径和CLI已另有未提交9项定向切片；完整feature默认/doctor/selftest、全协议嵌套读取及真实浏览器/宿主矩阵仍缺。
 
 ## 2026-09-27 text_patch@2/rebase/batch与ShareGrant@2（PR #63已合并main，CI成功）
 

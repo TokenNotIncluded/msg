@@ -64,6 +64,9 @@ async def create_resource(app,ctx,request,tx, *, parent,type,name=None,body=None
     require(parent.state=='active','ancestor_inactive')
     require(app.registry.resource_type(parent.type,parent.type_version).container,'not_a_container')
     app.registry.resource_type(type,1)
+    if parent.id=='t_store' or type=='listing':
+        require(parent.id=='t_store' and type=='listing' and
+                request.operation=='store.listing_create', 'store_controlled_resource')
     if parent.id=='t_last_will':
         require(request.operation=='identity.legacy_put' and type=='legacy_directive',
                 'legacy_directive_only')
