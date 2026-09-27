@@ -11,7 +11,8 @@ concurrency:
 jobs:
   contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The persistent credential crash matrix adds real PostgreSQL/transport cases.
+    timeout-minutes: 30
     services:
       postgres:
         # Ubuntu runner provides pg_dump 16; its client must not be older than the server.
