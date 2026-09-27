@@ -168,15 +168,28 @@ class EscrowEngine:
                 body['amount_minor'] == order['total_price_minor'] and
                 body['policy_version'] == policy['version'] and body['policy_digest'] == digest(policy) and
                 body['request_digest'] == order['payment_intent_digest'] and
-                row[2] in order['receipt_refs'], 'escrow_decision_mismatch')
+                order['receipt_refs'] == [order['payment_transaction_id'], row[2]] and
+                order['settled_at'] == body['issued_at'], 'escrow_decision_mismatch')
+        # Reconstruct only the fields changed by the original atomic release.
+        # Mutable projections after restoration must still match its signed
+        # order and delivery snapshots, not merely buyer/amount/order ID.
+        issued_order = {**order, 'state': 'delivered', 'settled_at': None,
+                        'receipt_refs': [order['payment_transaction_id']]}
+        issued_delivery = {**delivery, 'state': 'prepared', 'claimed_at': None, 'receipt': None}
+        ledger_request_id = digest(('checkout-settlement-v1', order['buyer'],
+                                    body['request_id'], order['id']))
+        require(body['order_digest'] == digest(issued_order) and
+                body['evidence_digest'] == digest(issued_delivery) and
+                body['ledger_request_id'] == ledger_request_id, 'escrow_decision_mismatch')
         # The decision's deadline limited execution, not how long the buyer may
         # acknowledge a previously paid order. Verify its original signed fact.
         validate_decision({'body': body, 'signature': loads(row[1])}, body,
                           self.app.receipt_signer.public_key, parse_time(body['issued_at']))
-        ledger = tx.one('''SELECT debit_account,credit_account,amount_minor,currency_id,reference,receipt
+        ledger = tx.one('''SELECT debit_account,credit_account,amount_minor,currency_id,reference,receipt,actor,request_id
             FROM money_ledger WHERE id=?''', (row[2],))
         require(ledger is not None and ledger[:5] == (
             order['escrow_subject'], order['seller'], order['total_price_minor'],
             CURRENCY_ID, 'order_release:' + order['id']) and
             loads(ledger[5]) == delivery['receipt'] and
+            ledger[6:] == (order['buyer'], ledger_request_id) and
             _balance(tx, order['escrow_subject']) == 0, 'escrow_decision_mismatch')
