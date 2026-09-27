@@ -1,0 +1,45 @@
+name: Market development runtime
+on:
+  push:
+    branches: [fix/market-73-75]
+    paths: [.github/workflows/market-dev-runtime.yml]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Prepare offline test dependencies and source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age nginx postgresql-16
+          python -m pip install '.[dev]'
+          mkdir -p /tmp/market-runtime/{python,postgres,lib,bin}
+          prefix=$(python -c 'import sys; print(sys.prefix)')
+          cp -a "$prefix"/. /tmp/market-runtime/python/
+          cp -a /usr/lib/postgresql/16/. /tmp/market-runtime/postgres/
+          cp /usr/bin/age /usr/bin/age-keygen /tmp/market-runtime/bin/
+          cp /usr/sbin/nginx /tmp/market-runtime/bin/
+          cp -a /usr/share/postgresql/16 /tmp/market-runtime/postgres/share
+          for binary in /tmp/market-runtime/postgres/bin/* /tmp/market-runtime/postgres/lib/*.so /tmp/market-runtime/python/bin/python3.15 /tmp/market-runtime/bin/*; do
+            ldd "$binary" 2>/dev/null | awk '/=> \/.* \(/ {print $3}' || true
+          done | sort -u | while read -r library; do cp -L "$library" /tmp/market-runtime/lib/; done
+          git archive HEAD | gzip > /tmp/market-source.tar.gz
+          tar -czf /tmp/market-runtime.tar.gz -C /tmp market-runtime
+      - uses: actions/upload-artifact@v4
+        with:
+          name: market-dev-runtime
+          retention-days: 1
+          path: |
+            /tmp/market-source.tar.gz
+            /tmp/market-runtime.tar.gz
