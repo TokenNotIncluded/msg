@@ -50,11 +50,14 @@ def read_journal(state):
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     except OSError:
         raise Failure('unsafe_token_journal') from None
-    with os.fdopen(fd, 'rb') as stream:
-        info = os.fstat(stream.fileno())
+    try:
+        info = os.fstat(fd)
         require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and
                 info.st_nlink == 1 and info.st_mode & 0o077 == 0, 'unsafe_token_journal')
-        raw = stream.read(8193)
+        with os.fdopen(fd, 'rb', closefd=False) as stream:
+            raw = stream.read(8193)
+    finally:
+        os.close(fd)
     require(len(raw) <= 8192, 'invalid_token_journal')
     try:
         saved = loads(raw)
