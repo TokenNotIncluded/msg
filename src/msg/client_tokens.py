@@ -10,7 +10,7 @@ import re
 from datetime import timedelta
 from uuid import uuid4
 
-from msg.client_journal import identity_lock, read_owned_json, remove_journal
+from msg.client_journal import locked_state, read_owned_json, remove_journal
 from msg.core.codec import b64, canonical, digest, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION, request_for
@@ -100,13 +100,6 @@ def read_journal(state):
     return path, pending
 
 
-def _reload(state):
-    # Do not keep an old in-memory token after another process completed a transition.
-    fresh = type(state)(state.directory, server=state.server)
-    state.data, state.signer = fresh.data, fresh.signer
-    state.encryption_recipient = fresh.encryption_recipient
-
-
 def pending_delivery(state):
     _, pending = read_journal(state)
     if pending is None:
@@ -187,8 +180,7 @@ async def issue_token(client, operation, arguments=None):
     arguments = arguments or {}
     client._require_token_secret_transport()
     state = client.state
-    with identity_lock(state.directory, busy='token_operation_busy', unsafe='unsafe_token_lock'):
-        _reload(state)
+    with locked_state(state, busy='token_operation_busy', unsafe='unsafe_token_lock'):
         path, pending = read_journal(state)
         if pending is not None:
             _complete_locally(state, path, pending)
@@ -236,8 +228,7 @@ async def issue_token(client, operation, arguments=None):
 async def recover_token(client):
     client._require_token_secret_transport()
     state = client.state
-    with identity_lock(state.directory, busy='token_operation_busy', unsafe='unsafe_token_lock'):
-        _reload(state)
+    with locked_state(state, busy='token_operation_busy', unsafe='unsafe_token_lock'):
         path, pending = read_journal(state)
         require(path is not None, 'token_recovery_not_pending')
         _complete_locally(state, path, pending)

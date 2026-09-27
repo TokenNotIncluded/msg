@@ -29,6 +29,16 @@ def identity_lock(directory, *, busy='identity_upgrade_busy', unsafe='unsafe_upg
         os.close(fd)
 
 
+
+@contextmanager
+def locked_state(state, *, busy='identity_upgrade_busy', unsafe='unsafe_upgrade_lock'):
+    """Reload accepted state only after acquiring the shared transition lock."""
+    with identity_lock(state.directory, busy=busy, unsafe=unsafe):
+        fresh = type(state)(state.directory, server=state.server)
+        state.data, state.signer = fresh.data, fresh.signer
+        state.encryption_recipient = fresh.encryption_recipient
+        yield
+
 def _owned_regular(info, code):
     require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and
             info.st_nlink == 1 and info.st_mode & 0o077 == 0, code)

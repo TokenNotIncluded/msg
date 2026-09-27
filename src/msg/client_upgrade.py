@@ -6,6 +6,7 @@ import stat
 from uuid import uuid4
 
 from msg.core.codec import b64, canonical, loads, wire
+from msg.client_journal import locked_state
 from msg.core.errors import Failure, require
 from msg.security.crypto import Ed25519Signer
 from msg.storage.git import durable_write
@@ -84,7 +85,7 @@ def pending_upgrade(state):
 async def upgrade_identity(client, handle=None):
     state = client.state
     client._require_token_secret_transport()
-    with upgrade_lock(state.directory):
+    with locked_state(state):
         journal = state.directory/'identity-upgrade.json'
         resuming = journal.exists() or journal.is_symlink()
         pending = read_intent(journal) if resuming else None
