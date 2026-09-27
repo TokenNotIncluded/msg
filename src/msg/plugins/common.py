@@ -159,11 +159,11 @@ def registration(app,name,dependencies=()):
     output_ref=ResourceRef(id='schema:operation-result')
     if output_ref.id not in app.registry._schemas:
         app.registry.add_schema(output_ref,OUTPUT)
-    def operation(opname,schema, *, effect='transaction',requirements=no_requirements,signature=False):
+    def operation(opname,schema, *, effect='transaction',requirements=no_requirements,signature=False,version=1):
         def decorate(handler):
-            ref=ResourceRef(id='schema:'+opname+':1')
+            ref=ResourceRef(id='schema:'+opname+':'+str(version))
             app.registry.add_schema(ref,schema)
-            operations.append(OperationSpec(name=opname,version=1,input_schema=ref,output_schema=output_ref,
+            operations.append(OperationSpec(name=opname,version=version,input_schema=ref,output_schema=output_ref,
                 effect=effect,entries=frozenset({'network','worker'}),require_signature=signature,
                 requirements=requirements,handler=handler))
             return handler

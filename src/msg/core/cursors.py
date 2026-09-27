@@ -46,3 +46,23 @@ class CursorCodec:
         require(query=={'operation':operation,'arguments':arguments},'cursor_query_mismatch')
         require(position['principal']==principal,'cursor_principal_mismatch')
         return position['last'],parse_time(position['snapshot'])
+
+    def encode_read(self,ref,max_bytes,offset,fence,line_start,continued,principal,expires_at,
+                    previous=None):
+        query={'ref':wire(ref),'max_bytes':max_bytes}
+        return self.encode('read-segment',query,{'offset':offset,'fence':fence,'line_start':line_start,
+            'continued':continued,'principal':principal,'expires_at':wire(expires_at),
+            'previous':previous})
+
+    def inspect_read(self,value,now):
+        data=self.inspect(value)
+        require(data.get('kind')=='read-segment','cursor_kind_mismatch')
+        position=data.get('position')
+        require(isinstance(position,dict) and now<parse_time(position['expires_at']),
+                'cursor_expired')
+        return data['query'],position
+
+    def decode_read(self,value,principal,now):
+        query,position=self.inspect_read(value,now)
+        require(position['principal']==principal,'cursor_principal_mismatch')
+        return query,position

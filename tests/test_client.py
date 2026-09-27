@@ -22,6 +22,8 @@ async def test_client_register_sign_transfer_and_cross_transport_resume(installe
     assert state.subject==result.subject
     assert state.signer.key_id==result.data['key_id']
     assert state.key_path.stat().st_mode & 0o777==0o600
+    assert state.age_key_path.stat().st_mode & 0o777==0o600
+    assert state.encryption_recipient==result.data['encryption_recipient']
     post=await client.call('content.post_create',{'parent':'/main','body':'signed by client'})
     assert post.status=='ok' and post.prefer_cli is False,post
     assert state.subject==post.actor
@@ -52,6 +54,12 @@ async def test_client_retry_reuses_request_and_does_not_replace_local_identity(i
     with pytest.raises(Failure,match='identity_already_configured'):
         await client.register('another-agent')
     assert state.signer.private_bytes()==first
+    old_identity=state.age_key_path.read_text()
+    rotated=await client.rotate_encryption_key()
+    assert rotated.status=='ok' and state.encryption_recipient==rotated.data['recipient']
+    historical=state.directory/('encryption-'+rotated.data['previous_key_id']+'.agekey')
+    assert historical.read_text()==old_identity
+    assert state.age_key_path.read_text()!=old_identity
     packet=client.prepare('content.post_create',{'parent':'/main','body':'retry'},request_id='client-stable-id')
     one=await client.send(packet)
     two=await client.send(packet)

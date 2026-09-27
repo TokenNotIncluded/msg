@@ -17,6 +17,7 @@ from msg.core.models import (
 from msg.plugins.common import registration,resolve,operation_id,check_access,new_id,create_resource,output_for
 from msg.plugins.schemas import *
 from msg.security.crypto import key_id,subject_id,verify
+from msg.security.age_keys import public_from_recipient,encryption_key_id
 from msg.security.certificates import ONLINE_ISSUABLE_CAPABILITIES,sign_certificate,csr_body,verify_csr
 from msg.security.policy import scope_subset,constraints_subset
 
@@ -57,6 +58,10 @@ async def issue_online(app,tx,subject,key,ctx,request, *, grants=None,kind='iden
     now=ctx.now
     lifetime=app.settings.base_certificate_ttl if ttl is None else ttl
     require(0<lifetime<=issuer.issuance.max_cert_ttl_seconds,'certificate_ttl_escalation')
+    if authority_source and authority_source.get('kind')=='certificate':
+        source=await app.certificates.validate(authority_source['certificate_id'],tx)
+        require(source.subject_id==subject and source.key_id==key,'authority_source_invalid')
+        lifetime=min(lifetime,(source.expires_at-now).total_seconds())
     if kind=='delegation':
         require(bool(sources),'authority_source_required')
         for source in sources:
@@ -111,16 +116,103 @@ def install(app):
     op,finish=registration(app,'identity')
 
     @op('identity.register',obj({'handle':STRING,'public_key':BYTES},('handle','public_key')),signature=True)
+    async def register_legacy(ctx,request,tx):
+        # The v1 wire schema and shortcodes remain intact, but it cannot create
+        # a compliant self-custody identity without a client-held age key.
+        raise Failure('encryption_subkey_required',details={'contract_version':2})
+
+    @op('identity.register',obj({'handle':STRING,'public_key':BYTES,'encryption_recipient':STRING},
+                                 ('handle','public_key','encryption_recipient')),signature=True,version=2)
     async def register(ctx,request,tx):
         await app.online_issuer(tx)
         public=unb64(request.arguments['public_key'],limit=32)
+        encryption_public=public_from_recipient(request.arguments['encryption_recipient'])
+        require(public!=encryption_public,'encryption_key_must_be_independent')
         user=await make_user(app,tx,ctx,ctx.principal.subject,request.arguments['handle'],'registered')
         credential=Credential(id=key_id(public),subject_id=user.id,kind='signing_key',verifier=public,
             ceiling=app.primary_ceiling(),not_before=ctx.now,expires_at=None,revoked_at=None)
         await tx.save_credential(credential,0)
+        tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
+                   (credential.id,user.id,b64(public),wire(ctx.now),None,1),write=True)
+        encryption_id=encryption_key_id(encryption_public)
+        tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,?,?)',
+                   (encryption_id,user.id,request.arguments['encryption_recipient'],
+                    b64(encryption_public),wire(ctx.now),None,1),write=True)
         cert=await issue_online(app,tx,user.id,credential.id,ctx,request)
         return HandlerOutput(resources=(ResourceRef(id=user.id),),data={'subject_id':user.id,'key_id':credential.id,
+            'encryption_key_id':encryption_id,'encryption_recipient':request.arguments['encryption_recipient'],
             'certificate_id':cert.resource_id,'handle':request.arguments['handle']})
+
+    @op('identity.identity_key_list',obj({'subject_id':IDENTIFIER},('subject_id',)),effect='read')
+    async def identity_key_list(ctx,request,tx):
+        subject=await resolve(tx,request.arguments['subject_id'])
+        await tx.subject(subject)
+        rows=tx.rows('''SELECT key_id,public_key,created_at,retired_at,is_primary
+            FROM identity_keys WHERE subject=? ORDER BY created_at,key_id''',(subject,))
+        return HandlerOutput(data={'subject_id':subject,'keys':[
+            {'key_id':key,'public_key':public,'created_at':created,'retired_at':retired,
+             'primary':bool(primary),'algorithm':'ed25519','purpose':'identity'}
+            for key,public,created,retired,primary in rows]})
+
+    @op('identity.identity_key_get',obj({'subject_id':IDENTIFIER,'key_id':IDENTIFIER},('subject_id',)),effect='read')
+    async def identity_key_get(ctx,request,tx):
+        subject=await resolve(tx,request.arguments['subject_id'])
+        await tx.subject(subject)
+        key=request.arguments.get('key_id')
+        row=tx.one('''SELECT key_id,public_key,created_at,retired_at,is_primary
+            FROM identity_keys WHERE subject=? AND '''+('key_id=?' if key else 'is_primary=1'),
+            (subject,key) if key else (subject,))
+        require(row is not None,'identity_key_not_found')
+        key,public,created,retired,primary=row
+        return HandlerOutput(data={'subject_id':subject,'key_id':key,'public_key':public,
+            'created_at':created,'retired_at':retired,'primary':bool(primary),
+            'algorithm':'ed25519','purpose':'identity'})
+
+    @op('identity.encryption_key_list',obj({'subject_id':IDENTIFIER},('subject_id',)),effect='read')
+    async def encryption_key_list(ctx,request,tx):
+        subject=await resolve(tx,request.arguments['subject_id'])
+        await tx.subject(subject)
+        rows=tx.rows('''SELECT key_id,recipient,public_key,created_at,retired_at,is_primary
+            FROM encryption_subkeys WHERE subject=? ORDER BY created_at,key_id''',(subject,))
+        return HandlerOutput(data={'subject_id':subject,'keys':[
+            {'key_id':key,'recipient':recipient,'public_key':public,'created_at':created,
+             'retired_at':retired,'primary':bool(primary),'algorithm':'age-x25519',
+             'purpose':'encryption'} for key,recipient,public,created,retired,primary in rows]})
+
+    @op('identity.encryption_key_get',obj({'subject_id':IDENTIFIER,'key_id':IDENTIFIER},('subject_id',)),effect='read')
+    async def encryption_key_get(ctx,request,tx):
+        subject=await resolve(tx,request.arguments['subject_id'])
+        await tx.subject(subject)
+        key=request.arguments.get('key_id')
+        row=tx.one('''SELECT key_id,recipient,public_key,created_at,retired_at,is_primary
+            FROM encryption_subkeys WHERE subject=? AND '''+('key_id=?' if key else 'is_primary=1'),
+            (subject,key) if key else (subject,))
+        require(row is not None,'encryption_key_not_found')
+        key,recipient,public,created,retired,primary=row
+        return HandlerOutput(data={'subject_id':subject,'key_id':key,'recipient':recipient,
+            'public_key':public,'created_at':created,'retired_at':retired,'primary':bool(primary),
+            'algorithm':'age-x25519','purpose':'encryption'})
+
+    @op('identity.encryption_key_rotate',obj({'encryption_recipient':STRING},
+                                              ('encryption_recipient',)),signature=True)
+    async def encryption_key_rotate(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        public=public_from_recipient(request.arguments['encryption_recipient'])
+        new_key=encryption_key_id(public)
+        current=tx.one('SELECT key_id FROM encryption_subkeys WHERE subject=? AND is_primary=1',
+                       (subject.resource_id,))
+        require(current is not None,'encryption_key_not_found')
+        require(current[0]!=new_key,'encryption_key_unchanged')
+        require(tx.one('SELECT 1 FROM encryption_subkeys WHERE key_id=?',(new_key,)) is None,
+                'encryption_key_exists')
+        tx.execute('''UPDATE encryption_subkeys SET is_primary=0,retired_at=?
+            WHERE subject=? AND is_primary=1''',(wire(ctx.now),subject.resource_id),write=True)
+        tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,?,?)',
+                   (new_key,subject.resource_id,request.arguments['encryption_recipient'],
+                    b64(public),wire(ctx.now),None,1),write=True)
+        return HandlerOutput(data={'subject_id':subject.resource_id,'key_id':new_key,
+            'recipient':request.arguments['encryption_recipient'],'previous_key_id':current[0],
+            'old_ciphertexts_require_rewrap':True})
 
     @op('identity.certificate_renew',obj({'grants':GRANTS,'ttl':{'type':'integer','minimum':1}}),signature=True)
     async def certificate_renew(ctx,request,tx):
@@ -145,8 +237,10 @@ def install(app):
         candidates.sort(key=lambda source:(source.not_before,source.resource_id))
         source=candidates[0]
         grants=tuple(decode(CapabilityGrant,g) for g in request.arguments['grants']) if 'grants' in request.arguments else source.grants
-        ttl=request.arguments.get('ttl',int((source.expires_at-source.not_before).total_seconds()))
-        require(ttl<=(source.expires_at-source.not_before).total_seconds(),'renewal_ttl_exceeded')
+        remaining=int((source.expires_at-ctx.now).total_seconds())
+        require(remaining>=1,'renewal_source_expiring')
+        ttl=request.arguments.get('ttl',remaining)
+        require(ttl<=remaining,'renewal_ttl_exceeded')
         for grant in grants:
             await app.certificates.validate_grant(grant,tx)
             require(any([g.capability==grant.capability and g.version==grant.version and
@@ -187,13 +281,22 @@ def install(app):
             'previous_credential':old.id,'expires_at':wire(credential.expires_at)})
 
     @op('identity.upgrade',obj({'handle':STRING,'public_key':BYTES,'possession_proof':SIGNATURE},('handle','public_key','possession_proof')))
+    async def upgrade_legacy(ctx,request,tx):
+        raise Failure('encryption_subkey_required',details={'contract_version':2})
+
+    @op('identity.upgrade',obj({'handle':STRING,'public_key':BYTES,'possession_proof':SIGNATURE,
+                                'encryption_recipient':STRING},
+                               ('handle','public_key','possession_proof','encryption_recipient')),version=2)
     async def upgrade(ctx,request,tx):
         await app.online_issuer(tx)
         subject=await controlled_owner(app,ctx,request,tx)
         require(subject.kind=='temporary','not_temporary')
         a=request.arguments
         public=unb64(a['public_key'],limit=32)
-        verify(public,canonical({'subject_id':subject.resource_id,'public_key':a['public_key'],'handle':a['handle']}),
+        encryption_public=public_from_recipient(a['encryption_recipient'])
+        require(public!=encryption_public,'encryption_key_must_be_independent')
+        verify(public,canonical({'subject_id':subject.resource_id,'public_key':a['public_key'],'handle':a['handle'],
+                                 'encryption_recipient':a['encryption_recipient']}),
                decode(Signature,a['possession_proof']),purpose='upgrade')
         require(re.fullmatch(r'[a-z][a-z0-9-]{1,40}',a['handle']) is not None and a['handle'] not in {'root','online-ca'},'invalid_handle')
         resource=await tx.resource(subject.resource_id)
@@ -204,9 +307,17 @@ def install(app):
         credential=Credential(id=key_id(public),subject_id=subject.resource_id,kind='signing_key',verifier=public,
             ceiling=app.primary_ceiling(),not_before=ctx.now,expires_at=None,revoked_at=None)
         await tx.save_credential(credential,subject.auth_version+1)
+        tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
+                   (credential.id,subject.resource_id,b64(public),wire(ctx.now),None,1),write=True)
+        encryption_id=encryption_key_id(encryption_public)
+        tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,?,?)',
+                   (encryption_id,subject.resource_id,a['encryption_recipient'],b64(encryption_public),
+                    wire(ctx.now),None,1),write=True)
         certificate=await issue_online(app,tx,subject.resource_id,credential.id,ctx,request)
         return HandlerOutput(resources=(ResourceRef(id=subject.resource_id),),data={'subject_id':subject.resource_id,
-            'key_id':credential.id,'certificate_id':certificate.resource_id,'handle':a['handle']})
+            'key_id':credential.id,'encryption_key_id':encryption_id,
+            'encryption_recipient':a['encryption_recipient'],
+            'certificate_id':certificate.resource_id,'handle':a['handle']})
 
     @op('identity.key_add',obj({'public_key':BYTES,'possession_proof':SIGNATURE,'ceiling':GRANTS},
                                ('public_key','possession_proof','ceiling')),signature=True)
@@ -221,6 +332,8 @@ def install(app):
         credential=Credential(id=key_id(public),subject_id=subject.resource_id,kind='signing_key',verifier=public,
             ceiling=ceiling,not_before=ctx.now,expires_at=None,revoked_at=None)
         await tx.save_credential(credential,subject.auth_version)
+        tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
+                   (credential.id,subject.resource_id,b64(public),wire(ctx.now),None,0),write=True)
         await tx.update_identity(replace(subject,auth_version=subject.auth_version+1),subject.auth_version)
         cert=await issue_online(app,tx,subject.resource_id,credential.id,ctx,request,
                                 grants=tuple(g for g in ceiling
@@ -236,6 +349,17 @@ def install(app):
         require(credential.kind!='signing_key' or any(c.kind=='signing_key' and c.revoked_at is None and c.id!=credential.id for c in active),
                 'last_signing_key')
         await tx.save_credential(replace(credential,revoked_at=ctx.now),subject.auth_version)
+        current=tx.one('SELECT is_primary FROM identity_keys WHERE key_id=? AND subject=?',
+                       (credential.id,subject.resource_id))
+        if current is not None:
+            tx.execute('UPDATE identity_keys SET is_primary=0,retired_at=? WHERE key_id=?',
+                       (wire(ctx.now),credential.id),write=True)
+            if current[0]:
+                replacement=tx.one('''SELECT key_id FROM identity_keys WHERE subject=? AND retired_at IS NULL
+                    ORDER BY created_at,key_id LIMIT 1''',(subject.resource_id,))
+                if replacement is not None:
+                    tx.execute('UPDATE identity_keys SET is_primary=1 WHERE key_id=?',
+                               (replacement[0],),write=True)
         await tx.update_identity(replace(subject,auth_version=subject.auth_version+1),subject.auth_version)
         return HandlerOutput(data={'key_id':credential.id,'revoked':True})
 

@@ -19,17 +19,22 @@ NOW = datetime(2026, 9, 27, tzinfo=UTC)
 from conftest import installed
 
 
-async def call(app, op, args, *, key=None, subject=None, certs=(), expected=(), rid=None, token=None):
+async def call(app, op, args, *, key=None, subject=None, certs=(), expected=(), rid=None, token=None,
+               contract_version=1):
     packet = request_for(op, args, app.settings.service_url,
         signer=key, subject=subject, certificates=certs, expected=expected,
-        request_id=rid, token=token, expires_at=NOW+timedelta(seconds=120))
+        request_id=rid, token=token, expires_at=NOW+timedelta(seconds=120),
+        contract_version=contract_version)
     return await app.executor.execute(packet)
 
 
 async def register(app, handle):
+    from msg.security.age_keys import generate_age_key
     key = Ed25519Signer.generate()
     uid = subject_id(key.public_key)
-    result = await call(app, 'identity.register', {'handle':handle,'public_key':b64(key.public_key)}, key=key, subject=uid)
+    _, recipient = generate_age_key()
+    result = await call(app, 'identity.register', {'handle':handle,'public_key':b64(key.public_key),
+        'encryption_recipient':recipient}, key=key, subject=uid, contract_version=2)
     assert result.status == 'ok', wire(result)
     return key, uid, result.data['certificate_id']
 
@@ -94,9 +99,14 @@ async def test_temporary_rotation_and_upgrade_preserve_subject(installed):
                            expected=((post.resources[0].id,post.data['generation']),))
     assert forbidden.error.code == 'credential_ceiling'
     new_key = Ed25519Signer.generate()
-    args = {'subject_id':uid,'public_key':b64(new_key.public_key),'handle':'promoted'}
+    from msg.security.age_keys import generate_age_key
+    _,recipient=generate_age_key()
+    args = {'subject_id':uid,'public_key':b64(new_key.public_key),'handle':'promoted',
+            'encryption_recipient':recipient}
     upgrade = await call(app,'identity.upgrade',{'handle':'promoted','public_key':args['public_key'],
-        'possession_proof':wire(new_key.sign(canonical(args),purpose='upgrade'))},subject=uid,token=token)
+        'encryption_recipient':recipient,
+        'possession_proof':wire(new_key.sign(canonical(args),purpose='upgrade'))},
+        subject=uid,token=token,contract_version=2)
     assert upgrade.status == 'ok' and upgrade.data['subject_id'] == uid, wire(upgrade)
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.resource(post.resources[0].id)).owner == uid

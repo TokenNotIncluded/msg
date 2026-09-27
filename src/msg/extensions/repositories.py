@@ -1,7 +1,11 @@
 """Native public Git repositories, physically separate from internal topic Git."""
 from __future__ import annotations
 import asyncio
+import base64
+from contextvars import ContextVar
 from dataclasses import replace
+from datetime import timedelta
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -11,7 +15,7 @@ import tempfile
 from urllib.parse import urlsplit
 
 from starlette.responses import Response,StreamingResponse
-from msg.core.codec import canonical,decode,wire
+from msg.core.codec import canonical,decode,wire,unb64,b64
 from msg.core.errors import Failure,require
 from msg.core.models import HandlerOutput,ResourceRef,EffectJob
 from msg.core.requests import request_for
@@ -22,6 +26,7 @@ from msg.storage.git import durable_write
 
 OID={'type':['string','null'],'pattern':'^[0-9a-f]{40}$'}
 CHANGE=obj({'ref':{'type':'string','pattern':'^refs/(heads|tags)/[^\\s]+$'},'old':OID,'new':OID},('ref','old','new'))
+_HTTP_RECEIVE=ContextVar('msg_git_http_receive',default=False)
 
 
 class NativeGitStore:
@@ -173,6 +178,103 @@ class NativeGitStore:
                 if not sender.done():sender.cancel()
         return StreamingResponse(stream(),status_code=status,headers={**headers,'X-Content-Type-Options':'nosniff'})
 
+    async def http_push(self,request,rid,suffix):
+        from msg.transports.http import body_bytes,json_response,error_status
+        from msg.transports.packet import path_packet
+        require(bool(re.fullmatch(r'[A-Za-z0-9_-]{1,128}',rid)),'not_found')
+        require(suffix in {'info/refs','git-receive-pack'},'not_found')
+        advertise=suffix=='info/refs'
+        require(request.method==('GET' if advertise else 'POST'),'method_not_allowed')
+        pairs=request.query_params.multi_items()
+        require(len(pairs)==len({name for name,_ in pairs}),'duplicate_query_parameter')
+        require(dict(request.query_params)==({'service':'git-receive-pack'} if advertise else {}),
+                'invalid_git_service')
+        if not advertise:
+            require(request.headers.get('content-type','').split(';',1)[0]==
+                    'application/x-git-receive-pack-request','invalid_git_content_type')
+        limits=self.app.settings.server.limits
+        body=b'' if advertise else await body_bytes(request,limits.max_request_bytes)
+        arguments={'id':rid} if advertise else {'id':rid,'pack_digest':'sha256:'+hashlib.sha256(body).hexdigest(),
+                                               'pack_size':len(body)}
+        operation='git.http_advertise' if advertise else 'git.http_receive'
+        signed=request.headers.get('x-msg-request')
+        authorization=request.headers.get('authorization','')
+        require(not (signed and authorization),'ambiguous_proof')
+        if not signed and not authorization:
+            return json_response({'status':'error','error':{'code':'authentication_required',
+                                  'retryable':False}},401,
+                                 headers={'WWW-Authenticate':'Basic realm="msg Git"'})
+        if signed:
+            packet=path_packet(signed,'j',limits.max_request_bytes)
+            require(packet.operation==operation and canonical(packet.arguments)==canonical(arguments),
+                    'representation_mismatch')
+            require(advertise or bool(packet.request_id),'git_request_id_required')
+        else:
+            require(authorization.startswith('Basic '),'authentication_required')
+            try:
+                user,password=base64.b64decode(authorization[6:],validate=True).decode('ascii').split(':',1)
+                token=unb64(password)
+            except (ValueError,UnicodeDecodeError,Failure) as exc:
+                raise Failure('invalid_token') from exc
+            request_id=request.headers.get('x-msg-request-id')
+            if not advertise:
+                require(request_id is not None and re.fullmatch(r'[A-Za-z0-9._:-]{1,128}',request_id)
+                        is not None,'git_request_id_required')
+            packet=request_for(operation,arguments,self.app.settings.service_url,token=(user,token),
+                               request_id=request_id,expires_at=self.app.clock()+timedelta(seconds=120))
+        marker=_HTTP_RECEIVE.set(not advertise)
+        try:
+            result=await self.app.executor.execute(packet,entry='network')
+        finally:
+            _HTTP_RECEIVE.reset(marker)
+        if result.error:
+            return json_response({'status':'error','error':wire(result.error)},
+                                 error_status(result.error.code))
+        if advertise:
+            process=await asyncio.create_subprocess_exec('git','--git-dir',str(self.path(rid)),
+                'receive-pack','--stateless-rpc','--advertise-refs',str(self.path(rid)),
+                stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL,env=self.env)
+            chunks=[]
+            size=0
+            try:
+                while chunk:=await asyncio.wait_for(process.stdout.read(65536),30):
+                    size+=len(chunk)
+                    require(size<=limits.max_response_bytes,'response_too_large')
+                    chunks.append(chunk)
+                require(await asyncio.wait_for(process.wait(),30)==0,'git_operation_failed')
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    await process.wait()
+            output=b''.join(chunks)
+            prefix=b'# service=git-receive-pack\n'
+            payload=f'{len(prefix)+4:04x}'.encode()+prefix+b'0000'+output
+            require(len(payload)<=limits.max_response_bytes,'response_too_large')
+            return Response(payload,media_type='application/x-git-receive-pack-advertisement',
+                            headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+        job_id=result.data['job_id']
+        if result.replayed:
+            async with self.app.metadata.transaction(write=False) as tx:
+                cached=tx.setting('git_http_result:'+job_id)
+                status=tx.setting('job_status:'+job_id)
+            if cached is None:
+                raise Failure(status['code'] if status and status['code'] not in {'ok'} else 'external_uncertain')
+            return Response(unb64(cached),media_type='application/x-git-receive-pack-result',
+                            headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+        from msg.extensions.ssh_git import guarded_command
+        code,output,_changed=await guarded_command(self.app,await self._job(job_id),
+            lambda store:['receive-pack','--stateless-rpc',str(store.path(rid))],
+            input_data=body,capture_output=True,output_limit=limits.max_response_bytes,timeout=600,
+            cache_result_key='git_http_result:'+job_id)
+        require(code==0,'git_operation_failed')
+        require(len(output)<=limits.max_response_bytes,'response_too_large')
+        return Response(output,media_type='application/x-git-receive-pack-result',
+                        headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+    async def _job(self,id):
+        async with self.app.metadata.transaction(write=False) as tx:
+            return await tx.job(id)
+
 
 def register(app,op):
     @op('git.create',obj({'parent':IDENTIFIER,'name':STRING},('parent','name')),signature=True)
@@ -186,7 +288,11 @@ def register(app,op):
         resource=await create_resource(app,ctx,request,tx,parent=parent.id,type='repo',name=name,
             mode=0o664 if parent.type=='organization' else 0o644)
         await NativeGitStore(app).create(resource.id)
-        return output_for(resource,path=await tx.path(resource.id),public=True)
+        path=await tx.path(resource.id)
+        return output_for(resource,path=path,public=True,
+            read_url=app.settings.service_url.rstrip('/')+path,
+            push_url=app.settings.service_url.rstrip('/')+'/-/git/'+resource.id,
+            push_max_bytes=app.settings.server.limits.max_request_bytes)
 
     @op('git.refs',obj({'id':IDENTIFIER,'cursor':STRING,'limit':{'type':'integer','minimum':1,'maximum':200}},('id',)),effect='read')
     async def refs(ctx,request,tx):
@@ -197,7 +303,38 @@ def register(app,op):
         after=app.cursors.decode(request.arguments['cursor'],'git.refs',rid) if request.arguments.get('cursor') else ''
         rows,following=await NativeGitStore(app).refs(rid,after=after,limit=request.arguments.get('limit',100))
         return HandlerOutput(data={'resource_id':rid,'refs':rows,
+            'read_url':app.settings.service_url.rstrip('/')+await tx.path(rid),
+            'push_url':app.settings.service_url.rstrip('/')+'/-/git/'+rid,
+            'push_max_bytes':app.settings.server.limits.max_request_bytes,
             'cursor':app.cursors.encode('git.refs',rid,following) if following else None})
+
+    @op('git.http_advertise',obj({'id':IDENTIFIER},('id',)),effect='read')
+    async def http_advertise(ctx,request,tx):
+        require(ctx.principal.method in {'signature','token'},'authentication_required')
+        rid=await resolve(tx,request.arguments['id'])
+        resource=await tx.resource(rid)
+        require(resource.type=='repo' and resource.state=='active','not_a_repository')
+        await check_access(app,ctx,request,tx,rid,'write')
+        return HandlerOutput(data={'resource_id':rid})
+
+    @op('git.http_receive',obj({'id':IDENTIFIER,'pack_digest':STRING,
+        'pack_size':{'type':'integer','minimum':0}},('id','pack_digest','pack_size')),effect='external')
+    async def http_receive(ctx,request,tx):
+        require(_HTTP_RECEIVE.get(),'git_http_transport_required')
+        require(ctx.principal.method in {'signature','token'},'authentication_required')
+        rid=await resolve(tx,request.arguments['id'])
+        resource=await tx.resource(rid)
+        require(resource.type=='repo' and resource.state=='active','not_a_repository')
+        await check_access(app,ctx,request,tx,rid,'write')
+        require(request.arguments['pack_digest'].startswith('sha256:') and
+                len(request.arguments['pack_digest'])==71,'invalid_pack_digest')
+        id,eid=new_id('job'),event_id(request,ctx.principal.subject)
+        job=EffectJob(id=id,event_id=eid,kind='git.receive',dedupe_key='git-http:'+eid,
+            principal=ctx.principal,operation=request.operation,
+            arguments={'id':rid,'request_id':request.request_id},state='running',attempts=1,
+            next_attempt_at=ctx.now,lease_until=ctx.now+timedelta(seconds=600))
+        await tx.enqueue(job)
+        return HandlerOutput(resources=(ResourceRef(id=rid),),data={'job_id':id})
 
     @op('git.push',obj({'id':IDENTIFIER,'bundle':REF,'changes':{'type':'array','items':CHANGE,'minItems':1,'maxItems':128},
         'force':BOOLEAN},('id','bundle','changes')),effect='external',signature=True)

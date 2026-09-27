@@ -18,7 +18,7 @@ import shlex
 import sys
 import tempfile
 
-from msg.core.codec import canonical, loads, wire
+from msg.core.codec import b64, canonical, loads, wire
 from msg.core.errors import Failure, require
 from msg.extensions.repositories import NativeGitStore
 from msg.plugins.common import check_access
@@ -155,7 +155,8 @@ def hook_program(socket_path, secret):
         'sys.exit(0 if r and len(r)<=8192 and json.loads(r).get("ok") else 1)\n').encode()
 
 
-async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None, stderr=None, timeout=600):
+async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None, stderr=None, timeout=600,
+                          input_data=None,capture_output=False,output_limit=None,cache_result_key=None):
     """Run a fixed Git command with a private reference-transaction hook.
 
     command_factory is installed adapter code, never a value accepted from wire.
@@ -195,9 +196,37 @@ async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None,
             '-c','receive.denyNonFastForwards=true',*command_factory(store)]
         process = None
         code = None
+        output = b''
         try:
-            process = await asyncio.create_subprocess_exec(*command, stdin=stdin, stdout=stdout, stderr=stderr, env=env, start_new_session=True)
-            code = await asyncio.wait_for(process.wait(), timeout)
+            process = await asyncio.create_subprocess_exec(*command,
+                stdin=asyncio.subprocess.PIPE if input_data is not None else stdin,
+                stdout=asyncio.subprocess.PIPE if capture_output else stdout,
+                stderr=asyncio.subprocess.DEVNULL if capture_output else stderr,
+                env=env,start_new_session=True)
+            if input_data is not None:
+                async def exchange():
+                    async def feed():
+                        try:
+                            process.stdin.write(input_data)
+                            await process.stdin.drain()
+                        except (BrokenPipeError,ConnectionResetError):
+                            pass
+                        finally:
+                            process.stdin.close()
+                    sender=asyncio.create_task(feed())
+                    chunks=[]
+                    size=0
+                    while chunk:=await process.stdout.read(65536):
+                        size+=len(chunk)
+                        require(output_limit is None or size<=output_limit,'response_too_large')
+                        chunks.append(chunk)
+                    await sender
+                    await process.wait()
+                    return b''.join(chunks)
+                output=await asyncio.wait_for(exchange(),timeout)
+                code=process.returncode
+            else:
+                code = await asyncio.wait_for(process.wait(), timeout)
         finally:
             if process is not None and process.returncode is None:
                 import signal
@@ -213,12 +242,17 @@ async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None,
                 if current.state == 'running':
                     # Git ref transactions may have partially succeeded without
                     # --atomic. Audit the actual committed refs, never invent rollback.
-                    state = 'uncertain' if guard.uncertain else 'done' if code == 0 and not guard.failures else 'failed'
+                    uncertain=guard.uncertain or (guard.changed and (code != 0 or bool(guard.failures)))
+                    state = 'uncertain' if uncertain else 'done' if code == 0 and not guard.failures else 'failed'
+                    if state=='done' and cache_result_key is not None:
+                        require(capture_output,'git_result_cache_requires_output')
+                        tx.set_setting(cache_result_key,b64(output))
                     await tx.save_job(replace(current, state=state, lease_until=None))
-                    tx.set_setting('job_status:'+job.id, {'code':'external_uncertain' if guard.uncertain else
-                        guard.failures[0] if guard.failures else 'ok' if code == 0 else 'git_operation_failed',
+                    tx.set_setting('job_status:'+job.id, {'code':'external_uncertain' if uncertain else
+                        guard.failures[0] if guard.failures else 'ok' if state=='done' else 'git_operation_failed',
                         'refs_changed':guard.changed})
-        return code if code is not None and not guard.uncertain and not guard.failures else 1
+        result=code if code is not None and not guard.uncertain and not guard.failures else 1
+        return (result,output,guard.changed) if capture_output else result
 
 
 async def receive_pack(app, job_id):

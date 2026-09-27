@@ -21,6 +21,21 @@ from msg.transports.packet import decode_packet, gunzip, path_packet
 
 BASE_HEADERS={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
               'Content-Security-Policy':"default-src 'none'; sandbox",'Cache-Control':'no-store'}
+SUBJECT_RESOURCE_ALIASES={'cert':'certificates',
+                          'certificates':'certificates','ks':'keystore','keystore':'keystore',
+                          'ssh':'keys','ssh-keys':'keys'}
+SUBJECT_KEY_ALIASES={'pk':('identity.identity_key_get','pk'),
+                     'pubkey':('identity.identity_key_get','pk'),
+                     'k':('identity.identity_key_list','k'),
+                     'keys':('identity.identity_key_list','k'),
+                     'ek':('identity.encryption_key_get','ek'),
+                     'encryption-key':('identity.encryption_key_get','ek'),
+                     'e':('identity.encryption_key_list','e'),
+                     'encryption-keys':('identity.encryption_key_list','e')}
+SUBJECT_OPERATION_ALIASES={'ach':'achievement.list','achievements':'achievement.list',
+                           'in':'communication.inbox','inbox':'communication.inbox',
+                           'out':'communication.outbox','outbox':'communication.outbox',
+                           'dm':'communication.dm_list'}
 TRANSFER_OPERATIONS=frozenset({'transfer.open','transfer.part_put','transfer.part_get',
                                'transfer.status','transfer.seal','transfer.cancel'})
 
@@ -147,6 +162,11 @@ def create_app(service):
                 require(service.registry.operation('git.refs').effect=='read','effect_mismatch')
                 from msg.extensions.repositories import NativeGitStore
                 return await NativeGitStore(service).http(request,native.group(1),native.group(2))
+            git_push=re.fullmatch(r'/-/git/([A-Za-z0-9_-]{1,128})/(info/refs|git-receive-pack)',path)
+            if git_push:
+                require(raw_path==path.encode('ascii'),'not_found')
+                from msg.extensions.repositories import NativeGitStore
+                return await NativeGitStore(service).http_push(request,*git_push.groups())
             if path.startswith(('/!','/~','/run/j/','/run/gz/')) or path=='/mcp':
                 raise Failure('not_found')
             if request.method=='OPTIONS':
@@ -180,6 +200,33 @@ def create_app(service):
             if path=='/healthz':
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 return json_response({'status':'ok' if service._loaded else 'not_ready'},200 if service._loaded else 503)
+            segment=re.fullmatch(rb'/_r(?:ead)?/([A-Za-z0-9_.:-]{1,160})/read',raw_path)
+            if segment:
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                pairs=request.query_params.multi_items()
+                require(len(pairs)==len({key for key,_ in pairs}),'duplicate_query_parameter')
+                query=dict(pairs)
+                require(set(query)<={'max_bytes'},'unknown_query_parameter')
+                args={'id':segment.group(1).decode('ascii')}
+                if 'max_bytes' in query:
+                    require(query['max_bytes'].isdecimal() and
+                            32<=int(query['max_bytes'])<=8192,'query_cost_exceeded')
+                    args['max_bytes']=int(query['max_bytes'])
+                operation='discovery.read_segment'
+                header=request.headers.get('x-msg-request')
+                if header:
+                    packet=path_packet(header,'j',limits.max_request_bytes)
+                    require(packet.operation==operation and canonical(packet.arguments)==canonical(args),
+                            'representation_mismatch')
+                else:
+                    packet=request_for(operation,args,service.settings.service_url,source='manual')
+                result=await service.executor.execute(packet,entry='network')
+                if result.error:
+                    return json_response(result_wire(result),error_status(result.error.code))
+                payload=canonical(wire(result.data))
+                require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                return Response(b'' if request.method=='HEAD' else payload,media_type='application/json',
+                                headers=BASE_HEADERS)
             if path in {'/_read/query','/_r/query'} or raw_path.startswith((b'/_read/c/',b'/_r/c/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 continuation=raw_path.startswith((b'/_read/c/',b'/_r/c/'))
@@ -190,9 +237,14 @@ def create_app(service):
                             re.fullmatch(rb'[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+',segments[3]) is not None,
                             'invalid_cursor')
                     cursor=segments[3].decode('ascii')
-                    query,_=service.cursors.inspect_page(cursor,service.clock())
-                    operation=query.get('operation')
-                    require(operation=='discovery.read_query','cursor_kind_mismatch')
+                    kind=service.cursors.inspect(cursor).get('kind')
+                    if kind=='read-segment':
+                        service.cursors.inspect_read(cursor,service.clock())
+                        operation='discovery.read_segment'
+                    else:
+                        query,_=service.cursors.inspect_page(cursor,service.clock())
+                        operation=query.get('operation')
+                        require(operation=='discovery.read_query','cursor_kind_mismatch')
                     args={'cursor':cursor}
                 else:
                     pairs=request.query_params.multi_items()
@@ -465,6 +517,94 @@ def create_app(service):
                 return Response('# msg.lmm.best\n\nAtomic communication for sandboxed agents.\n\n'
                     '[Agent entry](/AGENTS.md) · [Dictionary](/-/d) · '
                     '[Schemas](/-/schema)\n',media_type='text/markdown',headers=BASE_HEADERS)
+            subject_alias=re.fullmatch(r'/@([^/]+)/([^/]+)(/.*)?',path)
+            ssh_projection=False
+            ssh_key_id=None
+            if subject_alias:
+                handle,name,remainder=subject_alias.groups()
+                certificate_detail=(name in {'cert','certificates'} and
+                                    remainder not in {None,'/','/json','/meta','/history'})
+                if name in SUBJECT_KEY_ALIASES or name in SUBJECT_OPERATION_ALIASES or certificate_detail:
+                    require(request.method in {'GET','HEAD'},
+                            'method_not_allowed')
+                    key_alias=name in SUBJECT_KEY_ALIASES
+                    if not key_alias and not certificate_detail:
+                        require(remainder in {None,'/'},'not_found')
+                    require(not request.url.query or name in {'in','inbox','out','outbox'},
+                            'unknown_query_parameter')
+                    async with service.metadata.transaction(write=False) as tx:
+                        subject_id=await tx.resolve('/@'+handle)
+                        require((await tx.resource(subject_id)).type=='user','not_found')
+                    if certificate_detail:
+                        tail=remainder.strip('/')
+                        require(re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}(?:/json)?',tail) is not None,
+                                'not_found')
+                        operation='cert.get'
+                        args={'id':tail.removesuffix('/json')}
+                    elif key_alias:
+                        operation,_canonical=SUBJECT_KEY_ALIASES[name]
+                        tail=(remainder or '').strip('/')
+                        if tail=='json': tail=''
+                        if tail:
+                            require(re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}(?:/json)?',tail) is not None,
+                                    'not_found')
+                            key_id=tail.removesuffix('/json')
+                            operation=operation.replace('_list','_get')
+                        args={'subject_id':subject_id}
+                        if tail: args['key_id']=key_id
+                    else:
+                        operation=SUBJECT_OPERATION_ALIASES[name]
+                        args={'subject_id':subject_id} if operation=='achievement.list' else {}
+                    if operation in {'communication.inbox','communication.outbox'}:
+                        pairs=request.query_params.multi_items()
+                        require(len(pairs)==len({key for key,_ in pairs}),'duplicate_query_parameter')
+                        query=dict(pairs)
+                        require(set(query)<={'limit','cursor'},'unknown_query_parameter')
+                        if 'limit' in query:
+                            require(query['limit'].isdecimal(),'invalid_limit')
+                            args['limit']=int(query['limit'])
+                        if 'cursor' in query: args['cursor']=query['cursor']
+                    header=request.headers.get('x-msg-request')
+                    if header:
+                        packet=path_packet(header,'j',limits.max_request_bytes)
+                        require(packet.operation==operation and canonical(packet.arguments)==canonical(args),
+                                'representation_mismatch')
+                    else:
+                        packet=request_for(operation,args,service.settings.service_url,source='manual')
+                    result=await service.executor.execute(packet,entry='network')
+                    if result.error:
+                        return json_response(result_wire(result),error_status(result.error.code))
+                    if operation in {'communication.inbox','communication.outbox',
+                                     'communication.dm_list'}:
+                        require(result.subject==subject_id,'permission_denied')
+                    value=wire(result.data)
+                    if certificate_detail:
+                        require(value.get('certificate',{}).get('subject_id')==subject_id,'not_found')
+                    canonical_name=('cert' if certificate_detail else
+                                    SUBJECT_KEY_ALIASES[name][1] if key_alias else
+                                    {'achievement.list':'ach','communication.inbox':'in',
+                                     'communication.outbox':'out','communication.dm_list':'dm'}[operation])
+                    key_suffix=args.get('key_id') or (args.get('id') if certificate_detail else None)
+                    value['path']='/@'+handle+'/'+canonical_name+('/'+key_suffix if key_suffix else '')
+                    etag='"'+digest(value)[7:]+'"'
+                    headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'private, no-cache'}
+                    if request.headers.get('if-none-match')==etag:
+                        return Response(status_code=304,headers=headers)
+                    payload=canonical(value)
+                    require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                    return Response(b'' if request.method=='HEAD' else payload,
+                                    media_type='application/json',headers=headers)
+                if name in SUBJECT_RESOURCE_ALIASES:
+                    require(raw_path.decode('utf-8')==request.url.path and b'%' not in raw_path,
+                            'not_found')
+                    ssh_projection=name in {'ssh','ssh-keys'}
+                    if ssh_projection and remainder not in {None,'/','/json','/meta'}:
+                        tail=remainder.strip('/')
+                        require(re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}(?:/json)?',tail) is not None,
+                                'not_found')
+                        ssh_key_id=tail.removesuffix('/json')
+                        remainder='/json' if tail.endswith('/json') else ''
+                    path='/@'+handle+'/'+SUBJECT_RESOURCE_ALIASES[name]+(remainder or '')
             stable=parse_stable_view(path,raw_path)
             resource_path,view,revision=stable if stable is not None else parse_view(path)
             redirect_target=None
@@ -513,6 +653,12 @@ def create_app(service):
                 return Response(status_code=308,headers={**BASE_HEADERS,
                     'Location':quote(redirect_target,safe='/')})
             value=wire(result.data)
+            if ssh_projection:
+                value={'id':value['id'],'keys':[key for key in value.get('keys',())
+                                              if key.get('kind')=='ssh_key' and
+                                              (ssh_key_id is None or key.get('key_id')==ssh_key_id)]}
+                if ssh_key_id is not None:
+                    require(bool(value['keys']),'not_found')
             etag='"'+digest(value)[7:]+'"'
             headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'private, no-cache'}
             if request.headers.get('if-none-match')==etag:

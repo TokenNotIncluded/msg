@@ -54,6 +54,17 @@ CREATE TABLE IF NOT EXISTS memberships (org TEXT, subject TEXT, generation INTEG
 CREATE TABLE IF NOT EXISTS emails (subject TEXT PRIMARY KEY, generation INTEGER NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, subject TEXT NOT NULL, body TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS credentials_subject ON credentials(subject);
+CREATE TABLE IF NOT EXISTS identity_keys (
+ key_id TEXT PRIMARY KEY, subject TEXT NOT NULL, public_key TEXT NOT NULL,
+ created_at TEXT NOT NULL, retired_at TEXT, is_primary INTEGER NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS identity_keys_primary ON identity_keys(subject) WHERE is_primary=1;
+CREATE INDEX IF NOT EXISTS identity_keys_subject ON identity_keys(subject,created_at,key_id);
+CREATE TABLE IF NOT EXISTS encryption_subkeys (
+ key_id TEXT PRIMARY KEY, subject TEXT NOT NULL, recipient TEXT NOT NULL UNIQUE,
+ public_key TEXT NOT NULL, created_at TEXT NOT NULL, retired_at TEXT,
+ is_primary INTEGER NOT NULL DEFAULT 0);
+CREATE UNIQUE INDEX IF NOT EXISTS encryption_subkeys_primary ON encryption_subkeys(subject) WHERE is_primary=1;
+CREATE INDEX IF NOT EXISTS encryption_subkeys_subject ON encryption_subkeys(subject,created_at,key_id);
 CREATE TABLE IF NOT EXISTS certificates (id TEXT PRIMARY KEY, subject TEXT NOT NULL, parent TEXT, revoked INTEGER NOT NULL DEFAULT 0, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS csrs (id TEXT PRIMARY KEY, generation INTEGER NOT NULL, state TEXT NOT NULL, body TEXT NOT NULL, state_body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS results (subject TEXT, request_id TEXT, digest TEXT NOT NULL, body TEXT NOT NULL, PRIMARY KEY(subject,request_id));
@@ -87,6 +98,24 @@ CREATE TABLE IF NOT EXISTS achievement_grants (
  spec_version INTEGER NOT NULL, body TEXT NOT NULL,
  UNIQUE(subject,achievement_id,spec_version));
 CREATE INDEX IF NOT EXISTS achievement_grants_lookup ON achievement_grants(achievement_id,subject);
+CREATE TABLE IF NOT EXISTS dm_conversations (
+ pair TEXT PRIMARY KEY, resource_id TEXT NOT NULL UNIQUE REFERENCES resources(id),
+ participant_a TEXT NOT NULL, participant_b TEXT NOT NULL, initiator TEXT NOT NULL,
+ conversation_kind TEXT NOT NULL DEFAULT 'direct' CHECK(conversation_kind='direct'),
+ state TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+ CHECK(participant_a < participant_b), CHECK(state IN ('pending','active','rejected')));
+CREATE INDEX IF NOT EXISTS dm_conversations_participants ON dm_conversations(participant_a,participant_b);
+CREATE TABLE IF NOT EXISTS dm_blocks (
+ blocker TEXT NOT NULL, blocked TEXT NOT NULL, PRIMARY KEY(blocker,blocked));
+CREATE TABLE IF NOT EXISTS dm_archives (
+ subject TEXT NOT NULL, pair TEXT NOT NULL REFERENCES dm_conversations(pair),
+ PRIMARY KEY(subject,pair));
+CREATE TABLE IF NOT EXISTS presence (
+ subject TEXT PRIMARY KEY, expires_at TEXT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS claims (
+ id TEXT PRIMARY KEY REFERENCES resources(id), subject TEXT NOT NULL,
+ issued_at TEXT NOT NULL, expires_at TEXT, body TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS claims_subject ON claims(subject,issued_at,id);
 """
 
 

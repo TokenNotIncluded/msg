@@ -62,6 +62,9 @@ async def test_private_read_aliases_hide_head_meta_history_and_etag(installed):
 @pytest.mark.asyncio
 async def test_graphql_query_and_mutation_are_separated_by_route(installed):
     app, _ = installed
+    from msg.transports.graphql import GraphQLAdapter
+    mutations = GraphQLAdapter(app).schema.get_type('Mutation').fields
+    assert 'identity_register' in mutations and 'identity_register_v2' in mutations
     key, uid, cert = await register(app, 'graphql-boundary')
     read_packet = request_for('discovery.get', {'id': '/main'}, app.settings.service_url)
     write_packet = request_for('content.post_create', {'parent': '/main', 'body': 'GraphQL write'},

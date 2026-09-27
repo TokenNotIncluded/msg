@@ -130,8 +130,10 @@ class MCPHTTPTransport(HTTPTransport):
     async def call(self, request):
         await self._effect(request.operation)
         from msg.transports.mcp import PROTOCOL_VERSION
+        tool_name = request.operation if request.contract_version==1 else (
+            f'{request.operation}@{request.contract_version}')
         value = await self._json('POST','/-/mcp',body={'jsonrpc':'2.0','id':request.request_id,
-            'method':'tools/call','params':{'name':request.operation,'arguments':{'packet':wire(request)}}},
+            'method':'tools/call','params':{'name':tool_name,'arguments':{'packet':wire(request)}}},
             headers={'Accept':'application/json, text/event-stream','MCP-Protocol-Version':PROTOCOL_VERSION})
         if 'error' in value:
             raise Failure(value['error'].get('message','mcp_error'))

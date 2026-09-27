@@ -34,6 +34,7 @@ class MCPServer:
         tools=[]
         # Bounded discovery; an agent can request only the next useful page.
         for spec in specs[offset:offset+8]:
+            tool_name=spec.name if spec.version==1 else f'{spec.name}@{spec.version}'
             if self.local_client is not None:
                 input_schema=registry.schema(spec.input_schema)
             else:
@@ -41,7 +42,7 @@ class MCPServer:
                     'operation':{'const':spec.name},'contract_version':{'const':spec.version},
                     'arguments':registry.schema(spec.input_schema)}}
                 input_schema={'type':'object','properties':{'packet':packet_schema},'required':['packet'],'additionalProperties':False}
-            tools.append({'name':spec.name,'description':f'{spec.name}@{spec.version}; {spec.effect}; contract /-/d/{spec.name.split(".",1)[0]}/{spec.name}',
+            tools.append({'name':tool_name,'description':f'{spec.name}@{spec.version}; {spec.effect}; contract /-/d/{spec.name.split(".",1)[0]}/{tool_name}',
                 'inputSchema':input_schema,'outputSchema':RESULT_SCHEMA,
                 'annotations':{'readOnlyHint':spec.effect=='read','idempotentHint':True,
                     'destructiveHint':spec.effect!='read','openWorldHint':spec.effect=='external'}})
@@ -77,13 +78,19 @@ class MCPServer:
                 result=await self.tools(params.get('cursor'))
             elif method=='tools/call':
                 require(set(params)<={'name','arguments','_meta'} and isinstance(params.get('name'),str),'invalid_jsonrpc_params')
-                spec=self.service.registry.operation(params['name'])
+                name=params['name']
+                operation,separator,version=name.rpartition('@')
+                if separator:
+                    require(version.isdecimal() and int(version)>0,'invalid_operation_version')
+                    spec=self.service.registry.operation(operation,int(version))
+                else:
+                    spec=self.service.registry.operation(name)
                 require('network' in spec.entries,'entry_not_allowed')
                 arguments=params.get('arguments',{})
                 if self.local_client is None:
                     require(isinstance(arguments,dict) and set(arguments)=={'packet'},'signed_packet_required')
                     packet=decode_packet(arguments['packet'],self.service.settings.server.limits.max_request_bytes)
-                    require(packet.operation==spec.name,'operation_mismatch')
+                    require(packet.operation==spec.name and packet.contract_version==spec.version,'operation_mismatch')
                     output=await self.service.executor.execute(packet,entry='network')
                 else:
                     require(isinstance(arguments,dict),'invalid_jsonrpc_params')
@@ -96,7 +103,8 @@ class MCPServer:
                     if existing:
                         require(existing[0]==request_digest,'jsonrpc_id_conflict')
                         request_id=existing[1]
-                    packet=self.local_client.prepare(params['name'],arguments,expected=expected,request_id=request_id)
+                    packet=self.local_client.prepare(spec.name,arguments,expected=expected,
+                        request_id=request_id,contract_version=spec.version)
                     self._requests[cache_key]=(request_digest,packet.request_id)
                     # This is a process-local replay cache, not per-account server state.
                     if len(self._requests)>256:

@@ -21,9 +21,10 @@ def signing_bytes(request):
 
 
 def request_for(operation,arguments,service, *, subject=None,signer=None,token=None,
-                certificates=(),request_id=None,expires_at=None,source='msg',expected=(),return_fields=()):
+                certificates=(),request_id=None,expires_at=None,source='msg',expected=(),return_fields=(),
+                contract_version=1):
     request=OperationRequest(request_id=request_id or uuid4().hex,protocol_version=1,
-        operation=operation,contract_version=1,target_service=service,subject=subject,
+        operation=operation,contract_version=contract_version,target_service=service,subject=subject,
         arguments=arguments,expected_generations=tuple(expected),
         expires_at=expires_at or datetime.now(UTC)+timedelta(minutes=3),payload_digest='',proof=None,
         return_fields=tuple(return_fields),source=source)

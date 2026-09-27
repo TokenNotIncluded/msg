@@ -17,6 +17,7 @@ from msg.config import write_example
 from msg.core.codec import canonical,loads
 from msg.transports.client import HTTPTransport
 from msg.transports.http import create_app
+from msg.transports.mcp import MCPServer
 from msg.transports.stdio import serve_stdio
 from test_service import NOW
 
@@ -28,6 +29,23 @@ async def test_local_stdio_signs_tools_and_never_exposes_root(installed,tmp_path
         client=MsgClient(ClientState(tmp_path/'cli',server=app.settings.service_url),
             HTTPTransport(app.settings.service_url,http=http),clock=lambda:NOW)
         await client.register('stdio-agent')
+        registry=await client.contract_registry()
+        assert registry.operation('identity.register',1).version==1
+        newer=registry.operation('identity.register',2)
+        await registry.load_schemas((newer,))
+        assert tuple(registry.schema(newer.input_schema)['required'])==(
+            'handle','public_key','encryption_recipient')
+        mcp=MCPServer(app)
+        listed=[]
+        cursor=None
+        while True:
+            page=await mcp.tools(cursor)
+            listed.extend(tool['name'] for tool in page['tools'])
+            cursor=page.get('nextCursor')
+            if cursor is None:
+                break
+        assert 'identity.register' in listed and 'identity.register@2' in listed
+        assert len(listed)==len(set(listed))
         request={'jsonrpc':'2.0','id':3,'method':'tools/call','params':{
             'name':'content.post_create','arguments':{'parent':'/main','body':'stdio message'}}}
         messages=[{'jsonrpc':'2.0','id':1,'method':'initialize','params':{'protocolVersion':'2025-11-25'}},

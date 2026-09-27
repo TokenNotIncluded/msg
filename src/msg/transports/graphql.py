@@ -35,7 +35,8 @@ class GraphQLAdapter:
         queries={'call':field('read')}
         mutations={'call':field('transaction')}
         for spec in service.registry.operations('network'):
-            name=spec.name.replace('.','_')
+            base_name=spec.name.replace('.','_')
+            name=base_name if spec.version==1 else f'{base_name}_v{spec.version}'
             table=queries if spec.effect=='read' else mutations
             require(name not in table,'graphql_name_conflict')
             table[name]=field(spec.effect,spec.name)

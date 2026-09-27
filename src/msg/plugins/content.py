@@ -69,9 +69,11 @@ async def create_post(app,ctx,request,tx, *, parent,relations=()):
 
 async def source_content(app,ctx,request,tx,value):
     import codecs
+    from msg.plugins.communication import direct_ancestor
     ref=decode(ResourceRef,value)
     require(ref.revision is not None,'source_revision_required')
     await check_access(app,ctx,request,tx,ref.id,'read')
+    require(await direct_ancestor(tx,ref.id) is None,'dm_reference_private')
     revision=await tx.revision(ref)
     require(revision.content.media_type in {'text/plain','text/markdown'},'text_source_required')
     # Validation does not normalize or rewrite signed source bytes.
@@ -192,10 +194,12 @@ def install(app):
 
     @op('content.move',obj({'id':IDENTIFIER,'parent':IDENTIFIER,'name':STRING},('id','parent')))
     async def move(ctx,request,tx):
+        from msg.plugins.communication import direct_ancestor
         resource=await tx.resource(await resolve(tx,request.arguments['id']))
         require(resource.type in {'post','file','attachment','topic','template','skill','repo','website','keystore'},'controlled_resource')
         await assert_generation(request,resource)
         await removable(app,ctx,request,tx,resource)
+        require(await direct_ancestor(tx,resource.id) is None,'dm_controlled_resource')
         target=await resolve(tx,request.arguments['parent'])
         await check_access(app,ctx,request,tx,target,'create')
         parent=await tx.resource(target)

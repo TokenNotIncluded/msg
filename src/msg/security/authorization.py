@@ -76,6 +76,31 @@ class AuthorizationService:
             operation=check.operation
             await self._ceiling(principal,operation,resource.id,session)
             chain=(*await session.ancestors(resource.id),resource)
+            direct=None
+            for ancestor in chain:
+                direct=session.one('SELECT participant_a,participant_b,state,resource_id FROM dm_conversations WHERE resource_id=?',
+                                   (ancestor.id,))
+                if direct is not None:
+                    break
+            if direct is not None:
+                # A direct conversation has two fixed participants. Neither file
+                # mode nor an override certificate may reveal it to a third party.
+                require(principal.subject in direct[:2], 'permission_denied')
+                if check.check in {'read','list','traverse'}:
+                    continue
+                if (check.check=='create' and resource.id==direct[3] and
+                        operation=='communication.dm_send@1' and direct[2]=='active'):
+                    blocked=session.one('SELECT 1 FROM dm_blocks WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)',
+                                        (direct[0],direct[1],direct[1],direct[0]))
+                    require(blocked is None,'dm_blocked')
+                    continue
+                if (check.check=='write' and resource.type=='post' and resource.owner==principal.subject and
+                        operation=='content.post_edit@1'):
+                    blocked=session.one('SELECT 1 FROM dm_blocks WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)',
+                                        (direct[0],direct[1],direct[1],direct[0]))
+                    require(direct[2]=='active' and blocked is None,'dm_blocked')
+                    continue
+                require(False,'dm_controlled_resource')
             # tool.use only reveals its scoped tool and the ancestors needed to reach it.
             tool_access=resource.type=='tool' and await self.has(principal,'tool.use',operation,resource.id,session)
             if resource.type=='tool':

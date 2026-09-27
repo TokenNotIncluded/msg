@@ -16,6 +16,8 @@ from msg.core.errors import Failure, require
 from msg.core.models import ResourceRef, Certificate, Signature
 from msg.core.requests import request_for
 from msg.security.crypto import Ed25519Signer, subject_id, key_id
+from msg.security.age_keys import (generate_age_key,recipient_from_identity,
+    public_from_recipient,encryption_key_id)
 from msg.storage.git import durable_write
 
 
@@ -39,6 +41,7 @@ class ClientState:
         self.directory.chmod(0o700)
         self.path = self.directory/'client.json'
         self.key_path = self.directory/'identity.key'
+        self.age_key_path = self.directory/'encryption.agekey'
         self.pending_path = self.directory/'registration.json'
         self.data = loads(self.path.read_bytes()) if self.path.exists() else {'version':1}
         require(self.data.get('version')==1,'unknown_client_state_version')
@@ -46,11 +49,17 @@ class ClientState:
         self.server = self.data.get('server',server or 'https://msg.lmm.best').rstrip('/')
         self.data['server'] = self.server
         self.signer = None
+        self.encryption_recipient = None
         if self.key_path.exists():
             require(self.key_path.is_file() and not self.key_path.is_symlink() and
                     self.key_path.stat().st_uid==os.geteuid() and self.key_path.stat().st_mode&0o077==0,
                     'unsafe_client_key_permissions')
             self.signer = Ed25519Signer.from_bytes(self.key_path.read_bytes())
+        if self.age_key_path.exists():
+            require(self.age_key_path.is_file() and not self.age_key_path.is_symlink() and
+                    self.age_key_path.stat().st_uid==os.geteuid() and
+                    self.age_key_path.stat().st_mode&0o077==0,'unsafe_client_key_permissions')
+            self.encryption_recipient=recipient_from_identity(self.age_key_path.read_text().strip())
         self._save()
 
     @property
@@ -74,8 +83,19 @@ class ClientState:
         durable_write(self.key_path,signer.private_bytes(),mode=0o600)
         self.signer = signer
 
+    def ensure_encryption_key(self):
+        if self.encryption_recipient is None:
+            require(not self.age_key_path.exists(),'invalid_age_identity')
+            identity,recipient=generate_age_key()
+            durable_write(self.age_key_path,(identity+'\n').encode(),mode=0o600)
+            self.encryption_recipient=recipient
+        return self.encryption_recipient
+
     def accept_identity(self, result):
         require(result.status=='ok','identity_operation_failed')
+        if result.data.get('encryption_recipient'):
+            require(result.data['encryption_recipient']==self.encryption_recipient,
+                    'encryption_recipient_mismatch')
         self.data['subject_id'] = result.subject
         if result.data.get('certificate_id'):
             self.data['certificates'] = [result.data['certificate_id']]
@@ -95,7 +115,7 @@ class MsgClient:
         require(state.server==transport.server,'client_server_mismatch')
 
     def prepare(self, operation, arguments, *, expected=(), request_id=None, return_fields=(), subject=None,
-                signer=None, certificates=None, anonymous=False):
+                signer=None, certificates=None, anonymous=False, contract_version=1):
         require(not operation.startswith('root.'),'local_only')
         selected_signer = signer or self.state.signer
         selected_subject = subject or self.state.subject
@@ -107,7 +127,8 @@ class MsgClient:
             subject=None if anonymous else selected_subject,signer=None if anonymous else selected_signer,
             token=None if anonymous else token, certificates=() if anonymous else
             (self.state.certificates if certificates is None else certificates),request_id=request_id,
-            expires_at=self.clock()+timedelta(seconds=180),source='msg',expected=expected,return_fields=return_fields)
+            expires_at=self.clock()+timedelta(seconds=180),source='msg',expected=expected,
+            return_fields=return_fields,contract_version=contract_version)
 
     async def send(self, packet):
         result = None
@@ -155,10 +176,13 @@ class MsgClient:
         else:
             if self.state.signer is None:
                 self.state.save_signer(Ed25519Signer.generate())
+            self.state.ensure_encryption_key()
             pending={'handle':handle,'request_id':uuid4().hex}
             durable_write(self.state.pending_path,canonical(pending),mode=0o600)
         signer=self.state.signer
-        result=await self.call('identity.register',{'handle':handle,'public_key':b64(signer.public_key)},
+        recipient=self.state.ensure_encryption_key()
+        result=await self.call('identity.register',{'handle':handle,'public_key':b64(signer.public_key),
+            'encryption_recipient':recipient},contract_version=2,
             subject=subject_id(signer.public_key),signer=signer,certificates=(),request_id=pending['request_id'])
         if result.status=='ok':
             self.state.accept_identity(result)
@@ -195,11 +219,50 @@ class MsgClient:
         if self.state.signer is None:
             self.state.save_signer(Ed25519Signer.generate())
         signer=self.state.signer
-        signed={'subject_id':self.state.subject,'handle':handle,'public_key':b64(signer.public_key)}
+        recipient=self.state.ensure_encryption_key()
+        signed={'subject_id':self.state.subject,'handle':handle,'public_key':b64(signer.public_key),
+                'encryption_recipient':recipient}
         result=await self.call('identity.upgrade',{'handle':handle,'public_key':b64(signer.public_key),
-            'possession_proof':wire(signer.sign(canonical(signed),purpose='upgrade'))})
+            'encryption_recipient':recipient,
+            'possession_proof':wire(signer.sign(canonical(signed),purpose='upgrade'))},contract_version=2)
         if result.status=='ok':
             self.state.accept_identity(result)
+        return result
+
+    async def rotate_encryption_key(self):
+        require(self.state.subject is not None and self.state.signer is not None and
+                self.state.token is None,'signing_identity_required')
+        journal=self.state.directory/'encryption-rotation.json'
+        pending_key=self.state.directory/'encryption.pending.agekey'
+        if journal.exists():
+            pending=loads(journal.read_bytes())
+            require(pending_key.is_file() and not pending_key.is_symlink() and
+                    pending_key.stat().st_uid==os.geteuid() and pending_key.stat().st_mode&0o077==0,
+                    'unsafe_client_key_permissions')
+            require(recipient_from_identity(pending_key.read_text().strip())==pending['recipient'],
+                    'encryption_rotation_mismatch')
+        else:
+            require(self.state.encryption_recipient is not None,'encryption_key_not_found')
+            identity,recipient=generate_age_key()
+            durable_write(pending_key,(identity+'\n').encode(),mode=0o600)
+            pending={'recipient':recipient,'request_id':uuid4().hex}
+            durable_write(journal,canonical(pending),mode=0o600)
+        result=await self.call('identity.encryption_key_rotate',
+                               {'encryption_recipient':pending['recipient']},
+                               request_id=pending['request_id'])
+        if result.status=='ok':
+            require(result.data['recipient']==pending['recipient'],
+                    'encryption_rotation_mismatch')
+            previous=result.data['previous_key_id']
+            history=self.state.directory/('encryption-'+previous+'.agekey')
+            if self.state.age_key_path.exists() and self.state.encryption_recipient!=pending['recipient']:
+                require(not history.exists(),'encryption_history_conflict')
+                os.replace(self.state.age_key_path,history)
+            if not self.state.age_key_path.exists():
+                os.replace(pending_key,self.state.age_key_path)
+            self.state.encryption_recipient=pending['recipient']
+            pending_key.unlink(missing_ok=True)
+            journal.unlink(missing_ok=True)
         return result
 
     async def upload(self, path, *, transfer_id=None, part_bytes=65536, media_type='application/octet-stream',target=None):
@@ -320,9 +383,10 @@ class RemoteRegistry:
         self.directory=client.state.directory/'cache'/catalog['digest'].replace(':','-')
         self.directory.mkdir(parents=True,exist_ok=True)
         for item in catalog['operations']:
-            require(item['name'] not in self._specs,'duplicate_operation')
+            key=(item['name'],item['version'])
+            require(key not in self._specs,'duplicate_operation')
             require('network' in item['entries'] and not item['name'].startswith('root.'),'invalid_network_contract')
-            self._specs[item['name']]=SimpleNamespace(**{**item,'entries':frozenset(item['entries']),
+            self._specs[key]=SimpleNamespace(**{**item,'entries':frozenset(item['entries']),
                 'input_schema':decode(ResourceRef,item['input_schema']),'output_schema':decode(ResourceRef,item['output_schema'])})
 
     def catalog(self):
@@ -332,8 +396,8 @@ class RemoteRegistry:
         return tuple(self._specs[key] for key in sorted(self._specs) if entry in self._specs[key].entries)
 
     def operation(self,name,version=1):
-        require(name in self._specs and self._specs[name].version==version,'unknown_operation')
-        return self._specs[name]
+        require((name,version) in self._specs,'unknown_operation')
+        return self._specs[(name,version)]
 
     def schema(self,ref):
         require(ref.id in self._schemas,'schema_not_cached')
@@ -341,11 +405,12 @@ class RemoteRegistry:
 
     async def load_schemas(self,specs):
         async def load(spec):
-            path=self.directory/(digest(spec.name)[7:39]+'.json')
+            path=self.directory/(digest((spec.name,spec.version))[7:39]+'.json')
             if path.is_file():
                 value=loads(path.read_bytes())
             else:
-                result=self.client.checked(await self.client.call('discovery.schema',{'operation':spec.name},anonymous=True))
+                identity=spec.name if spec.version==1 else f'{spec.name}@{spec.version}'
+                result=self.client.checked(await self.client.call('discovery.schema',{'operation':identity},anonymous=True))
                 value=dict(result.data)
                 durable_write(path,canonical(value),mode=0o600)
             require(value['operation']['name']==spec.name and value['operation']['version']==spec.version,'schema_contract_mismatch')

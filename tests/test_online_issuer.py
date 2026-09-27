@@ -9,6 +9,7 @@ from msg.core.models import Scope, IssuancePolicy
 from msg.security.capabilities import grant_for
 from msg.security.crypto import Ed25519Signer
 from msg.plugins.identity import issue_online
+from msg.core.requests import request_for
 from test_authorization import request_certificate
 from test_service import NOW, call, register
 
@@ -89,6 +90,32 @@ async def test_revoked_renewal_source_cannot_be_issued_again(installed):
         tx.execute('UPDATE certificates SET revoked=1 WHERE id=?',(original_id,),write=True)
     denied = await call(app, 'identity.certificate_renew', {}, key=key, subject=owner)
     assert denied.error is not None and denied.error.code=='renewal_source_required', wire(denied)
+
+
+@pytest.mark.asyncio
+async def test_renewal_cannot_extend_past_the_live_source_window(installed):
+    app, _ = installed
+    key, owner, original_id = await register(app, 'renew-window')
+    async with app.metadata.transaction(write=False) as tx:
+        source = await tx.certificate(original_id)
+    later = NOW + timedelta(days=1)
+    app.clock = lambda: later
+    app.authenticator.clock = app.clock
+    app.certificates.clock = app.clock
+    app.executor.clock = app.clock
+
+    def renewal(arguments):
+        return request_for('identity.certificate_renew', arguments, app.settings.service_url,
+                           subject=owner, signer=key, expires_at=later + timedelta(seconds=120))
+
+    requested = int((source.expires_at - source.not_before).total_seconds())
+    denied = await app.executor.execute(renewal({'ttl':requested}))
+    assert denied.error is not None and denied.error.code == 'renewal_ttl_exceeded', wire(denied)
+    accepted = await app.executor.execute(renewal({}))
+    assert accepted.status == 'ok', wire(accepted)
+    async with app.metadata.transaction(write=False) as tx:
+        successor = await tx.certificate(accepted.data['certificate_id'])
+    assert successor.expires_at <= source.expires_at
 
 
 @pytest.mark.asyncio

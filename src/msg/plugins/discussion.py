@@ -39,8 +39,10 @@ def install(app):
         return output_for(resource,**meta)
 
     async def quote(ctx,request,tx):
+        from msg.plugins.communication import direct_ancestor
         target=decode(ResourceRef,request.arguments['target'])
         await check_access(app,ctx,request,tx,target.id,'read')
+        require(await direct_ancestor(tx,target.id) is None,'dm_reference_private')
         source=await tx.revision(target)
         parent=await resolve(tx,request.arguments['parent'])
         await check_access(app,ctx,request,tx,parent,'create')

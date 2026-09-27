@@ -1,6 +1,7 @@
 """ACL-filtered reads and rebuildable discovery projections."""
 from __future__ import annotations
 import difflib
+from dataclasses import replace
 from datetime import timedelta
 from msg.constants import *
 from msg.core.codec import canonical,wire,decode,loads,digest,b64
@@ -26,11 +27,18 @@ async def visible(app,ctx,request,tx,rid):
 
 async def metadata(tx,r):
     data=wire(r)
-    data['path']=await tx.path(r.id)
+    data['path']=short_subject_path(await tx.path(r.id))
     if r.revision:
         rev=await tx.revision(ResourceRef(id=r.id))
         data.update(size=rev.content.size,media_type=rev.content.media_type,digest=rev.content.digest)
     return data
+
+
+def short_subject_path(path):
+    parts=path.split('/')
+    if len(parts)>=3 and parts[1].startswith('@'):
+        parts[2]={'keys':'k','certificates':'cert','keystore':'ks'}.get(parts[2],parts[2])
+    return '/'.join(parts)
 
 
 async def filtered_tools(app,ctx,request,tx):
@@ -69,9 +77,9 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
             if credential.kind!='token':
                 keys.append({'key_id':credential.id,'kind':credential.kind,'public_key':b64(credential.verifier),
                              'revoked':credential.revoked_at is not None})
-        return {'id':rid,'keys':keys}
+        return {'id':rid,'path':meta['path'],'keys':keys}
     if resource.name=='certificates' and resource.parent is not None and (await tx.resource(resource.parent)).type=='user':
-        return {'id':rid,'certificates':[{'id':row[0],'revoked':bool(row[1])} for row in
+        return {'id':rid,'path':meta['path'],'certificates':[{'id':row[0],'revoked':bool(row[1])} for row in
             tx.rows('SELECT id,revoked FROM certificates WHERE subject=? ORDER BY id',(resource.parent,))]}
     if app.registry.resource_type(resource.type,1).container and resource.type not in {'repo','website'}:
         values=[]
@@ -81,7 +89,7 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
             for child in page.items:
                 if child.state=='active' and await visible(app,ctx,request,tx,child.id):
                     values.append({'id':child.id,'name':child.name,'type':child.type,'revision':child.revision,
-                                   'path':await tx.path(child.id)})
+                                   'path':short_subject_path(await tx.path(child.id))})
                     if len(values)==50:
                         break
             cursor=page.next_cursor
@@ -111,8 +119,81 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
     return {k:meta[k] for k in defaults if k in meta}
 
 
+async def markdown_segment(app,blob,offset,max_bytes,fence=False,line_start=True):
+    """Read a bounded UTF-8 window, preferring complete Markdown blocks."""
+    require(0<=offset<=blob.size,'invalid_byte_range')
+    end=min(blob.size,offset+max_bytes+4)
+    raw=b''.join([piece async for piece in app.contents.read(blob,(offset,end))])
+    decoded=None
+    for trim in range(4):
+        try:
+            decoded=raw[:len(raw)-trim if trim else len(raw)].decode('utf-8')
+            break
+        except UnicodeDecodeError as exc:
+            require(exc.start>=len(raw)-4,'invalid_utf8_content')
+    require(decoded is not None,'invalid_utf8_content')
+    used=0
+    count=0
+    for char in decoded:
+        length=len(char.encode('utf-8'))
+        if used+length>max_bytes:
+            break
+        used+=length
+        count+=1
+    budget=decoded[:count]
+    require(bool(budget) or offset==blob.size,'read_window_too_small')
+    candidate=None
+    scanned=0
+    in_fence=fence
+    at_line_start=line_start
+    state=(in_fence,at_line_start)
+    for line in budget.splitlines(keepends=True):
+        complete=line.endswith('\n')
+        stripped=line.strip()
+        if at_line_start and stripped.startswith(('```','~~~')):
+            in_fence=not in_fence
+            if not in_fence and complete:
+                candidate=(scanned+len(line),in_fence,True)
+        elif not in_fence and at_line_start and line.startswith('#') and scanned:
+            candidate=(scanned,in_fence,True)
+        elif not in_fence and not stripped and complete:
+            candidate=(scanned+len(line),in_fence,True)
+        scanned+=len(line)
+        at_line_start=complete
+        state=(in_fence,at_line_start)
+    if candidate is not None and candidate[0]>0:
+        char_end,fence_end,line_end=candidate
+        continued=False
+    else:
+        char_end=count
+        fence_end,line_end=state
+        continued=offset+len(budget.encode('utf-8'))<blob.size
+    text=budget[:char_end]
+    byte_end=offset+len(text.encode('utf-8'))
+    require(byte_end>offset or offset==blob.size,'read_window_too_small')
+    return byte_end,text,fence_end,line_end,continued
+
+
+async def previous_segment(app,blob,target,max_bytes):
+    offset=0
+    fence=False
+    line_start=True
+    continued=False
+    previous=None
+    while offset<target:
+        previous=(offset,fence,line_start,continued)
+        end,_,fence,line_start,continued=await markdown_segment(
+            app,blob,offset,max_bytes,fence,line_start)
+        require(end<=target,'invalid_cursor')
+        offset=end
+    require(offset==target and previous is not None,'invalid_cursor')
+    return previous
+
+
 def next_link(app,operation,args):
-    packet=request_for(operation,args,app.settings.service_url,source='manual')
+    packet=request_for(operation,args,app.settings.service_url,source='manual',
+                       request_id='read_'+digest((operation,args))[7:39])
+    packet=replace(packet,expires_at=None)
     return f'/-/g/{operation}/j/'+b64(canonical(packet))
 
 
@@ -145,6 +226,57 @@ def install(app):
         if a.get('known_digest')==version:
             return HandlerOutput(data={'not_modified':True,'digest':version})
         return HandlerOutput(data=data)
+
+    @op('discovery.read_segment',obj({'id':IDENTIFIER,'revision':IDENTIFIER,
+        'max_bytes':{'type':'integer','minimum':32,'maximum':8192},'cursor':STRING}),effect='read')
+    async def read_segment(ctx,request,tx):
+        a=request.arguments
+        principal={'actor':ctx.principal.actor,'subject':ctx.principal.subject,
+                   'credential_id':ctx.principal.credential_id}
+        if a.get('cursor'):
+            require(set(a)=={'cursor'},'cursor_query_mismatch')
+            query,position=app.cursors.decode_read(a['cursor'],principal,ctx.now)
+            ref=decode(ResourceRef,query['ref'])
+            max_bytes=query['max_bytes']
+            offset=position['offset']
+            fence=position['fence']
+            line_start=position['line_start']
+            continues_previous=position['continued']
+            previous=position.get('previous')
+        else:
+            require(a.get('id') is not None,'read_resource_required')
+            rid=await resolve(tx,a['id'])
+            ref=ResourceRef(id=rid,revision=a.get('revision'))
+            max_bytes=a.get('max_bytes',4096)
+            offset=0
+            fence=False
+            line_start=True
+            continues_previous=False
+            previous=None
+        require(32<=max_bytes<=min(8192,app.settings.server.limits.max_response_bytes//4),
+                'query_cost_exceeded')
+        await check_access(app,ctx,request,tx,ref.id,'read')
+        revision=await tx.revision(ref)
+        require(revision.content.media_type.startswith('text/'),'text_required')
+        ref=ResourceRef(id=ref.id,revision=revision.id)
+        end,text,fence_end,line_end,continued=await markdown_segment(
+            app,revision.content,offset,max_bytes,fence,line_start)
+        data={'id':ref.id,'revision':revision.id,'range':[offset,end],
+              'text':text,'continued_block':continued,'continues_previous':continues_previous}
+        if end<revision.content.size:
+            cursor=app.cursors.encode_read(ref,max_bytes,end,fence_end,line_end,continued,
+                                          principal,ctx.now+timedelta(minutes=15),
+                                          previous=[offset,fence,line_start,continues_previous])
+            data['next']='/_r/c/'+cursor
+        if offset>0:
+            if previous is None:
+                previous=await previous_segment(app,revision.content,offset,max_bytes)
+            previous_offset,previous_fence,previous_line,previous_continued=previous
+            cursor=app.cursors.encode_read(ref,max_bytes,previous_offset,previous_fence,
+                                          previous_line,previous_continued,principal,
+                                          ctx.now+timedelta(minutes=15))
+            data['prev']='/_r/c/'+cursor
+        return HandlerOutput(resources=(ref,),data=data)
 
     listing={'parent':IDENTIFIER,'type':STRING,'author':IDENTIFIER,'query':STRING,'tag':STRING,
              'state':{'enum':['active','archived','purged']},
@@ -257,7 +389,13 @@ def install(app):
 
     @op('discovery.schema',obj({'operation':STRING},('operation',)),effect='read')
     async def schema(ctx,request,tx):
-        spec=app.registry.operation(request.arguments['operation'])
+        name=request.arguments['operation']
+        operation,separator,version=name.rpartition('@')
+        if separator:
+            require(version.isdecimal() and int(version)>0,'invalid_operation_version')
+            spec=app.registry.operation(operation,int(version))
+        else:
+            spec=app.registry.operation(name)
         require('network' in spec.entries,'entry_not_allowed')
         return HandlerOutput(data={'operation':app.registry.describe(spec),'input':app.registry.schema(spec.input_schema),
             'output':app.registry.schema(spec.output_schema)})

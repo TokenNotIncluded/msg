@@ -105,10 +105,14 @@ async def test_key_id_cannot_be_reassigned_by_temporary_upgrade(installed):
     key,uid,base=await register(app,'permanent')
     tmp=await call(app,'identity.temporary',{'nonce':b64(os.urandom(32))})
     tempid=tmp.data['subject_id']
-    args={'subject_id':tempid,'public_key':b64(key.public_key),'handle':'other'}
+    from msg.security.age_keys import generate_age_key
+    _,recipient=generate_age_key()
+    args={'subject_id':tempid,'public_key':b64(key.public_key),'handle':'other',
+          'encryption_recipient':recipient}
     result=await call(app,'identity.upgrade',{'handle':'other','public_key':args['public_key'],
+        'encryption_recipient':recipient,
         'possession_proof':wire(key.sign(canonical(args),purpose='upgrade'))},subject=tempid,
-        token=(tmp.data['credential_id'],unb64(tmp.data['token'])))
+        token=(tmp.data['credential_id'],unb64(tmp.data['token'])),contract_version=2)
     assert result.error.code=='credential_identity_immutable',wire(result)
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.credential(key.key_id)).subject_id==uid

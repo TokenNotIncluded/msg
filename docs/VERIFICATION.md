@@ -1,8 +1,14 @@
 # 本地与 CI 验收记录
 
+## 2026-09-27 双钥、主体别名与协议版本批次
+
+权威 Google Drive `ChatGPT` 文件夹文档读取至 `2026-09-26T23:58:21.986Z`。本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **228 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功，`sh -n deploy/prepare-service.sh` 与 `git diff --check` 通过。新增 age/X25519 recipient 使用本机 `age-keygen -y` 与 `age` 加解密做互操作；注册/升级 v2 要求独立加密子钥，旧 v1 保留契约并明确拒绝缺钥注册；主体短长路径别名经真实钥、SSH、keystore、Inbox 数据验证。另含 DM、ReadCursor、presence/claim 与默认 1 MiB Git HTTP push 切片。本批尚未提交或取得对应远端 CI；custodial 双钥、恢复/遗言、Topic 治理、纯路径 QueryRef、新增 passive-client guard 等未实现，不能据此宣称完整需求或线上已更新。
+
 ## 2026-09-27 荣誉、读取游标与隔离 CA 自检批次
 
-权威 Google Drive `ChatGPT` 文件夹需求本批读取到 `2026-09-26T22:52:52.714Z`。本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **206 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功；`sh -n deploy/prepare-service.sh`、`git diff --check` 通过。配置文件新安装改为 `msgd.toml`，旧 `server.toml` 单独存在时可读；隔离自检在 `/_test/<run_id>/` 验证 Test Root→L1→L2→L3→Leaf、越层/扩大部分授权和撤销。荣誉 R1–R5 目前仅 self-custody；ReadQuery 仅有 GET collection/PageCursor 切片。完整 CA 负例矩阵、托管代签、ReadCursor/SyncCursor、Profile 与成就索引仍缺。本批尚未获得远端 CI 或线上验证。
+权威 Google Drive `ChatGPT` 文件夹需求本批读取到 `2026-09-26T22:52:52.714Z`。本地 Python 3.15/PostgreSQL 环境下 `uv run python -m pytest -q` 为 **206 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 成功；`sh -n deploy/prepare-service.sh`、`git diff --check` 通过。配置文件新安装改为 `msgd.toml`，旧 `server.toml` 单独存在时可读；隔离自检在 `/_test/<run_id>/` 验证 Test Root→L1→L2→L3→Leaf、越层/扩大部分授权和撤销。荣誉 R1–R5 目前仅 self-custody；ReadQuery 仅有 GET collection/PageCursor 切片。完整 CA 负例矩阵、托管代签、ReadCursor/SyncCursor、Profile 与成就索引仍缺。提交 `f085e7f` 已推送，其[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36278494686)已通过；未线上部署。
+
+按用户提供的本地域名另做真实 HTTP smoke：在临时 PostgreSQL 与临时初始化服务上监听 `127.0.0.1:18142`，以 `curl --resolve light.local:18142:127.0.0.1 --noproxy '*'` 保持 Host 为 `light.local`。`/`、`/AGENTS.md`、`/_read/query?root=/main&first=2` 及等价 `/_r/query` 均为 200；普通 `/main` 的 POST 为 405，旧 `/!foo` 为 404；`/_read/graphql` query 为 200，`/-/graphql` 对 query 返回 `graphql_effect_mismatch`。测试服务已停止、临时库与目录已清理。这是本机隔离实例的 HTTP 验证，不是生产域名或同域托管浏览器隔离验收。
 
 ## 2026-09-27 ChatGPT 文档对齐批次
 

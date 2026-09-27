@@ -14,6 +14,9 @@ BASE_FAMILIES = {
         'identity.email_set', 'identity.email_verify', 'identity.email_get', 'identity.email_notifications',
         'identity.delegate', 'identity.delegation_revoke', 'identity.certificate_renew',
         'identity.ssh_key_add', 'identity.ssh_key_revoke', 'identity.ssh_certificates',
+        'identity.identity_key_get', 'identity.identity_key_list',
+        'identity.encryption_key_get', 'identity.encryption_key_list',
+        'identity.encryption_key_rotate',
         'achievement.start', 'achievement.answer', 'achievement.finish'),
     'resource.basic': ('content.',),
     'discussion.basic': ('discussion.',),
@@ -114,6 +117,6 @@ def base_grants(registry,scope=None):
 
 
 def temporary_ceiling(registry,scope=None):
-    temporary=frozenset(f'{name}@1' for name in TEMPORARY_OPERATIONS)
+    temporary=frozenset(f'{name}@1' for name in TEMPORARY_OPERATIONS)|{'identity.upgrade@2'}
     return tuple(grant_for(spec,scope=scope,operations=spec.operations&temporary) for spec in registry.capabilities()
         if spec.name in BASE_FAMILIES and spec.operations&temporary)
