@@ -45,6 +45,9 @@ def parser():
     identity.add_parser('new').add_argument('handle')
     identity.add_parser('temporary')
     identity.add_parser('rotate-token')
+    create_token=identity.add_parser('create-token',help='Mint a restricted credential into a private local file.')
+    create_token.add_argument('--ceiling',required=True,help='JSON grant array, @file, or - for stdin.')
+    create_token.add_argument('--ttl',type=int,required=True)
     identity.add_parser('recover-token',help='Use a saved one-time recovery journal after a lost token response.')
     identity.add_parser('upgrade',help='Upgrade or resume a saved upgrade intention.').add_argument('handle',nargs='?')
     identity.add_parser('show')
@@ -213,6 +216,9 @@ async def run(args):
             expected_subject_id=args.subject,expected_encryption_key_id=args.key_id)
         print(canonical(value).decode())
         return 0
+    if args.command=='identity' and args.action!='show':
+        require(not (args.key or args.as_subject or args.certificate),
+                'identity_local_state_required')
     state=ClientState(args.config_dir,server=args.server)
     transport=TRANSPORTS[args.transport](state.server)
     client=MsgClient(state,transport)
@@ -233,6 +239,7 @@ async def run(args):
             elif args.action=='temporary': result=await client.temporary()
             elif args.action=='rotate-token': result=await client.rotate_token()
             elif args.action=='recover-token': result=await client.recover_token()
+            elif args.action=='create-token': result=await client.create_token(ceiling=json_input(args.ceiling),ttl=args.ttl)
             elif args.action=='upgrade': result=await client.upgrade(args.handle)
             else:
                 from msg.client_upgrade import pending_upgrade
@@ -240,6 +247,9 @@ async def run(args):
                         'server':state.server,'certificates':state.certificates,'auth':'token' if state.token else 'signature'}
                 pending=pending_upgrade(state)
                 if pending is not None: result['pending_upgrade']=pending
+                from msg.client_tokens import pending_delivery
+                pending=pending_delivery(state)
+                if pending is not None: result['pending_delivery']=pending
         elif command=='call':
             expected=[]
             for item in args.expect:

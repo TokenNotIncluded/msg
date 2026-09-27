@@ -157,12 +157,14 @@ class Application:
              self.recovery_verifier(request.arguments[field]),wire(expires)),write=True)
 
     async def _secrets_for_caller(self,request,result):
-        if result.status!='ok' or request.operation not in {'identity.temporary','identity.custodial_create',
-                'identity.token_rotate','identity.token_create','identity.token_recover'}:
+        if result.status!='ok' or request.operation not in SECRET_DELIVERY_MIN_VERSION:
             return result
         require(request.contract_version>=SECRET_DELIVERY_MIN_VERSION[request.operation],
                 'credential_delivery_upgrade_required')
         token=self.issued_token(request,result.subject)
+        # The signed, non-secret business result is distinct from the release status.
+        # Keep its original bytes/receipt, rather than modifying what was signed.
+        unavailable={'committed_result':wire(result,compact=True)}
         async with self.metadata.transaction(write=True) as tx:
             credential=await tx.credential(result.data['credential_id'])
             require(credential.revoked_at is None and credential.expires_at>self.clock(),'credential_expired')
@@ -170,12 +172,13 @@ class Application:
             row=tx.one('''SELECT subject,request_id,request_digest,claimed_at,consumed_at
                 FROM token_deliveries WHERE credential_id=?''',(credential.id,))
             require(row is not None and row[0]==result.subject and row[1]==request.request_id
-                    and row[2]==request.payload_digest and row[4] is None,'token_delivery_unavailable')
-            require(row[3] is None,'token_delivery_unavailable')
+                    and row[2]==request.payload_digest and row[4] is None,'token_delivery_unavailable',
+                    details=unavailable)
+            require(row[3] is None,'token_delivery_unavailable',details=unavailable)
             updated=tx.execute('''UPDATE token_deliveries SET claimed_at=? WHERE credential_id=?
                 AND claimed_at IS NULL AND consumed_at IS NULL''',
                 (wire(self.clock()),credential.id),write=True)
-            require(updated.rowcount==1,'token_delivery_unavailable')
+            require(updated.rowcount==1,'token_delivery_unavailable',details=unavailable)
         # The claim commits before the adapter sees the token. A dropped response
         # must use a separate, pre-bound recovery secret to rotate the credential.
         return replace(result,data=dict(result.data,token=b64(token)))

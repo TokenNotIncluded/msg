@@ -108,7 +108,7 @@ async def test_before_commit_retry_and_path_transport_fail_closed(installed,tmp_
         assert not (state.directory/'temporary.json').exists()
         other=ClientState(tmp_path/'path',server=app.settings.service_url)
         path_client=MsgClient(other,PathGETTransport(app.settings.service_url,http=http),clock=lambda:NOW)
-        with pytest.raises(Failure,match='token_secret_transport_required'):
+        with pytest.raises(Failure,match='secure_channel_required'):
             await path_client.temporary()
         assert not (other.directory/'temporary.json').exists()
     finally:
@@ -159,7 +159,7 @@ async def test_non_loopback_http_never_sends_recovery_secret(tmp_path):
     transport=HTTPTransport(server)
     client=MsgClient(state,transport)
     try:
-        with pytest.raises(Failure,match='token_secret_tls_required'):
+        with pytest.raises(Failure,match='secure_channel_required'):
             await client.temporary()
         assert not (state.directory/'temporary.json').exists() and transport.calls==0
     finally:

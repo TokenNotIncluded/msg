@@ -13,26 +13,9 @@ from msg.storage.git import durable_write
 
 @contextmanager
 def upgrade_lock(directory):
-    """A crash releases the OS lock; a second caller fails instead of blocking an event loop."""
-    try:
-        import fcntl
-    except ImportError:
-        raise Failure('upgrade_lock_unavailable') from None
-    try:
-        fd = os.open(directory/'identity-upgrade.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    except OSError:
-        raise Failure('unsafe_upgrade_lock') from None
-    try:
-        info = os.fstat(fd)
-        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid() and
-                info.st_nlink == 1 and info.st_mode & 0o077 == 0, 'unsafe_upgrade_lock')
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise Failure('identity_upgrade_busy', retryable=True) from None
+    from msg.client_journal import identity_lock
+    with identity_lock(directory):
         yield
-    finally:
-        os.close(fd)
 
 
 def read_intent(path):
@@ -122,7 +105,7 @@ async def upgrade_identity(client, handle=None):
         else:
             require(state.subject is not None and state.token is not None, 'temporary_identity_required')
             require(not any((state.directory/name).exists() or (state.directory/name).is_symlink() for name in (
-                'temporary.json', 'custodial-bootstrap.json', 'token-rotation.json',
+                'temporary.json', 'custodial-bootstrap.json', 'token-rotation.json', 'token-create.json',
                 'custodial-upgrade.json')), 'identity_recovery_pending')
             if state.signer is None:
                 state.save_signer(Ed25519Signer.generate())

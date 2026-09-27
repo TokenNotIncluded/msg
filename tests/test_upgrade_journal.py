@@ -348,7 +348,7 @@ async def test_path_only_transport_cannot_send_the_legacy_token_in_a_url(install
     app, _ = installed
     state, _, _, _, _ = await legacy_state(app, tmp_path/'client')
     async with connected(app, state, PathGETTransport) as client:
-        with pytest.raises(Failure, match='token_secret_transport_required'):
+        with pytest.raises(Failure, match='secure_channel_required'):
             await client.upgrade('path-agent')
         assert client.transport.calls == 0
     assert not state.key_path.exists() and not state.age_key_path.exists()
