@@ -1,0 +1,35 @@
+name: Apply verified custodial lifecycle patch
+on:
+  push:
+    branches: [fix/issues-68-70-security-lifecycle]
+    paths: [.github/workflows/apply-68.yml]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - name: Verify patch, apply and remove staging workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          test "$(git rev-parse HEAD^)" = f40539ea4ba32181526434c445600f64c0f11484
+          : > /tmp/68.patch.xz
+          for sha in cf44b9edca64c367374524233bbcd9cb11a86c5a 453406f5596848771eebe0b1d9ad7d4d86f6cc74 5af7de9ca5f7305daae91fed33075c1ed013117a; do
+            gh api "repos/TokenNotIncluded/msg.lmm.best/git/blobs/$sha" --jq .content | base64 -d >> /tmp/68.patch.xz
+          done
+          xz -d -c /tmp/68.patch.xz > /tmp/68.patch
+          echo '2db6a72494844f16997f7683b83382c64305d66cab61a9e52e0bc62179cd7e92  /tmp/68.patch' | sha256sum -c -
+          git apply --index /tmp/68.patch
+          git rm .github/workflows/apply-68.yml
+          test "$(git write-tree)" = a6acdc04710bc23b124afcb66e00304cd28e3107
+          git diff --cached --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Fix scoped custodial history recovery and online key retirement' -m 'Refs #68. Includes immutable A/B mappings, actual local decryption, scoped signed ACKs, explicit loss/decrypt-only retention, durable retries, PostgreSQL migration and isolated diagnostics. Backup retirement remains unverified; no production deployment. Full final-head CI is required before merge.'
+          git push origin HEAD:refs/heads/fix/issues-68-70-security-lifecycle
