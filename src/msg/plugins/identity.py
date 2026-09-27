@@ -22,7 +22,9 @@ from msg.security.crypto import key_id,subject_id,verify
 from msg.security.age_keys import public_from_recipient,encryption_key_id
 from msg.security.age_keys import generate_age_key
 from msg.security.crypto import Ed25519Signer
-from msg.security.vault import store_keys
+from msg.security.vault import (store_keys,open_signer,seal_upgrade_private,
+    server_upgrade_proof)
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
 from msg.security.certificates import ONLINE_ISSUABLE_CAPABILITIES,sign_certificate,csr_body,verify_csr
 from msg.security.policy import scope_subset,constraints_subset
 
@@ -191,6 +193,208 @@ def install(app):
             'identity_key_id':row[0],'encryption_key_id':row[1],
             'signature_source':'custodial','server_signable':True,
             'server_decryptable':True})
+
+    @op('identity.custodial_upgrade_start',obj({'handle':STRING,'public_key':BYTES,
+        'encryption_recipient':STRING,'possession_proof':SIGNATURE},
+        ('handle','public_key','encryption_recipient','possession_proof')))
+    async def custodial_upgrade_start(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        require(subject.kind=='custodial' and ctx.principal.method=='token',
+                'custodial_token_required')
+        args=request.arguments
+        require(re.fullmatch(r'[a-z][a-z0-9-]{1,40}',args['handle']) is not None and
+                args['handle'] not in {'root','online-ca'},'invalid_handle')
+        public=unb64(args['public_key'],limit=32)
+        require(len(public)==32,'invalid_public_key')
+        age_public=public_from_recipient(args['encryption_recipient'])
+        require(public!=age_public,'encryption_key_must_be_independent')
+        old_signing=tx.one('SELECT key_id FROM identity_keys WHERE subject=? AND is_primary=1',
+                           (subject.resource_id,))
+        old_age=tx.one('SELECT key_id FROM encryption_subkeys WHERE subject=? AND is_primary=1',
+                       (subject.resource_id,))
+        require(old_signing is not None and old_age is not None and
+                old_signing[0]!=key_id(public) and old_age[0]!=encryption_key_id(age_public),
+                'upgrade_keys_must_change')
+        signed={'subject_id':subject.resource_id,'handle':args['handle'],
+                'public_key':args['public_key'],
+                'encryption_recipient':args['encryption_recipient'],
+                'request_id':request.request_id}
+        verify(public,canonical(signed),decode(Signature,args['possession_proof']),
+               purpose='custodial-upgrade-start')
+        challenge_id=new_id('cupg')
+        ephemeral=X25519PrivateKey.generate()
+        expires=ctx.now+timedelta(seconds=300)
+        challenge={'subject_id':subject.resource_id,'challenge_id':challenge_id,
+                   'request_id':request.request_id,'handle':args['handle'],
+                   'public_key':args['public_key'],
+                   'encryption_recipient':args['encryption_recipient'],
+                   'server_public':b64(ephemeral.public_key().public_bytes_raw()),
+                   'nonce':b64(os.urandom(24)),'expires_at':wire(expires)}
+        private_nonce,private_cipher=seal_upgrade_private(app,subject.resource_id,
+            challenge_id,ephemeral.private_bytes_raw())
+        vault_signature=open_signer(app,tx,subject.resource_id).sign(canonical(challenge),
+            purpose='custodial-upgrade-challenge')
+        body={'old_identity_key_id':old_signing[0],
+              'old_encryption_key_id':old_age[0],
+              'new_identity_key_id':key_id(public),
+              'new_encryption_key_id':encryption_key_id(age_public),
+              'signing_possession_digest':digest(args['possession_proof']),
+              'server_signature':wire(vault_signature)}
+        tx.execute('''INSERT INTO custodial_upgrades
+            (id,subject,credential_id,status,expires_at,challenge,ephemeral_nonce,
+             ephemeral_ciphertext,body) VALUES (?,?,?,?,?,?,?,?,?)''',
+            (challenge_id,subject.resource_id,ctx.principal.credential_id,'pending',
+             wire(expires),canonical(challenge).decode(),private_nonce,private_cipher,
+             canonical(body).decode()),write=True)
+        return HandlerOutput(data={**challenge,'status':'pending',
+                                   'signature_source':'custodial',
+                                   'server_signature':wire(vault_signature)})
+
+    @op('identity.custodial_upgrade_finish',obj({'challenge_id':IDENTIFIER,
+        'age_proof':BYTES,'external_ciphertexts_migrated':BOOLEAN,
+        'migration_ack':SIGNATURE},
+        ('challenge_id','age_proof','external_ciphertexts_migrated','migration_ack')))
+    async def custodial_upgrade_finish(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        require(subject.kind=='custodial' and ctx.principal.method=='token',
+                'custodial_token_required')
+        args=request.arguments
+        row=tx.one('''SELECT credential_id,status,expires_at,challenge,ephemeral_nonce,
+            ephemeral_ciphertext,body FROM custodial_upgrades WHERE id=? AND subject=?''',
+            (args['challenge_id'],subject.resource_id))
+        require(row is not None and row[0]==ctx.principal.credential_id and row[1]=='pending',
+                'custodial_upgrade_not_pending')
+        require(ctx.now<parse_time(row[2]),'custodial_upgrade_expired')
+        challenge=loads(row[3])
+        details=loads(row[6])
+        expected=server_upgrade_proof(app,subject.resource_id,challenge,row[4],row[5])
+        if not hmac.compare_digest(expected,args['age_proof']):
+            tx.execute("UPDATE custodial_upgrades SET status='failed',ephemeral_nonce=NULL,ephemeral_ciphertext=NULL WHERE id=?",
+                       (args['challenge_id'],),write=True)
+            return HandlerOutput(data={'challenge_id':args['challenge_id'],'status':'failed',
+                                       'reason':'age_possession_failed'})
+        public=unb64(challenge['public_key'],limit=32)
+        acknowledgement={'subject_id':subject.resource_id,'challenge_id':args['challenge_id'],
+                         'age_proof':args['age_proof'],
+                         'external_ciphertexts_migrated':args['external_ciphertexts_migrated'],
+                         'request_id':request.request_id}
+        try:
+            verify(public,canonical(acknowledgement),decode(Signature,args['migration_ack']),
+                   purpose='custodial-upgrade-finish')
+        except Failure as exc:
+            if exc.code!='invalid_signature':
+                raise
+            tx.execute("UPDATE custodial_upgrades SET status='failed',ephemeral_nonce=NULL,ephemeral_ciphertext=NULL WHERE id=?",
+                       (args['challenge_id'],),write=True)
+            return HandlerOutput(data={'challenge_id':args['challenge_id'],'status':'failed',
+                                       'reason':'migration_ack_failed'})
+        folder=tx.one("SELECT id FROM resources WHERE parent=? AND name='keystore'",
+                      (subject.resource_id,))
+        tracked=0
+        if folder is not None:
+            for (revision_id,) in tx.rows('''SELECT v.id FROM revisions v JOIN resources r
+                ON r.id=v.resource_id WHERE r.parent=? AND r.type='keystore' ''',(folder[0],)):
+                if tx.setting('keystore_format:'+revision_id)=='age':
+                    tracked+=1
+        policy_row=tx.one('SELECT body FROM recovery_policies WHERE subject=? ORDER BY version DESC LIMIT 1',
+                          (subject.resource_id,))
+        policy_opted_in=bool(policy_row and loads(policy_row[0]).get('opted_in'))
+        if tracked or policy_opted_in or not args['external_ciphertexts_migrated']:
+            state={'status':'pending_rewrap','challenge_id':args['challenge_id'],
+                   'server_tracked_age_revisions':tracked,
+                   'recovery_policy_requires_review':policy_opted_in,
+                   'external_migration':'owner_not_confirmed' if not args['external_ciphertexts_migrated']
+                   else 'owner_declared_only',
+                   'token_remains_active':True,'vault_remains_active':True}
+            tx.execute('''UPDATE custodial_upgrades SET status='pending_rewrap',
+                ephemeral_nonce=NULL,ephemeral_ciphertext=NULL WHERE id=?''',
+                (args['challenge_id'],),write=True)
+            return HandlerOutput(data=state)
+        old_signing=await tx.credential(details['old_identity_key_id'])
+        old_key_id=old_signing.id
+        new_key_id=details['new_identity_key_id']
+        age_public=public_from_recipient(challenge['encryption_recipient'])
+        new_age_id=details['new_encryption_key_id']
+        signer=open_signer(app,tx,subject.resource_id)
+        audit_signature=signer.sign(canonical({'subject_id':subject.resource_id,
+            'challenge_id':args['challenge_id'],'old_identity_key_id':old_key_id,
+            'new_identity_key_id':new_key_id,'new_encryption_key_id':new_age_id,
+            'external_migration':'owner_declared_unverified'}),purpose='custodial-upgrade')
+        for (raw,) in tx.rows('SELECT body FROM credentials WHERE subject=?',(subject.resource_id,)):
+            credential=decode(Credential,loads(raw))
+            if credential.revoked_at is None and credential.kind in {'token','signing_key'}:
+                await tx.save_credential(replace(credential,revoked_at=ctx.now),subject.auth_version)
+        new_credential=Credential(id=new_key_id,subject_id=subject.resource_id,
+            kind='signing_key',verifier=public,ceiling=app.primary_ceiling(),
+            not_before=ctx.now,expires_at=None,revoked_at=None)
+        await tx.save_credential(new_credential,subject.auth_version)
+        tx.execute('UPDATE identity_keys SET is_primary=0,retired_at=? WHERE subject=? AND is_primary=1',
+                   (wire(ctx.now),subject.resource_id),write=True)
+        tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
+                   (new_key_id,subject.resource_id,b64(public),wire(ctx.now),None,1),write=True)
+        tx.execute('UPDATE encryption_subkeys SET is_primary=0,retired_at=? WHERE subject=? AND is_primary=1',
+                   (wire(ctx.now),subject.resource_id),write=True)
+        tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,?,?)',
+                   (new_age_id,subject.resource_id,challenge['encryption_recipient'],
+                    b64(age_public),wire(ctx.now),None,1),write=True)
+        resource=await tx.resource(subject.resource_id)
+        await tx.replace(replace(resource,name='@'+challenge['handle'],
+            generation=resource.generation+1,modified_at=ctx.now,
+            modified_by=ctx.principal.actor),resource.generation)
+        await tx.update_identity(replace(subject,kind='registered',auth_version=subject.auth_version+1),
+                                 subject.auth_version)
+        tx.execute('''UPDATE custodial_vault SET status='destroyed',signing_nonce=NULL,
+            signing_ciphertext=NULL,age_nonce=NULL,age_ciphertext=NULL,destroyed_at=? WHERE subject=?''',
+            (wire(ctx.now),subject.resource_id),write=True)
+        certificate=await issue_online(app,tx,subject.resource_id,new_key_id,ctx,request,
+            authority_source={'kind':'custodial_upgrade','challenge_id':args['challenge_id'],
+                              'new_key_id':new_key_id})
+        completed_data={
+            'status':'completed','subject_id':subject.resource_id,
+            'identity_key_id':new_key_id,'encryption_key_id':new_age_id,
+            'encryption_recipient':challenge['encryption_recipient'],
+            'certificate_id':certificate.resource_id,
+            'previous_credential':ctx.principal.credential_id,
+            'credential_id':new_key_id,
+            'external_migration':'owner_declared_unverified',
+            'server_tracked_age_revisions':0,'vault_destroyed':True,
+            'signature_source':'custodial'}
+        details=dict(details,completed_result=completed_data)
+        tx.execute('''UPDATE custodial_upgrades SET status='completed',ephemeral_nonce=NULL,
+            ephemeral_ciphertext=NULL,body=? WHERE id=?''',
+            (canonical(details).decode(),args['challenge_id']),write=True)
+        event=Event(id=new_id('audit'),type='identity.custodial_upgrade',time=ctx.now,
+            request_id=request.request_id,actor=ctx.principal.actor,subject=subject.resource_id,
+            resources=(ResourceRef(id=subject.resource_id),),data={
+                'challenge_id':args['challenge_id'],'old_identity_key_id':old_key_id,
+                'old_encryption_key_id':details['old_encryption_key_id'],
+                'new_identity_key_id':new_key_id,'new_encryption_key_id':new_age_id,
+                'previous_credential':ctx.principal.credential_id,
+                'external_migration':'owner_declared_unverified',
+                'server_tracked_age_revisions':0,'vault_destroyed':True,
+                'signature_source':'custodial','vault_signature':wire(audit_signature),
+                'new_key_possession_digest':digest(args['migration_ack']),
+                'age_possession_digest':digest(args['age_proof'])})
+        await tx.append_audit(AuditEvent(event=event,authority=(ResourceRef(id=subject.resource_id),),
+            before_digest=digest(details),after_digest=digest({'subject':subject.resource_id,
+                'new_identity_key_id':new_key_id,'new_encryption_key_id':new_age_id}),
+            previous_digest=None,entry_digest='',result='completed'))
+        return HandlerOutput(resources=(ResourceRef(id=subject.resource_id),),data=completed_data)
+
+    @op('identity.custodial_upgrade_result',obj({'challenge_id':IDENTIFIER},('challenge_id',)),
+        effect='read',signature=True)
+    async def custodial_upgrade_result(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        require(subject.kind=='registered' and ctx.principal.method=='signature',
+                'self_custody_signature_required')
+        row=tx.one('SELECT subject,status,body FROM custodial_upgrades WHERE id=?',
+                   (request.arguments['challenge_id'],))
+        require(row is not None and row[0]==subject.resource_id and row[1]=='completed',
+                'custodial_upgrade_not_completed')
+        completed=loads(row[2]).get('completed_result')
+        require(completed is not None and completed['identity_key_id']==ctx.principal.credential_id,
+                'custodial_upgrade_new_key_required')
+        return HandlerOutput(data=completed)
 
     @op('identity.register',obj({'handle':STRING,'public_key':BYTES,'encryption_recipient':STRING},
                                  ('handle','public_key','encryption_recipient')),signature=True,version=2)

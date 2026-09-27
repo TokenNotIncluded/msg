@@ -14,6 +14,7 @@ from msg.security.crypto import key_id,subject_id,verify
 CUSTODIAL_SIGNED_WRITES=frozenset({
     'content.post_create','content.post_edit','content.file_put','content.attach',
     'discussion.reply','discussion.quote','discussion.repost','identity.token_rotate',
+    'identity.custodial_upgrade_start','identity.custodial_upgrade_finish',
 })
 
 
@@ -74,13 +75,14 @@ class AuthenticationService:
             # A token invalidated by its own successful rotation may only retrieve
             # that exact committed rotation result. It cannot authorize new work.
             previous=None
-            if method=='token' and request.operation=='identity.token_rotate':
+            if method=='token' and request.operation in {
+                    'identity.token_rotate','identity.custodial_upgrade_finish'}:
                 previous=await session.request_result(actor.resource_id,request.request_id,request.payload_digest)
             require(previous is not None and previous.data.get('previous_credential')==credential.id,
                     'credential_revoked')
             successor=await session.credential(previous.data['credential_id'])
             require(successor.subject_id==actor.resource_id and successor.revoked_at is None and
-                    successor.expires_at>now,'credential_revoked')
+                    (successor.expires_at is None or successor.expires_at>now),'credential_revoked')
         subject=await session.subject(request.subject or actor.resource_id)
         require(not (actor.local_only or subject.local_only or actor.resource_id==ROOT_SUBJECT or
                      subject.resource_id==ROOT_SUBJECT) or entry=='local_admin','local_only')

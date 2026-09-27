@@ -154,6 +154,12 @@ CREATE TABLE IF NOT EXISTS custodial_vault (
  signing_nonce TEXT, signing_ciphertext TEXT, age_nonce TEXT, age_ciphertext TEXT,
  status TEXT NOT NULL CHECK(status IN ('active','destroyed')),
  created_at TEXT NOT NULL, destroyed_at TEXT);
+CREATE TABLE IF NOT EXISTS custodial_upgrades (
+ id TEXT PRIMARY KEY, subject TEXT NOT NULL, credential_id TEXT NOT NULL,
+ status TEXT NOT NULL CHECK(status IN ('pending','pending_rewrap','failed','completed')),
+ expires_at TEXT NOT NULL, challenge TEXT NOT NULL,
+ ephemeral_nonce TEXT, ephemeral_ciphertext TEXT, body TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS custodial_upgrades_subject ON custodial_upgrades(subject,status,expires_at);
 """
 
 

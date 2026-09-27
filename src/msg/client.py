@@ -18,6 +18,7 @@ from msg.core.requests import request_for
 from msg.security.crypto import Ed25519Signer, subject_id, key_id
 from msg.security.age_keys import (generate_age_key,recipient_from_identity,
     public_from_recipient,encryption_key_id)
+from msg.security.vault import client_upgrade_proof
 from msg.storage.git import durable_write
 
 
@@ -94,8 +95,14 @@ class ClientState:
     def accept_identity(self, result):
         require(result.status=='ok','identity_operation_failed')
         if result.data.get('encryption_recipient'):
-            require(result.data['encryption_recipient']==self.encryption_recipient,
-                    'encryption_recipient_mismatch')
+            if result.operation=='identity.custodial_create':
+                require(self.signer is None and self.encryption_recipient is None,
+                        'custodial_client_key_conflict')
+                self.data['custodial_encryption_recipient']=result.data['encryption_recipient']
+            else:
+                require(result.data['encryption_recipient']==self.encryption_recipient,
+                        'encryption_recipient_mismatch')
+                self.data.pop('custodial_encryption_recipient',None)
         self.data['subject_id'] = result.subject
         if result.data.get('certificate_id'):
             self.data['certificates'] = [result.data['certificate_id']]
@@ -203,6 +210,23 @@ class MsgClient:
             pending.unlink(missing_ok=True)
         return result
 
+    async def custodial(self,handle):
+        require(self.state.subject is None and self.state.signer is None and
+                self.state.encryption_recipient is None,'identity_already_configured')
+        pending=self.state.directory/'custodial-bootstrap.json'
+        if pending.exists():
+            data=loads(pending.read_bytes())
+            require(data['handle']==handle,'registration_pending_for_other_handle')
+        else:
+            data={'handle':handle,'nonce':b64(os.urandom(32)),'request_id':uuid4().hex}
+            durable_write(pending,canonical(data),mode=0o600)
+        result=await self.call('identity.custodial_create',{'handle':handle,'nonce':data['nonce']},
+                               request_id=data['request_id'],anonymous=True)
+        if result.status=='ok':
+            self.state.accept_identity(result)
+            pending.unlink(missing_ok=True)
+        return result
+
     async def rotate_token(self):
         require(self.state.token is not None,'token_required')
         pending=self.state.directory/'token-rotation.json'
@@ -227,6 +251,77 @@ class MsgClient:
             'possession_proof':wire(signer.sign(canonical(signed),purpose='upgrade'))},contract_version=2)
         if result.status=='ok':
             self.state.accept_identity(result)
+        return result
+
+    async def upgrade_custodial(self,handle, *, external_ciphertexts_migrated: bool):
+        require(type(external_ciphertexts_migrated) is bool,'migration_statement_required')
+        require(self.state.subject is not None and self.state.token is not None,
+                'custodial_token_required')
+        journal=self.state.directory/'custodial-upgrade.json'
+        if self.state.signer is None:
+            self.state.save_signer(Ed25519Signer.generate())
+        recipient=self.state.ensure_encryption_key()
+        public=b64(self.state.signer.public_key)
+        if journal.exists():
+            pending=loads(journal.read_bytes())
+            require(pending['handle']==handle and pending['public_key']==public and
+                    pending['encryption_recipient']==recipient,'custodial_upgrade_journal_mismatch')
+        else:
+            pending={'handle':handle,'public_key':public,'encryption_recipient':recipient,
+                     'start_request_id':uuid4().hex,'finish_request_id':uuid4().hex,
+                     'challenge':None}
+            durable_write(journal,canonical(pending),mode=0o600)
+        if pending['challenge'] is None:
+            signed={'subject_id':self.state.subject,'handle':handle,'public_key':public,
+                    'encryption_recipient':recipient,'request_id':pending['start_request_id']}
+            proof=self.state.signer.sign(canonical(signed),purpose='custodial-upgrade-start')
+            started=await self.call('identity.custodial_upgrade_start',{
+                'handle':handle,'public_key':public,'encryption_recipient':recipient,
+                'possession_proof':wire(proof)},request_id=pending['start_request_id'])
+            if started.status!='ok':
+                return started
+            pending['challenge']=dict(started.data)
+            durable_write(journal,canonical(pending),mode=0o600)
+        challenge=pending['challenge']
+        age_identity=self.state.age_key_path.read_text().strip()
+        require(recipient_from_identity(age_identity)==recipient,'encryption_identity_mismatch')
+        age_proof=client_upgrade_proof(age_identity,challenge)
+        acknowledgement={'subject_id':self.state.subject,'challenge_id':challenge['challenge_id'],
+            'age_proof':age_proof,'external_ciphertexts_migrated':external_ciphertexts_migrated,
+            'request_id':pending['finish_request_id']}
+        signed_ack=self.state.signer.sign(canonical(acknowledgement),
+                                          purpose='custodial-upgrade-finish')
+        async def recover_with_new_key():
+            return await self.call('identity.custodial_upgrade_result',
+                {'challenge_id':challenge['challenge_id']},signer=self.state.signer,
+                subject=self.state.subject,certificates=())
+        try:
+            result=await self.call('identity.custodial_upgrade_finish',{
+                'challenge_id':challenge['challenge_id'],'age_proof':age_proof,
+                'external_ciphertexts_migrated':external_ciphertexts_migrated,
+                'migration_ack':wire(signed_ack)},request_id=pending['finish_request_id'])
+        except Failure as exc:
+            if exc.code!='transport_uncertain':
+                raise
+            recovered=await recover_with_new_key()
+            if recovered.status!='ok':
+                raise
+            result=recovered
+        if result.status=='error' and result.error.code in {
+                'credential_expired','credential_revoked','request_expired','idempotency_conflict'}:
+            recovered=await recover_with_new_key()
+            if recovered.status=='ok':
+                result=recovered
+        if result.status=='ok' and result.data['status']=='completed':
+            self.state.accept_identity(result)
+            journal.unlink(missing_ok=True)
+        elif result.status=='ok' and result.data['status']=='pending_rewrap':
+            # A verified challenge is consumed; keep the new private keys but
+            # start a fresh proof after the client migrates its ciphertexts.
+            pending['challenge']=None
+            pending['start_request_id']=uuid4().hex
+            pending['finish_request_id']=uuid4().hex
+            durable_write(journal,canonical(pending),mode=0o600)
         return result
 
     async def rotate_encryption_key(self):

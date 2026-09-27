@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前状态：工作树本地284 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加custodial双钥vault核心、独立SyncCursor、QueryRef描述条件回收及客户端选定age条目rewrap。前一提交 `65acff3` 已推送，[CI 36285859198](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36285859198)已通过（274/8，age实际执行）；旧提交结果不替代本工作树验证。
+**当前状态：工作树本地295 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加托管转自托管的受限双钥升级闭环及同域只读hosting安全切片。前一提交 `fcf6ae9` 的284/8/build与[CI 36287082964](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36287082964)已通过，不替代本批验证。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
@@ -307,14 +307,22 @@ ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef�
 
 Revision可选change_note/source_kind/source_version/source_digest、release每文件来源、history PageCursor/精确diff已实现；requires_rules为类别映射，尚非完整精确RuleSet依赖，完整manifest签名仍缺。
 
-RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial升级/账号恢复/Policy UI仍缺，选定age条目的客户端rewrap已有。其中Policy/Envelope随65acff3提交并通过CI，选定条目rewrap属于当前未提交284项增量。
+RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial升级/账号恢复/Policy UI仍缺，选定age条目的客户端rewrap已有。其中Policy/Envelope随65acff3提交并通过CI，选定条目rewrap属于fcf6ae9已提交的284项增量。
 
-## 当前284项工作树切片
+## fcf6ae9已提交切片
 
-identity.custodial_create/status使用独立双钥AES-GCM vault，受控token写已接操作并生成真实custodial Revision签名；未接写操作fail-closed。不得冒充self-custody；完整升级须新双钥证明、rewrap、撤销token、销毁旧vault与审计，现尚缺，网络代解密也未开放。严格token一次展示及丢响应恢复仍待完成。
+identity.custodial_create/status使用独立双钥AES-GCM vault，受控token写已接操作并生成真实custodial Revision签名；未接写操作fail-closed。不得冒充self-custody；本批已有两阶段双钥持有证明和空已知age库存的升级切换；非空库存保持pending_rewrap，通用逐对象迁移仍缺，网络代解密也未开放。严格token一次展示及丢响应恢复仍待完成。
 
 独立/_read/s=/_r/s的SyncCursor为15分钟MAC token，seen字段加密且最多64引用，每次当前授权；只对已知撤权发最小失效通知。更大seen范围、权限新增旧事件回补尚缺，cursor不授读权。
 
 QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变更业务状态。客户端明确选定age keystore条目以旧钥解密、新recipient加密，保留历史并拒绝版本冲突；不提供服务器代解密或全账户自动迁移。SearchQuery/token-only纯路径QueryRef仍缺。
 
-以上本地284/8/build通过，未提交/无本批CI；65acff3的274/8/age实际执行CI已成功。
+以上本地284/8/build通过，已提交fcf6ae9，远端CI已通过；65acff3的274/8/age实际执行CI已成功。
+
+## 当前295项升级与hosting切片
+
+托管升级使用两阶段双钥PoP，客户端先保存新钥journal；服务器只在空已知age库存时切换。非空库存pending_rewrap保留旧入口，不能在未迁移时销毁唯一可解钥。切换结果丢失后新Ed钥可查询已完成结果，不恢复旧token普通写权。通用逐对象rewrap、外部密文完整验证和严格token一次展示仍缺。
+
+同域hosting在主app匿名只读，所有托管响应强制CSP sandbox且当前禁JS，危险格式作为附件；root web为代码样例而非Resource，preview未实现。light.local产品页测试是“脚本未执行/无API请求”；单独allow-scripts opaque probe是“实际GET私有API→403，CORS不可读”。两份证据不能合并声称同域JS产品可用或所有网络请求被阻断。完整浏览器/preview/root资源矩阵仍需验收。
+
+当前295/8/build仅本地工作树，尚未提交/无本批CI；fcf6ae9的成功CI属于前批。

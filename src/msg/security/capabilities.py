@@ -17,7 +17,9 @@ BASE_FAMILIES = {
         'identity.identity_key_get', 'identity.identity_key_list',
         'identity.encryption_key_get', 'identity.encryption_key_list',
         'identity.encryption_key_rotate',
-        'identity.custodial_status','identity.personal_put','identity.soul_visibility','identity.note_put',
+        'identity.custodial_status','identity.custodial_upgrade_start',
+        'identity.custodial_upgrade_finish','identity.personal_put','identity.soul_visibility','identity.note_put',
+        'identity.custodial_upgrade_result',
         'identity.note_list','identity.note_get',
         'identity.recovery_policy_get','identity.recovery_policy_set',
         'identity.recovery_envelope_register','identity.recovery_envelope_get',
@@ -38,6 +40,7 @@ BASE_FAMILIES = {
 EXCLUDED_BASE = {'content.purge','content.chown','identity.recover'}
 TEMPORARY_OPERATIONS = frozenset({
     'identity.temporary','identity.custodial_create','identity.upgrade','identity.token_rotate','identity.custodial_status',
+    'identity.custodial_upgrade_start','identity.custodial_upgrade_finish',
     'content.topic_create','content.post_create','content.post_edit','content.archive',
     'content.restore','content.file_put','content.attach',
     'discussion.reply','discussion.quote','discussion.repost','discussion.like','discussion.unlike',

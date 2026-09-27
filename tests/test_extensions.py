@@ -1,4 +1,3 @@
-from dataclasses import replace
 import httpx
 import pytest
 from msg.core.codec import b64,wire,canonical,unb64
@@ -45,9 +44,8 @@ async def test_keystore_stores_only_ciphertext_and_has_common_acl(installed):
 
 
 @pytest.mark.asyncio
-async def test_hosting_publish_is_explicit_versioned_and_other_origin(installed):
+async def test_hosting_publish_is_explicit_versioned_on_service_origin(installed):
     app,_=installed
-    app.settings=replace(app.settings,public_web_origin='https://pages.example.test')
     key,uid,_=await register(app,'site-owner')
     private_file=await call(app,'content.file_put',{'parent':'/@site-owner/files','name':'index.html',
         'data':b64(b'<h1>Published explicitly</h1>'),'media_type':'text/html'},key=key,subject=uid)
@@ -58,7 +56,7 @@ async def test_hosting_publish_is_explicit_versioned_and_other_origin(installed)
         'entries':[{'path':'index.html','source':wire(private_file.resources[0])}]},key=key,subject=uid,
         expected=((site.resources[0].id,site.data['generation']),))
     assert published.status=='ok',wire(published)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosting_app(app)),base_url='https://pages.example.test') as http:
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosting_app(app)),base_url=app.settings.service_url) as http:
         result=await http.get('/@site-owner/w/')
         assert result.status_code==200 and result.content==b'<h1>Published explicitly</h1>'
         assert 'set-cookie' not in result.headers
@@ -69,7 +67,7 @@ async def test_hosting_publish_is_explicit_versioned_and_other_origin(installed)
         cached=await http.get('/@site-owner/w/',headers={'If-None-Match':result.headers['etag']})
         assert cached.status_code==304
         assert cached.headers['content-security-policy']==result.headers['content-security-policy']
-        denied=await http.get('/@site-owner/w/../../root',headers={'Host':'testserver'})
+        denied=await http.get('/@site-owner/w/../../root',headers={'Host':'pages.example.test'})
         assert denied.status_code==403
     source=await call(app,'discovery.get',{'id':private_file.resources[0].id})
     assert source.error.code=='permission_denied'

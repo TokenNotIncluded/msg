@@ -190,7 +190,8 @@ def load_settings(config_dir=Path('/etc/msgd')):
         require(isinstance(public_web,str),'invalid_hosting_origin')
         hosted=urlsplit(public_web)
         require(hosted.scheme in {'https','http'} and hosted.hostname and not hosted.username and not hosted.password and not hosted.path and not hosted.query and not hosted.fragment,'invalid_hosting_origin')
-    require(public_web is None or urlsplit(public_web).netloc!=url.netloc,'hosting_origin_must_differ')
+    require(public_web is None or public_web.rstrip('/')==service.rstrip('/'),
+            'hosting_origin_must_match_service')
     return Settings(server=ServerConfig(config_dir=config_dir,
         postgres_dsn=postgres_dsn,valkey_url=valkey_url,
         content_dir=content_dir,

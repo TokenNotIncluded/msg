@@ -1,8 +1,14 @@
 # 本地与 CI 验收记录
 
+## 2026-09-27 托管升级与同域托管批次
+
+权威 Google Drive `ChatGPT` 文件夹设计仍为 `2026-09-27T00:35:34.164Z` 修订。当前未提交工作树本地 Python 3.15/PostgreSQL 下 `uv run python -m pytest -q` 为 **295 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 与 `git diff --check` 通过。托管升级已测试新 Ed25519/age-X25519 双钥持有证明、本地待提交 journal、已知 age 密文存在时的 `pending_rewrap`、空已知库存时同事务新钥绑定/旧 token 撤销/vault 销毁/审计，以及最终响应丢失后用新签名钥查询结果；外部密文迁移仅记录本人声明，逐对象 rewrap 尚无通用流程。托管静态文件改由主域匿名只读服务，HTML/HEAD/304/206/错误响应强制 CSP sandbox，本批完全禁用脚本；危险格式强制下载。
+
+真实浏览器使用本机 DNS 直接访问 `http://light.local:18144/@browser-probe/web/index.html`，不是 `--resolve`：页面快照仍为 “script not run”，浏览器控制台明确提示 sandbox 未允许脚本，网络记录仅 HTML GET，产品托管页**没有发出**私有 API 请求。另起受控探针页 `http://light.local:18145/` 并设 `sandbox allow-scripts`，其不属于产品托管响应；它从 opaque `Origin:null` 对 `http://light.local:18144/_read/t_private/json` **实际发出** GET，服务端访问日志为 403，浏览器报 CORS 无允许来源，脚本不能读取响应。此前 data: 源探针因浏览器 Private Network Access 在发出前拦截，不用作服务端拒绝证据。测试服务按预定时间退出，浏览器会话、临时数据库/目录和端口已清理。当前结果不证明 JS 托管、候选部署 preview、所有重定向/Service Worker/凭据组合或完整同域安全隔离。本批尚无远端 CI/线上部署结果。
+
 ## 2026-09-27 托管身份、SyncCursor 与显式 rewrap 批次
 
-权威 Google Drive `ChatGPT` 文件夹文档读取至 `2026-09-27T00:35:34.164Z`。当前未提交工作树在本地 Python 3.15/PostgreSQL 下 `uv run python -m pytest -q` 为 **284 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 与 `git diff --check` 通过。托管创建使用独立 Ed25519/age-X25519 私钥和域分离 AES-GCM vault；受控内容写入的 Revision 由 vault 签名并标明 custodial 来源，未接通代签的 token 写入明确拒绝。`/_read/s`/`/_r/s` 使用独立 SyncCursor，已见引用集合加密后由 MAC 保护，撤权只返回最小 ID，最多跟踪 64 个引用。QueryRef 的私有描述 File 由维护任务在有效期后按引用边界回收，GET 不清理。另有显式选定 age keystore 条目的旧钥→新 recipient rewrap，保留旧 Revision 和旧钥，stale base revision 拒绝。完整托管升级/网络代解密、严格 token 一次展示及丢响应恢复、超过 64 引用的长期同步和权限新增后的旧事件回补尚缺；本批尚无对应远端 CI 或线上验证。
+权威 Google Drive `ChatGPT` 文件夹文档读取至 `2026-09-27T00:35:34.164Z`。提交 `fcf6ae9` 前，本地 Python 3.15/PostgreSQL 下 `uv run python -m pytest -q` 为 **284 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 与 `git diff --check` 通过。托管创建使用独立 Ed25519/age-X25519 私钥和域分离 AES-GCM vault；受控内容写入的 Revision 由 vault 签名并标明 custodial 来源，未接通代签的 token 写入明确拒绝。`/_read/s`/`/_r/s` 使用独立 SyncCursor，已见引用集合加密后由 MAC 保护，撤权只返回最小 ID，最多跟踪 64 个引用。QueryRef 的私有描述 File 由维护任务在有效期后按引用边界回收，GET 不清理。另有显式选定 age keystore 条目的旧钥→新 recipient rewrap，保留旧 Revision 和旧钥，stale base revision 拒绝。完整托管升级/网络代解密、严格 token 一次展示及丢响应恢复、超过 64 引用的长期同步和权限新增后的旧事件回补尚缺；提交已推送，其[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36287082964)已通过，尚无线上验证。
 
 ## 2026-09-27 QueryRef、发行来源与自托管恢复备份批次
 

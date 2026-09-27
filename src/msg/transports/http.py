@@ -306,11 +306,16 @@ def create_app(service):
             require(supplied.hostname==expected.hostname and
                     (supplied.port or (443 if expected.scheme=='https' else 80))==
                     (expected.port or (443 if expected.scheme=='https' else 80)),'forbidden_host')
+            require('x-http-method-override' not in request.headers and
+                    'x-method-override' not in request.headers,'method_not_allowed')
+            if request.url.path.startswith(('/@','/&')):
+                from msg.extensions.hosting import serve_hosted
+                hosted=await serve_hosted(service,request)
+                if hosted is not None:
+                    return hosted
             origin=request.headers.get('origin')
             if origin is not None:
                 require(origin.rstrip('/')==f'{expected.scheme}://{expected.netloc}','forbidden_origin')
-            require('x-http-method-override' not in request.headers and
-                    'x-method-override' not in request.headers,'method_not_allowed')
             path=request.url.path
             if (path=='/-' or path.startswith('/-/')) and not (raw_path==b'/-' or raw_path.startswith(b'/-/')):
                 raise Failure('not_found')

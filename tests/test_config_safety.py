@@ -7,7 +7,7 @@ from msg.core.errors import Failure
  'port = 0','port = true','temporary_ttl = -1','transfer_ttl = 0',
  'service_url = "https://example.org/path"',
  'public_web_origin = "javascript:alert(1)"',
- 'public_web_origin = "https://msg.lmm.best"',
+ 'public_web_origin = "https://pages.example.test"',
 ])
 def test_reject_ambiguous_or_invalid_server_configuration(tmp_path,line):
     directory=tmp_path/'config'
@@ -18,6 +18,15 @@ def test_reject_ambiguous_or_invalid_server_configuration(tmp_path,line):
     text=text.replace('[server]','[server]\n'+line)
     (directory/'msgd.toml').write_text(text)
     with pytest.raises(Failure):load_settings(directory)
+
+
+def test_same_service_origin_is_allowed_for_hosted_content(tmp_path):
+    directory=tmp_path/'config'
+    write_example(directory,tmp_path/'data')
+    config=directory/'msgd.toml'
+    config.write_text(config.read_text().replace('[server]',
+        '[server]\npublic_web_origin = "https://msg.lmm.best"'))
+    assert load_settings(directory).public_web_origin=='https://msg.lmm.best'
 
 def test_example_quotes_filesystem_paths_and_unknown_plugin_keys_are_rejected(tmp_path):
     settings=write_example(tmp_path/'config',tmp_path/'with"quote')

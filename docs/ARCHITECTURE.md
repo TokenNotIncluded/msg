@@ -1,6 +1,6 @@
 # 架构与提交边界
 
-**当前状态：工作树本地284 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加custodial双钥vault核心、独立SyncCursor、QueryRef描述条件回收及客户端选定age条目rewrap。前一提交 `65acff3` 已推送，[CI 36285859198](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36285859198)已通过（274/8，age实际执行）；旧提交结果不替代本工作树验证。
+**当前状态：工作树本地295 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加托管转自托管的受限双钥升级闭环及同域只读hosting安全切片。前一提交 `fcf6ae9` 的284/8/build与[CI 36287082964](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36287082964)已通过，不替代本批验证。
 
 本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T00:35:34.164Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 
@@ -40,7 +40,7 @@ PostgreSQL 保存资源、主体、凭据、证书状态、关系投影、当前
 
 HTTP 协议操作只从 `/-/` 分流。旧 `/!`、`/~`、`/run/j|gz` 与 `/mcp` 不再有兼容 handler；普通资源、RSS、latest 与原生 Git 的公开读取在执行前核对注册操作为 read。原生 Git 的 POST `git-upload-pack` 只读，普通仓库路径的 `git-receive-pack` 不开放；e01dacc已有 /-/git/<repo-id> HTTP 小包推送切片。普通 Git/LFS 路径及子路径永久只读，写入只能直接走 `/-/` 注册操作；标准客户端发现写地址的兼容性仍待验证，不允许普通路径代理、重定向写入或额外子域名。旧兼容 handler 删除已纳入最终回归，提交 `f085e7f` 本地全套 206 passed、conformance 8 passed、uv build 成功，远端 CI 已通过。新 .md 规范路径、/AGENTS.md、/tools/ 已覆盖新安装；旧库存量链接和完整输出投影仍需单独迁移与验收。
 
-临时 token 不能代替托管身份；mode/证书不能代替可追踪 ShareGrant；现有全文更新不能代替 patch/grep；现有 hosting 独立 origin 不能满足同域托管要求。新增这些能力应继续复用资源、授权、事务与事件，不另建业务后端。
+临时 token 不能代替托管身份；mode/证书不能代替可追踪 ShareGrant；现有全文更新不能代替 patch/grep；现有同域匿名只读hosting禁JS切片不等于完整hosting要求。新增这些能力应继续复用资源、授权、事务与事件，不另建业务后端。
 
 第 13 章规定工具调用名为 `tool.run`；`/tools/` 只发现凭据允许的工具，路径本身绝不执行。公开契约已迁移为 `tool.run`，`tool.invoke` 仅保留不可执行 tombstone，短码不改义复用。`/-/transfer` 已提供六种分片操作的完整 OperationRequest POST 与只读 GET 发现；两段式 `/-/d/<namespace>/<operation>` 已实现。上述本地验证不代表完整工具/Git LFS/托管身份、逐 feature 验收或本轮远端 CI。
 
@@ -140,14 +140,22 @@ ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef�
 
 Revision可选change_note/source_kind/source_version/source_digest、release每文件来源、history PageCursor/精确diff已实现；requires_rules为类别映射，尚非完整精确RuleSet依赖，完整manifest签名仍缺。
 
-RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial升级/账号恢复/Policy UI仍缺，选定age条目的客户端rewrap已有。其中Policy/Envelope随65acff3提交并通过CI，选定条目rewrap属于当前未提交284项增量。
+RecoveryPolicy为owner签名opt-in；RecoveryEnvelope固定age keystore Revision并标owner_declared_unverified。custodian配置公开recipient/指纹，严禁私钥；客户端双recipient OR离线演练已有。服务器不能证明实际recipient集合，解密能力/Policy不授账号、资源或CA权。完整custodial升级/账号恢复/Policy UI仍缺，选定age条目的客户端rewrap已有。其中Policy/Envelope随65acff3提交并通过CI，选定条目rewrap属于fcf6ae9已提交的284项增量。
 
-## 当前284项工作树切片
+## fcf6ae9已提交切片
 
-identity.custodial_create/status使用独立双钥AES-GCM vault，受控token写已接操作并生成真实custodial Revision签名；未接写操作fail-closed。不得冒充self-custody；完整升级须新双钥证明、rewrap、撤销token、销毁旧vault与审计，现尚缺，网络代解密也未开放。严格token一次展示及丢响应恢复仍待完成。
+identity.custodial_create/status使用独立双钥AES-GCM vault，受控token写已接操作并生成真实custodial Revision签名；未接写操作fail-closed。不得冒充self-custody；本批已有两阶段双钥持有证明和空已知age库存的升级切换；非空库存保持pending_rewrap，通用逐对象迁移仍缺，网络代解密也未开放。严格token一次展示及丢响应恢复仍待完成。
 
 独立/_read/s=/_r/s的SyncCursor为15分钟MAC token，seen字段加密且最多64引用，每次当前授权；只对已知撤权发最小失效通知。更大seen范围、权限新增旧事件回补尚缺，cursor不授读权。
 
 QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变更业务状态。客户端明确选定age keystore条目以旧钥解密、新recipient加密，保留历史并拒绝版本冲突；不提供服务器代解密或全账户自动迁移。SearchQuery/token-only纯路径QueryRef仍缺。
 
-以上本地284/8/build通过，未提交/无本批CI；65acff3的274/8/age实际执行CI已成功。
+以上本地284/8/build通过，已提交fcf6ae9，远端CI已通过；65acff3的274/8/age实际执行CI已成功。
+
+## 当前295项升级与hosting切片
+
+托管升级使用两阶段双钥PoP，客户端先保存新钥journal；服务器只在空已知age库存时切换。非空库存pending_rewrap保留旧入口，不能在未迁移时销毁唯一可解钥。切换结果丢失后新Ed钥可查询已完成结果，不恢复旧token普通写权。通用逐对象rewrap、外部密文完整验证和严格token一次展示仍缺。
+
+同域hosting在主app匿名只读，所有托管响应强制CSP sandbox且当前禁JS，危险格式作为附件；root web为代码样例而非Resource，preview未实现。light.local产品页测试是“脚本未执行/无API请求”；单独allow-scripts opaque probe是“实际GET私有API→403，CORS不可读”。两份证据不能合并声称同域JS产品可用或所有网络请求被阻断。完整浏览器/preview/root资源矩阵仍需验收。
+
+当前295/8/build仅本地工作树，尚未提交/无本批CI；fcf6ae9的成功CI属于前批。

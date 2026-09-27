@@ -2,7 +2,7 @@
 
 权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T00:35:34.164Z`。
 
-**当前状态：工作树本地284 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加custodial双钥vault核心、独立SyncCursor、QueryRef描述条件回收及客户端选定age条目rewrap。前一提交 `65acff3` 已推送，[CI 36285859198](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36285859198)已通过（274/8，age实际执行）；旧提交结果不替代本工作树验证。
+**当前状态：工作树本地295 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加托管转自托管的受限双钥升级闭环及同域只读hosting安全切片。前一提交 `fcf6ae9` 的284/8/build与[CI 36287082964](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36287082964)已通过，不替代本批验证。
 
 历史证据单独保留：`e01dacc` 本地 228/8/build 与[CI 36281301900](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)通过；`f085e7f` 本地 206/8/build 与 CI 通过。220 是双钥加入前的中间结果，不是当前基线，不与任何测试数量累加。详细命令见 [VERIFICATION](VERIFICATION.md)。
 
@@ -15,7 +15,7 @@
 | DM | 双主体唯一 pair、request/accept/reject/send/list/archive/block、独立 post/Revision、Inbox 通知及隐私守卫 | 完整 CLI/分页/附件与分享移动矩阵、群聊历史隔离、离线 SyncCursor、逐 feature 验收 |
 | presence/claim | 主动签名 presence set/clear、默认/过期 unknown；签名 self_claim、authority=none、证据逐项授权 | doctor/selftest/CLI/完整主体视图；presence 默认300s、范围30–3600s是实现选择，非云端指定 |
 | 成就 | self-custody R1–R5、zero-width strategy、60s/300s、独立 grant/ceremony、签名与审计 | custodial、通用 Event evaluator、完整 Spec/Issuer、Profile pin/索引、完整默认/doctor/selftest |
-| Git/hosting/宿主 | 公开 Git、受限 SSH、`/-/git/<repo-id>` HTTP 小包 receive-pack、read_url/push_url；现有 hosting/CSP | 完整大包/流式/LFS；同域 hosting/preview/原子部署/rollback；真实 sshd/bubblewrap/SMTP/浏览器 |
+| Git/hosting/宿主 | 公开 Git、受限 SSH、`/-/git/<repo-id>` HTTP 小包 receive-pack、read_url/push_url；现有 hosting/CSP | 完整大包/流式/LFS；同域JS/preview/root样例Resource与完整部署回滚矩阵；真实 sshd/bubblewrap/SMTP/浏览器 |
 | 资源/存储/工具 | Registry/执行器、PostgreSQL 权威事实、可选 Valkey 唤醒、Transfer、签名审计、msgd.toml、新安装目录与备份v3、tool.run | 部署恢复/旧库迁移、ShareGrant/ShareLink、组完整生命周期、file/post patch/grep/rebase/batch、邮件/Webhook/TUI等 |
 | 本批规则/导航/个人文本 | docs/system bootstrap、/_rules默认GET索引+8分片、load幂等源码同步、普通wiki；LinkSet与精确diff；主动签名请求写Notes/SOUL/AGENTS | source/RuleSet精确映射、规则全文/删除迁移、HTML/TUI、Notes完整生命周期/Todos、客户端Revision manifest独立签名、自然语言继承/全部秘密识别 |
 | 其余未实现范围 | 旧模板/回执不是完整功能 | 完整custodial/账号恢复/rewrap/Policy UI/Legacy、其余八项Agent原语完整契约及各feature默认/doctor/selftest矩阵 |
@@ -33,7 +33,7 @@
 
 QueryRef 只描述查询、不携授权；构造/分片/封存仅在 `/-/`，读取每次鉴权。Topic `_events.md` 不是 Post/Revision，不计帖子数/latest，不允许业务编辑；默认10条 compact，原因字段按权限裁剪，失去读取权者仅收到自身最小通知。passive GET 的 UA 分类是防误触保险丝，不替代 proof/Authorizer/幂等。
 
-第15章要求实现、默认、样例或 empty/disabled/deny、测试、doctor、自检与启用配置 CI 全部具备；284项不能抵消缺项。当前无发布、生产迁移或宿主全流程证明。后续顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。
+第15章要求实现、默认、样例或 empty/disabled/deny、测试、doctor、自检与启用配置 CI 全部具备；295项不能抵消缺项。当前无发布、生产迁移或宿主全流程证明。后续顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。
 
 ## 当前实现深度与限制
 
@@ -51,8 +51,16 @@ self-custody RecoveryPolicy由owner签名opt-in，RecoveryEnvelope绑定确切ag
 
 ## 当前custodial / Sync / 清理 / rewrap边界
 
-identity.custodial_create/status已实现两类独立私钥AES-GCM vault、server-signable/server-decryptable披露、受控token；已接写入产生真实custodial Revision签名，其余未接写fail-closed。它不等于客户端签名；完整custodial→self-custody还缺新双钥持有证明、密文迁移/rewrap、token撤销、vault旧钥销毁和全程审计。网络代解密未开放。严格token一次展示尚缺，不能忽略首次响应丢失后的安全恢复。
+identity.custodial_create/status已实现两类独立私钥AES-GCM vault、server-signable/server-decryptable披露、受控token；已接写入产生真实custodial Revision签名，其余未接写fail-closed。它不等于客户端签名；custodial→self-custody已有双钥PoP与空已知age库存切换；非空库存迁移/rewrap和后续完整销毁审计闭环仍待补齐。网络代解密未开放。严格token一次展示尚缺，不能忽略首次响应丢失后的安全恢复。
 
 /_read/s与/_r/s独立SyncCursor已有：MAC保护、seen加密、最多64引用、15分钟、每次当前授权；已知撤权只返最小通知，不泄漏此前不可见对象。>64引用扩展与权限新增后的旧事件回补未做，不声称完整增量同步。
 
-QueryRef私有描述File由维护任务在过期+1h后满足条件才回收；读取不执行清理，不把token过期当任意用户File可删依据。SearchQuery/token-only纯路径分支仍缺。客户端可显式选择age keystore条目old→new rewrap，保留历史、基线冲突拒绝；这不是全账号自动迁移/恢复。当前284/8/build仅本地工作树，65acff3成功CI属于前批。
+QueryRef私有描述File由维护任务在过期+1h后满足条件才回收；读取不执行清理，不把token过期当任意用户File可删依据。SearchQuery/token-only纯路径分支仍缺。客户端可显式选择age keystore条目old→new rewrap，保留历史、基线冲突拒绝；这不是全账号自动迁移/恢复。当前284/8/build已提交fcf6ae9，远端CI已通过，65acff3成功CI属于前批。
+
+## 本批升级与同域托管的验收边界
+
+托管→自托管start/finish/result已有两阶段IdentityKey与EncryptionSubkey持有证明，客户端先持久化新钥与本地journal。只有已知age库存为空才完成切换；非空返回pending_rewrap并保留旧入口，不假称密文已迁移。旧token随完成切换失效、响应丢失后可用新Ed钥查询结果。已知库存为空不证明外部或任意格式密文都可恢复；通用逐对象rewrap/外部密文验证仍缺，严格token一次展示仍未完成。
+
+hosting已有主app同域匿名只读入口；所有托管响应强制CSP sandbox，本批不允许JS，危险格式按附件下载。/@root/web/index.html仅代码样例，不是真正Resource/Revision；preview缺，不能报完整hosting feature。
+
+真实light.local浏览器证据分开记录：产品页因本批禁JS而脚本未执行、API请求未发；另一受控sandbox allow-scripts的opaque探针确实发GET到私有API，服务端403，浏览器CORS不可读。前者证明执行限制，后者证明该探针请求的授权拒绝/读取隔离；不能互相替代，也不能证明全部浏览器旁路或支持同域JS。仍需preview/history/raw/304/Range/危险格式、身份携带、导航/窗口/服务worker和完整发布回滚矩阵。

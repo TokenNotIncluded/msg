@@ -2,13 +2,17 @@
 from __future__ import annotations
 
 import os
+import hmac
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey,X25519PublicKey
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives import hashes
 
 from msg.core.codec import b64,canonical,unb64,wire
 from msg.core.errors import Failure,require
-from msg.security.age_keys import recipient_from_identity
+from msg.security.age_keys import recipient_from_identity,private_from_identity
 from msg.security.crypto import Ed25519Signer
 
 
@@ -68,3 +72,51 @@ def open_age_identity(app,tx,subject):
     require(encryption_key_id(public_from_recipient(recipient))==key_id,
             'custodial_vault_corrupt')
     return identity
+
+
+def _upgrade_aad(subject,challenge_id):
+    return canonical({'domain':'msg-custodial-upgrade-ephemeral-v1',
+                      'subject':subject,'challenge_id':challenge_id})
+
+
+def seal_upgrade_private(app,subject,challenge_id,private):
+    nonce=os.urandom(12)
+    cipher=AESGCM(app._vault_key).encrypt(nonce,private,
+                                           _upgrade_aad(subject,challenge_id))
+    return b64(nonce),b64(cipher)
+
+
+def open_upgrade_private(app,subject,challenge_id,nonce,ciphertext):
+    try:
+        raw=AESGCM(app._vault_key).decrypt(unb64(nonce,limit=12),
+            unb64(ciphertext,limit=128),_upgrade_aad(subject,challenge_id))
+        return X25519PrivateKey.from_private_bytes(raw)
+    except (InvalidTag,ValueError,TypeError) as exc:
+        raise Failure('custodial_upgrade_challenge_corrupt') from exc
+
+
+UPGRADE_CONTEXT_FIELDS=('subject_id','challenge_id','request_id','handle','public_key',
+                        'encryption_recipient','server_public','nonce','expires_at')
+
+
+def _proof(shared,challenge):
+    context={name:challenge[name] for name in UPGRADE_CONTEXT_FIELDS}
+    key=HKDF(algorithm=hashes.SHA256(),length=32,
+             salt=unb64(context['nonce'],limit=64),
+             info=b'msg-custodial-upgrade-pop-v1').derive(shared)
+    return b64(hmac.digest(key,canonical(context),'sha256'))
+
+
+def client_upgrade_proof(age_identity,challenge):
+    private=private_from_identity(age_identity)
+    shared=private.exchange(X25519PublicKey.from_public_bytes(
+        unb64(challenge['server_public'],limit=32)))
+    return _proof(shared,challenge)
+
+
+def server_upgrade_proof(app,subject,challenge,nonce,ciphertext):
+    from msg.security.age_keys import public_from_recipient
+    private=open_upgrade_private(app,subject,challenge['challenge_id'],nonce,ciphertext)
+    shared=private.exchange(X25519PublicKey.from_public_bytes(
+        public_from_recipient(challenge['encryption_recipient'])))
+    return _proof(shared,challenge)

@@ -101,3 +101,12 @@ def recipient_from_identity(identity: str):
     except Failure as exc:
         raise Failure('invalid_age_identity') from exc
     return recipient_from_public(public)
+
+
+def private_from_identity(identity: str):
+    require(type(identity) is str and identity==identity.upper(),'invalid_age_identity')
+    try:
+        private=X25519PrivateKey.from_private_bytes(_decode(identity.lower(),'age-secret-key-'))
+    except (Failure,ValueError) as exc:
+        raise Failure('invalid_age_identity') from exc
+    return private
