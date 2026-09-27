@@ -11,6 +11,7 @@ from msg.plugins.schemas import NETWORK_CONSTRAINTS
 BASE_FAMILIES = {
     'identity.basic': ('identity.register', 'identity.temporary', 'identity.custodial_create', 'identity.upgrade',
         'identity.token_rotate', 'identity.token_create', 'identity.token_recover',
+        'identity.upgrade_result',
         'identity.key_add', 'identity.key_revoke',
         'identity.email_set', 'identity.email_verify', 'identity.email_get', 'identity.email_notifications',
         'identity.delegate', 'identity.delegation_revoke', 'identity.certificate_renew',

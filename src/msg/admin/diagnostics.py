@@ -583,6 +583,8 @@ async def selftest():
             all_versions=await call('discovery.get',{'id':post.resources[0].id,'view':'meta'})
             checks['stable_id_read']=all_versions.status=='ok'
             checks.update(await _selftest_ca_chain(app,root,call,register,now))
+            from msg.admin.upgrade_check import check_upgrade_recovery
+            checks['identity_upgrade_recovery']=await check_upgrade_recovery(app,now)
         except Failure as exc:
             checks['failure']={'code':exc.code}
         finally:

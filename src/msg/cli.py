@@ -46,7 +46,7 @@ def parser():
     identity.add_parser('temporary')
     identity.add_parser('rotate-token')
     identity.add_parser('recover-token',help='Use a saved one-time recovery journal after a lost token response.')
-    identity.add_parser('upgrade').add_argument('handle')
+    identity.add_parser('upgrade',help='Upgrade or resume a saved upgrade intention.').add_argument('handle',nargs='?')
     identity.add_parser('show')
     call=commands.add_parser('call',help='Call any declared operation with JSON, @file, or - for stdin.')
     call.add_argument('operation');call.add_argument('arguments',nargs='?',default='{}')
@@ -234,8 +234,12 @@ async def run(args):
             elif args.action=='rotate-token': result=await client.rotate_token()
             elif args.action=='recover-token': result=await client.recover_token()
             elif args.action=='upgrade': result=await client.upgrade(args.handle)
-            else: result={'subject_id':state.subject,'key_id':state.signer.key_id if state.signer else None,
-                          'server':state.server,'certificates':state.certificates,'auth':'token' if state.token else 'signature'}
+            else:
+                from msg.client_upgrade import pending_upgrade
+                result={'subject_id':state.subject,'key_id':state.signer.key_id if state.signer else None,
+                        'server':state.server,'certificates':state.certificates,'auth':'token' if state.token else 'signature'}
+                pending=pending_upgrade(state)
+                if pending is not None: result['pending_upgrade']=pending
         elif command=='call':
             expected=[]
             for item in args.expect:

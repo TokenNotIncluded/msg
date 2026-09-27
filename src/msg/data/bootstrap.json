@@ -1,5 +1,5 @@
 {
-  "version": 5,
+  "version": 6,
   "resources": [
     {"id":"r_root","type":"topic","name":"","parent":null,"owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"r_agents","type":"file","name":"AGENTS.md","parent":"r_root","owner":"u_root","group":"g_public","mode":"0444"},
@@ -45,6 +45,7 @@
     {"feature_id":"bootstrap","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"bootstrap","selftest_case":"isolated_namespace"},
     {"feature_id":"postgres","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"storage","selftest_case":"stable_id_read"},
     {"feature_id":"root_trust","enabled_by_default":true,"default_config":{},"sample_resource":"u_root","doctor_check":"root_trust","selftest_case":"root_network_rejected"},
+    {"feature_id":"identity_upgrade","enabled_by_default":true,"default_config":{"recovery":"current_new_identity_key","legacy_token_reuse":false},"sample_resource":null,"doctor_check":"authority_snapshot","selftest_case":"identity_upgrade_recovery"},
     {"feature_id":"online_ca","enabled_by_default":true,"default_config":{},"sample_resource":"u_online_ca","doctor_check":"online_ca","selftest_case":"online_registration"},
     {"feature_id":"authorization","enabled_by_default":true,"default_config":{},"sample_resource":"t_certified","doctor_check":"authority_snapshot","selftest_case":"certgate"},
     {"feature_id":"audit","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"audit","selftest_case":"online_delegation"},

@@ -1112,6 +1112,39 @@ def install(app):
             'encryption_recipient':a['encryption_recipient'],
             'certificate_id':certificate.resource_id,'handle':a['handle']})
 
+    @op('identity.upgrade_result',obj({'upgrade_request_id':IDENTIFIER},('upgrade_request_id',)),
+        effect='read',signature=True)
+    async def upgrade_result(ctx,request,tx):
+        # The request ID locates a committed fact; it never authenticates a caller.
+        # Ordinary authentication checks current key revocation and its ceiling
+        # before this read-only handler can look up any prior result.
+        subject=await controlled_owner(app,ctx,request,tx)
+        require(subject.kind=='registered' and ctx.principal.method=='signature',
+                'self_custody_signature_required')
+        row=tx.one('SELECT body FROM results WHERE subject=? AND request_id=?',
+                   (subject.resource_id,request.arguments['upgrade_request_id']))
+        require(row is not None,'upgrade_not_completed')
+        completed=loads(row[0])
+        require(completed.get('operation')=='identity.upgrade' and
+                completed.get('status')=='ok' and completed.get('subject')==subject.resource_id,
+                'upgrade_not_completed')
+        data=completed['data']
+        require(data['key_id']==ctx.principal.credential_id,'upgrade_new_key_required')
+        primary=tx.one('SELECT key_id FROM identity_keys WHERE subject=? AND is_primary=1 AND retired_at IS NULL',
+                       (subject.resource_id,))
+        require(primary==(data['key_id'],),'upgrade_new_key_required')
+        encryption=tx.one('SELECT subject,recipient,retired_at FROM encryption_subkeys WHERE key_id=?',
+                          (data['encryption_key_id'],))
+        require(encryption==(subject.resource_id,data['encryption_recipient'],None),
+                'upgrade_encryption_key_changed')
+        certificate=await app.certificates.validate(data['certificate_id'],tx)
+        require(certificate.subject_id==subject.resource_id and certificate.key_id==data['key_id'],
+                'upgrade_certificate_mismatch')
+        return HandlerOutput(data={**{field:data[field] for field in (
+            'subject_id','key_id','encryption_key_id','encryption_recipient','certificate_id','handle')},
+            'status':'completed','upgrade_request_id':request.arguments['upgrade_request_id'],
+            'upgrade_committed_at':completed['committed_at']})
+
     @op('identity.key_add',obj({'public_key':BYTES,'possession_proof':SIGNATURE,'ceiling':GRANTS},
                                ('public_key','possession_proof','ceiling')),signature=True)
     async def key_add(ctx,request,tx):

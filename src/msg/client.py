@@ -450,20 +450,9 @@ class MsgClient:
             durable_write(path,canonical(pending),mode=0o600)
         return result
 
-    async def upgrade(self,handle):
-        require(self.state.token is not None,'temporary_identity_required')
-        if self.state.signer is None:
-            self.state.save_signer(Ed25519Signer.generate())
-        signer=self.state.signer
-        recipient=self.state.ensure_encryption_key()
-        signed={'subject_id':self.state.subject,'handle':handle,'public_key':b64(signer.public_key),
-                'encryption_recipient':recipient}
-        result=await self.call('identity.upgrade',{'handle':handle,'public_key':b64(signer.public_key),
-            'encryption_recipient':recipient,
-            'possession_proof':wire(signer.sign(canonical(signed),purpose='upgrade'))},contract_version=2)
-        if result.status=='ok':
-            self.state.accept_identity(result)
-        return result
+    async def upgrade(self,handle=None):
+        from msg.client_upgrade import upgrade_identity
+        return await upgrade_identity(self,handle)
 
     async def upgrade_custodial(self,handle, *, external_ciphertexts_migrated: bool):
         require(type(external_ciphertexts_migrated) is bool,'migration_statement_required')
