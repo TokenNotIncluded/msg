@@ -80,8 +80,9 @@ async def test_buy_funds_escrow_once_and_does_not_claim_delivery(installed):
         row = tx.one('SELECT escrow_subject,state FROM store_orders WHERE id=?',
                      (order['id'],))
         assert row[1] == 'funded'
-        escrow_identity = await tx.subject(row[0])
-        assert escrow_identity.kind == 'system' and escrow_identity.local_only
+        assert tx.one('SELECT kind,subject_id,source_id FROM ledger_accounts WHERE id=?',
+                      (row[0],)) == ('order_escrow', None, order['id'])
+        assert tx.one('SELECT 1 FROM identities WHERE id=?', (row[0],)) is None
         assert tx.one('SELECT COUNT(*) FROM credentials WHERE subject=?',
                       (row[0],))[0] == 0
         assert tx.one('SELECT COUNT(*) FROM money_ledger WHERE credit_account=?',
@@ -181,7 +182,7 @@ async def test_price_race_quantity_and_failed_payment_roll_back(installed):
     async with app.metadata.transaction(write=False) as tx:
         assert tx.one('SELECT COUNT(*) FROM store_orders')[0] == 1
         assert tx.one("SELECT COUNT(*) FROM money_ledger WHERE reference LIKE 'order_fund:%'")[0] == 1
-        assert tx.one("SELECT COUNT(*) FROM identities WHERE id LIKE 'esc_%'")[0] == 1
+        assert tx.one("SELECT COUNT(*) FROM ledger_accounts WHERE kind='order_escrow'")[0] == 1
 
 
 @pytest.mark.asyncio
@@ -208,7 +209,7 @@ async def test_last_unit_competition_and_posted_debit_failure_roll_back(installe
     assert failed.error.code == 'forced_rollback'
     async with app.metadata.transaction(write=False) as tx:
         assert tx.one('SELECT COUNT(*) FROM store_orders')[0] == 0
-        assert tx.one("SELECT COUNT(*) FROM identities WHERE id LIKE 'esc_%'")[0] == 0
+        assert tx.one("SELECT COUNT(*) FROM ledger_accounts WHERE kind='order_escrow'")[0] == 0
         assert tx.one("SELECT COUNT(*) FROM money_ledger WHERE reference LIKE 'order_fund:%'")[0] == 0
     assert (await call(app, 'money.balance', {}, key=buyer_key,
                        subject=buyer)).data['balance_minor'] == 10_000_000

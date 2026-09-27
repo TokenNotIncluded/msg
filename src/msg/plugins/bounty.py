@@ -11,7 +11,7 @@ from datetime import timedelta
 
 from msg.core.codec import b64, canonical, decode, digest, loads, parse_time, unb64, wire
 from msg.core.errors import require
-from msg.core.models import HandlerOutput, ResourceRef, Signature, Subject
+from msg.core.models import HandlerOutput, ResourceRef, Signature
 from msg.plugins.common import (check_access, create_resource, new_id, operation_id,
                                 registration)
 from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _balance, _post_transfer
@@ -124,9 +124,9 @@ def install(app):
                 'money_subject_required')
         listing_id = new_id('bty')
         escrow = new_id('esc')
-        # This system identity has no Resource, key, or signing credential.
-        await tx.update_identity(Subject(resource_id=escrow, kind='system',
-            primary_group='g_public', auth_version=0, local_only=True), -1)
+        # The prefunded escrow is an account, not a signable Subject.
+        tx.execute('''INSERT INTO ledger_accounts(id,kind,subject_id,source_id)
+            VALUES (?,'bounty_escrow',NULL,?)''', (escrow,listing_id), write=True)
         body = {'mode': 'bounty', 'terms': args['terms'], 'reward_minor': reward,
                 'currency_id': CURRENCY_ID, 'budget_minor': budget,
                 'max_claims': args['max_claims'],

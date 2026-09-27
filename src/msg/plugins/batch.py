@@ -9,7 +9,8 @@ from msg.plugins.schemas import obj
 from msg.transports.packet import REQUEST_SCHEMA,decode_packet
 
 # Credential delivery has response-only secrets; it requires its own call.
-NO_BATCH=frozenset({'identity.register','identity.temporary','identity.token_create','identity.token_rotate','identity.upgrade'})
+NO_BATCH=frozenset({'identity.register','identity.temporary','identity.token_create','identity.token_rotate',
+                    'identity.custodial_create','identity.token_recover','identity.upgrade'})
 
 
 def packets(registry,request,subject,max_bytes=None):

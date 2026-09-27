@@ -8,7 +8,7 @@ import httpx
 from msg.core.codec import canonical, b64, loads, wire, decode
 from msg.core.errors import Failure, require
 from msg.core.models import TransportLimits
-from msg.transports.packet import decode_result
+from msg.transports.packet import decode_result, require_url_safe_packet
 
 
 class HTTPTransport:
@@ -96,6 +96,7 @@ class PathGETTransport(HTTPTransport):
     name = 'path_get'
 
     async def call(self, request):
+        require_url_safe_packet(request)
         await self._effect(request.operation)
         raw = canonical(request)
         encoded, encoding = b64(raw), 'j'

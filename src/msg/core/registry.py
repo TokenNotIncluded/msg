@@ -6,6 +6,19 @@ from msg.core.codec import canonical,digest,wire
 from msg.core.errors import Failure,require
 
 
+# Older credential contracts remain in the registry so their published short
+# codes and schemas can explain the migration path, but the executor rejects
+# them. Keep this metadata separate from OperationSpec so contract identity and
+# published operation rows remain unchanged.
+_DEPRECATED_OPERATIONS={
+    ('identity.temporary',1):('identity.temporary',3),
+    ('identity.temporary',2):('identity.temporary',3),
+    ('identity.custodial_create',1):('identity.custodial_create',2),
+    ('identity.token_rotate',1):('identity.token_rotate',2),
+    ('identity.token_create',1):('identity.token_create',2),
+}
+
+
 class Registry:
     def __init__(self):
         self._types={}
@@ -136,11 +149,16 @@ class Registry:
         rule_ids=tuple('msg.'+rule for rule in rules)
         require(len(set(rule_ids))==len(rule_ids) and all(rid in RULE_PATHS for rid in rule_ids),
                 'dangling_requires_rules',name)
-        return {'name':spec.name,'version':spec.version,'effect':spec.effect,
+        result={'name':spec.name,'version':spec.version,'effect':spec.effect,
                 'entries':sorted(spec.entries),'require_signature':spec.require_signature,
                 'input_schema':wire(spec.input_schema),'output_schema':wire(spec.output_schema),
                 'requires_rules':[{'rule_id':rule_id,'path':RULE_PATHS[rule_id]}
                                   for rule_id in rule_ids]}
+        replacement=_DEPRECATED_OPERATIONS.get((spec.name,spec.version))
+        if replacement is not None:
+            result.update(deprecated=True,
+                          replaced_by=f'{replacement[0]}@{replacement[1]}')
+        return result
 
     def catalog(self,entry='network'):
         values=[self.describe(s) for s in self.operations(entry)]

@@ -7,6 +7,18 @@ from msg.core.codec import canonical,digest,wire
 from msg.core.models import OperationRequest,SignatureProof,TokenProof
 
 
+# Old issuance contracts did not bind independent recovery material before
+# commit. Never execute or replay them: a historical result cannot prove
+# whether its secret was already delivered to the caller.
+SECRET_DELIVERY_MIN_VERSION = {
+    'identity.temporary': 3,
+    'identity.custodial_create': 2,
+    'identity.token_rotate': 2,
+    'identity.token_create': 2,
+    'identity.token_recover': 1,
+}
+
+
 def payload_fields(request):
     data=wire(request)
     for field in ('proof','payload_digest','source','expires_at'):
@@ -41,8 +53,6 @@ def receipt_bytes(result):
     value=wire(result)
     for field in ('receipt','replayed','prefer_cli','cli_url'):
         value.pop(field,None)
-    if result.operation in {'identity.temporary','identity.custodial_create',
-                            'identity.token_rotate','identity.token_create',
-                            'identity.token_recover'} and value.get('data'):
+    if result.operation in SECRET_DELIVERY_MIN_VERSION and value.get('data'):
         value['data'].pop('token',None)
     return canonical(value)

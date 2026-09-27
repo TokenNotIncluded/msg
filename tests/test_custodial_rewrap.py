@@ -44,8 +44,10 @@ async def test_pending_rewrap_converts_only_selected_revision_and_keeps_vault(in
     if shutil.which('age') is None:
         pytest.skip('age CLI is unavailable')
     app,_=installed
+    recovery_secret=b64(os.urandom(32))
     created=await call(app,'identity.custodial_create',{
-        'handle':'cust-rewrap','nonce':b64(os.urandom(32))})
+        'handle':'cust-rewrap','nonce':b64(os.urandom(32)),
+        'recovery_secret':recovery_secret},contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     old_key_id=created.data['encryption_key_id']
@@ -74,7 +76,8 @@ async def test_pending_rewrap_converts_only_selected_revision_and_keeps_vault(in
                       subject=subject,token=token,expected=((rid,1),))
     assert denied.status=='error' and denied.error.code=='custodial_rewrap_key_mismatch'
     outsider=await call(app,'identity.custodial_create',{
-        'handle':'cust-outsider','nonce':b64(os.urandom(32))})
+        'handle':'cust-outsider','nonce':b64(os.urandom(32)),
+        'recovery_secret':b64(os.urandom(32))},contract_version=2)
     other_token=(outsider.data['credential_id'],unb64(outsider.data['token']))
     denied=await call(app,'identity.custodial_rewrap_entry',args,
                       subject=outsider.data['subject_id'],token=other_token,expected=((rid,1),))

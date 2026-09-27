@@ -20,8 +20,10 @@ async def test_historical_revision_gets_independent_mapped_copy(installed,tmp_pa
     if shutil.which('age') is None:
         pytest.skip('age CLI is unavailable')
     app,_=installed
+    recovery_secret=b64(os.urandom(32))
     created=await call(app,'identity.custodial_create',{
-        'handle':'history-copy','nonce':b64(os.urandom(32))})
+        'handle':'history-copy','nonce':b64(os.urandom(32)),
+        'recovery_secret':recovery_secret},contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     old_plain=b'first historical secret\n'

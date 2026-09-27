@@ -38,7 +38,8 @@ async def finish(app,subject,token,signer,age_identity,challenge, *, rid='upgrad
 async def test_wrong_age_proof_fails_without_losing_old_token_or_vault(installed):
     app,_=installed
     created=await call(app,'identity.custodial_create',{'handle':'cust-proof',
-        'nonce':b64(os.urandom(32))})
+        'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32))},
+        contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     signer=Ed25519Signer.generate()
@@ -59,7 +60,8 @@ async def test_wrong_age_proof_fails_without_losing_old_token_or_vault(installed
 async def test_wrong_new_signer_ack_consumes_challenge_without_revoking_token(installed):
     app,_=installed
     created=await call(app,'identity.custodial_create',{'handle':'cust-ack',
-        'nonce':b64(os.urandom(32))})
+        'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32))},
+        contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     signer=Ed25519Signer.generate()
@@ -77,7 +79,8 @@ async def test_wrong_new_signer_ack_consumes_challenge_without_revoking_token(in
 async def test_server_tracked_age_ciphertext_keeps_upgrade_pending(installed):
     app,_=installed
     created=await call(app,'identity.custodial_create',{'handle':'cust-pending',
-        'nonce':b64(os.urandom(32))})
+        'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32))},
+        contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     # This test inserts a keystore age revision through the trusted store to
@@ -118,7 +121,8 @@ async def test_server_tracked_age_ciphertext_keeps_upgrade_pending(installed):
 async def test_empty_custodial_upgrade_switches_atomically_and_replays_result(installed):
     app,_=installed
     created=await call(app,'identity.custodial_create',{'handle':'cust-empty',
-        'nonce':b64(os.urandom(32))})
+        'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32))},
+        contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     old_post=await call(app,'content.post_create',{'parent':'/main','body':'old signature'},

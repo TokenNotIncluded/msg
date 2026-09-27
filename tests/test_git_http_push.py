@@ -30,8 +30,9 @@ async def test_git_push_advertisement_requires_token_and_ordinary_path_stays_rea
     rid=created.resources[0].id
     grant=grant_for(app.registry.capability('git.basic'))
     issued=await call(app,'identity.token_create',
-                      {'nonce':b64(os.urandom(32)),'ceiling':wire((grant,)),'ttl':3600},
-                      key=key,subject=user)
+                      {'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32)),
+                       'ceiling':wire((grant,)),'ttl':3600},
+                      key=key,subject=user,contract_version=2)
     assert issued.status=='ok',wire(issued)
     direct=await call(app,'git.http_receive',
                       {'id':rid,'pack_digest':'sha256:'+'0'*64,'pack_size':0},
@@ -75,8 +76,9 @@ async def test_git_http_receive_requires_explicit_request_id(installed):
     rid=created.resources[0].id
     grant=grant_for(app.registry.capability('git.basic'))
     issued=await call(app,'identity.token_create',
-                      {'nonce':b64(os.urandom(32)),'ceiling':wire((grant,)),'ttl':3600},
-                      key=key,subject=user)
+                      {'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32)),
+                       'ceiling':wire((grant,)),'ttl':3600},
+                      key=key,subject=user,contract_version=2)
     basic=base64.b64encode((issued.data['credential_id']+':'+issued.data['token']).encode()).decode()
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                  base_url='http://testserver') as http:
@@ -113,8 +115,9 @@ async def test_interrupted_pack_is_removed_and_request_id_can_retry(installed):
     rid=created.resources[0].id
     grant=grant_for(app.registry.capability('git.basic'))
     issued=await call(app,'identity.token_create',
-                      {'nonce':b64(os.urandom(32)),'ceiling':wire((grant,)),'ttl':3600},
-                      key=key,subject=user)
+                      {'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32)),
+                       'ceiling':wire((grant,)),'ttl':3600},
+                      key=key,subject=user,contract_version=2)
     basic=base64.b64encode((issued.data['credential_id']+':'+issued.data['token']).encode()).decode()
     headers={'Authorization':'Basic '+basic,'X-Msg-Request-Id':'interrupted-once',
              'Content-Type':'application/x-git-receive-pack-request'}
@@ -145,8 +148,9 @@ async def test_standard_git_push_uses_guarded_http_endpoint_once(installed,tmp_p
     rid=created.resources[0].id
     grant=grant_for(app.registry.capability('git.basic'))
     issued=await call(app,'identity.token_create',
-                      {'nonce':b64(os.urandom(32)),'ceiling':wire((grant,)),'ttl':3600},
-                      key=key,subject=user)
+                      {'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32)),
+                       'ceiling':wire((grant,)),'ttl':3600},
+                      key=key,subject=user,contract_version=2)
     basic=base64.b64encode((issued.data['credential_id']+':'+issued.data['token']).encode()).decode()
     application=create_app(app)
     captured=[]
@@ -235,8 +239,9 @@ async def test_http_git_reference_hook_rechecks_revoked_token(installed):
     rid=created.resources[0].id
     grant=grant_for(app.registry.capability('git.basic'))
     issued=await call(app,'identity.token_create',
-                      {'nonce':b64(os.urandom(32)),'ceiling':wire((grant,)),'ttl':3600},
-                      key=key,subject=user)
+                      {'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32)),
+                       'ceiling':wire((grant,)),'ttl':3600},
+                      key=key,subject=user,contract_version=2)
     packet=request_for('git.http_receive',
                        {'id':rid,'pack_digest':'sha256:'+'0'*64,'pack_size':0},
                        app.settings.service_url,token=(issued.data['credential_id'],

@@ -2,9 +2,10 @@
 from __future__ import annotations
 import re
 import zlib
+from collections.abc import Mapping
 from msg.core.codec import decode,loads,unb64,canonical,wire
 from msg.core.errors import require,Failure
-from msg.core.models import OperationRequest,OperationResult
+from msg.core.models import OperationRequest,OperationResult,TokenProof
 from msg.plugins.schemas import obj,IDENTIFIER,STRING,BYTES,REF,SIGNATURE
 
 REQUEST_SCHEMA=obj({
@@ -27,6 +28,34 @@ RESULT_SCHEMA={'type':'object','properties':{
     'replayed':{'type':'boolean'},'receipt':SIGNATURE,'error':{'type':'object'},'data':{'type':'object'},
     'output':REF,'prefer_cli':{'type':'boolean'},'cli_url':STRING},
     'required':['request_id','operation','status'],'additionalProperties':False}
+
+
+_URL_SECRET_FIELDS = frozenset({'token', 'recovery_secret',
+    'new_recovery_secret', 'private_key', 'secret', 'bootstrap_claim',
+    'password', 'api_key', 'authorization'})
+_CLAIM_OPERATIONS = frozenset({'identity.temporary', 'identity.custodial_create',
+    'identity.token_create', 'identity.token_rotate', 'identity.token_recover'})
+
+
+def require_url_safe_packet(packet: OperationRequest) -> None:
+    """Reject credentials and recovery claims before a GET URL is dispatched.
+
+    A signature is a bounded request proof; TokenProof and issuance claims are
+    reusable secrets. This guards both clients constructing URL packets and the
+    server receiving hand-built packets, including gzip envelopes.
+    """
+    require(not isinstance(packet.proof, TokenProof), 'secure_channel_required')
+    require(packet.operation not in _CLAIM_OPERATIONS, 'secure_channel_required')
+
+    def has_secret(value):
+        if isinstance(value, Mapping):
+            return any(key.casefold() in _URL_SECRET_FIELDS or has_secret(item)
+                       for key, item in value.items())
+        if isinstance(value, (list, tuple)):
+            return any(has_secret(item) for item in value)
+        return False
+
+    require(not has_secret(packet.arguments), 'secure_channel_required')
 
 
 def decode_packet(value,max_bytes=1048576):

@@ -15,16 +15,19 @@ from test_service import call,register
 @pytest.mark.asyncio
 async def test_custodial_bootstrap_encrypts_two_keys_and_signs_revision(installed):
     app, _ = installed
-    args={'handle':'vault-agent','nonce':b64(os.urandom(32))}
-    created=await call(app,'identity.custodial_create',args,rid='vault-bootstrap')
+    args={'handle':'vault-agent','nonce':b64(os.urandom(32)),
+          'recovery_secret':b64(os.urandom(32))}
+    created=await call(app,'identity.custodial_create',args,rid='vault-bootstrap',
+                       contract_version=2)
     assert created.status=='ok',wire(created)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     assert created.data['signature_source']=='custodial'
     assert created.data['server_signable'] and created.data['server_decryptable']
     verify(app.receipt_signer.public_key,receipt_bytes(created),created.receipt,purpose='receipt')
-    replay=await call(app,'identity.custodial_create',args,rid='vault-bootstrap')
-    assert replay.status=='ok' and replay.replayed and replay.data['token']==created.data['token']
+    replay=await call(app,'identity.custodial_create',args,rid='vault-bootstrap',
+                      contract_version=2)
+    assert replay.error.code=='token_delivery_unavailable'
     status=await call(app,'identity.custodial_status',{},subject=subject,token=token)
     assert status.status=='ok' and status.data['server_signable'] and status.data['server_decryptable']
     posted=await call(app,'content.post_create',{'parent':'/main','body':'server held signing key'},
@@ -76,7 +79,8 @@ async def test_custodial_bootstrap_encrypts_two_keys_and_signs_revision(installe
 async def test_custodial_token_scope_and_upgrade_fail_closed(installed):
     app, _ = installed
     created=await call(app,'identity.custodial_create',{'handle':'vault-limits',
-        'nonce':b64(os.urandom(32))})
+        'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32))},
+        contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     wrong=await call(app,'content.post_create',{'parent':'/main','body':'wrong token'},
@@ -106,11 +110,13 @@ async def test_custodial_token_scope_and_upgrade_fail_closed(installed):
 async def test_custodial_rotation_and_vault_tamper_fail_closed(installed):
     app, _ = installed
     created=await call(app,'identity.custodial_create',{'handle':'vault-rotate',
-        'nonce':b64(os.urandom(32))})
+        'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32))},
+        contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
-    rotated=await call(app,'identity.token_rotate',{'nonce':b64(os.urandom(32))},
-                       subject=subject,token=token,rid='vault-rotate-once')
+    rotated=await call(app,'identity.token_rotate',{
+        'nonce':b64(os.urandom(32)),'recovery_secret':b64(os.urandom(32))},
+        subject=subject,token=token,rid='vault-rotate-once',contract_version=2)
     assert rotated.status=='ok' and rotated.data['token']
     new_token=(rotated.data['credential_id'],unb64(rotated.data['token']))
     old=await call(app,'content.post_create',{'parent':'/main','body':'old token'},
@@ -133,13 +139,18 @@ async def test_custodial_rotation_and_vault_tamper_fail_closed(installed):
 
 
 @pytest.mark.asyncio
-async def test_lost_bootstrap_response_can_replay_same_request_without_new_token(installed):
+async def test_lost_bootstrap_response_cannot_replay_token(installed):
     app, _ = installed
-    args={'handle':'vault-lost-response','nonce':b64(os.urandom(32))}
-    await call(app,'identity.custodial_create',args,rid='lost-response')  # response lost in transit
-    recovered=await call(app,'identity.custodial_create',args,rid='lost-response')
-    assert recovered.status=='ok' and recovered.replayed and recovered.data['token']
-    token=(recovered.data['credential_id'],unb64(recovered.data['token']))
-    work=await call(app,'content.post_create',{'parent':'/main','body':'continued after retry'},
-                    subject=recovered.data['subject_id'],token=token)
-    assert work.status=='ok'
+    args={'handle':'vault-lost-response','nonce':b64(os.urandom(32)),
+          'recovery_secret':b64(os.urandom(32))}
+    await call(app,'identity.custodial_create',args,rid='lost-response',
+               contract_version=2)  # response lost in transit
+    replay=await call(app,'identity.custodial_create',args,rid='lost-response',
+                      contract_version=2)
+    assert replay.error.code=='token_delivery_unavailable'
+    async with app.metadata.transaction(write=False) as tx:
+        subject=tx.one('SELECT subject FROM token_deliveries WHERE request_id=?',
+                      ('lost-response',))[0]
+        assert (await tx.subject(subject)).kind=='custodial'
+        assert tx.one('SELECT status FROM custodial_vault WHERE subject=?',
+                      (subject,))[0]=='active'

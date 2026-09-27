@@ -20,7 +20,7 @@ from msg.core.models import BlobRef,SignatureProof
 from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
-from msg.transports.packet import decode_packet, gunzip, path_packet
+from msg.transports.packet import decode_packet, gunzip, path_packet, require_url_safe_packet
 from msg.transports.dictionary import (READ_QUERY_V1_SEGMENTS,READ_QUERY_V2_SEGMENTS,READ_QUERY_V1_SORT,
     READ_QUERY_V1_FIELDS,SEARCH_QUERY_V1_SEGMENTS)
 
@@ -367,6 +367,7 @@ def error_status(code):
     if code in {'generation_conflict','revision_conflict','idempotency_conflict','chunk_conflict','constraint_conflict'}: return 409
     if code in {'request_too_large','path_too_large','response_too_large','use_transfer','part_too_large'}: return 413
     if code in {'method_not_allowed','effect_mismatch'}: return 405
+    if code=='secure_channel_required': return 400
     if code in {'server_busy','issuer_not_ready','dependency_unavailable','service_restart_required','writes_paused'}: return 503
     if code=='internal_error': return 500
     return 400
@@ -455,6 +456,13 @@ def create_app(service):
             limits=service.settings.server.limits
             raw_path=request.scope.get('raw_path',request.url.path.encode())
             require(len(raw_path)<=limits.max_path_bytes,'path_too_large')
+            # URL query strings must never carry bearer/recovery material,
+            # including on routes which otherwise ignore query parameters.
+            for key in request.query_params:
+                require(key.casefold() not in {'token','recovery_secret',
+                        'new_recovery_secret','private_key','bootstrap_claim',
+                        'password','api_key','authorization'},
+                        'secure_channel_required')
             expected=urlsplit(service.settings.service_url)
             supplied=urlsplit('//'+request.headers.get('host',''))
             require(supplied.hostname==expected.hostname and
@@ -1050,6 +1058,9 @@ def create_app(service):
                 spec=service.registry.operation(name)
                 require('network' in spec.entries,'entry_not_allowed')
                 if request.method=='HEAD':
+                    if transport=='g' and encoded is not None:
+                        require_url_safe_packet(path_packet(
+                            encoded,encoding,limits.max_request_bytes))
                     return Response(status_code=200,headers=BASE_HEADERS)
                 if suffix=='schema':
                     require(request.method=='GET','method_not_allowed')
@@ -1070,6 +1081,7 @@ def create_app(service):
                 else:
                     require(encoded is not None and request.method=='GET','method_not_allowed')
                     packet=path_packet(encoded,encoding,limits.max_request_bytes)
+                    require_url_safe_packet(packet)
                 require(packet.operation==name,'operation_mismatch')
                 result=await service.executor.execute(packet,entry='network')
                 value=result_wire(result)
@@ -1098,20 +1110,11 @@ def create_app(service):
                         segments.append(unquote_to_bytes(raw).decode('utf-8'))
                 except UnicodeDecodeError as exc:
                     raise Failure('invalid_path') from exc
-                if request.method=='HEAD':
-                    return Response(status_code=200,headers=BASE_HEADERS)
                 if segments and segments[0] in {'token','bootstrap'}:
-                    require(not request.url.query,'unknown_query_parameter')
-                    require('x-msg-request' not in request.headers,'ambiguous_proof')
-                    decoded=short_codes.decode_direct_write_path(code,segments)
-                    require(len(decoded.request_id)<=128,'invalid_request_id')
-                    token=(decoded.credential_id,decoded.token) if decoded.kind=='token' else None
-                    packet=request_for(decoded.spec.name,decoded.arguments,
-                                       service.settings.service_url,subject=decoded.subject,
-                                       token=token,request_id=decoded.request_id,
-                                       expires_at=decoded.expires_at,source='manual',
-                                       expected=decoded.expected_generations)
+                    raise Failure('secure_channel_required')
                 else:
+                    if request.method=='HEAD':
+                        return Response(status_code=200,headers=BASE_HEADERS)
                     spec,args=short_codes.decode_get_path(code,segments)
                     header=request.headers.get('x-msg-request')
                     if header:

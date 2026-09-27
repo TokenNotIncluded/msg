@@ -14,6 +14,7 @@ from msg.core.cursors import CursorCodec
 from msg.core.errors import Failure, require
 from msg.core.executor import OperationExecutor
 from msg.core.models import Certificate, Scope
+from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
 from msg.core.registry import Registry
 from msg.security.authentication import AuthenticationService
 from msg.security.authorization import AuthorizationService
@@ -136,8 +137,9 @@ class Application:
 
     def record_token_delivery(self,tx,request,credential,now,*,recovery_deadline=None):
         """Bind recovery before commit; neither token nor recovery secret is stored."""
-        if request.contract_version<2 and request.operation!='identity.token_recover':
-            return
+        require(request.operation in SECRET_DELIVERY_MIN_VERSION and
+                request.contract_version>=SECRET_DELIVERY_MIN_VERSION[request.operation],
+                'credential_delivery_upgrade_required')
         field='new_recovery_secret' if request.operation=='identity.token_recover' else 'recovery_secret'
         secret=unb64(request.arguments[field],limit=64)
         require(secret!=unb64(request.arguments['nonce'],limit=64),'recovery_secret_not_independent')
@@ -158,22 +160,22 @@ class Application:
         if result.status!='ok' or request.operation not in {'identity.temporary','identity.custodial_create',
                 'identity.token_rotate','identity.token_create','identity.token_recover'}:
             return result
+        require(request.contract_version>=SECRET_DELIVERY_MIN_VERSION[request.operation],
+                'credential_delivery_upgrade_required')
         token=self.issued_token(request,result.subject)
-        strict=request.contract_version>=2 or request.operation=='identity.token_recover'
-        async with self.metadata.transaction(write=strict) as tx:
+        async with self.metadata.transaction(write=True) as tx:
             credential=await tx.credential(result.data['credential_id'])
             require(credential.revoked_at is None and credential.expires_at>self.clock(),'credential_expired')
             require(hmac.compare_digest(credential.verifier,hashlib.sha256(token).digest()),'invalid_token_result')
-            if strict:
-                row=tx.one('''SELECT subject,request_id,request_digest,claimed_at,consumed_at
-                    FROM token_deliveries WHERE credential_id=?''',(credential.id,))
-                require(row is not None and row[0]==result.subject and row[1]==request.request_id
-                        and row[2]==request.payload_digest and row[4] is None,'token_delivery_unavailable')
-                require(row[3] is None,'token_delivery_unavailable')
-                updated=tx.execute('''UPDATE token_deliveries SET claimed_at=? WHERE credential_id=?
-                    AND claimed_at IS NULL AND consumed_at IS NULL''',
-                    (wire(self.clock()),credential.id),write=True)
-                require(updated.rowcount==1,'token_delivery_unavailable')
+            row=tx.one('''SELECT subject,request_id,request_digest,claimed_at,consumed_at
+                FROM token_deliveries WHERE credential_id=?''',(credential.id,))
+            require(row is not None and row[0]==result.subject and row[1]==request.request_id
+                    and row[2]==request.payload_digest and row[4] is None,'token_delivery_unavailable')
+            require(row[3] is None,'token_delivery_unavailable')
+            updated=tx.execute('''UPDATE token_deliveries SET claimed_at=? WHERE credential_id=?
+                AND claimed_at IS NULL AND consumed_at IS NULL''',
+                (wire(self.clock()),credential.id),write=True)
+            require(updated.rowcount==1,'token_delivery_unavailable')
         # The claim commits before the adapter sees the token. A dropped response
         # must use a separate, pre-bound recovery secret to rotate the credential.
         return replace(result,data=dict(result.data,token=b64(token)))

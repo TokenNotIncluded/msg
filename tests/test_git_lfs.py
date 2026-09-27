@@ -26,8 +26,9 @@ async def test_lfs_upload_only_under_execution_boundary_and_current_repo_acl(ins
     assert created.status=='ok',wire(created)
     rid=created.resources[0].id
     issued=await call(app,'identity.token_create',{'nonce':b64(os.urandom(32)),
+        'recovery_secret':b64(os.urandom(32)),
         'ceiling':wire((grant_for(app.registry.capability('git.basic')),)),'ttl':3600},
-        key=key,subject=user)
+        key=key,subject=user,contract_version=2)
     basic='Basic '+base64.b64encode((issued.data['credential_id']+':'+issued.data['token']).encode()).decode()
     data=b'large-file-content\n'*100
     oid=hashlib.sha256(data).hexdigest()
@@ -148,8 +149,9 @@ async def test_real_git_lfs_push_and_pull(installed,tmp_path):
                        key=key,subject=user)
     rid=created.resources[0].id
     issued=await call(app,'identity.token_create',{'nonce':b64(os.urandom(32)),
+        'recovery_secret':b64(os.urandom(32)),
         'ceiling':wire((grant_for(app.registry.capability('git.basic')),)),'ttl':3600},
-        key=key,subject=user)
+        key=key,subject=user,contract_version=2)
     basic='Basic '+base64.b64encode((issued.data['credential_id']+':'+issued.data['token']).encode()).decode()
     application=create_app(app)
     port_holder=[0]

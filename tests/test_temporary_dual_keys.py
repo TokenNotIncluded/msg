@@ -7,7 +7,7 @@ import pytest
 from msg.core.codec import b64, canonical, unb64, wire
 from msg.security.age_keys import generate_age_key, public_from_recipient
 from msg.security.crypto import Ed25519Signer
-from test_service import call
+from test_service import call, temporary_v3_args
 
 
 def temporary_arguments(signer, recipient, *, nonce, request_id):
@@ -63,6 +63,14 @@ async def test_temporary_v3_creates_two_client_keys_and_upgrade_reuses_them(inst
     assert upgraded.data['subject_id']==subject
     assert upgraded.data['key_id']==created.data['identity_key_id']
     assert upgraded.data['encryption_key_id']==created.data['encryption_key_id']
+    old_token=(created.data['credential_id'],unb64(created.data['token']))
+    denied=await call(app,'content.post_create',{'parent':'/main','body':'old token'},
+                      subject=subject,token=old_token)
+    assert denied.error.code=='credential_revoked'
+    signed=await call(app,'content.post_create',
+                      {'parent':'/main','body':'new signing key'},
+                      key=signer,subject=subject)
+    assert signed.status=='ok',wire(signed)
     async with app.metadata.transaction(write=False) as tx:
         assert tx.one('SELECT COUNT(*) FROM identity_keys WHERE subject=?',(subject,))[0]==1
         assert tx.one('SELECT COUNT(*) FROM encryption_subkeys WHERE subject=?',(subject,))[0]==1
@@ -88,3 +96,34 @@ async def test_legacy_temporary_versions_and_false_key_proof_create_no_subject(i
     assert denied.status=='error'
     async with app.metadata.transaction(write=False) as tx:
         assert tx.one("SELECT COUNT(*) FROM identities WHERE kind='temporary'")[0]==before
+
+
+@pytest.mark.asyncio
+async def test_temporary_upgrade_cannot_silently_replace_creation_keys(installed):
+    app,_=installed
+    original=Ed25519Signer.generate()
+    _,recipient=generate_age_key()
+    args,request_id,_,_=temporary_v3_args(
+        signer=original,recipient=recipient)
+    created=await call(app,'identity.temporary',args,rid=request_id,
+                       contract_version=3)
+    assert created.status=='ok',wire(created)
+    subject=created.data['subject_id']
+    replacement=Ed25519Signer.generate()
+    _,new_recipient=generate_age_key()
+    signed={'subject_id':subject,'handle':'changed-temporary',
+            'public_key':b64(replacement.public_key),
+            'encryption_recipient':new_recipient}
+    denied=await call(app,'identity.upgrade',{
+        'handle':signed['handle'],'public_key':signed['public_key'],
+        'encryption_recipient':new_recipient,
+        'possession_proof':wire(replacement.sign(canonical(signed),purpose='upgrade'))},
+        subject=subject,
+        token=(created.data['credential_id'],unb64(created.data['token'])),
+        contract_version=2)
+    assert denied.error.code=='temporary_identity_key_mismatch'
+    async with app.metadata.transaction(write=False) as tx:
+        assert (await tx.subject(subject)).kind=='temporary'
+        assert tx.one('SELECT COUNT(*) FROM identity_keys WHERE subject=?',(subject,))[0]==1
+        assert tx.one('SELECT COUNT(*) FROM encryption_subkeys WHERE subject=?',
+                      (subject,))[0]==1

@@ -10,7 +10,7 @@ import os
 
 from msg.core.codec import canonical, digest, loads, parse_time, wire
 from msg.core.errors import require
-from msg.core.models import HandlerOutput, Subject
+from msg.core.models import HandlerOutput
 from msg.plugins.common import registration
 from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _balance, _post_transfer
 from msg.plugins.schemas import IDENTIFIER, obj
@@ -136,9 +136,10 @@ def install(app):
         # payload digest covers the quoted revision, currency, quantity and
         # total; the server-generated order ID is not falsely attributed to
         # the buyer's signature.
-        # No Resource, key, credential or signable profile exists for escrow.
-        await tx.update_identity(Subject(resource_id=escrow, kind='system',
-            primary_group='g_public', auth_version=0, local_only=True), -1)
+        # Escrow is a LedgerAccount, never an Identity/Subject. It has no
+        # Resource, key, credential, signer or network authentication path.
+        tx.execute('''INSERT INTO ledger_accounts(id,kind,subject_id,source_id)
+            VALUES (?,'order_escrow',NULL,?)''', (escrow,order_id), write=True)
         receipt = _post_transfer(tx, sender=buyer, recipient=escrow,
             amount=total, actor=buyer, request_id=request.request_id,
             now=ctx.now, receipt_signer=app.receipt_signer,

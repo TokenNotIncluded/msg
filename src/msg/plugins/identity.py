@@ -1013,7 +1013,7 @@ def install(app):
         if public is not None:
             signing_id=key_id(public)
             signing_credential=Credential(id=signing_id,subject_id=user.id,
-                kind='signing_key',verifier=public,ceiling=(),not_before=ctx.now,
+                kind='signing_key',verifier=public,ceiling=app.temporary_ceiling(),not_before=ctx.now,
                 expires_at=None,revoked_at=None)
             await tx.save_credential(signing_credential,0)
             tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
@@ -1101,6 +1101,12 @@ def install(app):
             require(existing_encryption==(encryption_id,a['encryption_recipient']),
                     'temporary_encryption_key_mismatch')
         certificate=await issue_online(app,tx,subject.resource_id,credential.id,ctx,request)
+        for (raw,) in tx.rows('SELECT body FROM credentials WHERE subject=?',
+                              (subject.resource_id,)):
+            previous=decode(Credential,loads(raw))
+            if previous.kind=='token' and previous.revoked_at is None:
+                await tx.save_credential(replace(previous,revoked_at=ctx.now),
+                                         subject.auth_version+1)
         return HandlerOutput(resources=(ResourceRef(id=subject.resource_id),),data={'subject_id':subject.resource_id,
             'key_id':credential.id,'encryption_key_id':encryption_id,
             'encryption_recipient':a['encryption_recipient'],

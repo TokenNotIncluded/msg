@@ -121,17 +121,22 @@ async def test_key_id_cannot_be_reassigned_by_temporary_upgrade(installed):
 
 
 @pytest.mark.asyncio
-async def test_token_rotation_retry_returns_same_token_not_another_rotation(installed):
+async def test_token_rotation_retry_releases_once_and_revokes_old_credential(installed):
     app,_=installed
     temp_args,temp_rid,_,_=temporary_v3_args()
     tmp=await call(app,'identity.temporary',temp_args,rid=temp_rid,contract_version=3)
     uid=tmp.data['subject_id']
     token=(tmp.data['credential_id'],unb64(tmp.data['token']))
-    args={'nonce':b64(os.urandom(32))}
-    first=await call(app,'identity.token_rotate',args,subject=uid,token=token,rid='rotate-once')
+    nonce=b64(os.urandom(32))
+    recovery_secret=b64(os.urandom(32))
+    assert nonce!=recovery_secret
+    args={'nonce':nonce,'recovery_secret':recovery_secret}
+    first=await call(app,'identity.token_rotate',args,subject=uid,token=token,
+                     rid='rotate-once',contract_version=2)
     assert first.status=='ok',wire(first)
-    again=await call(app,'identity.token_rotate',args,subject=uid,token=token,rid='rotate-once')
-    assert again.status=='ok' and again.replayed and again.data['token']==first.data['token'],wire(again)
+    again=await call(app,'identity.token_rotate',args,subject=uid,token=token,
+                     rid='rotate-once',contract_version=2)
+    assert again.error.code=='token_delivery_unavailable',wire(again)
     denied=await call(app,'content.post_create',{'parent':'/main','body':'old credential'},subject=uid,token=token)
     assert denied.error.code=='credential_revoked',wire(denied)
 

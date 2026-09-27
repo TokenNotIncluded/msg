@@ -5,19 +5,19 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
-from dataclasses import dataclass, field
-from datetime import datetime
 from importlib.resources import files
 from urllib.parse import quote
 
-from msg.core.codec import canonical, digest, loads, parse_time, unb64
+from msg.core.codec import canonical, digest, loads
 from msg.core.errors import Failure, require
-from msg.core.models import OperationSpec
 
 
 _PREFIX = {"namespace": "n", "operation": "o", "field": "f", "enum": "e"}
 _SCALAR = {"string", "integer", "number", "boolean"}
 _DEFAULT_PUBLISHED = object()
+_SECRET_OPERATIONS = frozenset({'identity.temporary', 'identity.custodial_create',
+    'identity.token_create', 'identity.token_rotate', 'identity.token_recover',
+    'sharing.link_read'})
 
 # Versioned, published path grammar for bounded GET-only read queries. The
 # meanings of these short segments must not change within version 1.
@@ -50,21 +50,6 @@ def read_query_path_document(registry):
                          'seal':'/-/g/transfer.query_seal/j/{signed-packet}',
                          'descriptor':{'version':1,'kind':'read','arguments':'{ReadQuery arguments}'},
                          'read':'/_r/q/{query_ref}/p/{short-lived-signed-query_get-packet}'}}
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class DirectWritePath:
-    """Decoded URL claims; the HTTP adapter must still authenticate the request."""
-
-    spec: OperationSpec
-    arguments: dict
-    kind: str
-    request_id: str
-    expires_at: datetime
-    subject: str | None = None
-    credential_id: str | None = None
-    expected_generations: tuple[tuple[str, int], ...] = ()
-    token: bytes | None = field(default=None, repr=False)
 
 
 def _code(kind: str, identity: str) -> str:
@@ -122,7 +107,13 @@ class ShortCodeDictionary:
             identity = f"{spec.name}@{spec.version}"
             namespace = spec.name.split(".", 1)[0]
             namespaces.add(namespace)
-            op_code = self._add("operation", identity, value=identity)
+            description = registry.describe(spec)
+            replacement = description.get("replaced_by")
+            op_code = self._add(
+                "operation", identity, value=identity,
+                deprecated=description.get("deprecated", False),
+                replaced_by=(_code("operation", replacement) if replacement else None),
+            )
             self._operations[op_code] = spec
             schema = registry.schema(spec.input_schema)
             properties = schema.get("properties", {})
@@ -147,8 +138,8 @@ class ShortCodeDictionary:
             direct = (spec.name != "sharing.link_read" and spec.effect == "read" and
                       schema.get("type") == "object" and
                       all(name in properties and _is_scalar(properties[name]) for name in required))
-            if spec.name == "sharing.link_read":
-                template = "/-/p/sharing.link_read"
+            if spec.name in _SECRET_OPERATIONS:
+                template = "/-/p/" + spec.name
                 example = None
             elif direct:
                 template = "/-/g/" + op_code + "".join("/{" + name + "}" for name in required)
@@ -164,31 +155,21 @@ class ShortCodeDictionary:
                 example = None
             direct_write_template = None
             direct_expected_template = None
-            if spec.effect != "read" and schema.get("type") == "object" and all(
-                name in properties and _is_scalar(properties[name]) for name in required
-            ):
-                if spec.name == "identity.temporary":
-                    direct_write_template = ("/-/g/" + op_code +
-                        "/bootstrap/{request_id}/{UTC-expiry}/args")
-                else:
-                    direct_write_template = ("/-/g/" + op_code +
-                        "/token/{credential_id}/{token}/{subject}/{request_id}/{UTC-expiry}/args")
-                    direct_expected_template = direct_write_template.replace(
-                        "/args", "/expected/{resource_id}/{generation}/args")
-                direct_write_template += "".join(
-                    "/" + self.code_for("field", f"{identity}:{name}") + "/{" + name + "}"
-                    for name in required)
-                if direct_expected_template is not None:
-                    direct_expected_template += "".join(
-                        "/" + self.code_for("field", f"{identity}:{name}") + "/{" + name + "}"
-                        for name in required)
+            legacy_direct_write = (spec.effect != 'read' and
+                schema.get('type') == 'object' and all(
+                    name in properties and _is_scalar(properties[name]) for name in required))
+            # There is no safe bearer-token or bootstrap-claim direct-write
+            # grammar. Signed packet GET remains available for non-secret work.
             operations.append({"name": spec.name, "version": spec.version,
                                "code": op_code, "namespace": namespace,
                                "effect": spec.effect, "fields": fields,
                                "required": required, "shortest_template": template,
                                "example": example, "direct": direct,
+                               "requires_secure_channel": spec.name in _SECRET_OPERATIONS,
                                "direct_write_template": direct_write_template,
-                               "direct_expected_template": direct_expected_template})
+                               "direct_expected_template": direct_expected_template,
+                               "direct_write_status": ('rejected_legacy_secret_url'
+                                   if legacy_direct_write else None)})
         for namespace in sorted(namespaces):
             self._add("namespace", namespace, value=namespace)
         self.document = {"version": 1, "entry": entry,
@@ -277,10 +258,18 @@ class ShortCodeDictionary:
         require(type(key) is str and bool(key), "unknown_short_code")
         for kind in ("namespace", "operation"):
             row = self._by_code[kind].get(key)
+            if row is None and kind == "operation":
+                row = self._by_code[kind].get(self._by_identity[kind].get(key))
             if row is not None and row["deprecated"]:
+                replacement_code = row.get("replaced_by")
+                replacement_row = (self._by_code["operation"].get(replacement_code)
+                                   if replacement_code else None)
                 return {"version": 1, "entry": self.entry, "scope": key,
                         "kind": kind, "identity": row["identity"],
-                        "deprecated": True, "replaced_by": row.get("replaced_by")}
+                        "deprecated": True, "replaced_by": replacement_code,
+                        "replacement": ({"code": replacement_code,
+                                         "identity": replacement_row["identity"]}
+                                        if replacement_row else None)}
         if key.startswith("n") and key in self._by_code["namespace"]:
             namespace = self.resolve("namespace", key)["identity"]
             operations = [row for row in self.document["operations"]
@@ -295,6 +284,11 @@ class ShortCodeDictionary:
             else:
                 identity = key if "@" in key else key + "@1"
                 code = self.code_for("operation", identity)
+                if "@" not in key and self._by_code["operation"][code]["deprecated"]:
+                    active = [(spec.version, candidate) for candidate, spec in self._operations.items()
+                              if spec.name == key and not self._by_code["operation"][candidate]["deprecated"]]
+                    require(active, "deprecated_short_code")
+                    code = max(active)[1]
             self.resolve_operation(code)
             operations = [row for row in self.document["operations"] if row["code"] == code]
             namespace = operations[0]["namespace"]
@@ -343,87 +337,9 @@ class ShortCodeDictionary:
 
     def decode_direct_write_path(
         self, operation_code: str, segments: list[str] | tuple[str, ...],
-    ) -> DirectWritePath:
-        """Decode token/bootstrap URL syntax without granting any authority."""
-        spec = self.resolve_operation(operation_code)
-        require(spec.effect != "read", "direct_path_write_required")
-        require(isinstance(segments, (list, tuple)) and
-                all(type(segment) is str for segment in segments), "invalid_path_arguments")
-        require(bool(segments), "invalid_path_arguments")
-        require(sum(len(segment.encode("utf-8")) + 1 for segment in segments) <= 8192,
-                "path_too_large")
-        kind = segments[0]
-        expected_generations = ()
-        if kind == "token":
-            require(spec.name != "identity.temporary", "invalid_bootstrap")
-            require(len(segments) >= 7, "invalid_direct_write_path")
-            credential_id, encoded_token, subject, request_id, expiry = segments[1:6]
-            require(all(re.fullmatch(r"[A-Za-z0-9_-]{1,160}", item)
-                        for item in (credential_id, subject)) and
-                    re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id) is not None,
-                    "invalid_direct_write_metadata")
-            token = unb64(encoded_token, limit=64)
-            require(len(token) >= 24, "invalid_direct_write_metadata")
-            if segments[6] == "args":
-                rest = segments[7:]
-            else:
-                require(segments[6] == "expected", "invalid_direct_write_path")
-                try:
-                    args_index = segments.index("args", 7)
-                except ValueError as exc:
-                    raise Failure("invalid_direct_write_path") from exc
-                expected_parts = segments[7:args_index]
-                require(bool(expected_parts) and len(expected_parts) % 2 == 0 and
-                        len(expected_parts) <= 64, "invalid_expected_generations")
-                expected = []
-                seen = set()
-                for resource_id, generation in zip(expected_parts[::2], expected_parts[1::2]):
-                    require(re.fullmatch(r"[A-Za-z0-9_-]{1,160}", resource_id) is not None and
-                            resource_id not in {"args", "expected"} and resource_id not in seen and
-                            re.fullmatch(r"(?:0|[1-9][0-9]{0,18})", generation) is not None and
-                            int(generation) <= 2**63 - 1,
-                            "invalid_expected_generations")
-                    seen.add(resource_id)
-                    expected.append((resource_id, int(generation)))
-                expected_generations = tuple(expected)
-                rest = segments[args_index + 1:]
-        elif kind == "bootstrap":
-            require(spec.name == "identity.temporary", "invalid_bootstrap")
-            require(len(segments) >= 4 and segments[3] == "args", "invalid_direct_write_path")
-            request_id, expiry = segments[1:3]
-            require(re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id) is not None,
-                    "invalid_direct_write_metadata")
-            credential_id = subject = token = None
-            rest = segments[4:]
-        else:
-            raise Failure("invalid_direct_write_path")
-        require(1 <= len(expiry) <= 40, "invalid_direct_write_metadata")
-        expires_at = parse_time(expiry)
-        require(len(rest) % 2 == 0, "invalid_path_arguments")
-        schema = self.registry.schema(spec.input_schema)
-        properties = schema.get("properties", {})
-        required = schema.get("required", [])
-        require(all(name in properties and _is_scalar(properties[name]) for name in required),
-                "direct_path_unavailable")
-        arguments = {}
-        for field_code, raw in zip(rest[::2], rest[1::2]):
-            require(len(raw.encode("utf-8")) <= 4096, "direct_path_value_too_long")
-            field_row = self.resolve("field", field_code)
-            require(field_row.get("operation") == f"{spec.name}@{spec.version}",
-                    "field_code_operation_mismatch")
-            name = field_row["path"]
-            require(name not in arguments and name in properties and _is_scalar(properties[name]),
-                    "invalid_path_argument")
-            arguments[name] = self._decode_value(spec, name, raw)
-        self.registry.validate(spec.input_schema, arguments)
-        if kind == "bootstrap":
-            require(set(arguments) == {"nonce"}, "invalid_bootstrap")
-            claim = unb64(arguments["nonce"], limit=64)
-            require(len(claim) >= 24, "invalid_bootstrap_nonce")
-        return DirectWritePath(spec=spec, arguments=arguments, kind=kind,
-                               request_id=request_id, expires_at=expires_at,
-                               subject=subject, credential_id=credential_id,
-                               expected_generations=expected_generations, token=token)
+    ):
+        """Legacy bearer/bootstrap URL grammar is intentionally disabled."""
+        raise Failure("secure_channel_required")
 
     def _decode_value(self, spec, name: str, raw: str):
         require(type(raw) is str, "invalid_path_argument")

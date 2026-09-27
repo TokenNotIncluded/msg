@@ -100,8 +100,9 @@ async def test_prefunded_bounty_pays_offline_publisher_and_stops_at_budget(insta
     assert (await call(app,'store.listing_get',{'id':listing})).data['listing']['mode']=='bounty'
     async with app.metadata.transaction(write=False) as tx:
         escrow=created.data['funding']['body']['to_subject']
-        identity=await tx.subject(escrow)
-        assert identity.kind=='system' and identity.local_only
+        assert tx.one('SELECT kind,subject_id,source_id FROM ledger_accounts WHERE id=?',
+                      (escrow,))==('bounty_escrow',None,listing)
+        assert tx.one('SELECT 1 FROM identities WHERE id=?',(escrow,)) is None
         assert tx.one('SELECT COUNT(*) FROM credentials WHERE subject=?',(escrow,))[0]==0
         assert tx.one('SELECT COUNT(*) FROM money_ledger WHERE credit_account=?',(escrow,))[0]==1
     challenge=await call(app,'bounty.challenge',{'listing_id':listing},

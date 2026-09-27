@@ -22,8 +22,10 @@ async def test_new_age_revision_after_start_blocks_finish_and_keeps_old_authorit
     if shutil.which('age') is None:
         pytest.skip('age CLI is unavailable')
     app,_=installed
+    recovery_secret=b64(os.urandom(32))
     created=await call(app,'identity.custodial_create',{
-        'handle':'inventory-drift','nonce':b64(os.urandom(32))})
+        'handle':'inventory-drift','nonce':b64(os.urandom(32)),
+        'recovery_secret':recovery_secret},contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     signer=Ed25519Signer.generate()
@@ -44,8 +46,10 @@ async def test_rewrap_mapping_requires_new_signer_ack_and_retains_historical_vau
     if shutil.which('age') is None:
         pytest.skip('age CLI is unavailable')
     app,_=installed
+    recovery_secret=b64(os.urandom(32))
     created=await call(app,'identity.custodial_create',{
-        'handle':'inventory-ack','nonce':b64(os.urandom(32))})
+        'handle':'inventory-ack','nonce':b64(os.urandom(32)),
+        'recovery_secret':recovery_secret},contract_version=2)
     subject=created.data['subject_id']
     token=(created.data['credential_id'],unb64(created.data['token']))
     plaintext=b'private mapped bytes\n'

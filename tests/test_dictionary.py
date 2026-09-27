@@ -173,127 +173,125 @@ def test_default_build_checks_packaged_publication_snapshot(registry):
     assert automatic.document != build_dictionary(registry, published=None).document
 
 
-def test_token_direct_write_decodes_explicit_claims_and_short_fields(registry):
-    dictionary = build_dictionary(registry, published=None)
+@pytest.mark.parametrize(("old_name", "old_version", "new_name", "new_version"), [
+    ("identity.temporary", 1, "identity.temporary", 3),
+    ("identity.temporary", 2, "identity.temporary", 3),
+    ("identity.custodial_create", 1, "identity.custodial_create", 2),
+    ("identity.token_rotate", 1, "identity.token_rotate", 2),
+    ("identity.token_create", 1, "identity.token_create", 2),
+])
+def test_disabled_credential_versions_are_published_as_deprecated(
+        registry, old_name, old_version, new_name, new_version):
+    dictionary = build_dictionary(registry)
+    old_identity = f"{old_name}@{old_version}"
+    new_identity = f"{new_name}@{new_version}"
+    old_code = dictionary.code_for("operation", old_identity)
+    new_code = dictionary.code_for("operation", new_identity)
+    old_row = next(row for row in dictionary.document["codes"]["operation"]
+                   if row["code"] == old_code)
+    new_spec = dictionary.resolve_operation(new_code)
+    assert old_row["deprecated"] is True
+    assert old_row["replaced_by"] == new_code
+    assert new_spec.name == new_name and new_spec.version == new_version
+    scoped = dictionary.lookup_document(old_code)
+    assert scoped["deprecated"] is True
+    assert scoped["replaced_by"] == new_code
+    assert scoped["replacement"] == {"code": new_code, "identity": new_identity}
+    with pytest.raises(Failure, match="deprecated_short_code"):
+        dictionary.resolve_operation(old_code)
+
+    old_description = next(row for row in dictionary.schema_document["operations"]
+                           if row["name"] == old_name and row["version"] == old_version)
+    assert old_description["deprecated"] is True
+    assert old_description["replaced_by"] == new_identity
+
+
+def test_deprecation_metadata_does_not_rewrite_published_operation_rows(registry):
+    snapshot = loads(files("msg.data").joinpath("shortcodes.json").read_bytes())
+    dictionary = build_dictionary(registry)
+    for operation in snapshot["operations"]:
+        if operation["name"] in {"identity.temporary", "identity.custodial_create",
+                                  "identity.token_rotate", "identity.token_create"}:
+            identity = f"{operation['name']}@{operation['version']}"
+            code = dictionary.code_for("operation", identity)
+            actual = next(row for row in dictionary.document["operations"]
+                          if row["name"] == operation["name"] and
+                          row["version"] == operation["version"])
+            assert actual == operation
+            if operation["version"] == 1 or (
+                    operation["name"] == "identity.temporary" and operation["version"] == 2):
+                code_row = next(row for row in dictionary.document["codes"]["operation"]
+                                if row["code"] == code)
+                assert code_row["deprecated"] is True
+
+
+def test_bare_operation_discovery_uses_active_version_after_v1_retirement(registry):
+    dictionary = build_dictionary(registry)
+    active = dictionary.lookup_document("identity.temporary")
+    assert [row["version"] for row in active["operations"]] == [3]
+    retired = dictionary.lookup_document("identity.temporary@1")
+    assert retired["deprecated"] is True
+    assert retired["replacement"]["identity"] == "identity.temporary@3"
+
+
+def test_legacy_direct_write_codes_stay_stable_but_are_rejected(registry):
+    dictionary = build_dictionary(registry)
     operation = "content.post_create@1"
     code = dictionary.code_for("operation", operation)
     parent = dictionary.code_for("field", operation + ":parent")
-    body = dictionary.code_for("field", operation + ":body")
-    token = b"t" * 32
-    decoded = dictionary.decode_direct_write_path(code, [
-        "token", "t_test", b64(token), "u_test", "request_1",
-        "2026-09-27T00:05:00Z", "args", parent, "/main", body, "hello",
-    ])
-    assert decoded.spec.name == "content.post_create"
-    assert decoded.arguments == {"parent": "/main", "body": "hello"}
-    assert decoded.kind == "token" and decoded.subject == "u_test"
-    assert decoded.credential_id == "t_test" and decoded.token == token
-    assert decoded.request_id == "request_1" and decoded.expires_at.utcoffset().total_seconds() == 0
-    assert b64(token) not in repr(decoded)
-    operation_row = next(row for row in dictionary.document["operations"]
-                         if row["name"] == "content.post_create")
-    assert operation_row["direct_write_template"].startswith("/-/g/" + code + "/token/")
-    assert "/" + parent + "/{parent}" in operation_row["direct_write_template"]
-    assert "/expected/{resource_id}/{generation}/args/" in operation_row["direct_expected_template"]
-
-    expected = dictionary.decode_direct_write_path(code, [
-        "token", "t_test", b64(token), "u_test", "request_1",
-        "2026-09-27T00:05:00Z", "expected", "p_one", "0", "p_two", "12",
-        "args", parent, "/main",
-    ])
-    assert expected.expected_generations == (("p_one", 0), ("p_two", 12))
-
-
-def test_bootstrap_direct_write_is_only_identity_temporary(registry):
-    dictionary = build_dictionary(registry, published=None)
-    operation = "identity.temporary@1"
-    code = dictionary.code_for("operation", operation)
-    nonce_code = dictionary.code_for("field", operation + ":nonce")
-    nonce = b64(b"n" * 32)
-    decoded = dictionary.decode_direct_write_path(code, [
-        "bootstrap", "bootstrap_1", "2026-09-27T00:05:00Z", "args", nonce_code, nonce,
-    ])
-    assert decoded.kind == "bootstrap" and decoded.arguments == {"nonce": nonce}
-    assert decoded.subject is None and decoded.credential_id is None and decoded.token is None
-    operation_row = next(row for row in dictionary.document["operations"]
-                         if row["name"] == "identity.temporary")
-    assert operation_row["direct_write_template"].startswith("/-/g/" + code + "/bootstrap/")
-    with pytest.raises(Failure, match="invalid_bootstrap"):
-        dictionary.decode_direct_write_path(
-            dictionary.code_for("operation", "content.post_create@1"),
-            ["bootstrap", "bootstrap_1", "2026-09-27T00:05:00Z", "args", nonce_code, nonce],
-        )
-
-
-def test_direct_write_rejects_missing_unknown_repeated_and_complex_fields(registry):
-    dictionary = build_dictionary(registry, published=None)
-    operation = "content.post_create@1"
-    code = dictionary.code_for("operation", operation)
-    parent = dictionary.code_for("field", operation + ":parent")
-    prefix = ["token", "t_test", b64(b"t" * 32), "u_test", "request_1",
-              "2026-09-27T00:05:00Z", "args"]
-    cases = [
-        prefix,
-        prefix + ["funknown", "/main"],
-        prefix + [parent, "/main", parent, "/other"],
-        prefix + [parent],
-        prefix + [parent, "/main", dictionary.code_for("field", "discovery.get@1:id"), "x"],
-        prefix + [parent, "/main", dictionary.code_for("field", operation + ":body"), "x" * 4097],
-        prefix + [parent, "/main", dictionary.code_for("field", operation + ":body"), "x" * 8192],
-        ["token", "t_test", b64(b"t" * 32), "u_test", "", *prefix[5:], parent, "/main"],
-        ["token", "t_test", b64(b"t" * 32), "u_test", "r" * 129,
-         *prefix[5:], parent, "/main"],
-        ["token", "t" * 161, b64(b"t" * 32), "u_test", "request_1",
-         *prefix[5:], parent, "/main"],
-        ["token", "t_test", b64(b"t" * 32), "u" * 161, "request_1",
-         *prefix[5:], parent, "/main"],
-        ["token", "t_test", b64(b"t" * 65), "u_test", "request_1",
-         *prefix[5:], parent, "/main"],
-        ["token", "t_test", b64(b"t" * 32), "u_test", "request_1",
-         "2" * 41, "args", parent, "/main"],
-        [*prefix[:6], "expected", "p_one", "-1", "args", parent, "/main"],
-        [*prefix[:6], "expected", "p_one", "1.5", "args", parent, "/main"],
-        [*prefix[:6], "expected", "p_one", "01", "args", parent, "/main"],
-        [*prefix[:6], "expected", "p_one", "1", "p_one", "2", "args", parent, "/main"],
-        [*prefix[:6], "expected", "p_one", "1", parent, "/main"],
-    ]
-    for segments in cases:
-        with pytest.raises(Failure):
-            dictionary.decode_direct_write_path(code, segments)
-    complex_code = dictionary.code_for("operation", "discussion.reply@1")
-    with pytest.raises(Failure, match="direct_path_unavailable"):
-        dictionary.decode_direct_write_path(complex_code, prefix)
-    read_code = dictionary.code_for("operation", "discovery.get@1")
-    with pytest.raises(Failure, match="direct_path_write_required"):
-        dictionary.decode_direct_write_path(read_code, prefix + [parent, "/main"])
-    bootstrap_code = dictionary.code_for("operation", "identity.temporary@1")
-    with pytest.raises(Failure, match="invalid_direct_write_path"):
-        dictionary.decode_direct_write_path(bootstrap_code, [
-            "bootstrap", "bootstrap_1", "2026-09-27T00:05:00Z", "expected",
-            "p_one", "0", "args", dictionary.code_for("field", "identity.temporary@1:nonce"),
-            b64(b"n" * 32),
+    assert dictionary.resolve_operation(code).name == "content.post_create"
+    assert dictionary.resolve("field", parent)["path"] == "parent"
+    token = b64(b"t" * 32)
+    with pytest.raises(Failure, match="secure_channel_required"):
+        dictionary.decode_direct_write_path(code, [
+            "token", "t_test", token, "u_test", "request_1",
+            "2026-09-27T00:05:00Z", "args", parent, "/main",
         ])
+    row = next(row for row in dictionary.document["operations"]
+               if row["name"] == "content.post_create")
+    assert row["direct_write_template"] is None
+    assert row["direct_expected_template"] is None
+    assert row["direct_write_status"] == "rejected_legacy_secret_url"
 
 
-def test_direct_transfer_accepts_one_kibibyte_data(registry):
-    plugins = ("identity", "content", "discussion", "communication", "discovery",
-               "transfer", "extensions", "system", "batch")
-    full_registry = Application(SimpleNamespace(server=SimpleNamespace(plugins=plugins))).registry
-    dictionary = build_dictionary(full_registry)
-    operation = "transfer.part_put@1"
-    code = dictionary.code_for("operation", operation)
+def test_legacy_bootstrap_claim_and_transfer_token_paths_are_rejected(registry):
+    dictionary = build_dictionary(registry)
+    bootstrap = dictionary.code_for("operation", "identity.temporary@1")
+    nonce_code = dictionary.code_for("field", "identity.temporary@1:nonce")
+    with pytest.raises(Failure, match="secure_channel_required"):
+        dictionary.decode_direct_write_path(bootstrap, [
+            "bootstrap", "request_1", "2026-09-27T00:05:00Z",
+            "args", nonce_code, b64(b"n" * 32),
+        ])
+    row = next(row for row in dictionary.document["operations"]
+               if row["name"] == "identity.temporary")
+    assert row["requires_secure_channel"] is True
+    assert row["shortest_template"] == "/-/p/identity.temporary"
 
-    def field(name):
-        return dictionary.code_for("field", operation + ":" + name)
 
-    data = b64(bytes(range(256)) * 4)
-    prefix = ["token", "t_test", b64(b"t" * 32), "u_test", "transfer_1",
-              "2026-09-27T00:05:00Z", "args",
-              field("transfer_id"), "tr_test", field("offset"), "0",
-              field("data"), data, field("digest"), "sha256:" + "0" * 64]
-    decoded = dictionary.decode_direct_write_path(code, prefix)
-    assert decoded.arguments["data"] == data
-    assert len(decoded.arguments["data"]) > 1024
-    prefix[-3] = "A" * 4097
-    with pytest.raises(Failure, match="direct_path_value_too_long"):
-        dictionary.decode_direct_write_path(code, prefix)
+@pytest.mark.parametrize("name", [
+    "identity.temporary", "identity.custodial_create", "identity.token_create",
+    "identity.token_rotate", "identity.token_recover",
+])
+def test_credential_secret_operations_have_no_argument_paths(registry, name):
+    dictionary = build_dictionary(registry)
+    rows = [row for row in dictionary.document["operations"] if row["name"] == name]
+    assert rows
+    for row in rows:
+        assert row["requires_secure_channel"] is True
+        assert row["example"] is None
+        assert row["direct"] is False
+        assert row["shortest_template"] == "/-/p/" + name
+        assert row["direct_write_template"] is None
+        assert row["direct_expected_template"] is None
+
+
+def test_sharing_link_secret_has_no_argument_path():
+    settings = SimpleNamespace(server=SimpleNamespace(
+        plugins=("identity", "content", "discussion", "communication", "discovery", "sharing")))
+    dictionary = build_dictionary(Application(settings).registry)
+    row = next(row for row in dictionary.document["operations"]
+               if row["name"] == "sharing.link_read")
+    assert row["requires_secure_channel"] is True
+    assert row["example"] is None
+    assert row["shortest_template"] == "/-/p/sharing.link_read"

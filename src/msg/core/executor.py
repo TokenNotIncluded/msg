@@ -7,7 +7,7 @@ from uuid import uuid4
 from msg.core.codec import wire,digest
 from msg.core.errors import Failure,require
 from msg.core.models import ExecutionContext,HandlerOutput,OperationResult,OperationError,Event,AccessRequirement
-from msg.core.requests import receipt_bytes
+from msg.core.requests import SECRET_DELIVERY_MIN_VERSION,receipt_bytes
 
 log=logging.getLogger(__name__)
 
@@ -29,6 +29,13 @@ class OperationExecutor:
         principal=None
         try:
             spec=self.registry.operation(request.operation,request.contract_version)
+            min_version=SECRET_DELIVERY_MIN_VERSION.get(spec.name)
+            if spec.name=='identity.temporary' and spec.version<3:
+                raise Failure('temporary_dual_keys_required',
+                              details={'contract_version':3})
+            require(min_version is None or spec.version>=min_version,
+                    'credential_delivery_upgrade_required',
+                    details={'contract_version':min_version} if min_version is not None else None)
             require(entry in spec.entries,'entry_not_allowed')
             self.registry.validate(spec.input_schema,request.arguments)
             require(not (spec.effect!='read' and self.recovery_drill_active()),
@@ -37,6 +44,12 @@ class OperationExecutor:
                 return await self._independent(request,spec,entry)
             async with self.metadata.transaction(write=spec.effect!='read') as session:
                 principal=await self.authenticator.authenticate(request,session,entry=entry)
+                if spec.name=='batch.atomic':
+                    # Validate the child set before an old cached parent result
+                    # can bypass the handler's secret-delivery exclusion.
+                    from msg.plugins.batch import packets
+                    packets(self.registry,request,principal.subject,
+                            self.application.settings.server.limits.max_request_bytes)
                 context=ExecutionContext(request_id=request.request_id,principal=principal,entry=entry,
                                          now=self.clock(),deadline_monotonic=time.monotonic()+30)
                 checks=await spec.requirements(request,session)
