@@ -12,34 +12,26 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ac083b3666b1b5268d90115129e2cc4e0dd11521
           persist-credentials: false
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.15'
-          allow-prereleases: true
-      - name: Prepare offline test dependencies and source snapshot
+      - name: Export regression-only dependencies
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq age nginx postgresql-16
-          python -m pip install '.[dev]'
-          mkdir -p /tmp/market-runtime/{python,postgres,lib,bin}
-          prefix=$(python -c 'import sys; print(sys.prefix)')
-          cp -a "$prefix"/. /tmp/market-runtime/python/
-          cp -a /usr/lib/postgresql/16/. /tmp/market-runtime/postgres/
-          cp /usr/bin/age /usr/bin/age-keygen /tmp/market-runtime/bin/
-          cp /usr/sbin/nginx /tmp/market-runtime/bin/
-          cp -a /usr/share/postgresql/16 /tmp/market-runtime/postgres/share
-          for binary in /tmp/market-runtime/postgres/bin/* /tmp/market-runtime/postgres/lib/*.so /tmp/market-runtime/python/bin/python3.15 /tmp/market-runtime/bin/*; do
-            ldd "$binary" 2>/dev/null | awk '/=> \/.* \(/ {print $3}' || true
-          done | sort -u | while read -r library; do cp -L "$library" /tmp/market-runtime/lib/; done
-          git archive HEAD | gzip > /tmp/market-source.tar.gz
-          tar -czf /tmp/market-runtime.tar.gz -C /tmp market-runtime
+          mkdir -p /tmp/market-extra/{legacy,valkey/bin,valkey/lib}
+          git archive HEAD | tar -x -C /tmp/market-extra/legacy
+          docker pull valkey/valkey:9.0.6
+          cid=$(docker create valkey/valkey:9.0.6)
+          trap 'docker rm -f "$cid" >/dev/null' EXIT
+          for binary in valkey-server valkey-cli; do
+            docker cp "$cid:/usr/local/bin/$binary" "/tmp/market-extra/valkey/bin/$binary"
+          done
+          docker run --rm --entrypoint sh valkey/valkey:9.0.6 -c 'ldd /usr/local/bin/valkey-server; ldd /usr/local/bin/valkey-cli' | awk '/=> \/.* \(/ {print $3}' | sort -u | while read -r library; do
+            docker cp "$cid:$library" "/tmp/market-extra/valkey/lib/$(basename "$library")"
+          done
+          tar -czf /tmp/market-extra.tar.gz -C /tmp market-extra
       - uses: actions/upload-artifact@v4
         with:
-          name: market-dev-runtime
+          name: market-extra
           retention-days: 1
-          path: |
-            /tmp/market-source.tar.gz
-            /tmp/market-runtime.tar.gz
+          path: /tmp/market-extra.tar.gz
