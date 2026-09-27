@@ -5,12 +5,12 @@
 ## 对照基线与证据
 
 - 权威来源：Google Drive `ChatGPT` 文件夹（`1L0gl0AqThp100kRrviq-jorc04cPSnYO`）唯一[《msg.lmm.best｜项目设计》](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)。本次实时读取修订为 **2026-09-27T05:54:08.096Z**，185段、01–15章。正文压缩不减少验收范围。
-- 报告实现基线：**本PR待提交工作树**，基于已推送52dd4b4。新增patch/rebase/batch与分享@2已收口；GIT_CONFIG_GLOBAL=/dev/null本地全套 **414 passed**、conformance **8 passed**、构建成功，尚无最终新提交/对应CI。
+- 报告实现基线：**PR #63合并main的2b4d483d58dfe4eb2d81565377238dbb5e17a6b5**，基于52dd4b4之后的变更。新增patch/rebase/batch与分享@2已收口；GIT_CONFIG_GLOBAL=/dev/null本地全套 **414 passed**、conformance **8 passed**、构建成功，main CI36302710481已completed/success（414 core、8 conformance、build），未部署。
 - CI：[36301644644](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36301644644)，已 **completed/success（408 core、8 conformance、build）**，对应完整提交 `52dd4b401800b4ecf0e42316ce7ad4f11ee1a679`。该CI只覆盖52dd4b4，不覆盖后续414项工作树。
-- 未提交工作：content.text_patch@2显式rebase/text_patch_batch、ShareGrant@2 group/read-only空constraints/受限reshare已纳入414项本地验证；旧@1不变。PR提交与CI仍待root执行，不借用52dd4b4的CI。
+- 已合并变更：content.text_patch@2显式rebase/text_patch_batch、ShareGrant@2 group/read-only空constraints/受限reshare已纳入414项本地验证；旧@1不变。PR #63已合并，使用main CI36302710481的成功结果，不借用52dd4b4的CI。
 - 部署：没有本重写版本已完成生产部署、旧库迁移、生产在线备份/恢复或旧CA升级的证据。本机 `light.local`、真实git-lfs与隔离恢复均属于各自本地验证，不等于生产证明。
 
-既有[实现状态](IMPLEMENTATION_STATUS.md)、[路线](ITERATION_PLAN.md)、[验收记录](VERIFICATION.md)包含逐批历史，一些早期“未实现/未提交”描述已落后；本报告以待提交工作树与分层验收为准，不把历史测试相加。
+既有[实现状态](IMPLEMENTATION_STATUS.md)、[路线](ITERATION_PLAN.md)、[验收记录](VERIFICATION.md)包含逐批历史，一些早期“未实现/未提交”描述已落后；本报告以main合并提交与分层验收为准，不把历史测试相加。
 
 ## 状态用语
 
@@ -34,7 +34,7 @@
 | 12 事件/通知/协作 | 局部 | Inbox/DM/ACK、Sync、Todo提醒、presence/claim；Inbox Webhook及需webhook.domain的三类owner事件订阅 | 所有通知来源/偏好；真实公网/SMTP；handoff/lease/request/offer/proposal/checkpoint/watch完整契约。同步checkpoint不是工作checkpoint。 |
 | 13 工具/客户端 | 局部 | CLI Search/Grep/hosting/recovery、MCP、受限SSH/工具、RSS；TUI只读Home/Inbox/Search/Thread | TUI全视图与交互；完整--json/--jq/--template等；真实sshd、bubblewrap、DNS/重定向/私网授权与生产运行矩阵。 |
 | 14 配置与接口 | 局部 | msgd.toml、根/服务/缓存分离、源码规则按文件digest/version及显式迁移、requires_rules、恢复drill闸 | 每项配置完整doctor、精确RuleSet/全部规则覆盖、旧布局迁移、生产秘密备份恢复和操作流程。源码规则迁移不是自动改生产授权。 |
-| 15 默认/TDD | 局部 | BootstrapManifest v5十二项feature rows、真实doctor/selftest映射、隔离Test Root；本批414项本地测试 | 十二项不覆盖所有正式feature；partial/disabled只报告完成度、不关现有API。完整默认/样例/负例/故障/跨协议/CI矩阵仍缺，当前工作树对应CI尚未产生。 |
+| 15 默认/TDD | 局部 | BootstrapManifest v5十二项feature rows、真实doctor/selftest映射、隔离Test Root；本批414项本地测试 | 十二项不覆盖所有正式feature；partial/disabled只报告完成度、不关现有API。完整默认/样例/负例/故障/跨协议/CI矩阵仍缺，main CI已通过但不替代剩余feature验收。 |
 
 ## 影响公开发布的关键阻塞
 
@@ -45,9 +45,11 @@
 
 ## 下一批可独立验收出口
 
-- 当前batch/分享已通过414项本地验证，下一出口是root提交PR并取得对应CI；继续保留失败整批不发布新引用、转授来源失效、DM/system旁路负例。Git不可达孤儿按引用保留/回收规则处理，不声称已自动清零。后续补历史generation映射及超出read/空constraints的分享能力时需新契约验收。
+- 当前batch/分享已通过414项本地验证并合并main，main CI36302710481成功；继续保留失败整批不发布新引用、转授来源失效、DM/system旁路负例。Git不可达孤儿按引用保留/回收规则处理，不声称已自动清零。后续补历史generation映射及超出read/空constraints的分享能力时需新契约验收。
 - 对Manifest逐feature补默认/样例/doctor/selftest与CI映射，明确disabled/partial含义，不用API存在代替完成。
 - 独立做生产同版本的隔离backup/restore、禁外发、CA快照差异演练；不以演练授权生产切流。
 - 再补完整Markdown/结构化patch、跨表示rebase和完整读取/客户端，避免同时扩大身份恢复或开放托管JS。
 
 需求修改建议另见 [DESIGN_CHANGE_REQUESTS](DESIGN_CHANGE_REQUESTS.md)。未获用户决定前，本报告仍按原设计记录差距。
+
+合并证据：[PR #63](https://github.com/TokenNotIncluded/msg.lmm.best/pull/63)、[main CI 36302710481](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36302710481)。本地已切main并fast-forward同步；发布/部署仍未完成，分支旧checks状态不替代main结果。

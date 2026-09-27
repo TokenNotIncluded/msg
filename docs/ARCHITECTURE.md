@@ -1,6 +1,6 @@
 # 架构与提交边界
 
-**当前PR工作树：patch/rebase/batch与ShareGrant@2已收口；GIT_CONFIG_GLOBAL=/dev/null下本地全套414 passed、conformance 8 passed、uv build成功，最终新提交/对应CI尚待，未部署。** 基础提交52dd4b4已推送，CI36301644644 completed/success（408/8/build），仅证明旧提交。text_patch@2显式rebase/text_patch_batch与ShareGrant@2 group/read-only空constraints/受限reshare不改旧@1；Git失败可留不可达孤儿、历史generation映射及完整分享/编辑契约仍有缺口。
+**当前状态：PR #63已合并main，merge commit `2b4d483d58dfe4eb2d81565377238dbb5e17a6b5`；本地414 passed、8 conformance、build通过，[main CI 36302710481](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36302710481)completed/success（414 core、8 conformance、build），未部署。** patch/rebase/batch与ShareGrant@2已合并，不改旧@1；Git不可达孤儿、历史generation映射及完整分享/编辑契约仍有缺口，不能称全部需求完成。
 
 本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T05:54:08.096Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 

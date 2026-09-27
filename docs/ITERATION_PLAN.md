@@ -2,7 +2,7 @@
 
 权威[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)最新修订仍为2026-09-27T05:54:08.096Z。
 
-**当前PR工作树：patch/rebase/batch与ShareGrant@2已收口；GIT_CONFIG_GLOBAL=/dev/null下本地全套414 passed、conformance 8 passed、uv build成功，最终新提交/对应CI尚待，未部署。** 基础提交52dd4b4已推送，CI36301644644 completed/success（408/8/build），仅证明旧提交。text_patch@2显式rebase/text_patch_batch与ShareGrant@2 group/read-only空constraints/受限reshare不改旧@1；Git失败可留不可达孤儿、历史generation映射及完整分享/编辑契约仍有缺口。
+**当前状态：PR #63已合并main，merge commit `2b4d483d58dfe4eb2d81565377238dbb5e17a6b5`；本地414 passed、8 conformance、build通过，[main CI 36302710481](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36302710481)completed/success（414 core、8 conformance、build），未部署。** patch/rebase/batch与ShareGrant@2已合并，不改旧@1；Git不可达孤儿、历史generation映射及完整分享/编辑契约仍有缺口，不能称全部需求完成。
 
 1. **c62e516的309/8/build与CI已通过；验证后续CLI Search/Grep和SyncCursor改动。** 保持未接custodial写fail-closed；网络代解密不开放。继续补完整RouteSpec/只读零业务变更矩阵，UA guard不替代认证。
 2. **补齐custodial非空库存升级。** 双钥PoP/本地journal/空库存切换与新钥查结果已有；下一步显式逐对象可恢复密文rewrap→确认迁移结果→撤销托管token→按策略销毁旧vault钥并审计。每步断线/重复请求可安全恢复，未完成不能冒称self-custody。严格token一次展示必须同时解决首次响应丢失恢复，不靠重复返回秘密掩盖。

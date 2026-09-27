@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前PR工作树：patch/rebase/batch与ShareGrant@2已收口；GIT_CONFIG_GLOBAL=/dev/null下本地全套414 passed、conformance 8 passed、uv build成功，最终新提交/对应CI尚待，未部署。** 基础提交52dd4b4已推送，CI36301644644 completed/success（408/8/build），仅证明旧提交。text_patch@2显式rebase/text_patch_batch与ShareGrant@2 group/read-only空constraints/受限reshare不改旧@1；Git失败可留不可达孤儿、历史generation映射及完整分享/编辑契约仍有缺口。
+**当前状态：PR #63已合并main，merge commit `2b4d483d58dfe4eb2d81565377238dbb5e17a6b5`；本地414 passed、8 conformance、build通过，[main CI 36302710481](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36302710481)completed/success（414 core、8 conformance、build），未部署。** patch/rebase/batch与ShareGrant@2已合并，不改旧@1；Git不可达孤儿、历史generation映射及完整分享/编辑契约仍有缺口，不能称全部需求完成。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 

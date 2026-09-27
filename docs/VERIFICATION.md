@@ -1,10 +1,10 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 text_patch@2/rebase/batch与ShareGrant@2（PR待提交，本地全套通过）
+## 2026-09-27 text_patch@2/rebase/batch与ShareGrant@2（PR #63已合并main，CI成功）
 
-GIT_CONFIG_GLOBAL=/dev/null下全套 **414 passed**、conformance **8 passed**，`uv build -q`成功；最终新提交/对应CI尚待，未部署。content.text_patch@2显式rebase及text_patch_batch、ShareGrant@2 group/read-only空constraints/受限reshare已纳入；旧@1不变。批量保证SQL引用原子发布，不保证Git/文件系统回滚，可留Git不可达孤儿；历史generation映射仍有缺口，分享@2不支持任意操作或非空constraints。
+GIT_CONFIG_GLOBAL=/dev/null下全套 **414 passed**、conformance **8 passed**，`uv build -q`成功；PR #63已合并main，merge commit `2b4d483d58dfe4eb2d81565377238dbb5e17a6b5`；[main CI36302710481](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36302710481)completed/success（414 core、8 conformance、build），未部署。content.text_patch@2显式rebase及text_patch_batch、ShareGrant@2 group/read-only空constraints/受限reshare已纳入；旧@1不变。批量保证SQL引用原子发布，不保证Git/文件系统回滚，可留Git不可达孤儿；历史generation映射仍有缺口，分享@2不支持任意操作或非空constraints。
 
-基础提交52dd4b4已推送，[CI 36301644644](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36301644644)completed/success（408 core、8 conformance、build），只归该旧提交。当前PR工作树不能借用其CI。PR合并、部署仍需分别记录。
+基础提交52dd4b4已推送，[CI 36301644644](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36301644644)completed/success（408 core、8 conformance、build），只归该旧提交。该旧CI不替代当前main CI。PR已合并，本地已切main并git pull --ff-only同步；部署仍未完成。
 
 
 ## 2026-09-27 BootstrapManifest v5、组织治理与post操作（未提交，本地全套通过）
