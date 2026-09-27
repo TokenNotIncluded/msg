@@ -19,6 +19,8 @@ from msg.core.executor import result_wire
 from msg.core.models import BlobRef,SignatureProof
 from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
+from msg.core.read_query import read_query_version
+from msg.transports.read_tree_path import decode_read_tree_path
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, gunzip, path_packet, require_url_safe_packet
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
@@ -245,6 +247,25 @@ def compile_read_query_v2(query,service):
     base['first']=first
     operation,args=compile_read_query(base,service)
     args.update(expand=expanded,nested_first=int(nested_first))
+    return operation,args
+
+
+def compile_read_query_v3(query,service):
+    require(set(query)<={'version','root','select','filter','sort','first','after','tree'},
+            'unknown_query_parameter')
+    require(query.get('version','3')=='3','invalid_read_query_version')
+    if 'after' in query:
+        require(set(query)<={'version','after'},'cursor_query_mismatch')
+        saved,_=service.cursors.inspect_page(query['after'],service.clock())
+        require(saved.get('operation')=='discovery.read_query' and
+                read_query_version(saved.get('arguments',{}))==3,'cursor_kind_mismatch')
+        return 'discovery.read_query',{'cursor':query['after']}
+    base={key:value for key,value in query.items() if key not in {'version','tree'}}
+    operation,args=compile_read_query(base,service)
+    args['query_version']=3
+    if 'tree' in query:
+        args['expand']=loads(query['tree'])
+    service.registry.validate(service.registry.operation(operation,3).input_schema,args)
     return operation,args
 
 
@@ -687,7 +708,8 @@ def create_app(service):
                                 headers=BASE_HEADERS)
             path_query_v1=raw_path.startswith((b'/_read/q/1/',b'/_r/q/1/'))
             path_query_v2=raw_path.startswith((b'/_read/q/2/',b'/_r/q/2/'))
-            path_query=path_query_v1 or path_query_v2
+            path_query_v3=raw_path.startswith((b'/_read/q/3/',b'/_r/q/3/'))
+            path_query=path_query_v1 or path_query_v2 or path_query_v3
             if path in {'/_read/query','/_r/query'} or path_query or raw_path.startswith((b'/_read/c/',b'/_r/c/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 continuation=raw_path.startswith((b'/_read/c/',b'/_r/c/'))
@@ -721,17 +743,18 @@ def create_app(service):
                                     3 if any(name in saved_args for name in
                                     ('source_kind','relation_type')) else
                                     2 if 'facets' in saved_args else 1)
-                            elif operation=='discovery.read_query' and any(
-                                    name in query.get('arguments',{}) for name in
-                                    ('expand','collection','nested_first')):
-                                contract_version=2
+                            elif operation=='discovery.read_query':
+                                contract_version=read_query_version(query.get('arguments',{}))
                     except Failure as exc:
                         if exc.code=='invalid_base64':
                             raise Failure('invalid_cursor') from exc
                         raise
                     args={'cursor':cursor}
                 else:
-                    if path_query:
+                    if path_query_v3:
+                        args,path_proof=decode_read_tree_path(raw_path)
+                        query={'version':'3'}
+                    elif path_query:
                         query,path_proof=decode_read_query_path(raw_path,
                             b'2' if path_query_v2 else b'1')
                     else:
@@ -739,9 +762,13 @@ def create_app(service):
                         require(len(pairs)==len({key for key,_ in pairs}),
                                 'duplicate_query_parameter')
                         query=dict(pairs)
-                    contract_version=2 if path_query_v2 or query.get('version')=='2' else 1
-                    operation,args=(compile_read_query_v2(query,service) if contract_version==2 else
-                                    compile_read_query(query,service))
+                    contract_version=(3 if path_query_v3 or query.get('version')=='3' else
+                                      2 if path_query_v2 or query.get('version')=='2' else 1)
+                    if path_query_v3:
+                        operation='discovery.read_query'
+                    else:
+                        compiler={1:compile_read_query,2:compile_read_query_v2,3:compile_read_query_v3}[contract_version]
+                        operation,args=compiler(query,service)
                 require(service.registry.operation(operation,contract_version).effect=='read',
                         'effect_mismatch')
                 header=request.headers.get('x-msg-request')
@@ -755,6 +782,7 @@ def create_app(service):
                 else:
                     packet=request_for(operation,args,service.settings.service_url,
                                        source='manual',contract_version=contract_version)
+                require(packet.contract_version==contract_version,'representation_mismatch')
                 result=await service.executor.execute(packet,entry='network')
                 if result.error:
                     return json_response(result_wire(result),error_status(result.error.code))

@@ -11,6 +11,8 @@ from msg.core.codec import canonical,wire,decode,loads,digest,b64
 from msg.core.errors import Failure,require
 from msg.core.models import Resource,ResourceRef,Revision,HandlerOutput,Credential
 from msg.core.tags import normalize_tag
+from msg.core.read_query import (ReadBudget,MAX_READ_DEPTH,NESTED_FIELDS,ROOT_FIELDS,
+    expansion_schema,read_query_version)
 from msg.core.requests import request_for
 from msg.core.template_dsl import render_values
 from msg.plugins.common import *
@@ -95,7 +97,7 @@ async def basic_links(app,ctx,request,tx,resource,revision):
     return singles
 
 
-async def relation_page(app,ctx,request,tx,resource,revision,rel,limit,position,snapshot):
+async def relation_page(app,ctx,request,tx,resource,revision,rel,limit,position,snapshot, *, budget=None):
     if rel in {'c','b','f','q'} and position=='':
         position=['','']
     candidates=()
@@ -128,7 +130,8 @@ async def relation_page(app,ctx,request,tx,resource,revision,rel,limit,position,
         if key<=position:
             continue
         scanned+=1
-        require(scanned<=2048,'query_cost_exceeded')
+        require(scanned<=2048 and time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+        if budget is not None:budget.scan()
         link=await visible_link(app,ctx,request,tx,ref)
         if link is None:
             continue
@@ -141,6 +144,7 @@ async def relation_page(app,ctx,request,tx,resource,revision,rel,limit,position,
         if len(items)==limit:
             more=True
             break
+        if budget is not None:budget.node(len(NESTED_FIELDS))
         items.append(link)
         last=key
     return items,last,more
@@ -403,8 +407,8 @@ def install(app):
     listing={'parent':IDENTIFIER,'type':STRING,'author':IDENTIFIER,'query':STRING,'tag':STRING,
              'state':{'enum':['active','archived','purged']},
              'sort':{'enum':['id','time','name']},'direction':{'enum':['asc','desc']},'limit':{'type':'integer','minimum':1,'maximum':200},'cursor':STRING,'fields':fields}
-    async def list_items(ctx,request,tx):
-        a=dict(request.arguments)
+    async def list_items(ctx,request,tx, *, arguments=None,budget=None):
+        a=dict(request.arguments if arguments is None else arguments)
         stable=request.operation=='discovery.read_query'
         internal_page=getattr(request,'internal_page_state',None)
         if internal_page is not None:
@@ -417,7 +421,10 @@ def install(app):
                    'credential_id':ctx.principal.credential_id}
         if stable and a.get('cursor'):
             saved_query,_=app.cursors.inspect_page(a['cursor'],ctx.now)
-            require(saved_query.get('operation')==request.operation,'cursor_query_mismatch')
+            require(saved_query.get('operation')==request.operation and
+                    (read_query_version(saved_query.get('arguments',{}))==request.contract_version or
+                     request.contract_version==2 and read_query_version(saved_query.get('arguments',{}))==1),
+                    'cursor_query_mismatch')
             supplied={k:v for k,v in a.items() if k!='cursor'}
             require(not supplied,'cursor_query_mismatch')
             a={**saved_query['arguments'],'cursor':a['cursor']}
@@ -469,26 +476,35 @@ def install(app):
         values=[]
         last_position=position
         more=False
+        scanned=0
         while len(values)<=limit:
+            require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
             sql=f"SELECT r.body,{column},r.id FROM resources r WHERE {' AND '.join(filters)} AND ({column},r.id){comparison}(?,?) ORDER BY {column} {ordering},r.id {ordering} LIMIT 128"
             rows=tx.rows(sql,(*parameters,*last_position))
             if not rows:
                 break
             for raw,order,rid in rows:
+                scanned+=1
+                require(scanned<=4096 and time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+                if budget is not None:budget.scan()
                 last_position=[order,rid]
                 resource=decode(Resource,loads(raw))
                 if await visible(app,ctx,request,tx,rid):
                     if len(values)==limit:
                         more=True
                         break
-                    data=await metadata(tx,resource)
                     chosen=a.get('fields',('id','type','name','revision','generation','path'))
+                    if budget is not None:budget.node(len(chosen))
+                    data=await metadata(tx,resource)
                     require(set(chosen)<=set(data),'unknown_projection_field')
                     values.append({k:data[k] for k in chosen})
                     position=last_position
             if more or len(rows)<128:
                 break
         data={'items':values}
+        if stable and request.contract_version==3 and values and not more:
+            data['cursor']=app.cursors.encode_page(request.operation,query_args,position,snapshot,
+                principal,ctx.now+timedelta(minutes=15))
         if more:
             if stable:
                 cursor=app.cursors.encode_page(request.operation,query_args,position,snapshot,
@@ -510,7 +526,7 @@ def install(app):
         'nested_first':{'type':'integer','minimum':1,'maximum':10},
         'collection':{'enum':['children','replies']}},())
 
-    async def nested_page(ctx,request,tx,args):
+    async def nested_page(ctx,request,tx,args, *, budget=None):
         """An independent, reauthorized page of one resource's collection."""
         principal={'actor':ctx.principal.actor,'subject':ctx.principal.subject,
                    'credential_id':ctx.principal.credential_id}
@@ -556,7 +572,8 @@ def install(app):
                     break
                 for raw,rid in rows:
                     scanned+=1
-                    require(scanned<=2048,'query_cost_exceeded')
+                    require(scanned<=2048 and time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+                    if budget is not None:budget.scan()
                     scan_position=rid
                     if not await visible(app,ctx,request,tx,rid):
                         continue
@@ -566,6 +583,7 @@ def install(app):
                     child=decode(Resource,loads(raw))
                     value=await metadata(tx,child)
                     fields=a.get('fields',('id','name','type','path'))
+                    if budget is not None:budget.node(len(fields))
                     items.append({key:value[key] for key in fields})
                     last=rid
                 if more or len(rows)<128:
@@ -573,7 +591,7 @@ def install(app):
         else:
             revision=await tx.revision(ResourceRef(id=parent)) if resource.revision else None
             items,last,more=await relation_page(app,ctx,request,tx,resource,revision,
-                                                'c',limit,position,snapshot)
+                                                'c',limit,position,snapshot,budget=budget)
         end_cursor=None
         if items:
             end_cursor=app.cursors.encode_page(request.operation,query_args,last,snapshot,
@@ -590,7 +608,8 @@ def install(app):
         a=dict(request.arguments)
         if a.get('cursor'):
             saved,_=app.cursors.inspect_page(a['cursor'],ctx.now)
-            require(saved.get('operation')==request.operation and set(a)=={'cursor'},
+            require(saved.get('operation')==request.operation and set(a)=={'cursor'} and
+                    read_query_version(saved.get('arguments',{})) in {1,2},
                     'cursor_query_mismatch')
             if saved.get('arguments',{}).get('collection'):
                 return HandlerOutput(data=await nested_page(ctx,request,tx,a))
@@ -603,7 +622,8 @@ def install(app):
         nested_first=a.get('nested_first',5)
         require(not expand or (limit<=10 and limit*len(expand)*(nested_first+1)<=100),
                 'query_cost_exceeded')
-        result=await list_items(ctx,request,tx)
+        root_args=request.arguments if request.arguments.get('cursor') else {**a,'expand':list(expand)}
+        result=await list_items(ctx,request,tx,arguments=root_args)
         data=dict(result.data)
         items=[]
         for source in data['items']:
@@ -619,6 +639,105 @@ def install(app):
         data['pageInfo']={'hasNextPage':bool(data.get('next')),
                           'endCursor':data.get('cursor')}
         return HandlerOutput(data=data)
+
+    tree_schema=obj({**listing,
+        'query_version':{'const':3},
+        'limit':{'type':'integer','minimum':1,'maximum':100},
+        'fields':{'type':'array','items':{'enum':list(ROOT_FIELDS)},
+                  'minItems':1,'maxItems':len(ROOT_FIELDS),'uniqueItems':True},
+        'collection':{'enum':['children','replies']},
+        'expand':expansion_schema()})
+
+    @op('discovery.read_query',tree_schema,effect='read',version=3)
+    async def read_query_v3(ctx,request,tx):
+        budget=ReadBudget(ctx.deadline_monotonic,app.settings.server.limits.max_response_bytes)
+        budget.check()
+        principal={'actor':ctx.principal.actor,'subject':ctx.principal.subject,
+                   'credential_id':ctx.principal.credential_id}
+        supplied=dict(request.arguments)
+        a=dict(supplied)
+        position=snapshot=None
+        if a.get('cursor'):
+            require(set(a)=={'cursor'},'cursor_query_mismatch')
+            saved,_=app.cursors.inspect_page(a['cursor'],ctx.now)
+            require(saved.get('operation')==request.operation and
+                    read_query_version(saved.get('arguments',{}))==3,'cursor_query_mismatch')
+            a=dict(saved['arguments'])
+            position,snapshot=app.cursors.decode_page(supplied['cursor'],request.operation,
+                a,principal,ctx.now)
+            # Cursor arguments are revalidated, not trusted as an open-ended
+            # query language merely because their MAC is valid.
+            app.registry.validate(tree_schema_ref,a)
+        a['query_version']=3
+
+        async def expand_page(page,plan,depth):
+            require(depth<=MAX_READ_DEPTH,'query_cost_exceeded')
+            values=[]
+            for original in page['items']:
+                budget.check()
+                item=dict(original)
+                if plan:
+                    require('id' in item,'unknown_projection_field')
+                    item['collections']={}
+                    for collection,spec in plan.items():
+                        child={'parent':item['id'],'collection':collection,
+                               'limit':spec.get('limit',5),
+                               'fields':spec.get('fields',list(NESTED_FIELDS)),
+                               'expand':spec.get('expand',{}),'query_version':3}
+                        item['collections'][collection]=await collection_page(child,depth+1)
+                values.append(item)
+            page['items']=values
+            budget.output(page)
+            return page
+
+        async def collection_page(arguments,depth, *, last=None,boundary=None):
+            require(depth<=MAX_READ_DEPTH,'query_cost_exceeded')
+            args=dict(arguments)
+            args['parent']=await resolve(tx,args['parent'])
+            # The leaf reader is shared with v2; the public cursor additionally
+            # binds this v3 expansion tree, its projection and stable parent ID.
+            leaf={key:value for key,value in args.items() if key not in {'expand','query_version'}}
+            if last is not None:
+                inner=app.cursors.encode_page(request.operation,leaf,last,boundary,
+                    principal,ctx.now+timedelta(minutes=15))
+                leaf_request={'cursor':inner}
+            else:
+                leaf_request=leaf
+            page=await nested_page(ctx,request,tx,leaf_request,budget=budget)
+            if args['collection']=='replies':
+                selected=args.get('fields',NESTED_FIELDS)
+                values=[]
+                for link in page['items']:
+                    resource=await tx.resource(link['ref']['id'])
+                    value=await metadata(tx,resource)
+                    values.append({key:value[key] for key in selected})
+                page['items']=values
+            end=page['pageInfo']['endCursor']
+            if end:
+                leaf_query,_=app.cursors.inspect_page(end,ctx.now)
+                last,boundary=app.cursors.decode_page(end,request.operation,
+                    leaf_query['arguments'],principal,ctx.now)
+                outer=app.cursors.encode_page(request.operation,args,last,boundary,
+                    principal,ctx.now+timedelta(minutes=15))
+                require(len(outer)<=8192,'query_cost_exceeded')
+                page['pageInfo']['endCursor']=outer
+                if page['pageInfo']['hasNextPage']:
+                    page['next']='/_r/c/'+outer
+            return await expand_page(page,args.get('expand',{}),depth)
+
+        if a.get('collection'):
+            require(a.get('parent'),'invalid_nested_query')
+            data=await collection_page(a,0,last=position,boundary=snapshot)
+        else:
+            root_args=supplied if supplied.get('cursor') else a
+            result=await list_items(ctx,request,tx,arguments=root_args,budget=budget)
+            data=dict(result.data)
+            data['pageInfo']={'hasNextPage':bool(data.get('next')),
+                              'endCursor':data.get('cursor')}
+            data=await expand_page(data,a.get('expand',{}),0)
+        return HandlerOutput(data=data)
+
+    tree_schema_ref=ResourceRef(id='schema:discovery.read_query:3')
 
     lexical_fields={'type':'array','items':STRING,'maxItems':12,'uniqueItems':True}
     lexical_facets={'type':'array','items':{'enum':['type','tag']},
