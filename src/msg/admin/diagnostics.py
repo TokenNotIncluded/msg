@@ -170,6 +170,19 @@ async def _doctor(config_dir,clock):
             require(tx.one('SELECT version FROM schema_version')[0]==1,'schema_version_unknown')
             success('storage')
             try:
+                from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
+                columns={row[0] for row in tx.rows("SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema='public' AND table_name='token_deliveries'")}
+                require({'credential_id','subject','request_id','request_digest','recovery_verifier',
+                         'recovery_expires_at','claimed_at','consumed_at'} <= columns,
+                        'credential_delivery_schema_missing')
+                for operation,version in SECRET_DELIVERY_MIN_VERSION.items():
+                    require(app.registry.operation(operation,version).effect=='transaction',
+                            'credential_delivery_contract_invalid')
+                success('credential_delivery',recovery_window_seconds=settings.credential_delivery_recovery_window,
+                        release='once',secret_url=False,versions=SECRET_DELIVERY_MIN_VERSION)
+            except Failure as exc:failed('credential_delivery',exc.code)
+            try:
                 await validator.validate(root.resource_id,tx)
                 require((await tx.subject(ROOT_SUBJECT)).local_only,'root_policy_corrupt')
                 success('root_trust',fingerprint=digest(unb64(trust['public_key'])))
@@ -464,7 +477,7 @@ async def selftest():
         now=datetime.now(UTC)
         run_id=uuid.uuid4().hex
         test_path='/_test/'+run_id
-        app=Application(write_example(folder/'etc',folder/'data','http://selftest.invalid',
+        app=Application(write_example(folder/'etc',folder/'data','https://selftest.invalid',
                                       postgres_dsn=dsn),clock=lambda:now,selftest_run_id=run_id)
         try:
             csr,root=await _provision(app,'selftest-'+os.urandom(24).hex())
@@ -585,6 +598,8 @@ async def selftest():
             checks.update(await _selftest_ca_chain(app,root,call,register,now))
             from msg.admin.upgrade_check import check_upgrade_recovery
             checks['identity_upgrade_recovery']=await check_upgrade_recovery(app,now)
+            from msg.admin.token_delivery_check import check_token_delivery
+            checks['credential_delivery_recovery']=await check_token_delivery(app,now)
         except Failure as exc:
             checks['failure']={'code':exc.code}
         finally:

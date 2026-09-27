@@ -3,14 +3,14 @@ from __future__ import annotations
 from msg.core.codec import wire,canonical
 from msg.core.errors import Failure,require
 from msg.core.executor import result_wire
+from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
 from msg.core.models import HandlerOutput
 from msg.plugins.common import registration,operation_id
 from msg.plugins.schemas import obj
 from msg.transports.packet import REQUEST_SCHEMA,decode_packet
 
 # Credential delivery has response-only secrets; it requires its own call.
-NO_BATCH=frozenset({'identity.register','identity.temporary','identity.token_create','identity.token_rotate',
-                    'identity.custodial_create','identity.token_recover','identity.upgrade'})
+NO_BATCH=frozenset(SECRET_DELIVERY_MIN_VERSION) | {'identity.register','identity.upgrade'}
 
 
 def packets(registry,request,subject,max_bytes=None):

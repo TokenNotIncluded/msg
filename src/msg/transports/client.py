@@ -8,6 +8,7 @@ import httpx
 from msg.core.codec import canonical, b64, loads, wire, decode
 from msg.core.errors import Failure, require
 from msg.core.models import TransportLimits
+from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
 from msg.transports.packet import decode_result, require_url_safe_packet
 from msg.transports.url_safety import require_safe_relative_url
 
@@ -80,7 +81,15 @@ class HTTPTransport:
         require(effect in {'read','transaction','external'}, 'unknown_operation')
         return effect
 
+    def _secure_delivery(self, request):
+        if request.operation in SECRET_DELIVERY_MIN_VERSION:
+            parsed = urlsplit(self.server)
+            require(parsed.scheme == 'https' or parsed.hostname in {
+                'testserver', 'localhost', '127.0.0.1', '::1'
+            }, 'secure_channel_required')
+
     async def call(self, request):
+        self._secure_delivery(request)
         await self._effect(request.operation)
         path = '/-/p/' + request.operation
         # Signed reads use POST to a query endpoint: read/write is the operation's
@@ -114,6 +123,7 @@ class GraphQLTransport(HTTPTransport):
     name = 'graphql'
 
     async def call(self, request):
+        self._secure_delivery(request)
         effect = await self._effect(request.operation)
         kind = 'query' if effect=='read' else 'mutation'
         payload = {'query':kind+' MsgOperation($packet: JSON!) { call(packet: $packet) }',
@@ -130,6 +140,7 @@ class MCPHTTPTransport(HTTPTransport):
     name = 'mcp_http'
 
     async def call(self, request):
+        self._secure_delivery(request)
         await self._effect(request.operation)
         from msg.transports.mcp import PROTOCOL_VERSION
         tool_name = request.operation if request.contract_version==1 else (

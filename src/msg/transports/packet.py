@@ -4,6 +4,7 @@ import re
 import zlib
 from msg.core.codec import decode,loads,unb64,canonical,wire
 from msg.core.errors import require,Failure
+from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
 from msg.core.models import OperationRequest,OperationResult,TokenProof
 from msg.plugins.schemas import obj,IDENTIFIER,STRING,BYTES,REF,SIGNATURE
 from msg.transports.url_safety import contains_secret_fields
@@ -30,8 +31,6 @@ RESULT_SCHEMA={'type':'object','properties':{
     'required':['request_id','operation','status'],'additionalProperties':False}
 
 
-_CLAIM_OPERATIONS = frozenset({'identity.temporary', 'identity.custodial_create',
-    'identity.token_create', 'identity.token_rotate', 'identity.token_recover'})
 
 
 def require_url_safe_packet(packet: OperationRequest) -> None:
@@ -42,7 +41,7 @@ def require_url_safe_packet(packet: OperationRequest) -> None:
     server receiving hand-built packets, including gzip envelopes.
     """
     require(not isinstance(packet.proof, TokenProof), 'secure_channel_required')
-    require(packet.operation not in _CLAIM_OPERATIONS, 'secure_channel_required')
+    require(packet.operation not in SECRET_DELIVERY_MIN_VERSION, 'secure_channel_required')
 
     require(not contains_secret_fields(packet.arguments), 'secure_channel_required')
 
