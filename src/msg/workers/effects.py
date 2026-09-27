@@ -15,7 +15,8 @@ import time
 
 from msg.constants import ROOT_SUBJECT
 from msg.core.codec import decode, wire
-from msg.core.errors import Failure, require
+from msg.core.errors import Failure
+from msg.core.errors import require
 from msg.core.models import (
     CapabilityGrant, EffectJob, EmailSettings, ExecutionContext, Principal, ResourceRef,
 )
@@ -133,12 +134,23 @@ class EffectWorker:
             await tx.save_job(job)
             return job, True
 
+    async def _live_attempt(self, tx, job):
+        """Fence completions even when no other worker has swept expired leases."""
+        current = await tx.job(job.id)
+        if current.state != 'running' or current.attempts != job.attempts:
+            return None
+        if current.lease_until is None or current.lease_until <= self.app.clock():
+            await tx.save_job(replace(current, state='uncertain', lease_until=None))
+            tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
+            from msg.market.targets import notification_status
+            notification_status(tx, current, 'uncertain', 'expired_execution_lease')
+            return None
+        return current
+
     async def _finish(self, job, state, code):
         async with self.app.metadata.transaction(write=True) as tx:
-            current = await tx.job(job.id)
-            # A different process may have expired this lease. Never overwrite its
-            # uncertainty with a late result from the old lease holder.
-            if current.state != 'running' or current.attempts != job.attempts:
+            current = await self._live_attempt(tx, job)
+            if current is None:
                 return
             await tx.save_job(replace(current, state=state, lease_until=None))
             tx.set_setting('job_status:' + job.id, {'code': code})
@@ -147,8 +159,8 @@ class EffectWorker:
 
     async def _retry(self, job, retry_code, exhausted_code):
         async with self.app.metadata.transaction(write=True) as tx:
-            current = await tx.job(job.id)
-            if current.state != 'running' or current.attempts != job.attempts:
+            current = await self._live_attempt(tx, job)
+            if current is None:
                 return
             exhausted = current.attempts >= 8
             next_at = (current.next_attempt_at if exhausted else
