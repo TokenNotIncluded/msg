@@ -22,7 +22,11 @@ async def test_consistent_backup_restores_content_but_never_root_private_key(ins
     restored=Application(load_settings(tmp_path/'restored-etc'),clock=lambda:NOW)
     await restored.load()
     read=await call(restored,'discovery.get',{'id':posted.resources[0].id})
-    assert read.status=='ok' and read.data['content']=='survives recovery',wire(read)
+    assert read.status=='error' and read.error.code=='recovery_quarantined',wire(read)
+    # Inspect offline bytes without treating pre-replay snapshot ACLs as current.
+    async with restored.metadata.transaction(write=False) as tx:
+        revision=await tx.revision(posted.resources[0])
+    assert await restored.contents.read_bytes(revision.content)==b'survives recovery'
     assert await restored.contents.read_bytes(binary)==b'\x00\xffbackup'
     assert not (tmp_path/'restored-etc'/'root').exists()
     await restored.close()

@@ -43,45 +43,38 @@ def install(app):
         ('challenge_id',)),effect='read')
     async def custodial_upgrade_inventory(ctx,request,tx):
         subject=await _owner(app,ctx,request,tx)
-        require(subject.kind=='custodial' and ctx.principal.method=='token',
-                'custodial_token_required')
-        row=tx.one('''SELECT credential_id,status,challenge,body FROM custodial_upgrades
-            WHERE id=? AND subject=?''',(request.arguments['challenge_id'],subject.resource_id))
-        require(row is not None and row[0]==ctx.principal.credential_id and
-                row[1] in {'pending','pending_rewrap'},'custodial_upgrade_not_pending')
-        from msg.plugins.identity import custodial_age_inventory
+        row=tx.one("""SELECT credential_id,status,challenge,body FROM custodial_upgrades
+            WHERE id=? AND subject=?""",(request.arguments['challenge_id'],subject.resource_id))
+        require(row is not None and row[1] in {'pending','pending_rewrap','completed'},
+                'custodial_upgrade_not_pending')
         details=loads(row[3])
+        if subject.kind=='custodial':
+            require(ctx.principal.method=='token' and row[0]==ctx.principal.credential_id,
+                    'custodial_token_required')
+        else:
+            require(subject.kind=='registered' and ctx.principal.method=='signature' and
+                    ctx.principal.credential_id==details.get('new_identity_key_id'),
+                    'custodial_upgrade_new_key_required')
+        from msg.plugins.identity import custodial_age_inventory
+        from msg.security.custody_history import history_evidence,retirement_evidence
         frozen=details.get('age_inventory')
         require(frozen is not None,'custodial_inventory_required')
         current=await custodial_age_inventory(tx,subject.resource_id)
-        mappings=details.get('rewrap_mappings',{})
-        acks=details.get('rewrap_acks',{})
-        expected=frozen+[mapping['new'] for mapping in mappings.values()]
-        drift=current!=sorted(expected,key=lambda item:(item['id'],item['revision']))
-        source_by_revision={item['revision']:item for item in frozen}
-        mapped_complete=(set(mappings)==set(source_by_revision) and
-            all(mapping.get('old')==source_by_revision[revision] and
-                mapping.get('recipient')==loads(row[2])['encryption_recipient']
-                for revision,mapping in mappings.items()) and
-            len({(item['new']['id'],item['new']['revision'])
-                 for item in mappings.values()})==len(mappings))
-        acked_complete=(mapped_complete and set(acks)==set(source_by_revision) and
-            all(acks[revision].get('new_revision')==mappings[revision]['new']['revision'] and
-                acks[revision].get('ciphertext_digest')==mappings[revision]['new']['ciphertext_digest']
-                for revision in acks))
+        evidence=history_evidence(subject.resource_id,request.arguments['challenge_id'],
+                                  loads(row[2]),details,current)
+        retirement=await retirement_evidence(tx,subject.resource_id,details,
+            history_recoverable=evidence['known_ciphertexts_migrated'])
         policy=_current_policy(tx,subject.resource_id)
         policy_review=bool(policy and policy.get('opted_in'))
         return HandlerOutput(data={'challenge_id':request.arguments['challenge_id'],
             'status':row[1],'recipient':loads(row[2])['encryption_recipient'],
             'frozen':frozen,'frozen_digest':digest(frozen),
-            'mappings':mappings,'acks':acks,'inventory_changed':drift,
-            'mapped_count':len(mappings),'acked_count':len(acks),
-            'known_ciphertexts_migrated':acked_complete and not drift,
+            'mappings':details.get('rewrap_mappings',{}),'acks':details.get('rewrap_acks',{}),
+            **evidence,**retirement,
             'recovery_policy_requires_review':policy_review,
             'external_ciphertexts_migrated_owner_claim':details.get(
                 'external_ciphertexts_migrated',False),
-            'historical_revisions_require_migration':not acked_complete,
-            'finalize_ready':False,'vault_remains_active':True})
+            'finalize_ready':False,'vault_remains_active':not retirement['online_retired']})
 
     @op('identity.custodial_rewrap_entry',obj({
         'challenge_id':IDENTIFIER,'ciphertext_ref':REF,
@@ -150,7 +143,8 @@ def install(app):
                'recipient':args['new_recipient']}
         mapping={'old':frozen_entry,'new':{'id':updated.id,
             'revision':updated.revision,'ciphertext_digest':digest(new_ciphertext)},
-            'recipient':args['new_recipient'],'created_at':wire(ctx.now)}
+            'recipient':args['new_recipient'],'old_encryption_key_id':details['old_encryption_key_id'],
+                 'new_encryption_key_id':details['new_encryption_key_id'],'created_at':wire(ctx.now)}
         details.setdefault('rewrap_mappings',{})[revision.id]=mapping
         tx.execute('UPDATE custodial_upgrades SET body=? WHERE id=?',
                    (canonical(details).decode(),args['challenge_id']),write=True)
@@ -224,6 +218,8 @@ def install(app):
         new={'id':copy.id,'revision':copy.revision,
              'ciphertext_digest':digest(new_ciphertext)}
         mapping={'old':old,'new':new,'recipient':args['new_recipient'],
+                 'old_encryption_key_id':details['old_encryption_key_id'],
+                 'new_encryption_key_id':details['new_encryption_key_id'],
                  'created_at':wire(ctx.now),'copy_kind':'historical_revision'}
         details.setdefault('rewrap_mappings',{})[revision.id]=mapping
         tx.execute('UPDATE custodial_upgrades SET body=? WHERE id=?',

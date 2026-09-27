@@ -9,6 +9,7 @@ removed credential slots without weakening the shared secret classifier.
 from __future__ import annotations
 
 from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 
 from msg.core.errors import Failure
 from msg.transports.http_routes import (
@@ -32,6 +33,20 @@ class PassiveGetBoundary:
         self.service = service
 
     async def __call__(self, scope, receive, send):
+        executor = self.service.executor
+        if scope['type'] == 'http' and executor is not None and executor.recovery_drill_active():
+            # Public ACLs in an old snapshot can also have been revoked. Do not
+            # serve business content before authority replay and local promotion.
+            health = (scope.get('raw_path', b'') == b'/healthz' and
+                      scope['method'] in {'GET', 'HEAD'} and not scope.get('query_string'))
+            data = ({'status':'recovery_quarantined','ready':False,
+                     'writes_enabled':False,'outbound_enabled':False}
+                    if health else {'error':{'code':'recovery_quarantined','retryable':False}})
+            response = (Response(status_code=503, headers=BASE_HEADERS)
+                        if scope['method'] == 'HEAD' else
+                        JSONResponse(data, status_code=503, headers=BASE_HEADERS))
+            await response(scope, receive, send)
+            return
         if scope['type'] == 'http' and scope['method'] == 'GET':
             raw = scope.get('raw_path') or scope['path'].encode('utf-8')
             maximum = self.service.settings.server.limits.max_path_bytes

@@ -21,6 +21,7 @@ from msg.security.authorization import AuthorizationService
 from msg.security.capabilities import install_capabilities, primary_ceiling, base_grants, temporary_ceiling
 from msg.security.certificates import CertificateValidator
 from msg.security.crypto import Ed25519Signer
+from msg.security.quarantine import active as quarantine_active
 from msg.storage.git import GitContentStore
 from msg.storage.postgres import PostgresMetadataStore
 from msg.storage.valkey_bus import ValkeyOutboxSignal
@@ -98,21 +99,31 @@ class Application:
         self.cursors=CursorCodec(hmac.digest(self._token_secret,b'cursor-key-v1','sha256'))
         self.certificates=CertificateValidator(self.registry,root_certificate,root_public,self.settings.service_url,self.clock)
         async with self.metadata.transaction(write=False) as tx:
+            quarantined=quarantine_active(tx)
             await self.certificates.validate(root_certificate.resource_id,tx)
             root=await tx.subject(ROOT_SUBJECT)
             require(root.local_only,'root_policy_corrupt')
         # Only a verified installation may import immutable release-owned rules.
         # This is idempotent per source digest/version and rejects source deletion.
         from msg.bootstrap import sync_system_sources
-        async with self.metadata.transaction(write=True) as tx:
-            await sync_system_sources(tx,self.contents,self.clock(),namespace_root=self.namespace_root)
+        marker=self.settings.config_dir/'recovery-drill.json'
+        quarantined=quarantined or marker.exists() or marker.is_symlink()
+        if not quarantined:
+            async with self.metadata.transaction(write=True) as tx:
+                # Recheck under the writer lock; loading a restore must not
+                # mutate release resources before recovery has been accepted.
+                if not quarantine_active(tx):
+                    await sync_system_sources(tx,self.contents,self.clock(),namespace_root=self.namespace_root)
+                else:
+                    quarantined=True
         self.authenticator=AuthenticationService(self.registry,self.certificates,self.settings.service_url,self.clock,
             self.primary_ceiling,self.temporary_ceiling)
         self.authorizer=AuthorizationService(self.registry,self.certificates)
         self.executor=OperationExecutor(self.registry,self.metadata,self.contents,self.authenticator,self.authorizer,
                                        self.clock,self.receipt_signer)
         self.executor.application=self
-        self.executor.recovery_drill_marker=self.settings.config_dir/'recovery-drill.json'
+        self.executor.recovery_drill_marker=marker
+        self.executor.recovery_quarantined=quarantined
         self.executor.response_hook=self._secrets_for_caller
         self._loaded=True
         return self
