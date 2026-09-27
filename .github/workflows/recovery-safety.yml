@@ -21,13 +21,13 @@ jobs:
           POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
-          --health-cmd 'pg_isready -U msgtest'
+          --health-cmd "pg_isready -U msgtest -d postgres"
           --health-interval 5s --health-timeout 5s --health-retries 10
       valkey:
         image: valkey/valkey:9.0.6
         ports: ['6379:6379']
         options: >-
-          --health-cmd 'valkey-cli ping'
+          --health-cmd "valkey-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
