@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 import httpx
 import pytest
-from test_service import NOW
+from test_service import NOW, call, temporary_v3_args
 
 from msg.core.codec import b64, wire
 from msg.core.models import Credential
@@ -26,40 +26,23 @@ def direct_path(dictionary, operation, kind, *parts, arguments):
     return '/-/g/' + '/'.join(map(segment, (code, kind, *parts, 'args', *fields)))
 
 
+async def temporary_token(app):
+    args,request_id,_,_=temporary_v3_args()
+    result=await call(app,'identity.temporary',args,rid=request_id,
+                      contract_version=3)
+    assert result.status=='ok',wire(result)
+    return result.data
+
+
 @pytest.mark.asyncio
 async def test_get_only_bootstrap_and_token_write_are_idempotent(installed):
     app, _ = installed
     dictionary = build_dictionary(app.registry)
-    nonce = b64(os.urandom(32))
     expiry = wire(NOW + timedelta(seconds=120))
-    bootstrap = direct_path(dictionary, 'identity.temporary', 'bootstrap',
-                            'get-bootstrap', expiry, arguments={'nonce': nonce})
+    data=await temporary_token(app)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                  base_url='http://testserver') as http:
-        assert (await http.head(bootstrap)).status_code == 200
-        async with app.metadata.transaction(write=False) as tx:
-            assert tx.one("SELECT COUNT(*) FROM identities WHERE kind='subject'")[0] == 2
-        created = await http.get(bootstrap)
-        assert created.status_code == 200, created.text
-        assert created.json()['status'] == 'ok'
-        assert created.json()['data']['token']
-        query = await http.get(bootstrap + '?ignored=1')
-        assert query.status_code == 400
-        assert query.json()['error']['code'] == 'unknown_query_parameter'
-        mixed = await http.get(bootstrap, headers={'X-Msg-Request': 'unused'})
-        assert mixed.status_code == 400
-        assert mixed.json()['error']['code'] == 'ambiguous_proof'
-        replay = await http.get(bootstrap)
-        assert replay.status_code == 200 and replay.json()['replayed'], replay.text
-        assert replay.json()['data']['token'] == created.json()['data']['token']
-        refreshed_bootstrap = direct_path(dictionary, 'identity.temporary', 'bootstrap',
-                                          'get-bootstrap', wire(NOW + timedelta(seconds=180)),
-                                          arguments={'nonce': nonce})
-        assert (await http.get(refreshed_bootstrap)).json()['replayed'] is True
-
-        uid = created.json()['data']['subject_id']
-        credential = created.json()['data']['credential_id']
-        token = created.json()['data']['token']
+        uid,credential,token=(data['subject_id'],data['credential_id'],data['token'])
         post = direct_path(dictionary, 'content.post_create', 'token', credential, token,
                            uid, 'get-post', expiry,
                            arguments={'parent': '/tmp', 'body': 'GET only 写入 / unicode'})
@@ -88,13 +71,10 @@ async def test_get_only_bootstrap_and_token_write_are_idempotent(installed):
 async def test_get_only_write_rejects_expired_wrong_scope_and_root_token(installed):
     app, _ = installed
     dictionary = build_dictionary(app.registry)
-    nonce = b64(os.urandom(32))
     expiry = wire(NOW + timedelta(seconds=120))
-    bootstrap = direct_path(dictionary, 'identity.temporary', 'bootstrap',
-                            'get-auth-bootstrap', expiry, arguments={'nonce': nonce})
+    data=await temporary_token(app)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                  base_url='http://testserver') as http:
-        data = (await http.get(bootstrap)).json()['data']
         uid, credential, token = (data['subject_id'], data['credential_id'], data['token'])
         expired = direct_path(dictionary, 'content.post_create', 'token', credential, token,
                               uid, 'get-expired', wire(NOW - timedelta(seconds=1)),
@@ -157,12 +137,9 @@ async def test_get_only_token_rotation_replay_and_revocation(installed):
     app, _ = installed
     dictionary = build_dictionary(app.registry)
     expiry = wire(NOW + timedelta(seconds=120))
-    bootstrap = direct_path(dictionary, 'identity.temporary', 'bootstrap',
-                            'get-rotate-bootstrap', expiry,
-                            arguments={'nonce': b64(os.urandom(32))})
+    data=await temporary_token(app)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                  base_url='http://testserver') as http:
-        data = (await http.get(bootstrap)).json()['data']
         uid, credential, token = data['subject_id'], data['credential_id'], data['token']
         rotate = direct_path(dictionary, 'identity.token_rotate', 'token',
                              credential, token, uid, 'get-rotate', expiry,
@@ -191,12 +168,9 @@ async def test_get_only_expected_generation_uses_executor_conflict_check(install
     app, _ = installed
     dictionary = build_dictionary(app.registry)
     expiry = wire(NOW + timedelta(seconds=120))
-    bootstrap = direct_path(dictionary, 'identity.temporary', 'bootstrap',
-                            'get-expected-bootstrap', expiry,
-                            arguments={'nonce': b64(os.urandom(32))})
+    data=await temporary_token(app)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                  base_url='http://testserver') as http:
-        data = (await http.get(bootstrap)).json()['data']
         prefix = (data['credential_id'], data['token'], data['subject_id'])
         stale = direct_path(dictionary, 'content.post_create', 'token', *prefix,
                             'expected-stale', expiry, 'expected', 't_tmp', '999',

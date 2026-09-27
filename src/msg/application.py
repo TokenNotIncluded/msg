@@ -136,7 +136,7 @@ class Application:
 
     def record_token_delivery(self,tx,request,credential,now,*,recovery_deadline=None):
         """Bind recovery before commit; neither token nor recovery secret is stored."""
-        if request.contract_version!=2 and request.operation!='identity.token_recover':
+        if request.contract_version<2 and request.operation!='identity.token_recover':
             return
         field='new_recovery_secret' if request.operation=='identity.token_recover' else 'recovery_secret'
         secret=unb64(request.arguments[field],limit=64)
@@ -159,7 +159,7 @@ class Application:
                 'identity.token_rotate','identity.token_create','identity.token_recover'}:
             return result
         token=self.issued_token(request,result.subject)
-        strict=request.contract_version==2 or request.operation=='identity.token_recover'
+        strict=request.contract_version>=2 or request.operation=='identity.token_recover'
         async with self.metadata.transaction(write=strict) as tx:
             credential=await tx.credential(result.data['credential_id'])
             require(credential.revoked_at is None and credential.expires_at>self.clock(),'credential_expired')

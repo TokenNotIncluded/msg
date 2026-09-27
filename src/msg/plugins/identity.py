@@ -987,16 +987,55 @@ def install(app):
     @op('identity.temporary',obj({'nonce':BYTES},('nonce',)))
     @op('identity.temporary',obj({'nonce':BYTES,'recovery_secret':BYTES},
                                  ('nonce','recovery_secret')),version=2)
+    @op('identity.temporary',obj({'nonce':BYTES,'recovery_secret':BYTES,
+        'public_key':BYTES,'encryption_recipient':STRING,
+        'possession_proof':SIGNATURE},
+        ('nonce','recovery_secret','public_key','encryption_recipient',
+         'possession_proof')),version=3)
     async def temporary(ctx,request,tx):
+        if request.contract_version<3:
+            raise Failure('temporary_dual_keys_required',
+                          details={'contract_version':3})
         token=app.issued_token(request,ctx.principal.subject)
+        public=encryption_public=None
+        if request.contract_version==3:
+            public=unb64(request.arguments['public_key'],limit=32)
+            encryption_public=public_from_recipient(request.arguments['encryption_recipient'])
+            require(public!=encryption_public,'encryption_key_must_be_independent')
+            verify(public,canonical({'subject_id':ctx.principal.subject,
+                'nonce':request.arguments['nonce'],
+                'public_key':request.arguments['public_key'],
+                'encryption_recipient':request.arguments['encryption_recipient'],
+                'request_id':request.request_id}),
+                decode(Signature,request.arguments['possession_proof']),
+                purpose='temporary-key-possession-v1')
         user=await make_user(app,tx,ctx,ctx.principal.subject,'tmp-'+ctx.principal.subject[-24:],'temporary')
+        if public is not None:
+            signing_id=key_id(public)
+            signing_credential=Credential(id=signing_id,subject_id=user.id,
+                kind='signing_key',verifier=public,ceiling=(),not_before=ctx.now,
+                expires_at=None,revoked_at=None)
+            await tx.save_credential(signing_credential,0)
+            tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
+                       (signing_id,user.id,b64(public),wire(ctx.now),None,1),write=True)
+            encryption_id=encryption_key_id(encryption_public)
+            tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,?,?)',
+                       (encryption_id,user.id,request.arguments['encryption_recipient'],
+                        b64(encryption_public),wire(ctx.now),None,1),write=True)
         credential=Credential(id=ctx.principal.credential_id,subject_id=user.id,kind='token',
             verifier=hashlib.sha256(token).digest(),ceiling=app.temporary_ceiling(),not_before=ctx.now,
             expires_at=ctx.now+timedelta(seconds=app.settings.temporary_ttl),revoked_at=None)
         await tx.save_credential(credential,0)
         app.record_token_delivery(tx,request,credential,ctx.now)
-        return HandlerOutput(resources=(ResourceRef(id=user.id),),data={'subject_id':user.id,
-            'credential_id':credential.id,'expires_at':wire(credential.expires_at)})
+        result={'subject_id':user.id,'credential_id':credential.id,
+                'expires_at':wire(credential.expires_at)}
+        if public is not None:
+            result.update(identity_key_id=signing_id,
+                          encryption_key_id=encryption_id,
+                          encryption_recipient=request.arguments['encryption_recipient'],
+                          signature_source='self_custody',server_signable=False,
+                          server_decryptable=False)
+        return HandlerOutput(resources=(ResourceRef(id=user.id),),data=result)
 
     @op('identity.token_rotate',obj({'nonce':BYTES},('nonce',)))
     @op('identity.token_rotate',obj({'nonce':BYTES,'recovery_secret':BYTES},
@@ -1043,12 +1082,24 @@ def install(app):
         credential=Credential(id=key_id(public),subject_id=subject.resource_id,kind='signing_key',verifier=public,
             ceiling=app.primary_ceiling(),not_before=ctx.now,expires_at=None,revoked_at=None)
         await tx.save_credential(credential,subject.auth_version+1)
-        tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
-                   (credential.id,subject.resource_id,b64(public),wire(ctx.now),None,1),write=True)
+        existing_key=tx.one('SELECT key_id,public_key FROM identity_keys WHERE subject=? AND is_primary=1',
+                            (subject.resource_id,))
+        if existing_key is None:
+            tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
+                       (credential.id,subject.resource_id,b64(public),wire(ctx.now),None,1),write=True)
+        else:
+            require(existing_key==(credential.id,b64(public)),
+                    'temporary_identity_key_mismatch')
         encryption_id=encryption_key_id(encryption_public)
-        tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,?,?)',
-                   (encryption_id,subject.resource_id,a['encryption_recipient'],b64(encryption_public),
-                    wire(ctx.now),None,1),write=True)
+        existing_encryption=tx.one('''SELECT key_id,recipient FROM encryption_subkeys
+            WHERE subject=? AND is_primary=1''',(subject.resource_id,))
+        if existing_encryption is None:
+            tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,?,?)',
+                       (encryption_id,subject.resource_id,a['encryption_recipient'],
+                        b64(encryption_public),wire(ctx.now),None,1),write=True)
+        else:
+            require(existing_encryption==(encryption_id,a['encryption_recipient']),
+                    'temporary_encryption_key_mismatch')
         certificate=await issue_online(app,tx,subject.resource_id,credential.id,ctx,request)
         return HandlerOutput(resources=(ResourceRef(id=subject.resource_id),),data={'subject_id':subject.resource_id,
             'key_id':credential.id,'encryption_key_id':encryption_id,

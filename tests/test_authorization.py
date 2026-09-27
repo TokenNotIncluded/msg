@@ -11,7 +11,7 @@ from msg.security.certificates import csr_body,sign_certificate
 from msg.security.crypto import Ed25519Signer
 from msg.security.capabilities import grant_for
 from msg.plugins.identity import certificate_resource
-from test_service import call,register,NOW
+from test_service import call,register,NOW,temporary_v3_args
 
 
 async def request_certificate(app,uid,login_key,subject_key,grants, *, kind='capability',issuance=None,issuer=ROOT_SUBJECT,depth=0,ttl=3600):
@@ -103,7 +103,8 @@ async def test_replay_does_not_leak_changed_private_content_or_create_again(inst
 async def test_key_id_cannot_be_reassigned_by_temporary_upgrade(installed):
     app,_=installed
     key,uid,base=await register(app,'permanent')
-    tmp=await call(app,'identity.temporary',{'nonce':b64(os.urandom(32))})
+    temp_args,temp_rid,_,_=temporary_v3_args()
+    tmp=await call(app,'identity.temporary',temp_args,rid=temp_rid,contract_version=3)
     tempid=tmp.data['subject_id']
     from msg.security.age_keys import generate_age_key
     _,recipient=generate_age_key()
@@ -122,7 +123,8 @@ async def test_key_id_cannot_be_reassigned_by_temporary_upgrade(installed):
 @pytest.mark.asyncio
 async def test_token_rotation_retry_returns_same_token_not_another_rotation(installed):
     app,_=installed
-    tmp=await call(app,'identity.temporary',{'nonce':b64(os.urandom(32))})
+    temp_args,temp_rid,_,_=temporary_v3_args()
+    tmp=await call(app,'identity.temporary',temp_args,rid=temp_rid,contract_version=3)
     uid=tmp.data['subject_id']
     token=(tmp.data['credential_id'],unb64(tmp.data['token']))
     args={'nonce':b64(os.urandom(32))}

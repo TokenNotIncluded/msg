@@ -37,7 +37,8 @@ async def test_bootstrap_lost_after_claim_recovers_after_restart(installed,tmp_p
         journal=state.directory/'temporary.json'
         saved=loads(journal.read_bytes())
         assert journal.stat().st_mode&0o777==0o600
-        assert saved['contract_version']==2 and len(saved['recovery_secret'])>=43
+        assert saved['contract_version']==3 and len(saved['recovery_secret'])>=43
+        assert state.signer is not None and state.encryption_recipient is not None
         assert state.token is None and state.subject is None
         restarted_state,restarted_transport,restarted=client_for(app,state.directory,http)
         replay=await restarted.temporary()
@@ -46,7 +47,7 @@ async def test_bootstrap_lost_after_claim_recovers_after_restart(installed,tmp_p
         assert restored.status=='ok' and restarted_state.token is not None
         assert restored.data['credential_id']!=saved['credential_id']
         assert not journal.exists()
-        assert all(packet.contract_version==2 for packet in seen)
+        assert all(packet.contract_version==3 for packet in seen)
         post=await restarted.call('content.post_create',{'parent':'/main','body':'recovered'})
         assert post.status=='ok'
         with pytest.raises(Failure,match='token_recovery_not_pending'):
@@ -145,7 +146,7 @@ async def test_recovery_claim_lost_can_recover_again_without_version_one(install
         second=await client.recover_token()
         assert second.status=='ok' and state.token[0]!=advanced['credential_id']
         assert not (state.directory/'temporary.json').exists()
-        assert [p.contract_version for p in packets if p.operation=='identity.temporary']==[2]
+        assert [p.contract_version for p in packets if p.operation=='identity.temporary']==[3]
         assert all(p.proof is None for p in packets if p.operation=='identity.token_recover')
     finally:
         await http.aclose()

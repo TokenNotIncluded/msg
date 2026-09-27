@@ -9,7 +9,7 @@ from msg.application import Application
 from msg.core.codec import b64,unb64,wire
 from msg.core.requests import receipt_bytes,request_for
 from msg.security.crypto import verify
-from test_service import NOW,call,register
+from test_service import NOW,call,register,temporary_v3_args
 
 
 def secret():
@@ -19,8 +19,8 @@ def secret():
 @pytest.mark.asyncio
 async def test_v2_bootstrap_claim_once_and_recover_lost_response(installed):
     app,_=installed
-    original={'nonce':secret(),'recovery_secret':secret()}
-    created=await call(app,'identity.temporary',original,rid='strict-bootstrap',contract_version=2)
+    original,_,_,_=temporary_v3_args(request_id='strict-bootstrap')
+    created=await call(app,'identity.temporary',original,rid='strict-bootstrap',contract_version=3)
     assert created.status=='ok' and created.data['token']
     uid=created.data['subject_id']
     old_id=created.data['credential_id']
@@ -29,7 +29,7 @@ async def test_v2_bootstrap_claim_once_and_recover_lost_response(installed):
         assert row[1] and row[2] is None
         assert original['recovery_secret'] not in str(row)
         assert created.data['token'] not in str(row)
-    replay=await call(app,'identity.temporary',original,rid='strict-bootstrap',contract_version=2)
+    replay=await call(app,'identity.temporary',original,rid='strict-bootstrap',contract_version=3)
     assert replay.error.code=='token_delivery_unavailable'
     args={'credential_id':old_id,'original_request_id':'strict-bootstrap',
           'recovery_secret':original['recovery_secret'],
@@ -64,8 +64,9 @@ async def test_v2_concurrent_claim_and_cross_subject_denial(installed):
     assert sorted((first.status,second.status))==['error','ok']
     assert next(r for r in (first,second) if r.status=='error').error.code=='token_delivery_unavailable'
     winner=next(r for r in (first,second) if r.status=='ok')
-    other=await call(app,'identity.temporary',{'nonce':secret(),'recovery_secret':secret()},
-                     contract_version=2)
+    other_args,other_rid,_,_=temporary_v3_args()
+    other=await call(app,'identity.temporary',other_args,
+                     rid=other_rid,contract_version=3)
     denied=await call(app,'identity.token_recover',{
         'credential_id':winner.data['credential_id'],'original_request_id':'race',
         'recovery_secret':args['recovery_secret'],
@@ -76,17 +77,17 @@ async def test_v2_concurrent_claim_and_cross_subject_denial(installed):
 @pytest.mark.asyncio
 async def test_v2_unclaimed_commit_survives_restart_and_expiry(installed):
     app,_=installed
-    args={'nonce':secret(),'recovery_secret':secret()}
+    args,_,_,_=temporary_v3_args(request_id='restart-before-claim')
     original_hook=app.executor.response_hook
     app.executor.response_hook=None  # simulates commit followed by process loss before claim
-    committed=await call(app,'identity.temporary',args,rid='restart-before-claim',contract_version=2)
+    committed=await call(app,'identity.temporary',args,rid='restart-before-claim',contract_version=3)
     assert committed.status=='ok' and 'token' not in committed.data
     second=Application(app.settings,clock=lambda:NOW)
     await second.load()
     try:
-        claimed=await call(second,'identity.temporary',args,rid='restart-before-claim',contract_version=2)
+        claimed=await call(second,'identity.temporary',args,rid='restart-before-claim',contract_version=3)
         assert claimed.status=='ok' and claimed.replayed and claimed.data['token']
-        exhausted=await call(second,'identity.temporary',args,rid='restart-before-claim',contract_version=2)
+        exhausted=await call(second,'identity.temporary',args,rid='restart-before-claim',contract_version=3)
         assert exhausted.error.code=='token_delivery_unavailable'
         uid=claimed.data['subject_id']
         recovery={'credential_id':claimed.data['credential_id'],
@@ -107,8 +108,9 @@ async def test_v2_unclaimed_commit_survives_restart_and_expiry(installed):
 @pytest.mark.asyncio
 async def test_v2_rotate_and_signed_create_bind_separate_recovery(installed):
     app,_=installed
-    bootstrap=await call(app,'identity.temporary',{'nonce':secret(),'recovery_secret':secret()},
-                         rid='rotate-bootstrap',contract_version=2)
+    bootstrap_args,_,_,_=temporary_v3_args(request_id='rotate-bootstrap')
+    bootstrap=await call(app,'identity.temporary',bootstrap_args,
+                         rid='rotate-bootstrap',contract_version=3)
     uid=bootstrap.data['subject_id']
     token=(bootstrap.data['credential_id'],unb64(bootstrap.data['token']))
     rotate_args={'nonce':secret(),'recovery_secret':secret()}
@@ -144,8 +146,8 @@ async def test_v2_rotate_and_signed_create_bind_separate_recovery(installed):
 @pytest.mark.asyncio
 async def test_v2_recovery_secret_is_consumed_once_under_race(installed):
     app,_=installed
-    args={'nonce':secret(),'recovery_secret':secret()}
-    created=await call(app,'identity.temporary',args,contract_version=2)
+    args,request_id,_,_=temporary_v3_args()
+    created=await call(app,'identity.temporary',args,rid=request_id,contract_version=3)
     uid=created.data['subject_id']
     base={'credential_id':created.data['credential_id'],
           'original_request_id':created.request_id,

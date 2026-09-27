@@ -272,7 +272,9 @@ class MsgClient:
                 path.stat().st_uid==os.geteuid() and path.stat().st_mode&0o077==0,
                 'unsafe_token_journal')
         pending=loads(path.read_bytes())
-        require(pending.get('contract_version')==2 and
+        require(pending.get('contract_version') in {2,3} and
+                (pending['contract_version']!=3 or
+                 pending.get('operation')=='identity.temporary') and
                 len(unb64(pending['recovery_secret'],limit=64))>=32,
                 'legacy_token_journal_requires_manual_resolution')
         return path,pending
@@ -288,13 +290,13 @@ class MsgClient:
             credential='t_'+digest((request_id,subject))[7:39]
         return subject,credential
 
-    def _new_token_journal(self,path,operation,*,handle=None):
+    def _new_token_journal(self,path,operation,*,handle=None,contract_version=2):
         require(self._token_journal()==(None,None),'token_operation_pending')
         nonce=b64(os.urandom(32))
         recovery_secret=b64(os.urandom(32))
         request_id=uuid4().hex
         subject,credential=self._token_claim(nonce,request_id,operation,self.state.subject)
-        pending={'contract_version':2,'operation':operation,'nonce':nonce,
+        pending={'contract_version':contract_version,'operation':operation,'nonce':nonce,
                  'recovery_secret':recovery_secret,'request_id':request_id,
                  'expires_at':wire(self.clock()+timedelta(seconds=180)),
                  'subject_id':subject,'credential_id':credential}
@@ -303,13 +305,16 @@ class MsgClient:
         durable_write(path,canonical(pending),mode=0o600)
         return pending
 
-    def _existing_token_journal(self,path,operation,*,handle=None):
+    def _existing_token_journal(self,path,operation,*,handle=None,contract_version=2):
         existing,pending=self._token_journal()
         if pending is None:
-            return self._new_token_journal(path,operation,handle=handle)
+            return self._new_token_journal(path,operation,handle=handle,
+                                           contract_version=contract_version)
         require(existing==path and pending['operation']==operation and
                 (handle is None or pending.get('handle')==handle),
                 'token_operation_pending')
+        require(pending['contract_version']==contract_version,
+                'legacy_token_journal_requires_manual_resolution')
         return pending
 
     def _finish_token(self,path,pending,result):
@@ -361,11 +366,21 @@ class MsgClient:
     async def temporary(self):
         require(self.state.subject is None,'identity_already_configured')
         self._require_token_secret_transport()
+        if self.state.signer is None:
+            self.state.save_signer(Ed25519Signer.generate())
+        signer=self.state.signer
+        recipient=self.state.ensure_encryption_key()
         pending=self.state.directory/'temporary.json'
-        data=self._existing_token_journal(pending,'identity.temporary')
+        data=self._existing_token_journal(pending,'identity.temporary',contract_version=3)
+        proof=signer.sign(canonical({'subject_id':data['subject_id'],
+            'nonce':data['nonce'],'public_key':b64(signer.public_key),
+            'encryption_recipient':recipient,'request_id':data['request_id']}),
+            purpose='temporary-key-possession-v1')
         packet=self.prepare('identity.temporary',{'nonce':data['nonce'],
-            'recovery_secret':data['recovery_secret']},request_id=data['request_id'],
-            anonymous=True,contract_version=2,expires_at=parse_time(data['expires_at']))
+            'recovery_secret':data['recovery_secret'],
+            'public_key':b64(signer.public_key),'encryption_recipient':recipient,
+            'possession_proof':wire(proof)},request_id=data['request_id'],
+            anonymous=True,contract_version=3,expires_at=parse_time(data['expires_at']))
         return self._finish_token(pending,data,await self._send_token_secret(packet))
 
     async def custodial(self,handle):

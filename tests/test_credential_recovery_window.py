@@ -10,7 +10,7 @@ from msg.admin.backups import _write_restored_config
 from msg.core.codec import b64, parse_time
 from msg.core.errors import Failure
 from msg.core.requests import request_for
-from test_service import NOW
+from test_service import NOW, temporary_v3_args
 
 
 def secret():
@@ -78,8 +78,8 @@ async def test_recovery_retry_and_successor_keep_original_commit_deadline(instal
             request_id=request_id,contract_version=version,
             expires_at=current[0]+timedelta(seconds=100))
 
-    args={'nonce':secret(),'recovery_secret':secret()}
-    original=packet('identity.temporary',args,request_id='commit-anchor',version=2)
+    args,_,_,_=temporary_v3_args(request_id='commit-anchor')
+    original=packet('identity.temporary',args,request_id='commit-anchor',version=3)
     hook=app.executor.response_hook
     app.executor.response_hook=None  # business commit, but no secret released
     try:

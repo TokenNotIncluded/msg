@@ -1,7 +1,9 @@
 """End-to-end requests go through real signature verification and SQLite commits."""
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+import hashlib
 import os
+from uuid import uuid4
 
 import pytest
 
@@ -9,11 +11,28 @@ from msg.application import Application
 from msg.admin.root import _provision, _approve_csr
 from msg.config import write_example
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import b64, canonical, wire
+from msg.core.codec import b64, canonical, unb64, wire
 from msg.core.requests import request_for, receipt_bytes
 from msg.security.crypto import Ed25519Signer, subject_id, verify
+from msg.security.age_keys import generate_age_key
 
 NOW = datetime(2026, 9, 27, tzinfo=UTC)
+
+
+def temporary_v3_args(*, nonce=None, recovery_secret=None, request_id=None,
+                      signer=None, recipient=None):
+    nonce=nonce or b64(os.urandom(32))
+    recovery_secret=recovery_secret or b64(os.urandom(32))
+    request_id=request_id or uuid4().hex
+    signer=signer or Ed25519Signer.generate()
+    recipient=recipient or generate_age_key()[1]
+    subject='u_tmp_'+hashlib.sha256(unb64(nonce)).hexdigest()[:32]
+    proof=signer.sign(canonical({'subject_id':subject,'nonce':nonce,
+        'public_key':b64(signer.public_key),'encryption_recipient':recipient,
+        'request_id':request_id}),purpose='temporary-key-possession-v1')
+    return ({'nonce':nonce,'recovery_secret':recovery_secret,
+             'public_key':b64(signer.public_key),'encryption_recipient':recipient,
+             'possession_proof':wire(proof)},request_id,signer,recipient)
 
 
 from conftest import installed
@@ -88,7 +107,9 @@ async def test_default_deny_and_certgate(installed):
 @pytest.mark.asyncio
 async def test_temporary_rotation_and_upgrade_preserve_subject(installed):
     app, _ = installed
-    result = await call(app,'identity.temporary',{'nonce':b64(os.urandom(32))})
+    temporary_args,temporary_rid,new_key,recipient=temporary_v3_args()
+    result = await call(app,'identity.temporary',temporary_args,
+                        rid=temporary_rid,contract_version=3)
     assert result.status == 'ok', wire(result)
     uid = result.data['subject_id']
     from msg.core.codec import unb64
@@ -98,9 +119,6 @@ async def test_temporary_rotation_and_upgrade_preserve_subject(installed):
     forbidden = await call(app,'content.chmod',{'id':post.resources[0].id,'mode':'0777'},subject=uid,token=token,
                            expected=((post.resources[0].id,post.data['generation']),))
     assert forbidden.error.code == 'credential_ceiling'
-    new_key = Ed25519Signer.generate()
-    from msg.security.age_keys import generate_age_key
-    _,recipient=generate_age_key()
     args = {'subject_id':uid,'public_key':b64(new_key.public_key),'handle':'promoted',
             'encryption_recipient':recipient}
     upgrade = await call(app,'identity.upgrade',{'handle':'promoted','public_key':args['public_key'],

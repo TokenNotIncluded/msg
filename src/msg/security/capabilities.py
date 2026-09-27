@@ -147,7 +147,8 @@ def base_grants(registry,scope=None):
 
 def temporary_ceiling(registry,scope=None):
     temporary=frozenset(f'{name}@1' for name in TEMPORARY_OPERATIONS)|{
-        'identity.upgrade@2','identity.temporary@2','identity.custodial_create@2',
+        'identity.upgrade@2','identity.temporary@2','identity.temporary@3',
+        'identity.custodial_create@2',
         'identity.token_rotate@2'}
     return tuple(grant_for(spec,scope=scope,operations=spec.operations&temporary) for spec in registry.capabilities()
         if spec.name in BASE_FAMILIES and spec.operations&temporary)
