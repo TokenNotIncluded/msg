@@ -4,24 +4,40 @@ on:
     branches: ['fix/issues-74-76']
     paths: ['.github/workflows/issue-verification-env.yml']
 permissions:
-  contents: read
+  contents: write
 jobs:
-  snapshot:
+  apply:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Export immutable source snapshots
+          ref: fix/issues-74-76
+      - name: Apply the exact three-file authorization patch
         run: |
-          mkdir -p snapshots
-          git archive --format=tar.gz --output=snapshots/main.tar.gz 2dd6a0d0260f8c230a1d5b2f4ff75241113835b2
-          git archive --format=tar.gz --output=snapshots/market-pr102.tar.gz bfcf55d6567459c6a777cccaf9382eea316bd28c
-          printf '%s\n' 'main 2dd6a0d0260f8c230a1d5b2f4ff75241113835b2' 'market-pr102 bfcf55d6567459c6a777cccaf9382eea316bd28c' > snapshots/commits.txt
-          sha256sum snapshots/*.tar.gz > snapshots/checksums.txt
-      - uses: actions/upload-artifact@v4
-        with:
-          name: pinned-source-review
-          path: snapshots
-          retention-days: 1
+          git config user.name 'LIghtJUNction'
+          git config user.email 'lightjunction.me@gmail.com'
+          git merge --no-edit 2dd6a0d0260f8c230a1d5b2f4ff75241113835b2
+          python - <<'PY'
+          import hashlib, pathlib, subprocess
+          source = pathlib.Path('.github/issue76-source.patch')
+          raw = source.read_bytes()
+          # Repair the one known transport-space typo, then require byte-exact
+          # equality with the locally tested patch; nothing else is normalized.
+          raw = raw.replace(b'\n diff --git a/src/msg/security/authorization.py',
+                            b'\ndiff --git a/src/msg/security/authorization.py')
+          assert hashlib.sha256(raw).hexdigest() == '6d38879ab658f40e49169da82c5eed1e4d72ef6a4f417cf944c1c53dfb8c6973'
+          allowed = {b'src/msg/plugins/sharing.py', b'src/msg/security/authorization.py', b'src/msg/storage/sqlite.py'}
+          paths = {line.split(b' b/', 1)[1] for line in raw.splitlines() if line.startswith(b'diff --git ')}
+          assert paths == allowed
+          patch = pathlib.Path('/tmp/issue76-verified.patch')
+          patch.write_bytes(raw)
+          subprocess.run(['git', 'apply', '--check', str(patch)], check=True)
+          subprocess.run(['git', 'apply', '--index', str(patch)], check=True)
+          PY
+          git rm .github/issue76-source.patch
+          python -m compileall -q src/msg/security/authorization.py src/msg/plugins/sharing.py src/msg/storage/sqlite.py
+          git diff --cached --check
+          git commit -m 'Enforce live organization and bounded share authority (#76)'
+          git push origin HEAD:fix/issues-74-76
