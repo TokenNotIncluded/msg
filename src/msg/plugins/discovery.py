@@ -505,6 +505,8 @@ def install(app):
     op('discovery.read_query',obj(listing),effect='read')(list_items)
 
     lexical_fields={'type':'array','items':STRING,'maxItems':12,'uniqueItems':True}
+    lexical_facets={'type':'array','items':{'enum':['type','tag']},
+                    'maxItems':2,'uniqueItems':True}
     lexical_schema=obj({'scope':IDENTIFIER,'terms':STRING,'exact':STRING,'not_terms':STRING,
         'mode':{'enum':['all','any']},'field':{'enum':['all','name','body','metadata']},
         'type':STRING,'owner':IDENTIFIER,'author':IDENTIFIER,'tag':STRING,
@@ -513,9 +515,14 @@ def install(app):
         'depth':{'type':'integer','minimum':0,'maximum':5},'recursive':BOOLEAN,
         'order':{'enum':['relevance','updated','created','name']},
         'limit':{'type':'integer','minimum':1,'maximum':100},'cursor':STRING,
-        'snippet':BOOLEAN,'explain':{'enum':['compact']},'fields':lexical_fields})
+        'snippet':BOOLEAN,'explain':{'enum':['compact']},'fields':lexical_fields,
+        'facets':lexical_facets})
+    lexical_schema_v1={**lexical_schema,
+                       'properties':{name:value for name,value in lexical_schema['properties'].items()
+                                     if name!='facets'}}
 
-    @op('discovery.lexical_search',lexical_schema,effect='read')
+    @op('discovery.lexical_search',lexical_schema_v1,effect='read')
+    @op('discovery.lexical_search',lexical_schema,effect='read',version=2)
     async def lexical_search(ctx,request,tx):
         a=dict(request.arguments)
         internal_page=getattr(request,'internal_page_state',None)
@@ -562,6 +569,7 @@ def install(app):
         owner=await resolve(tx,a['owner']) if a.get('owner') else None
         author=await resolve(tx,a['author']) if a.get('author') else None
         results=[]
+        facet_counts={name:{} for name in a.get('facets',())}
         scanned=0
         # Restrict the SQL candidate set before applying the work budget. A
         # global LIMIT lets unrelated (or unreadable) rows starve a small scope.
@@ -666,10 +674,23 @@ def install(app):
             if a.get('fields'):
                 item={key:item[key] for key in selected if key in item}
             results.append((sort_key,item))
+            # Aggregate only matched resources after the current read grant was
+            # checked. Never derive buckets from the SQL candidates or a
+            # previous page cursor: grants can disappear between page reads.
+            for name,values in facet_counts.items():
+                keys=(resource.type,) if name=='type' else resource.tags
+                for key in keys:
+                    values[key]=values.get(key,0)+1
+                    require(len(values)<=20,'query_cost_exceeded')
         results.sort(key=lambda row:row[0])
         following=[row for row in results if not position or row[0]>position]
         page=following[:limit]
         data={'items':[item for _,item in page]}
+        if facet_counts:
+            data['facets']={name:[{'value':key,'count':count}
+                                  for key,count in sorted(values.items(),
+                                      key=lambda pair:(-pair[1],pair[0]))]
+                            for name,values in facet_counts.items()}
         if len(following)>limit:
             cursor=app.cursors.encode_page(request.operation,normalized,page[-1][0],snapshot,
                 principal,ctx.now+timedelta(minutes=15))

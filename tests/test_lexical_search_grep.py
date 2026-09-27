@@ -91,6 +91,53 @@ async def test_private_snippet_and_count_are_filtered_before_output(installed):
 
 
 @pytest.mark.asyncio
+async def test_facets_use_all_currently_readable_matches_and_recheck_old_cursor(installed):
+    app, _ = installed
+    key,user,_=await register(app,'facet-owner')
+    created=[]
+    for words,tag in [('facetneedle '*4,'shared'),('facetneedle '*3,'shared'),
+                      ('facetneedle','private-only')]:
+        post=await call(app,'content.post_create',{'parent':'/main','body':words},
+                        key=key,subject=user)
+        rid=post.resources[0].id
+        tagged=await call(app,'content.tags_set',{'id':rid,'tags':[tag]},
+                          key=key,subject=user,expected=((rid,post.data['generation']),))
+        assert tagged.status=='ok',wire(tagged)
+        created.append((rid,tagged.data['generation']))
+    args={'scope':'/main','terms':'facetneedle','field':'body','limit':1,
+          'facets':['type','tag']}
+    before=await business_state(app)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        # QueryRef and ordinary reads use the same lexical operation. The HTTP
+        # parameter parser is tested separately once it exposes `facets`.
+        first=await call(app,'discovery.lexical_search',args,contract_version=2)
+        assert first.status=='ok',wire(first)
+        first_data=wire(first)['data']
+        assert first_data['facets']=={
+            'type':[{'value':'post','count':3}],
+            'tag':[{'value':'shared','count':2},{'value':'private-only','count':1}]}
+        assert first_data['items'][0]['ref']['id']==created[0][0]
+        assert first_data['next'].startswith('/_r/c/')
+        hidden=created[2]
+        locked=await call(app,'content.chmod',{'id':hidden[0],'mode':'0600'},
+                          key=key,subject=user,expected=(hidden,))
+        assert locked.status=='ok',wire(locked)
+        after_write=await business_state(app)
+        continued=await http.get(first_data['next'])
+        assert continued.status_code==200,continued.text
+        body=continued.json()
+        assert [item['ref']['id'] for item in body['items']]==[created[1][0]]
+        assert body['facets']=={'type':[{'value':'post','count':2}],
+                                'tag':[{'value':'shared','count':2}]}
+        assert hidden[0] not in continued.text and 'private-only' not in continued.text
+        fresh=await call(app,'discovery.lexical_search',args,contract_version=2)
+        assert fresh.status=='ok' and wire(fresh)['data']['facets']==body['facets']
+    assert await business_state(app)==after_write
+    assert before!=after_write
+
+
+@pytest.mark.asyncio
 async def test_v2_path_filter_segments_match_query_string_and_are_described(installed):
     app, _ = installed
     key,user,_=await register(app,'lexical-filter-owner')
@@ -200,7 +247,8 @@ async def test_sealed_search_query_ref_reads_same_authorized_results(installed):
                       {'parent':'/main','body':'queryref lexical needle'},key=key,subject=user)
     second=await call(app,'content.post_create',
                       {'parent':'/main','body':'queryref lexical second'},key=key,subject=user)
-    args={'scope':'/main','terms':'queryref lexical','mode':'all','field':'body','limit':1}
+    args={'scope':'/main','terms':'queryref lexical','mode':'all','field':'body',
+          'limit':1,'facets':['type']}
     descriptor=canonical({'version':1,'kind':'search','arguments':args})
     opened=await call(app,'transfer.open',{'direction':'upload','size':len(descriptor),
         'digest':digest(descriptor),'media_type':'application/vnd.msg.read-query+json'},
@@ -221,12 +269,14 @@ async def test_sealed_search_query_ref_reads_same_authorized_results(installed):
         path=await http.get('/_r/q/'+token+'/p/'+b64(canonical(packet)))
         assert path.status_code==200,path.text
         assert len(path.json()['items'])==1
+        assert path.json()['facets']=={'type':[{'value':'post','count':2}]}
         assert path.json()['next'].startswith('/_r/q/'+token+'/c/')
         page_packet=request_for('transfer.query_get',
             {'query_ref':token,'cursor':path.json()['cursor']},app.settings.service_url,
             signer=key,subject=user,expires_at=NOW+timedelta(seconds=60))
         continued=await http.get(path.json()['next']+'/p/'+b64(canonical(page_packet)))
         assert continued.status_code==200,continued.text
+        assert continued.json()['facets']==path.json()['facets']
         assert {item['ref']['id'] for item in path.json()['items']+continued.json()['items']}=={
             result.resources[0].id,second.resources[0].id}
     assert await business_state(app)==before

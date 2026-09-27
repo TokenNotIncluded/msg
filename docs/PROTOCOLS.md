@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前状态：第七批本地在GIT_CONFIG_GLOBAL=/dev/null下全套351 passed、conformance 8 passed、uv build成功；尚未提交、无本批CI，未部署。** 短码183→190保旧义；联合定向24已包含在全套内，不累加。真实git-lfs3.8.0 push/clone/pull、ShareLink长短GET封禁与系统签名开关均有回归。前批8480589的CI36294545663成功（345/8/build），仅对应旧提交。
+**当前状态：第八批在GIT_CONFIG_GLOBAL=/dev/null下本地全套355 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** facets以lexical_search@2新增，@1旧schema不变；短码190→191旧义保留。路由effect矩阵和只读doctor.authority_snapshot已纳入。前批78dbd80的[CI 36295518895](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36295518895)completed/success（351/8/build），不覆盖当前增量。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
@@ -329,7 +329,7 @@ QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变�
 
 ## 新增搜索/Grep与Legacy切片（本地验证通过，尚未提交）
 
-SearchQuery通过discovery.lexical_search读取有限scope的词法结果，q/2纯路径和SearchQuery QueryRef共用Operation执行器；结果按当前权限过滤后构造snippet/解释/LinkSet及分页。Grep只处理已知范围，固定串或禁分组/量词/回溯等很小正则子集，返回Revision与匹配上下文；count_only亦须授权。facet/suggest/spell、完整查询/大库边界仍缺。SQL递归限定scope候选，当前可见性与基础过滤通过后再累计候选预算；2001条范围外资源不饿死范围内查询的回归已通过。仍不声称恒定时间或所有时序侧信道消除。
+SearchQuery通过discovery.lexical_search读取有限scope的词法结果，q/2纯路径和SearchQuery QueryRef共用Operation执行器；结果按当前权限过滤后构造snippet/解释/LinkSet及分页。Grep只处理已知范围，固定串或禁分组/量词/回溯等很小正则子集，返回Revision与匹配上下文；count_only亦须授权。facets已有第八批@2切片，suggest/spell及完整查询/大库边界仍缺。SQL递归限定scope候选，当前可见性与基础过滤通过后再累计候选预算；2001条范围外资源不饿死范围内查询的回归已通过。仍不声称恒定时间或所有时序侧信道消除。
 
 LegacyDirective已有identity.legacy_put/get/archive/status与/last-will/本人签名登记；private/public可选，更新绑定expected_revision，公开正文只表达意愿，恢复/checkpoint/handoff引用独立保存并当前授权裁剪。普通post/reply/like/移动/分享不能替代专用操作。declaration_only=true与automatic_transition=false意味着不执行遗愿、不因presence过期变legacy、不授账号/资源/CA权限；完整恢复执行、Revision独立签名及自然语言秘密检测仍缺。
 
@@ -402,3 +402,9 @@ c965385 CI36293461291失败源于Git默认1MiB postBuffer的0000探测请求占�
 ShareLink默认off，system.share_links_set为受控开关；token仅POST body，长短GET token路径均已拒绝。它不是裸URL可直接浏览器打开的分享能力；仍须当前授权/期限/撤销边界，不把token写入普通页面、日志或可点击执行URL。
 
 托管历史age Revision迁移已有显式私有新钥副本与mapping，旧原文/历史不改写；finalize仍fail-closed，不因副本存在就销毁旧vault或撤销最后入口。外部密文和实际recipient集合无法由服务器证明，完整升级仍缺。这些增量本地351/8/build已通过，仍未提交/无本批CI；历史密文仅显式副本mapping，finalize仍关闭，不借用8480589的CI。
+
+## 第八批facets与权限快照边界
+
+lexical_search@1保持已发布schema，facets只进入@2；QueryRef、续页、HTTP query与q/2共用@2契约，不能将新字段偷偷加入@1。短码190→191，旧码意义保留；本地355/8/build通过，尚无本批CI。
+
+doctor.authority_snapshot只读比较当前Registry与旧Root/Online CA签名grants快照，不修改证书、不自动扩权。旧签名快照不能原位安全增加能力；需要的新增授权必须显式本机Root流程处理，若需Root轮换会使旧信任链失效，必须先评估迁移/重签影响。诊断结果不是升级生产授权的许可，本批不自动修改生产。

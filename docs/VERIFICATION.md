@@ -1,8 +1,15 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 真实LFS、ShareLink与托管历史副本（未提交，本地全套通过）
+## 2026-09-27 Search facets @2、路由effect与权限快照（未提交，本地全套通过）
 
-GIT_CONFIG_GLOBAL=/dev/null环境全套 **351 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；未提交、无本批CI。联合定向24包含在全套内，不累加；短码183→190旧义保留。真实git-lfs **3.8.0**以 **1.3MB** 对象完成push/clone/pull，Range与/-/.git兼容已有。未完成跨worker配额、共用BlobStore/GC生命周期。
+GIT_CONFIG_GLOBAL=/dev/null下全套 **355 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；未提交、无本批CI。lexical_search@1旧schema保持，@2新增facets，QueryRef/续页/HTTP query/q2共用@2；短码190→191旧义保留。路由effect矩阵及只读doctor.authority_snapshot已纳入。
+
+诊断仅揭示旧Root/Online CA冻结grants差异；不原位重写签名、不自动扩权或改生产。显式Root轮换会使旧链失效，需先评估重签/迁移。前批78dbd80的CI36295518895已completed/success（351/8/build），不是本批证据。
+
+
+## 2026-09-27 真实LFS、ShareLink与托管历史副本（78dbd80已推送、CI通过）
+
+GIT_CONFIG_GLOBAL=/dev/null环境全套 **351 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；已提交推送78dbd80，[CI 36295518895](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36295518895)completed/success（351/8/build）。联合定向24包含在全套内，不累加；短码183→190旧义保留。真实git-lfs **3.8.0**以 **1.3MB** 对象完成push/clone/pull，Range与/-/.git兼容已有。未完成跨worker配额、共用BlobStore/GC生命周期。
 
 ShareLink默认off，受控system.share_links_set开关；token仅POST body，GET长短路径均拒绝，不是裸URL分享。托管历史age Revision仅创建显式私有新钥副本+mapping，原历史不变、finalize继续fail-closed；外部密文不可证明。以上不借用8480589的CI。
 

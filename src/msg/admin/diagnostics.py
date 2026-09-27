@@ -65,6 +65,39 @@ class ReadOnlyStore:
             return await callback(session)
 
 
+async def authority_snapshot_drift(app, root, online, tx):
+    """Show signed authority missing from this installation's current vocabulary.
+
+    Registry changes are never silently copied into a signed trust anchor or CA.
+    Compare individual operations, because a capability can gain an operation
+    without changing its name or version. Scope and constraints are checked as
+    well; a narrower old grant must not be described as covering a broad one.
+    """
+    from msg.security.policy import constraints_subset, scope_subset
+    require(root.issuance is not None and online.issuance is not None,'issuer_not_ca')
+
+    async def missing(expected, actual):
+        gaps=[]
+        for desired in expected:
+            covered=set()
+            for grant in actual:
+                if (grant.capability==desired.capability and grant.version==desired.version and
+                    await scope_subset(desired.scope,grant.scope,tx) and
+                    constraints_subset(desired.constraints,grant.constraints)):
+                    covered.update(grant.operations)
+            operations=sorted(desired.operations-covered)
+            if operations:
+                gaps.append({'capability':desired.capability,'version':desired.version,
+                             'scope':wire(desired.scope),'operations':operations})
+        return gaps
+
+    primary=app.primary_ceiling()
+    base=app.base_grants()
+    return {'root_use':await missing(primary,root.grants),
+            'root_issue':await missing(primary,root.issuance.issue_grants),
+            'online_issue':await missing(base,online.issuance.issue_grants)}
+
+
 def doctor(config_dir=Path('/etc/msgd'), *, clock=None):
     """This synchronous wrapper is also safe to call from an existing event loop."""
     # Running the read-only coroutine in a short-lived thread avoids nesting an
@@ -122,6 +155,20 @@ async def _doctor(config_dir,clock):
                 require(online_certificate.key_id==online_key.key_id,'issuer_key_mismatch')
                 success('online_ca')
             except (Failure,OSError,ValueError) as exc:failed('online_ca',getattr(exc,'code','issuer_key_missing'))
+            try:
+                online_id=tx.setting('online_ca_certificate')
+                require(online_id is not None,'issuer_not_ready')
+                online_certificate=await tx.certificate(online_id)
+                gaps=await authority_snapshot_drift(app,root,online_certificate,tx)
+                if any(gaps.values()):
+                    failed('authority_snapshot','signed_authority_outdated',missing=gaps,
+                           action='No automatic authority expansion. Preserve this chain and keep the new '
+                                  'operation unavailable, or explicitly rotate the root and reissue '
+                                  'certificates; rotation invalidates old chains.')
+                else:
+                    success('authority_snapshot')
+            except Failure as exc:
+                failed('authority_snapshot',exc.code)
             drift=[]
             for expected in manifest()['resources']:
                 try:

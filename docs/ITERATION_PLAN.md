@@ -2,7 +2,7 @@
 
 权威[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)最新修订仍为2026-09-27T00:35:34.164Z。
 
-**当前状态：第七批本地在GIT_CONFIG_GLOBAL=/dev/null下全套351 passed、conformance 8 passed、uv build成功；尚未提交、无本批CI，未部署。** 短码183→190保旧义；联合定向24已包含在全套内，不累加。真实git-lfs3.8.0 push/clone/pull、ShareLink长短GET封禁与系统签名开关均有回归。前批8480589的CI36294545663成功（345/8/build），仅对应旧提交。
+**当前状态：第八批在GIT_CONFIG_GLOBAL=/dev/null下本地全套355 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** facets以lexical_search@2新增，@1旧schema不变；短码190→191旧义保留。路由effect矩阵和只读doctor.authority_snapshot已纳入。前批78dbd80的[CI 36295518895](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36295518895)completed/success（351/8/build），不覆盖当前增量。
 
 1. **c62e516的309/8/build与CI已通过；验证后续CLI Search/Grep和SyncCursor改动。** 保持未接custodial写fail-closed；网络代解密不开放。继续补完整RouteSpec/只读零业务变更矩阵，UA guard不替代认证。
 2. **补齐custodial非空库存升级。** 双钥PoP/本地journal/空库存切换与新钥查结果已有；下一步显式逐对象可恢复密文rewrap→确认迁移结果→撤销托管token→按策略销毁旧vault钥并审计。每步断线/重复请求可安全恢复，未完成不能冒称self-custody。严格token一次展示必须同时解决首次响应丢失恢复，不靠重复返回秘密掩盖。
@@ -77,3 +77,9 @@ c965385 CI36293461291失败源于Git默认1MiB postBuffer的0000探测请求占�
 ShareLink默认off，system.share_links_set为受控开关；token仅POST body，长短GET token路径均已拒绝。它不是裸URL可直接浏览器打开的分享能力；仍须当前授权/期限/撤销边界，不把token写入普通页面、日志或可点击执行URL。
 
 托管历史age Revision迁移已有显式私有新钥副本与mapping，旧原文/历史不改写；finalize仍fail-closed，不因副本存在就销毁旧vault或撤销最后入口。外部密文和实际recipient集合无法由服务器证明，完整升级仍缺。这些增量本地351/8/build已通过，仍未提交/无本批CI；历史密文仅显式副本mapping，finalize仍关闭，不借用8480589的CI。
+
+## 第八批facets与权限快照边界
+
+lexical_search@1保持已发布schema，facets只进入@2；QueryRef、续页、HTTP query与q/2共用@2契约，不能将新字段偷偷加入@1。短码190→191，旧码意义保留；本地355/8/build通过，尚无本批CI。
+
+doctor.authority_snapshot只读比较当前Registry与旧Root/Online CA签名grants快照，不修改证书、不自动扩权。旧签名快照不能原位安全增加能力；需要的新增授权必须显式本机Root流程处理，若需Root轮换会使旧信任链失效，必须先评估迁移/重签影响。诊断结果不是升级生产授权的许可，本批不自动修改生产。

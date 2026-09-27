@@ -45,7 +45,8 @@ SEARCH_V2_SEGMENTS={'scope':'s','terms':'t','mode':'m','field':'f','order':'o',
                     'not_terms':'z','type':'y','owner':'w','tag':'g','state':'a',
                     'cursor':'j','author':'au','created_after':'ca',
                     'created_before':'cb','updated_after':'ua','updated_before':'ub',
-                    'has_attachment':'ha','depth':'d','recursive':'re','fields':'fi'}
+                    'has_attachment':'ha','depth':'d','recursive':'re','fields':'fi',
+                    'facets':'fc'}
 GREP_V1_SEGMENTS={'scope':'s','pattern':'t','regex':'r','glob':'g',
                   'exclude_glob':'x','case_sensitive':'i','before':'b','after':'a',
                   'max_matches':'m','max_files':'f','files_with_matches':'w',
@@ -86,10 +87,22 @@ def classify_route(path,method,registry):
         from msg.transports.dictionary import build_dictionary
         code=path.split('/',4)[3]
         return operation_route(build_dictionary(registry).resolve_operation(code))
-    if path=='/-/graphql' or path=='/-/mcp' or (path=='/-/transfer' and method=='POST'):
-        return RouteSpec('dynamic_execution',RouteEffect.BUSINESS_WRITE)
-    if path.startswith('/-/git/') and method=='POST':
-        return RouteSpec('git_receive',RouteEffect.EXTERNAL_EFFECT)
+    if path in {'/-/graphql','/-/mcp'}:
+        return RouteSpec('dynamic_execution',RouteEffect.EXTERNAL_EFFECT)
+    if path=='/-/transfer' and method=='POST':
+        return RouteSpec('transfer_execution',RouteEffect.BUSINESS_WRITE)
+    if re.fullmatch(r'/-/git/[A-Za-z0-9_-]{1,128}(?:\.git)?/info/lfs/objects/[0-9a-f]{64}/[0-9]+',path):
+        return RouteSpec('git.lfs_publish',RouteEffect.EXTERNAL_EFFECT)
+    if re.fullmatch(r'/-/git/[A-Za-z0-9_-]{1,128}(?:\.git)?/info/lfs/objects/batch',path):
+        return RouteSpec('git.lfs_write_authorize',RouteEffect.PURE_READ)
+    if re.fullmatch(r'/-/git/[A-Za-z0-9_-]{1,128}/git-receive-pack',path):
+        return operation_route(registry.operation('git.http_receive'))
+    if re.fullmatch(r'/-/git/[A-Za-z0-9_-]{1,128}/info/refs',path):
+        return operation_route(registry.operation('git.http_advertise'))
+    if re.fullmatch(r'/[@&][^/]+/[^/]+\.git/info/lfs/objects/batch',path):
+        return operation_route(registry.operation('git.lfs_read_batch'))
+    if re.fullmatch(r'/[@&][^/]+/[^/]+\.git/(?:info/refs|git-upload-pack|HEAD)',path):
+        return operation_route(registry.operation('git.refs'))
     return RouteSpec('read',RouteEffect.PURE_READ)
 
 
@@ -197,7 +210,7 @@ def compile_lexical_search(query):
     require(set(query)<={'scope','terms','exact','not_terms','mode','field','type',
             'owner','author','tag','state','created_after','created_before',
             'updated_after','updated_before','has_attachment','order','limit',
-            'cursor','snippet','explain','fields','depth','recursive'},
+            'cursor','snippet','explain','fields','facets','depth','recursive'},
             'unknown_query_parameter')
     if 'cursor' in query:
         require(set(query)=={'cursor'},'cursor_query_mismatch')
@@ -216,6 +229,11 @@ def compile_lexical_search(query):
             args[name]=args[name]=='1'
     if 'fields' in args:
         args['fields']=args['fields'].split(',')
+    if 'facets' in args:
+        facets=args['facets'].split(',')
+        require(facets and len(facets)==len(set(facets)) and
+                all(name in {'type','tag'} for name in facets),'invalid_search_facets')
+        args['facets']=facets
     return args
 
 
@@ -604,6 +622,7 @@ def create_app(service):
             if path in {'/_read/query','/_r/query'} or path_query or raw_path.startswith((b'/_read/c/',b'/_r/c/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 continuation=raw_path.startswith((b'/_read/c/',b'/_r/c/'))
+                contract_version=1
                 require(not (continuation or path_query) or not request.url.query,
                         'unknown_query_parameter')
                 path_proof=None
@@ -627,6 +646,9 @@ def create_app(service):
                             require(operation in {'discovery.read_query','discovery.links',
                                                   'discovery.lexical_search'},
                                     'cursor_kind_mismatch')
+                            if (operation=='discovery.lexical_search' and
+                                    'facets' in query.get('arguments',{})):
+                                contract_version=2
                     except Failure as exc:
                         if exc.code=='invalid_base64':
                             raise Failure('invalid_cursor') from exc
@@ -651,7 +673,8 @@ def create_app(service):
                     require(packet.operation==operation and canonical(packet.arguments)==canonical(args),
                             'representation_mismatch')
                 else:
-                    packet=request_for(operation,args,service.settings.service_url,source='manual')
+                    packet=request_for(operation,args,service.settings.service_url,
+                                       source='manual',contract_version=contract_version)
                 result=await service.executor.execute(packet,entry='network')
                 if result.error:
                     return json_response(result_wire(result),error_status(result.error.code))
@@ -730,7 +753,7 @@ def create_app(service):
                 is_index=raw_path.startswith((b'/_index/by-tag/',b'/_i/by-tag/'))
                 lexical=lexical_path or (not is_index and
                     bool(set(query)&{'terms','exact','not_terms','scope','mode','field','order',
-                                      'snippet','explain','has_attachment'}))
+                                      'snippet','explain','has_attachment','facets'}))
                 if lexical:
                     args=compile_lexical_search(query)
                     operation='discovery.lexical_search'
@@ -772,7 +795,8 @@ def create_app(service):
                     require(canonical(packet.arguments)==canonical(args),'representation_mismatch')
                 else:
                     packet=request_for(operation,args,service.settings.service_url,
-                                       source='manual')
+                                       source='manual',
+                                       contract_version=2 if lexical and 'facets' in args else 1)
                 result=await service.executor.execute(packet,entry='network')
                 if result.error:
                     return json_response(result_wire(result),error_status(result.error.code))
@@ -867,6 +891,8 @@ def create_app(service):
                     'mode':{'all':'a','any':'n'},
                     'field':{'all':'a','body':'b','name':'n','metadata':'m'},
                     'order':{'relevance':'r','updated':'u','created':'c','name':'n'},
+                    'facets':['type','tag'],
+                    'contract_version':{'default':1,'with_facets':2},
                     'template':'/_search/q/2/s/{percent-encoded-scope}/t/{terms}/m/{mode}/f/{field}/n/{limit}',
                     'proof_suffix':'/p/{short-lived-signed-OperationRequest}'}
                 etag='"'+digest(document)[7:]+'"'

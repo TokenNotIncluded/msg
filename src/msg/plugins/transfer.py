@@ -42,8 +42,9 @@ async def sealed_read_query(app,ctx,request,tx,transfer):
     require(args.get('parent' if kind=='read' else 'scope') is not None and
             'cursor' not in args,'invalid_query_ref')
     operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
+    contract_version=2 if kind=='search' and 'facets' in args else 1
     try:
-        app.registry.validate(app.registry.operation(operation).input_schema,args)
+        app.registry.validate(app.registry.operation(operation,contract_version).input_schema,args)
     except Failure as exc:
         raise Failure('invalid_query_ref') from exc
     return ref,revision,kind,args
@@ -189,6 +190,7 @@ def install(app):
                 'query_ref_digest_mismatch')
         require(query.get('query_kind')==kind,'query_ref_digest_mismatch')
         operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
+        contract_version=2 if kind=='search' and 'facets' in args else 1
         principal=query_ref_principal(ctx.principal)
         normalized=dict(args)
         scope_field='parent' if kind=='read' else 'scope'
@@ -211,9 +213,9 @@ def install(app):
                            'snapshot':page['snapshot']}
         # Reuse the installed read handler and its current per-object Authorizer.
         # Query bytes can select only this registered read operation.
-        nested=SimpleNamespace(operation=operation,contract_version=1,
+        nested=SimpleNamespace(operation=operation,contract_version=contract_version,
                                arguments=nested_args,internal_page_state=internal_page)
-        output=await app.registry.operation(operation).handler(ctx,nested,tx)
+        output=await app.registry.operation(operation,contract_version).handler(ctx,nested,tx)
         data=dict(output.data)
         if data.get('cursor'):
             # This oversized cursor was generated in this call by the trusted

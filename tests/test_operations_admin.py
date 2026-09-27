@@ -54,6 +54,7 @@ async def test_doctor_does_not_create_database_or_repair_bootstrap(installed,tmp
     status=doctor(app.settings.config_dir,clock=lambda:NOW)
     assert status['checks']['bootstrap']['ok'],status
     assert status['checks']['root_trust']['ok'],status
+    assert status['checks']['authority_snapshot']['ok'],status
     missing=tmp_path/'missing'
     result=doctor(missing)
     assert not result['ok'] and not missing.exists()
