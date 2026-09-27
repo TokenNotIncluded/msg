@@ -46,11 +46,13 @@ jobs:
           python-version: '3.15'
           allow-prereleases: true
           cache: pip
-      - name: Install age for recovery interoperability tests
+      - name: Install required recovery and ingress test tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age
+          sudo apt-get install -y -qq age nginx openssl
           age --version
+          nginx -v
+          openssl version
       - name: Install the complete dependency set
         run: python -m pip install -e '.[dev]'
       - name: Compile all new modules

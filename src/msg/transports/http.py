@@ -21,6 +21,7 @@ from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, gunzip, path_packet, require_url_safe_packet
+from msg.transports.url_safety import require_safe_request_target
 from msg.transports.dictionary import (READ_QUERY_V1_SEGMENTS,READ_QUERY_V2_SEGMENTS,READ_QUERY_V1_SORT,
     READ_QUERY_V1_FIELDS,SEARCH_QUERY_V1_SEGMENTS)
 
@@ -454,20 +455,21 @@ def create_app(service):
         nonlocal graphql_adapter, short_codes
         try:
             limits=service.settings.server.limits
-            raw_path=request.scope.get('raw_path',request.url.path.encode())
-            require(len(raw_path)<=limits.max_path_bytes,'path_too_large')
-            # URL query strings must never carry bearer/recovery material,
-            # including on routes which otherwise ignore query parameters.
-            for key in request.query_params:
-                require(key.casefold() not in {'token','recovery_secret',
-                        'new_recovery_secret','private_key','bootstrap_claim',
-                        'password','api_key','authorization'},
-                        'secure_channel_required')
+            raw_path=request.scope.get('raw_path') or request.scope['path'].encode('utf-8')
+            require_safe_request_target(raw_path,request.scope.get('query_string',b''),
+                                        maximum=limits.max_path_bytes)
             expected=urlsplit(service.settings.service_url)
-            supplied=urlsplit('//'+request.headers.get('host',''))
-            require(supplied.hostname==expected.hostname and
+            try:
+                supplied=urlsplit('//'+request.headers.get('host',''))
+                host_matches=(len(request.headers.getlist('host'))==1 and
+                    not (supplied.username or supplied.password or supplied.path or
+                         supplied.query or supplied.fragment) and
+                    supplied.hostname==expected.hostname and
                     (supplied.port or (443 if expected.scheme=='https' else 80))==
-                    (expected.port or (443 if expected.scheme=='https' else 80)),'forbidden_host')
+                    (expected.port or (443 if expected.scheme=='https' else 80)))
+            except ValueError:
+                host_matches=False
+            require(host_matches,'forbidden_host')
             require('x-http-method-override' not in request.headers and
                     'x-method-override' not in request.headers,'method_not_allowed')
             if request.url.path.startswith(('/@','/&')):
@@ -479,15 +481,6 @@ def create_app(service):
             if origin is not None:
                 require(origin.rstrip('/')==f'{expected.scheme}://{expected.netloc}','forbidden_origin')
             path=request.url.path
-            if (path=='/-' or path.startswith('/-/')) and not (raw_path==b'/-' or raw_path.startswith(b'/-/')):
-                raise Failure('not_found')
-            if raw_path.startswith(b'/-/'):
-                segments=raw_path.split(b'/')
-                if (any(unquote_to_bytes(segment) in {b'.',b'..'} for segment in segments) or
-                        any(b'%' in segment for segment in segments[2:4]) or
-                        (len(segments)>4 and segments[2] in {b'g',b'p'} and
-                         b'.' in segments[3] and b'%' in segments[4])):
-                    raise Failure('not_found')
             native=re.fullmatch(r'(/[@&][^/]+/[^/]+\.git)/(.*)',path)
             if native:
                 require(service.registry.operation('git.refs').effect=='read','effect_mismatch')
@@ -1063,7 +1056,7 @@ def create_app(service):
                             encoded,encoding,limits.max_request_bytes))
                     return Response(status_code=200,headers=BASE_HEADERS)
                 if suffix=='schema':
-                    require(request.method=='GET','method_not_allowed')
+                    require(request.method in {'GET','HEAD'},'method_not_allowed')
                     return json_response({'operation':service.registry.describe(spec),
                                           'input':service.registry.schema(spec.input_schema),
                                           'output':service.registry.schema(spec.output_schema)})
@@ -1556,7 +1549,8 @@ def create_app(service):
             return json_response({'status':'error','error':exc.as_dict()},error_status(exc.code))
         except Exception:
             import logging
-            logging.getLogger(__name__).exception('http_dispatch_failed')
+            # Exception messages/tracebacks may contain URLs, headers or input.
+            logging.getLogger(__name__).error('http_dispatch_failed')
             return json_response({'status':'error','error':{'code':'internal_error','retryable':False}},500)
 
     return Starlette(routes=[Route('/{path:path}',dispatch,methods=['GET','HEAD','POST','PUT','DELETE','PATCH','OPTIONS'])],lifespan=lifespan)

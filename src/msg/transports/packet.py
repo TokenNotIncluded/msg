@@ -2,11 +2,11 @@
 from __future__ import annotations
 import re
 import zlib
-from collections.abc import Mapping
 from msg.core.codec import decode,loads,unb64,canonical,wire
 from msg.core.errors import require,Failure
 from msg.core.models import OperationRequest,OperationResult,TokenProof
 from msg.plugins.schemas import obj,IDENTIFIER,STRING,BYTES,REF,SIGNATURE
+from msg.transports.url_safety import contains_secret_fields
 
 REQUEST_SCHEMA=obj({
     'request_id':{'type':'string','minLength':1,'maxLength':128},'protocol_version':{'const':1},
@@ -30,9 +30,6 @@ RESULT_SCHEMA={'type':'object','properties':{
     'required':['request_id','operation','status'],'additionalProperties':False}
 
 
-_URL_SECRET_FIELDS = frozenset({'token', 'recovery_secret',
-    'new_recovery_secret', 'private_key', 'secret', 'bootstrap_claim',
-    'password', 'api_key', 'authorization'})
 _CLAIM_OPERATIONS = frozenset({'identity.temporary', 'identity.custodial_create',
     'identity.token_create', 'identity.token_rotate', 'identity.token_recover'})
 
@@ -47,15 +44,7 @@ def require_url_safe_packet(packet: OperationRequest) -> None:
     require(not isinstance(packet.proof, TokenProof), 'secure_channel_required')
     require(packet.operation not in _CLAIM_OPERATIONS, 'secure_channel_required')
 
-    def has_secret(value):
-        if isinstance(value, Mapping):
-            return any(key.casefold() in _URL_SECRET_FIELDS or has_secret(item)
-                       for key, item in value.items())
-        if isinstance(value, (list, tuple)):
-            return any(has_secret(item) for item in value)
-        return False
-
-    require(not has_secret(packet.arguments), 'secure_channel_required')
+    require(not contains_secret_fields(packet.arguments), 'secure_channel_required')
 
 
 def decode_packet(value,max_bytes=1048576):
