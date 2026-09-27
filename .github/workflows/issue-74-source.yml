@@ -1,0 +1,22 @@
+name: Issue 74 source snapshot
+on:
+  push:
+    branches: [work/issues-74-76-continuation]
+    paths: [.github/workflows/issue-74-source.yml]
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Archive tracked source only
+        run: git archive --format=tar.gz --output=issue-74-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue-74-source
+          path: issue-74-source.tar.gz
+          retention-days: 1
