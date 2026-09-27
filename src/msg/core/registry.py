@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 
-from jsonschema import Draft202012Validator
-from msg.core.codec import canonical,digest,wire
+from referencing.exceptions import Unresolvable
+from msg.core.schema_policy import local_validator
+from msg.core.codec import digest,wire
 from msg.core.errors import Failure,require
 
 
@@ -54,11 +55,9 @@ class Registry:
         # Keep one owned snapshot for both validation and publication. Caller
         # dictionaries and lookup results must not mutate a frozen contract.
         schema=deepcopy(schema)
-        Draft202012Validator.check_schema(schema)
-        require(b'http' not in canonical(schema).lower() or '$ref' not in canonical(schema).decode(),
-                'remote_schema_reference_forbidden')
+        validator=local_validator(schema)
         self._schemas[ref.id]=schema
-        self._validators[ref.id]=Draft202012Validator(schema)
+        self._validators[ref.id]=validator
 
     def add(self,manifest):
         require(not self._frozen,'registry_frozen')
@@ -73,7 +72,7 @@ class Registry:
         for item in (*manifest.resource_types,*manifest.capabilities,*manifest.operations):
             require(item.version>=1 and item.name and '*' not in item.name,'invalid_registry_name')
         for item in manifest.operations:
-            require(not item.name.startswith('root.') or item.entries==frozenset({'local_admin'}),'local_only_contract')
+            require(not item.name.startswith('root.') or spec.entries==frozenset({'local_admin'}),'local_only_contract')
             require(item.entries and item.entries<=frozenset({'local_admin','network','worker'}),'invalid_entries')
         for item in manifest.resource_types:
             self.add_resource_type(item)
@@ -128,7 +127,11 @@ class Registry:
         return deepcopy(self._schemas[key])
 
     def validate(self,ref,value):
-        errors=sorted(self._validators[ref.id if hasattr(ref,"id") else ref].iter_errors(wire(value)),key=lambda e:str(e.path))
+        try:
+            errors=sorted(self._validators[ref.id if hasattr(ref,"id") else ref].iter_errors(wire(value)),key=lambda e:str(e.path))
+        except Unresolvable as exc:
+            # Reference exception messages can include filesystem paths/URIs.
+            raise Failure('schema_reference_unresolvable') from exc
         if errors:
             raise Failure('schema_validation','.'.join(str(i) for i in errors[0].path) or 'arguments')
 
