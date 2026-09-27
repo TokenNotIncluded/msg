@@ -129,13 +129,13 @@ async def test_new_write_delta_requires_refresh_and_all_acks_are_rebound(install
             await tx.save_credential(replace(credential,ceiling=app.primary_ceiling()),subject.auth_version)
         ciphertext=_age('--encrypt','--recipient',client.state.encryption_recipient,input_data=b'new-key write')
         args={'name':'during.age','format':'age','ciphertext':b64(ciphertext)}
-        missing=await call(app,'keystore.put',args,subject=client.state.subject,key=signing)
+        missing=await call(app,'keystore.put',args,subject=client.state.subject,key=signing,contract_version=2)
         assert missing.status=='error' and missing.error.code=='custodial_new_encryption_key_required'
         wrong=await call(app,'keystore.put',dict(args,encryption_key_id=created.data['encryption_key_id']),
-                         subject=client.state.subject,key=signing)
+                         subject=client.state.subject,key=signing,contract_version=2)
         assert wrong.status=='error' and wrong.error.code=='custodial_new_encryption_key_required'
         latest=await call(app,'keystore.put',dict(args,encryption_key_id=first['inventory']['new_key_id']),
-                          subject=client.state.subject,key=signing)
+                          subject=client.state.subject,key=signing,contract_version=2)
         assert latest.status=='ok',wire(latest)
         drift=(await inventory(client)).data
         assert drift['inventory_changed'] and len(drift['delta']['added'])==1
@@ -275,7 +275,7 @@ async def test_scoped_ack_and_decision_tampering_never_retire_keys(installed, tm
             'decryption_ack': wire(client.state.signer.sign(canonical(statement), purpose='custodial-history-ack-v1'))}
         for field, value in (('inventory_digest', digest('stale')), ('plaintext_digest', digest('tamper')),
                              ('new_revision', source[1])):
-            denied = await client.call('identity.custodial_rewrap_ack', dict(args, **{field: value}), request_id=rid)
+            denied = await client.call('identity.custodial_rewrap_ack', dict(args, **{field: value}), request_id=rid,contract_version=2)
             assert denied.status == 'error'
         assert not (await inventory(client)).data['verified_revisions']
         await acknowledge(client, source[1])
@@ -290,7 +290,7 @@ async def test_scoped_ack_and_decision_tampering_never_retire_keys(installed, tm
         args['migration_ack'] = wire(client.state.signer.sign(canonical(stage_statement(
             client.state.subject, args, rid)), purpose='custodial-decision-v1'))
         args['resolution'] = 'accept_loss'
-        denied = await client.call('identity.custodial_upgrade_finish', args, request_id=rid)
+        denied = await client.call('identity.custodial_upgrade_finish', args, request_id=rid,contract_version=2)
         assert denied.status == 'error' and denied.error.code == 'invalid_signature'
         assert client.state.token == token
         async with app.metadata.transaction(write=False) as tx:

@@ -142,11 +142,17 @@ def install(app):
                   'old_revision_unchanged':True})
 
     @op('identity.custodial_rewrap_ack',obj({
+        'challenge_id':IDENTIFIER,'old_revision':IDENTIFIER,
+        'new_revision':IDENTIFIER,'ciphertext_digest':IDENTIFIER,
+        'plaintext_digest':IDENTIFIER,'decryption_ack':{'type':'object'}},
+        ('challenge_id','old_revision','new_revision','ciphertext_digest',
+         'plaintext_digest','decryption_ack')))
+    @op('identity.custodial_rewrap_ack',obj({
         'challenge_id':IDENTIFIER,'old_revision':IDENTIFIER,'new_revision':IDENTIFIER,
         'ciphertext_digest':IDENTIFIER,'plaintext_digest':IDENTIFIER,
         'decryption_ack':{'type':'object'},'inventory_digest':IDENTIFIER,
         'method':{'enum':['rewrap','compatibility_recovery']}},
-        ('challenge_id','old_revision','new_revision','ciphertext_digest','plaintext_digest','decryption_ack')))
+        ('challenge_id','old_revision','new_revision','ciphertext_digest','plaintext_digest','decryption_ack')),version=2)
     async def custodial_rewrap_ack(ctx,request,tx):
         from msg.plugins.custodial_lifecycle import audit
         subject,status,challenge,details,state = await migration(ctx,request,tx,pending=True)

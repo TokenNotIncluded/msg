@@ -95,3 +95,7 @@ application without the isolated selftest namespace.
 retirement procedure exists. Neither a boolean supplied by a network caller nor a
 green test run can establish that old backups lost a key. Restore/revocation replay
 and real operator acceptance are tracked separately in issues #69 and #70.
+
+## Published contract compatibility
+
+The original v1 short-code rows and input schemas remain immutable. Scoped decisions use `identity.custodial_upgrade_finish@2`, scoped acknowledgements use `identity.custodial_rewrap_ack@2`, and explicit new-key writes use `keystore.put@2`. Existing deployments must explicitly authorize these new operations through local CA governance and reissue constrained credentials before using them; registry vocabulary never silently expands an existing signed grant. The official migration client selects v2. Legacy ACKs remain readable but cannot authorize retirement.

@@ -278,6 +278,10 @@ def install(app):
 
     @op('identity.custodial_upgrade_finish',obj({'challenge_id':IDENTIFIER,
         'age_proof':BYTES,'external_ciphertexts_migrated':BOOLEAN,
+        'migration_ack':SIGNATURE},
+        ('challenge_id','age_proof','external_ciphertexts_migrated','migration_ack')))
+    @op('identity.custodial_upgrade_finish',obj({'challenge_id':IDENTIFIER,
+        'age_proof':BYTES,'external_ciphertexts_migrated':BOOLEAN,
         'migration_ack':SIGNATURE,
         'action':{'enum':['refresh','recovery_envelope','finalize']},
         'inventory_digest':IDENTIFIER,'observed_digest':IDENTIFIER,'results_digest':IDENTIFIER,
@@ -285,7 +289,7 @@ def install(app):
         'loss_revisions':{'type':'array','items':IDENTIFIER,'uniqueItems':True,'maxItems':10000},
         'reviewed_policy_version':{'type':'integer','minimum':0},
         'reason':{'type':'string','minLength':1,'maxLength':1000}},
-        ('challenge_id','age_proof','external_ciphertexts_migrated','migration_ack')))
+        ('challenge_id','age_proof','external_ciphertexts_migrated','migration_ack')),version=2)
     async def custodial_upgrade_finish(ctx,request,tx):
         subject=await controlled_owner(app,ctx,request,tx)
         args=request.arguments

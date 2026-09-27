@@ -83,7 +83,7 @@ async def transition(client, action, *, resolution='verified', loss_revisions=()
             return result
         try:
             result = await client.call('identity.custodial_upgrade_finish', pending['arguments'],
-                                       request_id=pending['request_id'])
+                                       request_id=pending['request_id'], contract_version=2)
         except Failure as exc:
             if exc.code != 'transport_uncertain' or action != 'finalize':
                 raise
@@ -176,7 +176,7 @@ async def acknowledge(client, old_revision, *, method='rewrap'):
             'challenge_id': state['challenge_id'], 'old_revision': old_revision,
             'new_revision': target_ref['revision'], 'ciphertext_digest': target_ref['ciphertext_digest'],
             'plaintext_digest': plaintext_digest, 'inventory_digest': state['inventory_digest'],
-            'method': method, 'decryption_ack': wire(signature)}, request_id=request_id))
+            'method': method, 'decryption_ack': wire(signature)}, request_id=request_id, contract_version=2))
 
 
 async def migrate(client, *, method='rewrap', limit=100):

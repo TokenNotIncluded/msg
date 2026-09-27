@@ -8,7 +8,9 @@ from msg.plugins.schemas import obj,STRING,IDENTIFIER,BYTES,REF
 
 def register(app,op):
     @op('keystore.put',obj({'name':STRING,'format':{'enum':['msg-x25519-v1','age','openpgp']},
-        'ciphertext':BYTES,'source':REF,'id':IDENTIFIER,'encryption_key_id':IDENTIFIER},('name','format')),signature=True)
+        'ciphertext':BYTES,'source':REF,'id':IDENTIFIER},('name','format')),signature=True)
+    @op('keystore.put',obj({'name':STRING,'format':{'enum':['msg-x25519-v1','age','openpgp']},
+        'ciphertext':BYTES,'source':REF,'id':IDENTIFIER,'encryption_key_id':IDENTIFIER},('name','format')),signature=True,version=2)
     async def put(ctx,request,tx):
         a=request.arguments
         parent=tx.one("SELECT id FROM resources WHERE parent=? AND name='keystore'",(ctx.principal.subject,))
