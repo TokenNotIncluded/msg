@@ -95,6 +95,20 @@ CREATE TABLE IF NOT EXISTS achievement_grants (
  spec_version INTEGER NOT NULL, body TEXT NOT NULL,
  UNIQUE(subject,achievement_id,spec_version));
 CREATE INDEX IF NOT EXISTS achievement_grants_lookup ON achievement_grants(achievement_id,subject);
+CREATE TABLE IF NOT EXISTS order_escrow_decisions (
+ order_id TEXT PRIMARY KEY REFERENCES store_orders(id),
+ id TEXT NOT NULL UNIQUE, body TEXT NOT NULL, signature TEXT NOT NULL,
+ source_proof TEXT NOT NULL,
+ transaction_id TEXT NOT NULL UNIQUE REFERENCES money_ledger(id));
+CREATE TRIGGER IF NOT EXISTS escrow_decision_no_update BEFORE UPDATE ON order_escrow_decisions
+BEGIN SELECT RAISE(ABORT,'append_only_escrow_decision'); END;
+CREATE TRIGGER IF NOT EXISTS escrow_decision_no_delete BEFORE DELETE ON order_escrow_decisions
+BEGIN SELECT RAISE(ABORT,'append_only_escrow_decision'); END;
+CREATE TABLE IF NOT EXISTS achievement_pins (
+ subject TEXT NOT NULL REFERENCES identities(id),
+ grant_id TEXT NOT NULL REFERENCES achievement_grants(id),
+ position INTEGER NOT NULL CHECK(position>=0),
+ PRIMARY KEY(subject,grant_id), UNIQUE(subject,position));
 CREATE TABLE IF NOT EXISTS share_grants (
  id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
  grantor TEXT NOT NULL, grantee TEXT NOT NULL, created_at TEXT NOT NULL,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import base64
 import os
 
+from msg.market.escrow import EscrowEngine, validate_policy
 from msg.core.codec import canonical, digest, loads, parse_time, wire
 from msg.core.errors import require
 from msg.core.models import HandlerOutput
@@ -85,12 +86,26 @@ def install(app):
 
     @op('orders.buy', obj({'listing_id': IDENTIFIER,
         'listing_revision': IDENTIFIER, 'quantity': quantity,
+        'currency_id': {'const': CURRENCY_ID}, 'total_price_minor': amount,
+        'package_digest': {'type': 'string', 'pattern': '^sha256:[a-f0-9]{64}$'},
+        'auto_accept': {'type': 'boolean'},
+        'email': {'type': 'string', 'minLength': 3, 'maxLength': 254}},
+        ('listing_id', 'listing_revision', 'quantity', 'currency_id',
+         'total_price_minor', 'package_digest')), signature=True, version=2)
+    @op('orders.buy', obj({'listing_id': IDENTIFIER,
+        'listing_revision': IDENTIFIER, 'quantity': quantity,
         'currency_id': {'const': CURRENCY_ID}, 'total_price_minor': amount},
         ('listing_id', 'listing_revision', 'quantity', 'currency_id',
          'total_price_minor')), signature=True)
     async def buy(ctx, request, tx):
         buyer = _subject(ctx)
         args = request.arguments
+        instant = request.contract_version == 2
+        if instant:
+            require('delivery' in app.settings.server.plugins, 'delivery_disabled')
+            if 'email' in args:
+                from msg.market.delivery_targets import validate_address
+                validate_address(args['email'])
         listing = await _listing(app, ctx, request, tx, args['listing_id'])
         body, _ = await _body(app, tx, listing)
         require(body['mode'] == 'sale' and body['state'] == 'active' and
@@ -99,6 +114,11 @@ def install(app):
         require(body['delivery_mode'] == 'managed_instant' and
                 body['item_kind'] in {'file','bundle'},
                 'order_delivery_mode_unsupported')
+        policy = validate_policy(body['escrow_policy'],body['dispute_policy'])
+        if not instant:
+            require(body['escrow_policy'] == 'escrow-v1', 'escrow_policy_requires_v2')
+        if args.get('auto_accept'):
+            require('checkout_accept' in policy['reasons'], 'escrow_reason_unsupported')
         require(args['listing_revision'] == listing.revision,
                 'listing_revision_conflict')
         require(body['currency_id'] == args['currency_id'] == CURRENCY_ID,
@@ -125,8 +145,10 @@ def install(app):
             require(0 <= package[9] <= 1024 * 1024,
                     'delivery_package_too_large')
             package_revision, package_digest = package[4], package[8]
-        # The only currently supported target is the buyer's in-site order
-        # collection. Verified email and encryption endpoints need Delivery.
+        if instant:
+            require(args['package_digest'] == package_digest, 'delivery_package_mismatch')
+        # Site ownership is separate from an optional, buyer-owned email
+        # endpoint. SMTP never changes this authoritative target.
         target = {'subject_id': buyer, 'channel': 'site'}
         order_id = _order_id()
         escrow = 'esc_' + order_id[4:]
@@ -160,34 +182,29 @@ def install(app):
              canonical(target).decode(),request.payload_digest,receipt_id,
              'funded',wire(ctx.now),wire(ctx.now),None,None,
              canonical([receipt_id]).decode()), write=True)
-        return HandlerOutput(data={'order': _view(_row(tx, order_id, buyer), buyer),
-                                   'payment': receipt})
+        data = {'payment': receipt}
+        if instant:
+            from msg.plugins.delivery import prepare_managed, delivery_summary
+            from msg.market.delivery_notifications import initialize_notification
+            order = _row(tx, order_id, buyer)
+            delivery = await prepare_managed(app, ctx, tx, order)
+            data['delivery'] = delivery_summary(delivery)
+            if args.get('auto_accept'):
+                released, decision, _ = await EscrowEngine(app).settle(
+                    ctx, request, tx, reason='checkout_accept', order_id=order_id)
+                data.update(settlement=released, decision=decision)
+            data['notification'] = await initialize_notification(
+                app, ctx, request, tx, _row(tx, order_id, buyer), args.get('email'))
+        data['order'] = _view(_row(tx, order_id, buyer), buyer)
+        return HandlerOutput(data=data)
 
     @op('orders.cancel', obj({'order_id': IDENTIFIER}, ('order_id',)),
         signature=True)
     async def cancel(ctx, request, tx):
         buyer = _subject(ctx)
-        row = _row(tx, request.arguments['order_id'], buyer)
-        require(row['buyer'] == buyer, 'order_not_found')
-        require(row['state'] == 'funded' and row['delivered_at'] is None,
-                'order_not_cancellable')
-        require(tx.one('SELECT 1 FROM store_deliveries WHERE order_id=?',
-                       (row['id'],)) is None, 'order_not_cancellable')
-        require(_balance(tx, row['escrow_subject']) == row['total_price_minor'],
-                'escrow_balance_mismatch')
-        refund = _post_transfer(tx, sender=row['escrow_subject'],
-            recipient=buyer, amount=row['total_price_minor'], actor=buyer,
-            request_id=request.request_id, now=ctx.now,
-            receipt_signer=app.receipt_signer,
-            reference='order_refund:' + row['id'], kind='refund')
-        refs = [*row['receipt_refs'], refund['body']['transaction_id']]
-        changed = tx.execute('''UPDATE store_orders SET state='refunded',receipt_refs=?
-            WHERE id=? AND buyer=? AND state='funded' AND delivered_at IS NULL
-              AND NOT EXISTS (SELECT 1 FROM store_deliveries WHERE order_id=?)''',
-            (canonical(refs).decode(), row['id'], buyer, row['id']), write=True)
-        require(changed.rowcount == 1, 'order_not_cancellable')
-        return HandlerOutput(data={'order': _view(_row(tx, row['id'], buyer), buyer),
-                                   'refund': refund})
+        refund,decision,_ = await EscrowEngine(app).settle(ctx,request,tx,reason='buyer_cancel')
+        return HandlerOutput(data={'order':_view(_row(tx,request.arguments['order_id'],buyer),buyer),
+                                   'refund':refund,'decision':decision})
 
     @op('orders.get', obj({'order_id': IDENTIFIER}, ('order_id',)), effect='read')
     async def get(ctx, request, tx):
