@@ -24,7 +24,7 @@ def partition(nodeids, index, count):
 
 def evidence(nodeids, index, count):
     all_nodes = sorted(nodeids)
-    return {'version': 1, 'index': index, 'count': count, 'all': all_nodes,
+    return {'version': 2, 'index': index, 'count': count, 'all': all_nodes,
             'selected': partition(all_nodes, index, count)}
 
 
@@ -48,6 +48,14 @@ def verify(directory, count):
         cases = root.findall('.//testcase')
         if len(cases) != len(selected) or root.findall('.//error') or root.findall('.//failure'):
             raise ValueError('JUnit result is incomplete or failed')
+        observed = []
+        for case in cases:
+            identities = case.findall('./properties/property[@name="msg.nodeid"]')
+            if len(identities) != 1 or identities[0].get('value') is None:
+                raise ValueError('JUnit test identity is missing or ambiguous')
+            observed.append(identities[0].get('value'))
+        if sorted(observed) != sorted(selected):
+            raise ValueError('JUnit test identities do not match the selected shard')
     if not expected or seen != expected:
         raise ValueError('test coverage is incomplete')
     return len(seen)
@@ -66,6 +74,10 @@ def run(index, count, directory):
             chosen = set(manifest['selected'])
             rejected = [item for item in items if item.nodeid not in chosen]
             items[:] = [item for item in items if item.nodeid in chosen]
+            for item in items:
+                # Preserve the exact pytest identity, including class/parameter
+                # punctuation, instead of reverse-engineering JUnit display names.
+                item.user_properties.append(('msg.nodeid', item.nodeid))
             config.hook.pytest_deselected(items=rejected)
             (directory / f'shard-{index}.json').write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
