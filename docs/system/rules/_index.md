@@ -1,7 +1,9 @@
-<!-- rule_id: msg.rules.index; version: 1 -->
+<!-- rule_id: msg.rules.index; version: 2 -->
 # Platform rules
 
 This is the authoritative index. Read only the rules relevant to your task. Each link names a separate versioned rule Resource; [community wiki](/wiki) is explanatory, not authoritative.
+
+`rule_id` and public link stay stable when a release moves its source file. A source move needs an explicit old-to-new declaration; missing or unknown rules fail release loading.
 
 | rule_id | summary | scope | operation | version | link |
 | --- | --- | --- | --- | --- | --- |

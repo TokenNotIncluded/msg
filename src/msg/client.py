@@ -7,11 +7,12 @@ import hashlib
 import os
 from pathlib import Path
 import stat
+from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
 
-from msg.core.codec import b64, unb64, canonical, digest, loads, wire, decode
+from msg.core.codec import b64, unb64, canonical, digest, loads, wire, decode, parse_time
 from msg.core.errors import Failure, require
 from msg.core.models import ResourceRef, Certificate, Signature
 from msg.core.requests import request_for
@@ -20,6 +21,7 @@ from msg.security.age_keys import (generate_age_key,recipient_from_identity,
     public_from_recipient,encryption_key_id)
 from msg.security.vault import client_upgrade_proof
 from msg.storage.git import durable_write
+from msg.transports.client import HTTPTransport, GraphQLTransport, MCPHTTPTransport
 
 
 def hash_file(path):
@@ -122,8 +124,10 @@ class MsgClient:
         require(state.server==transport.server,'client_server_mismatch')
 
     def prepare(self, operation, arguments, *, expected=(), request_id=None, return_fields=(), subject=None,
-                signer=None, certificates=None, anonymous=False, contract_version=1):
+                signer=None, certificates=None, anonymous=False, contract_version=1,expires_at=None):
         require(not operation.startswith('root.'),'local_only')
+        if (self.state.directory/'token-rotation.json').exists():
+            require(operation=='identity.token_rotate','token_rotation_pending')
         selected_signer = signer or self.state.signer
         selected_subject = subject or self.state.subject
         # An explicit temporary token remains authoritative until upgrade succeeds.
@@ -134,7 +138,7 @@ class MsgClient:
             subject=None if anonymous else selected_subject,signer=None if anonymous else selected_signer,
             token=None if anonymous else token, certificates=() if anonymous else
             (self.state.certificates if certificates is None else certificates),request_id=request_id,
-            expires_at=self.clock()+timedelta(seconds=180),source='msg',expected=expected,
+            expires_at=expires_at or self.clock()+timedelta(seconds=180),source='msg',expected=expected,
             return_fields=return_fields,contract_version=contract_version)
 
     async def send(self, packet):
@@ -158,6 +162,81 @@ class MsgClient:
 
     async def call(self, operation, arguments=None, **kwargs):
         return await self.send(self.prepare(operation,arguments or {},**kwargs))
+
+    def _require_token_secret_transport(self):
+        # These envelopes contain a recovery secret. A path transport would put
+        # it in URL history and access logs, including when it compresses paths.
+        require(type(self.transport) in {HTTPTransport,GraphQLTransport,MCPHTTPTransport},
+                'token_secret_transport_required')
+        host=urlsplit(self.state.server).hostname
+        require(self.state.server.startswith('https://') or host in {
+            'testserver','localhost','127.0.0.1','::1'},
+            'token_secret_tls_required')
+
+    async def _send_token_secret(self, packet):
+        self._require_token_secret_transport()
+        return await self.send(packet)
+
+    def _token_journal(self):
+        paths=[self.state.directory/name for name in (
+            'temporary.json','custodial-bootstrap.json','token-rotation.json')]
+        present=[path for path in paths if path.exists() or path.is_symlink()]
+        require(len(present)<=1,'multiple_token_journals')
+        if not present:
+            return None,None
+        path=present[0]
+        require(path.is_file() and not path.is_symlink() and
+                path.stat().st_uid==os.geteuid() and path.stat().st_mode&0o077==0,
+                'unsafe_token_journal')
+        pending=loads(path.read_bytes())
+        require(pending.get('contract_version')==2 and
+                len(unb64(pending['recovery_secret'],limit=64))>=32,
+                'legacy_token_journal_requires_manual_resolution')
+        return path,pending
+
+    @staticmethod
+    def _token_claim(nonce,request_id,operation,subject=None):
+        if operation in {'identity.temporary','identity.custodial_create'}:
+            prefix='u_tmp_' if operation=='identity.temporary' else 'u_cust_'
+            subject=prefix+hashlib.sha256(unb64(nonce,limit=64)).hexdigest()[:32]
+            credential='t_'+subject[2:]
+        else:
+            require(subject is not None,'token_subject_required')
+            credential='t_'+digest((request_id,subject))[7:39]
+        return subject,credential
+
+    def _new_token_journal(self,path,operation,*,handle=None):
+        require(self._token_journal()==(None,None),'token_operation_pending')
+        nonce=b64(os.urandom(32))
+        recovery_secret=b64(os.urandom(32))
+        request_id=uuid4().hex
+        subject,credential=self._token_claim(nonce,request_id,operation,self.state.subject)
+        pending={'contract_version':2,'operation':operation,'nonce':nonce,
+                 'recovery_secret':recovery_secret,'request_id':request_id,
+                 'expires_at':wire(self.clock()+timedelta(seconds=180)),
+                 'subject_id':subject,'credential_id':credential}
+        if handle is not None:
+            pending['handle']=handle
+        durable_write(path,canonical(pending),mode=0o600)
+        return pending
+
+    def _existing_token_journal(self,path,operation,*,handle=None):
+        existing,pending=self._token_journal()
+        if pending is None:
+            return self._new_token_journal(path,operation,handle=handle)
+        require(existing==path and pending['operation']==operation and
+                (handle is None or pending.get('handle')==handle),
+                'token_operation_pending')
+        return pending
+
+    def _finish_token(self,path,pending,result):
+        if result.status=='ok':
+            require(result.data['credential_id']==pending['credential_id'] and
+                    result.data['subject_id']==pending['subject_id'] and
+                    bool(result.data.get('token')),'token_claim_mismatch')
+            self.state.accept_identity(result)
+            path.unlink()
+        return result
 
     @staticmethod
     def checked(result):
@@ -198,44 +277,79 @@ class MsgClient:
 
     async def temporary(self):
         require(self.state.subject is None,'identity_already_configured')
+        self._require_token_secret_transport()
         pending=self.state.directory/'temporary.json'
-        if pending.exists():
-            data=loads(pending.read_bytes())
-        else:
-            data={'nonce':b64(os.urandom(32)),'request_id':uuid4().hex}
-            durable_write(pending,canonical(data),mode=0o600)
-        result=await self.call('identity.temporary',{'nonce':data['nonce']},request_id=data['request_id'],anonymous=True)
-        if result.status=='ok':
-            self.state.accept_identity(result)
-            pending.unlink(missing_ok=True)
-        return result
+        data=self._existing_token_journal(pending,'identity.temporary')
+        packet=self.prepare('identity.temporary',{'nonce':data['nonce'],
+            'recovery_secret':data['recovery_secret']},request_id=data['request_id'],
+            anonymous=True,contract_version=2,expires_at=parse_time(data['expires_at']))
+        return self._finish_token(pending,data,await self._send_token_secret(packet))
 
     async def custodial(self,handle):
         require(self.state.subject is None and self.state.signer is None and
                 self.state.encryption_recipient is None,'identity_already_configured')
+        self._require_token_secret_transport()
         pending=self.state.directory/'custodial-bootstrap.json'
-        if pending.exists():
-            data=loads(pending.read_bytes())
-            require(data['handle']==handle,'registration_pending_for_other_handle')
-        else:
-            data={'handle':handle,'nonce':b64(os.urandom(32)),'request_id':uuid4().hex}
-            durable_write(pending,canonical(data),mode=0o600)
-        result=await self.call('identity.custodial_create',{'handle':handle,'nonce':data['nonce']},
-                               request_id=data['request_id'],anonymous=True)
-        if result.status=='ok':
-            self.state.accept_identity(result)
-            pending.unlink(missing_ok=True)
-        return result
+        data=self._existing_token_journal(pending,'identity.custodial_create',handle=handle)
+        packet=self.prepare('identity.custodial_create',{'handle':handle,'nonce':data['nonce'],
+            'recovery_secret':data['recovery_secret']},request_id=data['request_id'],
+            anonymous=True,contract_version=2,expires_at=parse_time(data['expires_at']))
+        return self._finish_token(pending,data,await self._send_token_secret(packet))
 
     async def rotate_token(self):
         require(self.state.token is not None,'token_required')
+        self._require_token_secret_transport()
         pending=self.state.directory/'token-rotation.json'
-        data=loads(pending.read_bytes()) if pending.exists() else {'nonce':b64(os.urandom(32)),'request_id':uuid4().hex}
-        durable_write(pending,canonical(data),mode=0o600)
-        result=await self.call('identity.token_rotate',{'nonce':data['nonce']},request_id=data['request_id'])
+        data=self._existing_token_journal(pending,'identity.token_rotate')
+        packet=self.prepare('identity.token_rotate',{'nonce':data['nonce'],
+            'recovery_secret':data['recovery_secret']},request_id=data['request_id'],
+            contract_version=2,expires_at=parse_time(data['expires_at']))
+        return self._finish_token(pending,data,await self._send_token_secret(packet))
+
+    async def recover_token(self):
+        self._require_token_secret_transport()
+        path,pending=self._token_journal()
+        require(path is not None,'token_recovery_not_pending')
+        # A crash after writing client.json but before unlinking the journal is
+        # complete locally. Never revoke that already accepted credential.
+        if self.state.token and self.state.token[0]==pending['credential_id']:
+            path.unlink()
+            raise Failure('token_recovery_not_pending')
+        recovery=pending.get('recovery')
+        if recovery is None:
+            nonce=b64(os.urandom(32))
+            request_id=uuid4().hex
+            _,credential=self._token_claim(nonce,request_id,'identity.token_recover',
+                                            pending['subject_id'])
+            recovery={'nonce':nonce,'new_recovery_secret':b64(os.urandom(32)),
+                      'request_id':request_id,'credential_id':credential,
+                      'expires_at':wire(self.clock()+timedelta(seconds=180))}
+            pending['recovery']=recovery
+            durable_write(path,canonical(pending),mode=0o600)
+        args={'credential_id':pending['credential_id'],
+              'original_request_id':pending['request_id'],
+              'recovery_secret':pending['recovery_secret'],
+              'nonce':recovery['nonce'],
+              'new_recovery_secret':recovery['new_recovery_secret']}
+        packet=request_for('identity.token_recover',args,self.state.server,
+            subject=pending['subject_id'],request_id=recovery['request_id'],
+            expires_at=parse_time(recovery['expires_at']),source='msg')
+        result=await self._send_token_secret(packet)
         if result.status=='ok':
+            require(result.data['credential_id']==recovery['credential_id'] and
+                    result.data['subject_id']==pending['subject_id'] and
+                    result.data['previous_credential']==pending['credential_id'] and
+                    bool(result.data.get('token')),'token_claim_mismatch')
             self.state.accept_identity(result)
-            pending.unlink(missing_ok=True)
+            path.unlink()
+        elif result.error.code=='token_delivery_unavailable':
+            # Claim committed but its response may have vanished. A further
+            # explicit recovery consumes the newly bound secret, never @1.
+            pending.update(credential_id=recovery['credential_id'],
+                           request_id=recovery['request_id'],
+                           recovery_secret=recovery['new_recovery_secret'])
+            pending.pop('recovery')
+            durable_write(path,canonical(pending),mode=0o600)
         return result
 
     async def upgrade(self,handle):

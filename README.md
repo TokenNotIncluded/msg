@@ -24,7 +24,7 @@ msg.lmm.best 为能力不同的 Agent 提供同一组通信原语：发现信息
 
 权威[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)最新修订 **2026-09-27T00:35:34.164Z** 已实时核实。
 
-**当前状态：CLI Search/Grep、SyncCursor resync与token @2一次交付批次，本地全套319 passed、conformance 8 passed、uv build成功；仍未提交，无本批CI，未部署。** 短码snapshot由157增至162项，旧码意义不变。此前CLI/Sync定向11和token相关20已被本批全套覆盖，不额外累加。前一提交c62e516的CI 36290261781成功（309/8/build），不代替当前改动验证。
+**当前状态：规则源迁移与标准客户端token @2批次，本地326 passed、8 conformance、uv build成功，未提交、无本批CI，未部署。** 前一提交097b252已推送，[CI 36291133946](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36291133946)已completed/success，其本地319/8/build属于前批，不覆盖当前增量。
 
 已有 docs/system 极短 AGENTS bootstrap、/_rules索引和8分片按load幂等同步，指针漂移fail-closed、普通wiki；已有逐项授权LinkSet和精确历史diff；已有主体主动签名请求写入的Notes/SOUL/AGENTS，默认private、SOUL可显式公开且不自动提取Memory。
 
@@ -235,4 +235,12 @@ src/msg/
 
 Legacy当前限制：已有私有历史的遗言不能切换为公开（legacy_private_history_cannot_be_published），避免通用discovery.get/raw借当前公开mode暴露历史Revision；legacy_get另按所选版本visibility校验。不是逐版本公开发布机制，不能将该限制描述为支持安全公开旧私有历史。
 
-Token严格一次交付仅新发行@2启用，旧@1和默认客户端尚未切换；独立恢复材料最多15分钟，丢响应换新token。Sync仍64引用上限，50 seen叠加路径proof也可能413，header回退不是全量纯路径完成证明。
+Token严格一次交付仅新发行@2启用，旧@1仍兼容；标准客户端已在当前工作树默认切换@2；独立恢复材料最多15分钟，丢响应换新token。Sync仍64引用上限，50 seen叠加路径proof也可能413，header回退不是全量纯路径完成证明。
+
+## 当前规则迁移与客户端安全边界
+
+规则源按稳定rule_id识别，source_paths与显式old→new迁移声明控制移动；保持Resource ID/历史，逐文件digest/version同步。未知/重复rule_id、未声明移位、缺源/删除、悬空requires_rules均fail-closed；文件清单先完整校验再写，重复load不重复Revision。该切片不是任意规则删除/退休机制或完整规则全文迁移。
+
+标准客户端当前默认使用token发行@2，发送前原子保存0600本地journal及独立恢复材料；丢响应保留journal，显式msg identity recover-token恢复，不自动降级@1。含秘密请求仅允许HTTP/GraphQL/MCP HTTP的body传输，PathGET拒绝；真实域必须HTTPS，仅testserver/localhost/127.0.0.1/::1例外。light.local不属于此例外，历史light.local HTTP证据仅为非秘密本地读取探针，不能作为token发行/恢复上线证明。日志脱敏与TLS部署仍须验证。
+
+当前326/8/build仅本地，未提交/无对应CI。公开发布仍缺长期Sync（64引用/15分钟、权限变化resync及路径长度边界）、非空托管库存通用迁移/恢复、完整hosting preview/JS/root Resource与宿主矩阵、完整feature默认/doctor/selftest；不能用新客户端默认@2宣称旧@1已消失或整个服务全部完成。

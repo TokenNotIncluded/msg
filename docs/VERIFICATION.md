@@ -1,12 +1,19 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 CLI Search/Grep、Sync resync 与 token @2（未提交，本地全套通过）
+## 2026-09-27 规则源迁移与标准客户端token @2（未提交，本地全套通过）
 
-当前工作树未提交、无本批远端CI。`.venv/bin/python -m pytest -q` 为 **319 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q` 成功。短码snapshot由157增至162项且旧码意义不变。此前CLI/Sync定向11、token相关20已包含在全套内，不额外累加；不借用c62e516已通过的309/8/build CI。
+当前工作树 `.venv/bin/python -m pytest -q` 为 **326 passed**，conformance **8 passed**，`uv build -q` 成功；尚未提交、无本批CI。规则源显式迁移保留rule_id/Resource/历史，完整清单/依赖先校验，缺失/未知/重复/悬空声明拒绝。标准客户端默认token @2，0600 journal与显式`msg identity recover-token`，不降级@1。
+
+恢复秘密只用HTTP/GraphQL/MCP HTTP body；PathGET拒绝。真实域要求HTTPS，测试/loopback例外仅testserver、localhost、127.0.0.1、::1；light.local历史HTTP探针是非秘密读取测试，不证明token安全传输。当前没有生产部署证明。
+
+
+## 2026-09-27 CLI Search/Grep、Sync resync 与 token @2（097b252已推送、CI通过）
+
+提交097b252已推送，[CI 36291133946](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36291133946)已completed/success；以下为该提交本地证据。`.venv/bin/python -m pytest -q` 为 **319 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q` 成功。短码snapshot由157增至162项且旧码意义不变。此前CLI/Sync定向11、token相关20已包含在全套内，不额外累加；不借用c62e516已通过的309/8/build CI。
 
 CLI search/grep采用单页与显式cursor；Sync授权epoch/Topic成员摘要变化要求resync，只披露已知撤权最小ID且不给续cursor；>64引用明确失败。50个seen叠加完整路径proof可能超过URL限制返回413，已有header proof可用，但纯路径大窗口仍有限。
 
-四种token发行操作新增@2严格原子claim，独立至少32B恢复材料窗口最多15分钟；identity.token_recover消费旧恢复材料、撤销旧token并保持原scope/期限换发。定向覆盖一次交付、并发、丢响应恢复、重启和过期。旧@1及默认客户端仍未切换，不能声明全平台一次展示完成。
+四种token发行操作新增@2严格原子claim，独立至少32B恢复材料窗口最多15分钟；identity.token_recover消费旧恢复材料、撤销旧token并保持原scope/期限换发。定向覆盖一次交付、并发、丢响应恢复、重启和过期。该提交时旧@1及默认客户端仍未切换；后续326项工作树才增加客户端默认@2，不能声明全平台一次展示完成。
 
 
 ## 2026-09-27 SearchQuery、Grep、Legacy 登记与 CLI 批次

@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前状态：CLI Search/Grep、SyncCursor resync与token @2一次交付批次，本地全套319 passed、conformance 8 passed、uv build成功；仍未提交，无本批CI，未部署。** 短码snapshot由157增至162项，旧码意义不变。此前CLI/Sync定向11和token相关20已被本批全套覆盖，不额外累加。前一提交c62e516的CI 36290261781成功（309/8/build），不代替当前改动验证。
+**当前状态：规则源迁移与标准客户端token @2批次，本地326 passed、8 conformance、uv build成功，未提交、无本批CI，未部署。** 前一提交097b252已推送，[CI 36291133946](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36291133946)已completed/success，其本地319/8/build属于前批，不覆盖当前增量。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
@@ -347,8 +347,16 @@ SyncCursor后续工作树改动仍保留最多64个seen引用，并未实现无�
 
 identity.temporary/custodial_create/token_create/token_rotate新增@2，要求独立于nonce的至少32字节恢复材料，恢复窗口最多15分钟且不超过原凭据期限。业务提交仅存verifier和绑定事实，response hook通过持久原子claim最多返回一次token；已claim的相同请求返回token_delivery_unavailable。claim提交后丢响应通过identity.token_recover显式换新token，旧token撤销、旧恢复材料单次消费；新凭据保持原ceiling及expires_at，并绑定新的独立恢复材料。服务器不承诺网络恰好送达一次。
 
-该严格模式目前是选择@2才启用，旧@1仍可重放交付，现有客户端默认尚未切换；不能宣称全平台token一次展示已经完成。token定向20 passed包含竞态、丢响应/恢复、重启和过期等切片，已纳入319项全套，不额外累加；仍无本批CI。
+该严格模式目前是选择@2才启用，旧@1仍可重放交付；标准客户端当前已默认切换@2；不能宣称全平台token一次展示已经完成。token定向20 passed包含竞态、丢响应/恢复、重启和过期等切片，已纳入319项全套，不额外累加；仍无本批CI。
 
 CLI search/grep为受限单页、显式cursor，相关CLI/Sync定向11 passed。Sync v2在授权epoch/Topic成员摘要变化时，只能返回已知撤权最小ID+resync_required且无续cursor，其余要求resync；>64引用明确失败，不静默淘汰。完整signed proof嵌入URL时，即使50 seen也可能触发路径413，可用既有header承载proof；这意味着全量纯路径体验仍有缺口，不宣称只靠路径可支持所有窗口。
 
-@2的recovery_secret/new_recovery_secret目前仍是请求参数；若客户端选择GET packet路径，会进入URL，可能被客户端历史、代理/access/error日志或trace记录。数据库只存verifier不等于全链路无秘密泄漏风险。默认客户端尚未接@2；安全上线前须强制含恢复秘密的请求走POST body/TLS，并实测应用、代理及可观测链路日志脱敏，不能以服务端不落明文替代该验证。
+@2的recovery_secret/new_recovery_secret目前仍是请求参数；若客户端选择GET packet路径，会进入URL，可能被客户端历史、代理/access/error日志或trace记录。数据库只存verifier不等于全链路无秘密泄漏风险。标准客户端当前已接@2；安全上线前须强制含恢复秘密的请求走POST body/TLS，并实测应用、代理及可观测链路日志脱敏，不能以服务端不落明文替代该验证。
+
+## 当前规则迁移与客户端安全边界
+
+规则源按稳定rule_id识别，source_paths与显式old→new迁移声明控制移动；保持Resource ID/历史，逐文件digest/version同步。未知/重复rule_id、未声明移位、缺源/删除、悬空requires_rules均fail-closed；文件清单先完整校验再写，重复load不重复Revision。该切片不是任意规则删除/退休机制或完整规则全文迁移。
+
+标准客户端当前默认使用token发行@2，发送前原子保存0600本地journal及独立恢复材料；丢响应保留journal，显式msg identity recover-token恢复，不自动降级@1。含秘密请求仅允许HTTP/GraphQL/MCP HTTP的body传输，PathGET拒绝；真实域必须HTTPS，仅testserver/localhost/127.0.0.1/::1例外。light.local不属于此例外，历史light.local HTTP证据仅为非秘密本地读取探针，不能作为token发行/恢复上线证明。日志脱敏与TLS部署仍须验证。
+
+当前326/8/build仅本地，未提交/无对应CI。公开发布仍缺长期Sync（64引用/15分钟、权限变化resync及路径长度边界）、非空托管库存通用迁移/恢复、完整hosting preview/JS/root Resource与宿主矩阵、完整feature默认/doctor/selftest；不能用新客户端默认@2宣称旧@1已消失或整个服务全部完成。

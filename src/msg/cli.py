@@ -40,6 +40,7 @@ def parser():
     identity.add_parser('new').add_argument('handle')
     identity.add_parser('temporary')
     identity.add_parser('rotate-token')
+    identity.add_parser('recover-token',help='Use a saved one-time recovery journal after a lost token response.')
     identity.add_parser('upgrade').add_argument('handle')
     identity.add_parser('show')
     call=commands.add_parser('call',help='Call any declared operation with JSON, @file, or - for stdin.')
@@ -173,6 +174,7 @@ async def run(args):
             if args.action=='new': result=await client.register(args.handle)
             elif args.action=='temporary': result=await client.temporary()
             elif args.action=='rotate-token': result=await client.rotate_token()
+            elif args.action=='recover-token': result=await client.recover_token()
             elif args.action=='upgrade': result=await client.upgrade(args.handle)
             else: result={'subject_id':state.subject,'key_id':state.signer.key_id if state.signer else None,
                           'server':state.server,'certificates':state.certificates,'auth':'token' if state.token else 'signature'}

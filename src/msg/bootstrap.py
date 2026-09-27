@@ -12,6 +12,19 @@ from msg.core.models import Resource,ResourceRef,Revision,Subject,Organization,M
 
 RULE_NAMES=('identity','read-write','auth','topics','files','recovery','security','protocol')
 SOURCE_HEADER=re.compile(r'<!-- rule_id: ([a-z][a-z0-9.\-]*); version: ([1-9][0-9]*) -->\n')
+REQUIRES_HEADER=re.compile(r'<!-- requires_rules: ([^\n<>]*) -->')
+# Public identity and location are deliberately independent of the release file.
+# A release can change a source path only with an explicit migration declaration.
+RULE_SPECS=(('msg.bootstrap','r_agents',ROOT_SPACE,'AGENTS.md','AGENTS.md',1000),
+            ('msg.rules.index','r_rule_index','r_rules','_index.md','rules/_index.md',2400),
+            *((f'msg.{name}',f'r_rule_{name.replace("-","_")}','r_rules',
+               name,f'rules/{name}.md',4000) for name in RULE_NAMES))
+RULE_PATHS={rule_id:('/AGENTS.md' if rid=='r_agents' else
+                     '/_rules/_index.md' if rid=='r_rule_index' else '/_rules/'+name)
+            for rule_id,rid,_,name,_,_ in RULE_SPECS}
+# Release maintainers declare a relocation in both maps in the same change.
+SOURCE_PATH_OVERRIDES={}
+SOURCE_MIGRATIONS={}
 
 
 def system_source_root():
@@ -21,8 +34,75 @@ def system_source_root():
     return Path(__file__).resolve().parents[2]/'docs'/'system'
 
 
-async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_root=ROOT_SPACE):
+async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_root=ROOT_SPACE,
+                              source_paths=None,migrations=None):
     """Sync each release-owned document independently; never delete a source implicitly."""
+    root=Path(source_root or system_source_root())
+    source_paths=dict(SOURCE_PATH_OVERRIDES if source_paths is None else source_paths)
+    migrations=dict(SOURCE_MIGRATIONS if migrations is None else migrations)
+    require(set(source_paths)<=RULE_PATHS.keys() and set(migrations)<=RULE_PATHS.keys(),
+            'unknown_rule_id')
+    specs=[]
+    for rule_id,rid,parent,name,default_path,max_bytes in RULE_SPECS:
+        relative=source_paths.get(rule_id,default_path)
+        require(isinstance(relative,str) and relative.endswith('.md') and
+                relative==Path(relative).as_posix() and
+                not Path(relative).is_absolute() and '..' not in Path(relative).parts,
+                'system_source_invalid_path',rule_id)
+        specs.append((relative,rid,namespace_root if parent==ROOT_SPACE else parent,
+                      name,rule_id,max_bytes))
+    require(len({s[0] for s in specs})==len(specs),'duplicate_system_source_path')
+    expected={s[0] for s in specs}
+    actual={p.relative_to(root).as_posix() for p in root.rglob('*.md')}
+    for relative in sorted(actual):
+        candidate=root/relative
+        require(not candidate.is_symlink() and candidate.resolve().is_relative_to(root.resolve()),
+                'system_source_invalid_path',relative)
+    observed={}
+    for relative in sorted(actual):
+        match=SOURCE_HEADER.match((root/relative).read_text(encoding='utf-8'))
+        require(match is not None,'system_source_invalid_header',relative)
+        rule_id=match.group(1)
+        require(rule_id in RULE_PATHS,'unknown_rule_id',relative)
+        require(rule_id not in observed,'duplicate_rule_id',rule_id)
+        observed[rule_id]=relative
+    require(not expected-actual,'system_source_deleted_requires_migration',
+            details={'paths':sorted(expected-actual)})
+    require(not actual-expected,'system_source_inventory_mismatch',
+            details={'unknown':sorted(actual-expected)})
+    prepared=[]
+    rule_ids=set()
+    for relative,rid,parent,name,expected_rule_id,max_bytes in specs:
+        path=root/relative
+        require(path.is_file() and not path.is_symlink(),'system_source_missing',relative)
+        raw=path.read_bytes()
+        require(len(raw)<=max_bytes,'system_source_too_large',relative)
+        try:
+            source_text=raw.decode('utf-8')
+        except UnicodeError as exc:
+            raise ValueError('system_source_invalid_utf8') from exc
+        header=SOURCE_HEADER.match(source_text)
+        require(header is not None,'system_source_invalid_header',relative)
+        rule_id,version=header.group(1),int(header.group(2))
+        require(rule_id in RULE_PATHS and rule_id==expected_rule_id,'unknown_rule_id',relative)
+        require(rule_id not in rule_ids,'duplicate_rule_id',rule_id)
+        rule_ids.add(rule_id)
+        note_match=re.search(r'<!-- change_note: ([^\n<>]{1,240}) -->',source_text)
+        change_note=note_match.group(1) if note_match else None
+        required=REQUIRES_HEADER.findall(source_text)
+        require(len(required)==source_text.count('<!-- requires_rules:'),
+                'dangling_requires_rules',rule_id)
+        require(len(required)<=1,'duplicate_requires_rules',rule_id)
+        dependencies=tuple(part.strip() for part in required[0].split(',')) if required else ()
+        require(all(dep in RULE_PATHS and dep!=rule_id for dep in dependencies) and
+                len(set(dependencies))==len(dependencies),'dangling_requires_rules',rule_id)
+        prepared.append((relative,rid,parent,name,rule_id,version,raw,change_note))
+    require(rule_ids==RULE_PATHS.keys(),'system_source_inventory_mismatch')
+    for rule_id,move in migrations.items():
+        require(isinstance(move,(list,tuple)) and len(move)==2 and
+                all(isinstance(p,str) for p in move) and
+                move[1]==source_paths.get(rule_id,next(s[4] for s in RULE_SPECS if s[0]==rule_id)),
+                'system_source_invalid_migration',rule_id)
     for rid,name,mode in (('r_rules','_rules','0555'),('t_wiki','wiki','1777')):
         await seed_resource(tx,contents,dict(id=rid,type='topic',name=name,parent=namespace_root,
             owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode=mode),now)
@@ -32,35 +112,8 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
             (topic,subject,role,status,joined_at,invited_by) VALUES (?,?,?,?,?,?)
             ON CONFLICT(topic,subject) DO NOTHING''',
             (rid,ROOT_SUBJECT,'admin','active',wire(now),None),write=True)
-    root=Path(source_root or system_source_root())
-    specs=[('AGENTS.md','r_agents',namespace_root,'AGENTS.md','msg.bootstrap',1000),
-           ('rules/_index.md','r_rule_index','r_rules','_index.md','msg.rules.index',2400)]
-    specs.extend((f'rules/{name}.md','r_rule_'+name.replace('-','_'),'r_rules',name,
-                  'msg.'+name,4000) for name in RULE_NAMES)
     desired=set()
-    rule_ids=set()
-    for relative,rid,parent,name,expected_rule_id,max_bytes in specs:
-        path=root/relative
-        if not path.is_file():
-            require(tx.one('SELECT 1 FROM system_sources WHERE source_path=?',
-                           ('docs/system/'+relative,)) is None,
-                    'system_source_deleted_requires_migration',relative)
-            require(False,'system_source_missing',relative)
-        require(not path.is_symlink(),'system_source_missing',relative)
-        raw=path.read_bytes()
-        require(len(raw)<=max_bytes,'system_source_too_large',relative)
-        try:
-            text=raw.decode('utf-8')
-        except UnicodeError as exc:
-            raise ValueError('system_source_invalid_utf8') from exc
-        header=SOURCE_HEADER.match(text)
-        require(header is not None and header.group(1)==expected_rule_id,
-                'system_source_invalid_header',relative)
-        rule_id,version=header.group(1),int(header.group(2))
-        note_match=re.search(r'<!-- change_note: ([^\n<>]{1,240}) -->',text)
-        change_note=note_match.group(1) if note_match else None
-        require(rule_id not in rule_ids,'duplicate_rule_id')
-        rule_ids.add(rule_id)
+    for relative,rid,parent,name,rule_id,version,raw,change_note in prepared:
         source_path='docs/system/'+relative
         desired.add(source_path)
         resource=await seed_resource(tx,contents,
@@ -70,10 +123,16 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
         old=tx.one('''SELECT source_path,rule_id,source_version,source_digest,revision_id
             FROM system_sources WHERE resource_id=?''',(rid,))
         if old is not None:
-            require(old[0]==source_path and old[1]==rule_id,'system_source_migration_required')
+            require(old[1]==rule_id,'system_source_identity_drift')
+            if old[0]!=source_path:
+                require(migrations.get(rule_id)==(old[0].removeprefix('docs/system/'),relative),
+                        'system_source_migration_required',rule_id)
             require(resource.revision==old[4],'system_source_pointer_drift')
             if old[3]==source_digest:
                 require(old[2]==version,'system_source_version_drift')
+                if old[0]!=source_path:
+                    tx.execute('UPDATE system_sources SET source_path=? WHERE resource_id=?',
+                               (source_path,rid),write=True)
                 continue
             require(version>old[2],'system_source_version_required')
         blob=await contents.put_bytes(raw,'text/markdown')
@@ -97,9 +156,9 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
                 VALUES (?,?,?,?,?,?,?)''',
                 (rid,source_path,rule_id,'release',version,source_digest,revision_id),write=True)
         else:
-            tx.execute('''UPDATE system_sources SET source_kind='release',source_version=?,
+            tx.execute('''UPDATE system_sources SET source_path=?,source_kind='release',source_version=?,
                 source_digest=?,revision_id=? WHERE resource_id=?''',
-                (version,source_digest,revision_id,rid),write=True)
+                (source_path,version,source_digest,revision_id,rid),write=True)
     missing={path for (path,) in tx.rows('SELECT source_path FROM system_sources')} - desired
     require(not missing,'system_source_deleted_requires_migration',details={'paths':sorted(missing)})
 

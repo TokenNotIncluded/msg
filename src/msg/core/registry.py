@@ -115,6 +115,7 @@ class Registry:
             raise Failure('schema_validation','.'.join(str(i) for i in errors[0].path) or 'arguments')
 
     def describe(self,spec):
+        from msg.bootstrap import RULE_PATHS
         name=spec.name
         if name.startswith('identity.'):
             rules=('identity','auth')
@@ -132,11 +133,14 @@ class Registry:
             rules=('read-write','protocol')
         else:
             rules=('protocol',)
+        rule_ids=tuple('msg.'+rule for rule in rules)
+        require(len(set(rule_ids))==len(rule_ids) and all(rid in RULE_PATHS for rid in rule_ids),
+                'dangling_requires_rules',name)
         return {'name':spec.name,'version':spec.version,'effect':spec.effect,
                 'entries':sorted(spec.entries),'require_signature':spec.require_signature,
                 'input_schema':wire(spec.input_schema),'output_schema':wire(spec.output_schema),
-                'requires_rules':[{'rule_id':'msg.'+rule,'path':'/_rules/'+rule}
-                                  for rule in rules]}
+                'requires_rules':[{'rule_id':rule_id,'path':RULE_PATHS[rule_id]}
+                                  for rule_id in rule_ids]}
 
     def catalog(self,entry='network'):
         values=[self.describe(s) for s in self.operations(entry)]
