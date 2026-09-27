@@ -1,9 +1,8 @@
 """Bridge Git's reference transaction to a current-authority metadata transaction.
 
-Pack upload happens without holding SQLite's write reservation. The prepared
-reference hook asks this process to reauthorize and reserve SQLite only while
-refs are being changed. Git and SQLite are still not one atomic storage engine:
-a lost commit acknowledgement is persisted as uncertain, never retried blindly.
+Pack upload happens without holding a PostgreSQL write transaction. The
+reference hook reauthorizes at ref preparation. Git and PostgreSQL are not one
+atomic storage engine: a lost commit acknowledgement is recorded as uncertain.
 """
 from __future__ import annotations
 
@@ -60,7 +59,7 @@ class ReferenceGuard:
         return rows
 
     async def run(self):
-        """One task owns both halves of each SQLite transaction."""
+        """One task owns both halves of each PostgreSQL transaction."""
         manager = tx = None
         preparing = prepared = None
         while True:
@@ -77,8 +76,8 @@ class ReferenceGuard:
                 if state == 'preparing':
                     require(manager is None, 'git_transaction_already_prepared')
                     # Git 2.54+ invokes this phase before taking ref locks.
-                    # Preflight current authority without holding a SQLite write
-                    # reservation, then re-check inside the prepared phase.
+                    # Preflight current authority without holding a PostgreSQL write
+                    # transaction, then re-check inside the prepared phase.
                     async with self.app.metadata.transaction(write=False) as preflight:
                         await self.authorize(preflight)
                     preparing = changes
@@ -156,13 +155,14 @@ def hook_program(socket_path, secret):
 
 
 async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None, stderr=None, timeout=600,
-                          input_data=None,capture_output=False,output_limit=None,cache_result_key=None):
+                          input_data=None,input_file=None,capture_output=False,output_limit=None,cache_result_key=None):
     """Run a fixed Git command with a private reference-transaction hook.
 
     command_factory is installed adapter code, never a value accepted from wire.
     Tests exercise this bridge with real update-ref; the SSH adapter uses receive-pack.
     """
     store = NativeGitStore(app)
+    require(input_data is None or input_file is None,'ambiguous_git_input')
     app.settings.server.staging_dir.mkdir(parents=True, exist_ok=True)
     # Unix socket path has a small OS limit; the random private directory is not
     # an account directory and contains no application credentials.
@@ -199,30 +199,40 @@ async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None,
         output = b''
         try:
             process = await asyncio.create_subprocess_exec(*command,
-                stdin=asyncio.subprocess.PIPE if input_data is not None else stdin,
+                stdin=asyncio.subprocess.PIPE if input_data is not None or input_file is not None else stdin,
                 stdout=asyncio.subprocess.PIPE if capture_output else stdout,
                 stderr=asyncio.subprocess.DEVNULL if capture_output else stderr,
                 env=env,start_new_session=True)
-            if input_data is not None:
+            if input_data is not None or input_file is not None:
                 async def exchange():
                     async def feed():
                         try:
-                            process.stdin.write(input_data)
-                            await process.stdin.drain()
+                            if input_file is None:
+                                process.stdin.write(input_data)
+                                await process.stdin.drain()
+                            else:
+                                with open(input_file,'rb') as source:
+                                    while chunk:=source.read(65536):
+                                        process.stdin.write(chunk)
+                                        await process.stdin.drain()
                         except (BrokenPipeError,ConnectionResetError):
                             pass
                         finally:
                             process.stdin.close()
                     sender=asyncio.create_task(feed())
-                    chunks=[]
-                    size=0
-                    while chunk:=await process.stdout.read(65536):
-                        size+=len(chunk)
-                        require(output_limit is None or size<=output_limit,'response_too_large')
-                        chunks.append(chunk)
-                    await sender
-                    await process.wait()
-                    return b''.join(chunks)
+                    try:
+                        chunks=[]
+                        size=0
+                        while chunk:=await process.stdout.read(65536):
+                            size+=len(chunk)
+                            require(output_limit is None or size<=output_limit,'response_too_large')
+                            chunks.append(chunk)
+                        await sender
+                        await process.wait()
+                        return b''.join(chunks)
+                    finally:
+                        if not sender.done():sender.cancel()
+                        await asyncio.gather(sender,return_exceptions=True)
                 output=await asyncio.wait_for(exchange(),timeout)
                 code=process.returncode
             else:

@@ -1,8 +1,15 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 hosting preview、Notes/Todo、ShareGrant与Sync边界（未提交，本地全套通过）
+## 2026-09-27 Todo due、custodial rewrap与Git流式限制（未提交，本地全套通过）
 
-当前 `.venv/bin/python -m pytest -q` 为 **332 passed**，conformance **8 passed**，`uv build -q` 成功；尚未提交、无本批远端CI。已报定向hosting **21 passed**、notes **4 passed**、sync **1 passed**；ShareGrant直接叶资源限时read/revoke/list已实现并通过定向，以上不相加成全套。真实root web Resource与private preview、Notes archive/restore/私有Todo、ShareGrant直接叶资源和Sync失败边界各有代码切片，但完整feature仍未完成。
+第五批`.venv/bin/python -m pytest -q`为 **336 passed**，conformance **8 passed**，`uv build -q`成功；未提交、无本批CI。Todo到期维护任务定向 **8 passed**，仅本人Inbox且去重；custodial单条age rewrap定向 **11 passed**，保留旧vault/token、client_decryption_verified=false，不自动收尾；Git定向 **10 passed**，/-/receive-pack独立32MiB、每worker2并发、staging流式SHA256及64KiB feed。上述定向已包含在336项全套，不额外累加；短码173→175，旧义保留。
+
+未实现/未证明：LFS、多ref原子性、跨worker磁盘配额；rewrap不等于客户端已解密验证或完成托管升级。旧d4affbb本地332/8结果不覆盖本批。
+
+
+## 2026-09-27 hosting preview、Notes/Todo、ShareGrant与Sync边界（d4affbb已推送，CI已通过）
+
+当前 `.venv/bin/python -m pytest -q` 为 **332 passed**，conformance **8 passed**，`uv build -q` 成功；已提交推送d4affbb，[CI 36292686957](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36292686957)已completed/success（332/8/build）。已报定向hosting **21 passed**、notes **4 passed**、sync **1 passed**；ShareGrant直接叶资源限时read/revoke/list已实现并通过定向，以上不相加成全套。真实root web Resource与private preview、Notes archive/restore/私有Todo、ShareGrant直接叶资源和Sync失败边界各有代码切片，但完整feature仍未完成。
 
 preview需签名header，不是无凭据浏览器链接；Todo尚无到期本人Inbox，Sync长期checkpoint/ack未实现。前一ae3aac2的326/8/build/CI成功不能作为本工作树证据。
 
@@ -124,3 +131,5 @@ CLI search/grep采用单页与显式cursor；Sync授权epoch/Topic成员摘要�
 第四批已完成合并定向：`.venv/bin/python -m pytest -q tests/test_share_grants.py tests/test_notes_todos.py tests/test_hosting_same_origin.py tests/test_sync_cursor.py tests/test_dictionary.py` 为 **28 passed**；短码snapshot由162增至173项，旧码意义不变。此前各项定向不再累加。第四批最终332/8/build通过，未提交、无对应CI。
 
 ShareGrant为直接叶资源限时read/revoke/list；私有Note可单项分享但不授父目录列举。SOUL、Todo、DM、system-managed及preview均排除，不等于组分享/转授链/ShareLink。旧安装Online CA证书的grants是冻结快照，新增sharing.basic不能自动扩入旧证书；启用前需受控重签并验证当前授权范围，不能以新安装测试代替存量迁移。
+
+第五批契约修正：system.maintenance@1保留原三种action不变，新增@2才包含deliver_due_todos；短码snapshot从173增至175，旧码含义保持，不在已发布@1中扩改枚举。Git上传新增120秒deadline，避免慢连接长期占据每worker两个slot；这只是当前未提交增量，当前本地336/8/build通过，仍未提交/无本批CI，不借用旧提交结果。

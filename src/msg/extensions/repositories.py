@@ -14,6 +14,7 @@ import subprocess
 import tempfile
 from urllib.parse import urlsplit
 
+from starlette.requests import ClientDisconnect
 from starlette.responses import Response,StreamingResponse
 from msg.core.codec import canonical,decode,wire,unb64,b64
 from msg.core.errors import Failure,require
@@ -27,6 +28,33 @@ from msg.storage.git import durable_write
 OID={'type':['string','null'],'pattern':'^[0-9a-f]{40}$'}
 CHANGE=obj({'ref':{'type':'string','pattern':'^refs/(heads|tags)/[^\\s]+$'},'old':OID,'new':OID},('ref','old','new'))
 _HTTP_RECEIVE=ContextVar('msg_git_http_receive',default=False)
+# A separate, deliberately bounded Git pack budget. Two active uploads can use
+# at most 64 MiB of staging space per worker; other protocol requests retain
+# the configured (normally 1 MiB) request limit.
+MAX_GIT_PACK_BYTES=32*1024*1024
+MAX_GIT_UPLOAD_SECONDS=120
+_GIT_UPLOAD_SLOTS=asyncio.Semaphore(2)
+
+
+async def spool_git_pack(request,path):
+    require(request.headers.get('content-encoding','identity')=='identity','unknown_encoding')
+    length=request.headers.get('content-length')
+    if length is not None:
+        require(length.isdecimal() and int(length)<=MAX_GIT_PACK_BYTES,'request_too_large')
+    hasher=hashlib.sha256()
+    size=0
+    try:
+        with path.open('xb') as stream:
+            async for chunk in request.stream():
+                size+=len(chunk)
+                require(size<=MAX_GIT_PACK_BYTES,'request_too_large')
+                hasher.update(chunk)
+                stream.write(chunk)
+            stream.flush()
+            os.fsync(stream.fileno())
+    except ClientDisconnect as exc:
+        raise Failure('request_incomplete') from exc
+    return 'sha256:'+hasher.hexdigest(),size
 
 
 class NativeGitStore:
@@ -179,7 +207,7 @@ class NativeGitStore:
         return StreamingResponse(stream(),status_code=status,headers={**headers,'X-Content-Type-Options':'nosniff'})
 
     async def http_push(self,request,rid,suffix):
-        from msg.transports.http import body_bytes,json_response,error_status
+        from msg.transports.http import json_response,error_status
         from msg.transports.packet import path_packet
         require(bool(re.fullmatch(r'[A-Za-z0-9_-]{1,128}',rid)),'not_found')
         require(suffix in {'info/refs','git-receive-pack'},'not_found')
@@ -193,9 +221,6 @@ class NativeGitStore:
             require(request.headers.get('content-type','').split(';',1)[0]==
                     'application/x-git-receive-pack-request','invalid_git_content_type')
         limits=self.app.settings.server.limits
-        body=b'' if advertise else await body_bytes(request,limits.max_request_bytes)
-        arguments={'id':rid} if advertise else {'id':rid,'pack_digest':'sha256:'+hashlib.sha256(body).hexdigest(),
-                                               'pack_size':len(body)}
         operation='git.http_advertise' if advertise else 'git.http_receive'
         signed=request.headers.get('x-msg-request')
         authorization=request.headers.get('authorization','')
@@ -204,11 +229,13 @@ class NativeGitStore:
             return json_response({'status':'error','error':{'code':'authentication_required',
                                   'retryable':False}},401,
                                  headers={'WWW-Authenticate':'Basic realm="msg Git"'})
+        if not advertise:
+            return await self._http_push_receive(request,rid,operation,signed,authorization,limits)
+        arguments={'id':rid}
         if signed:
             packet=path_packet(signed,'j',limits.max_request_bytes)
             require(packet.operation==operation and canonical(packet.arguments)==canonical(arguments),
                     'representation_mismatch')
-            require(advertise or bool(packet.request_id),'git_request_id_required')
         else:
             require(authorization.startswith('Basic '),'authentication_required')
             try:
@@ -216,13 +243,9 @@ class NativeGitStore:
                 token=unb64(password)
             except (ValueError,UnicodeDecodeError,Failure) as exc:
                 raise Failure('invalid_token') from exc
-            request_id=request.headers.get('x-msg-request-id')
-            if not advertise:
-                require(request_id is not None and re.fullmatch(r'[A-Za-z0-9._:-]{1,128}',request_id)
-                        is not None,'git_request_id_required')
             packet=request_for(operation,arguments,self.app.settings.service_url,token=(user,token),
-                               request_id=request_id,expires_at=self.app.clock()+timedelta(seconds=120))
-        marker=_HTTP_RECEIVE.set(not advertise)
+                               expires_at=self.app.clock()+timedelta(seconds=120))
+        marker=_HTTP_RECEIVE.set(False)
         try:
             result=await self.app.executor.execute(packet,entry='network')
         finally:
@@ -230,46 +253,86 @@ class NativeGitStore:
         if result.error:
             return json_response({'status':'error','error':wire(result.error)},
                                  error_status(result.error.code))
-        if advertise:
-            process=await asyncio.create_subprocess_exec('git','--git-dir',str(self.path(rid)),
+        process=await asyncio.create_subprocess_exec('git','--git-dir',str(self.path(rid)),
                 'receive-pack','--stateless-rpc','--advertise-refs',str(self.path(rid)),
                 stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL,env=self.env)
-            chunks=[]
-            size=0
-            try:
-                while chunk:=await asyncio.wait_for(process.stdout.read(65536),30):
-                    size+=len(chunk)
-                    require(size<=limits.max_response_bytes,'response_too_large')
-                    chunks.append(chunk)
-                require(await asyncio.wait_for(process.wait(),30)==0,'git_operation_failed')
-            finally:
-                if process.returncode is None:
-                    process.kill()
-                    await process.wait()
-            output=b''.join(chunks)
-            prefix=b'# service=git-receive-pack\n'
-            payload=f'{len(prefix)+4:04x}'.encode()+prefix+b'0000'+output
-            require(len(payload)<=limits.max_response_bytes,'response_too_large')
-            return Response(payload,media_type='application/x-git-receive-pack-advertisement',
-                            headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
-        job_id=result.data['job_id']
-        if result.replayed:
-            async with self.app.metadata.transaction(write=False) as tx:
-                cached=tx.setting('git_http_result:'+job_id)
-                status=tx.setting('job_status:'+job_id)
-            if cached is None:
-                raise Failure(status['code'] if status and status['code'] not in {'ok'} else 'external_uncertain')
-            return Response(unb64(cached),media_type='application/x-git-receive-pack-result',
-                            headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
-        from msg.extensions.ssh_git import guarded_command
-        code,output,_changed=await guarded_command(self.app,await self._job(job_id),
-            lambda store:['receive-pack','--stateless-rpc',str(store.path(rid))],
-            input_data=body,capture_output=True,output_limit=limits.max_response_bytes,timeout=600,
-            cache_result_key='git_http_result:'+job_id)
-        require(code==0,'git_operation_failed')
-        require(len(output)<=limits.max_response_bytes,'response_too_large')
-        return Response(output,media_type='application/x-git-receive-pack-result',
+        chunks=[]
+        size=0
+        try:
+            while chunk:=await asyncio.wait_for(process.stdout.read(65536),30):
+                size+=len(chunk)
+                require(size<=limits.max_response_bytes,'response_too_large')
+                chunks.append(chunk)
+            require(await asyncio.wait_for(process.wait(),30)==0,'git_operation_failed')
+        finally:
+            if process.returncode is None:
+                process.kill()
+                await process.wait()
+        output=b''.join(chunks)
+        prefix=b'# service=git-receive-pack\n'
+        payload=f'{len(prefix)+4:04x}'.encode()+prefix+b'0000'+output
+        require(len(payload)<=limits.max_response_bytes,'response_too_large')
+        return Response(payload,media_type='application/x-git-receive-pack-advertisement',
                         headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+
+    async def _http_push_receive(self,request,rid,operation,signed,authorization,limits):
+        from msg.transports.http import json_response,error_status
+        from msg.transports.packet import path_packet
+        # Reject missing/invalid request IDs before accepting a pack. This also
+        # leaves no job or staged file when a client disconnects during upload.
+        if signed:
+            packet=path_packet(signed,'j',limits.max_request_bytes)
+            require(packet.operation==operation and bool(packet.request_id),'git_request_id_required')
+        else:
+            require(authorization.startswith('Basic '),'authentication_required')
+            request_id=request.headers.get('x-msg-request-id')
+            require(request_id is not None and re.fullmatch(r'[A-Za-z0-9._:-]{1,128}',request_id)
+                    is not None,'git_request_id_required')
+            try:
+                user,password=base64.b64decode(authorization[6:],validate=True).decode('ascii').split(':',1)
+                token=unb64(password)
+            except (ValueError,UnicodeDecodeError,Failure) as exc:
+                raise Failure('invalid_token') from exc
+        self.app.settings.server.staging_dir.mkdir(parents=True,exist_ok=True)
+        async with _GIT_UPLOAD_SLOTS:
+            with tempfile.TemporaryDirectory(prefix='msg-git-http-',dir=self.app.settings.server.staging_dir) as temp:
+                pack_path=Path(temp)/'receive.pack'
+                try:
+                    async with asyncio.timeout(MAX_GIT_UPLOAD_SECONDS):
+                        pack_digest,pack_size=await spool_git_pack(request,pack_path)
+                except TimeoutError as exc:
+                    raise Failure('request_incomplete') from exc
+                arguments={'id':rid,'pack_digest':pack_digest,'pack_size':pack_size}
+                if signed:
+                    require(canonical(packet.arguments)==canonical(arguments),'representation_mismatch')
+                else:
+                    packet=request_for(operation,arguments,self.app.settings.service_url,token=(user,token),
+                                       request_id=request_id,expires_at=self.app.clock()+timedelta(seconds=120))
+                marker=_HTTP_RECEIVE.set(True)
+                try:
+                    result=await self.app.executor.execute(packet,entry='network')
+                finally:
+                    _HTTP_RECEIVE.reset(marker)
+                if result.error:
+                    return json_response({'status':'error','error':wire(result.error)},
+                                         error_status(result.error.code))
+                job_id=result.data['job_id']
+                if result.replayed:
+                    async with self.app.metadata.transaction(write=False) as tx:
+                        cached=tx.setting('git_http_result:'+job_id)
+                        status=tx.setting('job_status:'+job_id)
+                    if cached is None:
+                        raise Failure(status['code'] if status and status['code'] not in {'ok'} else 'external_uncertain')
+                    return Response(unb64(cached),media_type='application/x-git-receive-pack-result',
+                                    headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
+                from msg.extensions.ssh_git import guarded_command
+                code,output,_changed=await guarded_command(self.app,await self._job(job_id),
+                    lambda store:['receive-pack','--stateless-rpc',str(store.path(rid))],
+                    input_file=pack_path,capture_output=True,output_limit=limits.max_response_bytes,timeout=600,
+                    cache_result_key='git_http_result:'+job_id)
+                require(code==0,'git_operation_failed')
+                return Response(output,media_type='application/x-git-receive-pack-result',
+                                headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
 
     async def _job(self,id):
         async with self.app.metadata.transaction(write=False) as tx:
@@ -292,7 +355,7 @@ def register(app,op):
         return output_for(resource,path=path,public=True,
             read_url=app.settings.service_url.rstrip('/')+path,
             push_url=app.settings.service_url.rstrip('/')+'/-/git/'+resource.id,
-            push_max_bytes=app.settings.server.limits.max_request_bytes)
+            push_max_bytes=MAX_GIT_PACK_BYTES)
 
     @op('git.refs',obj({'id':IDENTIFIER,'cursor':STRING,'limit':{'type':'integer','minimum':1,'maximum':200}},('id',)),effect='read')
     async def refs(ctx,request,tx):
@@ -305,7 +368,7 @@ def register(app,op):
         return HandlerOutput(data={'resource_id':rid,'refs':rows,
             'read_url':app.settings.service_url.rstrip('/')+await tx.path(rid),
             'push_url':app.settings.service_url.rstrip('/')+'/-/git/'+rid,
-            'push_max_bytes':app.settings.server.limits.max_request_bytes,
+            'push_max_bytes':MAX_GIT_PACK_BYTES,
             'cursor':app.cursors.encode('git.refs',rid,following) if following else None})
 
     @op('git.http_advertise',obj({'id':IDENTIFIER},('id',)),effect='read')

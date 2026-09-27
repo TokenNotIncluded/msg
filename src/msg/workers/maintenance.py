@@ -128,6 +128,54 @@ async def _rebuild(app,tx):
     return {'indexed_resources':count}
 
 
+async def _deliver_due_todos(app,tx):
+    """Deliver current due todo revisions to their owner, once per due instant.
+
+    The maintenance transaction is the only producer. A revised, completed or
+    archived todo is evaluated from its current state rather than a stale job.
+    """
+    now=app.clock()
+    delivered=0
+    for (raw,) in tx.execute("SELECT body FROM resources WHERE type='todo' AND state='active' ORDER BY id"):
+        resource=decode(Resource,loads(raw))
+        if resource.revision is None or resource.mode&0o077:
+            continue
+        parent=await tx.resource(resource.parent)
+        if (parent.name!='todos' or parent.parent!=resource.owner or
+                parent.owner!=resource.owner or
+                parent.mode&0o077 or parent.state!='active'):
+            continue
+        revision=await tx.revision(ResourceRef(id=resource.id,revision=resource.revision))
+        details=loads((await app.contents.read_bytes(revision.content)).decode('utf-8'))
+        due_at=details.get('due_at')
+        if (not due_at or details.get('status') not in {'pending','in_progress'} or
+                parse_time(due_at)>now):
+            continue
+        # An id stable across worker restarts and unrelated edits prevents
+        # duplicate reminders, while a changed due instant is a new reminder.
+        notice_id='m_'+digest(('todo_due',resource.id,due_at))[7:39]
+        record={'id':notice_id,'sender':None,'actor':ONLINE_CA,
+                'recipient':resource.owner,'resource':wire(ResourceRef(id=resource.id)),
+                'time':wire(now),'state':'delivered','source':'todo_due',
+                'due_at':due_at,'todo_revision_at_delivery':resource.revision,
+                'status_at_delivery':details['status']}
+        inserted=tx.execute('''INSERT INTO messages (id,sender,recipient,resource,event_id,body)
+            VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING''',
+            (notice_id,None,resource.owner,resource.id,notice_id,
+             canonical(record).decode()),write=True).rowcount
+        if not inserted:
+            continue
+        event=Event(id=new_id('audit'),type='identity.todo.due_notice',time=now,
+            request_id='todo-due:'+notice_id,actor=ONLINE_CA,subject=resource.owner,
+            resources=(ResourceRef(id=resource.id,revision=resource.revision),),
+            data={'message_id':notice_id,'due_at':due_at})
+        await tx.append_audit(AuditEvent(event=event,authority=(),
+            before_digest=digest(resource),after_digest=digest(record),
+            previous_digest=None,entry_digest='',result='delivered'))
+        delivered+=1
+    return {'delivered_todo_reminders':delivered}
+
+
 async def _collect(app,tx, *, grace_seconds=3600):
     """Remove unreferenced content after a grace period and retained Git ancestry.
 
@@ -182,7 +230,7 @@ async def _collect(app,tx, *, grace_seconds=3600):
 
 
 async def run_maintenance(app,action, *, scheduled=False,principal=None):
-    require(action in {'cleanup_expired','rebuild_search','collect_garbage'},'unknown_maintenance_action')
+    require(action in {'cleanup_expired','deliver_due_todos','rebuild_search','collect_garbage'},'unknown_maintenance_action')
     async with app.metadata.transaction(write=True) as tx:
         if not scheduled:
             require(principal is not None,'maintenance_authority_required')
@@ -191,5 +239,6 @@ async def run_maintenance(app,action, *, scheduled=False,principal=None):
             require(await app.authorizer.has(live,'system.maintenance','system.maintenance@1',ROOT_SPACE,tx),
                     'capability_required')
         if action=='cleanup_expired':return await _cleanup(app,tx,scheduled=scheduled)
+        if action=='deliver_due_todos':return await _deliver_due_todos(app,tx)
         if action=='rebuild_search':return await _rebuild(app,tx)
         return await _collect(app,tx)

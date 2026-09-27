@@ -20,6 +20,7 @@ BASE_FAMILIES = {
         'identity.encryption_key_rotate',
         'identity.custodial_status','identity.custodial_upgrade_start',
         'identity.custodial_upgrade_finish','identity.personal_put','identity.soul_visibility','identity.note_put',
+        'identity.custodial_rewrap_entry',
         'identity.custodial_upgrade_result',
         'identity.note_list','identity.note_get',
         'identity.note_archive','identity.note_restore','identity.todo_put',
@@ -46,6 +47,7 @@ EXCLUDED_BASE = {'content.purge','content.chown','identity.recover'}
 TEMPORARY_OPERATIONS = frozenset({
     'identity.temporary','identity.custodial_create','identity.upgrade','identity.token_rotate','identity.custodial_status',
     'identity.custodial_upgrade_start','identity.custodial_upgrade_finish',
+    'identity.custodial_rewrap_entry',
     'content.topic_create','content.post_create','content.post_edit','content.archive',
     'content.restore','content.file_put','content.attach',
     'discussion.reply','discussion.quote','discussion.repost','discussion.like','discussion.unlike',
@@ -55,6 +57,7 @@ TEMPORARY_OPERATIONS = frozenset({
     'discovery.get','discovery.raw','discovery.list','discovery.search','discovery.operations',
     'discovery.capabilities','discovery.schema','discovery.diff','discovery.references',
     'transfer.open','transfer.part_put','transfer.part_get','transfer.status','transfer.seal','transfer.cancel',
+    'keystore.get',
     'batch.independent','batch.atomic','job.get',
     'achievement.start','achievement.answer','achievement.finish','achievement.list',
 })

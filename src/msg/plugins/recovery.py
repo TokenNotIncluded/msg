@@ -3,11 +3,14 @@ from __future__ import annotations
 
 from msg.core.codec import b64,canonical,decode,loads,wire
 from msg.core.errors import Failure,require
-from msg.core.models import HandlerOutput,ResourceRef
+from msg.core.models import HandlerOutput,ResourceRef,Event,AuditEvent
 from msg.core.requests import signing_bytes
-from msg.plugins.common import registration,check_access,new_id,resolve,operation_id
+from msg.plugins.common import (registration,check_access,new_id,resolve,operation_id,
+                                revise_resource,assert_generation)
 from msg.plugins.schemas import IDENTIFIER,INTEGER,REF,STRING,obj
 from msg.security.age_keys import encryption_key_id,public_from_recipient
+from msg.security.vault import open_age_identity,rewrap_owned_age_ciphertext
+from msg.core.codec import digest
 
 
 def _current_policy(tx,subject):
@@ -23,6 +26,73 @@ def _owner(app,ctx,request,tx):
 
 def install(app):
     op,finish=registration(app,'recovery',('identity',))
+
+    @op('identity.custodial_rewrap_entry',obj({
+        'challenge_id':IDENTIFIER,'ciphertext_ref':REF,
+        'old_encryption_key_id':IDENTIFIER,'new_recipient':STRING},
+        ('challenge_id','ciphertext_ref','old_encryption_key_id','new_recipient')))
+    async def custodial_rewrap_entry(ctx,request,tx):
+        """Convert exactly one currently owned age revision during a pending exit."""
+        subject=await _owner(app,ctx,request,tx)
+        require(subject.kind=='custodial' and ctx.principal.method=='token',
+                'custodial_token_required')
+        args=request.arguments
+        row=tx.one('''SELECT credential_id,status,challenge,body FROM custodial_upgrades
+            WHERE id=? AND subject=?''',(args['challenge_id'],subject.resource_id))
+        require(row is not None and row[0]==ctx.principal.credential_id and
+                row[1]=='pending_rewrap','custodial_upgrade_not_pending_rewrap')
+        challenge=loads(row[2])
+        details=loads(row[3])
+        require(challenge['encryption_recipient']==args['new_recipient'] and
+                details['old_encryption_key_id']==args['old_encryption_key_id'],
+                'custodial_rewrap_key_mismatch')
+        primary=tx.one('''SELECT key_id FROM encryption_subkeys WHERE subject=?
+            AND is_primary=1''',(subject.resource_id,))
+        vault=tx.one('''SELECT encryption_key_id,status FROM custodial_vault WHERE subject=?''',
+                     (subject.resource_id,))
+        require(primary is not None and vault is not None and vault[1]=='active' and
+                primary[0]==vault[0]==args['old_encryption_key_id'],
+                'custodial_rewrap_unknown_old_key')
+        ref=decode(ResourceRef,args['ciphertext_ref'])
+        require(ref.revision is not None,'custodial_rewrap_revision_required')
+        resource=await tx.resource(ref.id)
+        folder=tx.one("SELECT id FROM resources WHERE parent=? AND name='keystore'",
+                      (subject.resource_id,))
+        require(folder is not None and resource.parent==folder[0] and
+                resource.type=='keystore' and resource.owner==subject.resource_id and
+                resource.state=='active','custodial_rewrap_not_owned')
+        await assert_generation(request,resource)
+        require(resource.revision==ref.revision,'revision_conflict')
+        await check_access(app,ctx,request,tx,resource.id,'read')
+        await check_access(app,ctx,request,tx,resource.id,'write')
+        revision=await tx.revision(ref)
+        require(tx.setting('keystore_format:'+revision.id)=='age' and
+                revision.content.size<=1048576,'custodial_rewrap_age_required')
+        old_ciphertext=await app.contents.read_bytes(revision.content,limit=1048576)
+        new_ciphertext=rewrap_owned_age_ciphertext(
+            open_age_identity(app,tx,subject.resource_id),args['new_recipient'],old_ciphertext)
+        updated=await revise_resource(app,ctx,request,tx,resource,new_ciphertext,
+                                      'application/octet-stream')
+        tx.set_setting('keystore_format:'+updated.revision,'age')
+        before={'resource_id':resource.id,'revision':revision.id,
+                'ciphertext_digest':revision.content.digest,'key_id':args['old_encryption_key_id']}
+        after={'resource_id':updated.id,'revision':updated.revision,
+               'ciphertext_digest':digest(new_ciphertext),
+               'recipient':args['new_recipient']}
+        event=Event(id=new_id('audit'),type='identity.custodial_rewrap_entry',time=ctx.now,
+            request_id=request.request_id,actor=ctx.principal.actor,subject=subject.resource_id,
+            resources=(ref,ResourceRef(id=updated.id,revision=updated.revision)),data={
+                'challenge_id':args['challenge_id'],'old':before,'new':after,
+                'plaintext_exposed':False})
+        await tx.append_audit(AuditEvent(event=event,
+            authority=(ResourceRef(id=subject.resource_id),),
+            before_digest=digest(before),after_digest=digest(after),
+            previous_digest=None,entry_digest='',result='rewrapped'))
+        return HandlerOutput(resources=(ResourceRef(id=updated.id,revision=updated.revision),),
+            data={'id':updated.id,'revision':updated.revision,'generation':updated.generation,
+                  'old_revision':revision.id,'new_recipient':args['new_recipient'],
+                  'ciphertext_digest':digest(new_ciphertext),
+                  'client_decryption_verified':False,'upgrade_status':'pending_rewrap'})
 
     @op('identity.recovery_custodians',obj(),effect='read')
     async def custodians(ctx,request,tx):

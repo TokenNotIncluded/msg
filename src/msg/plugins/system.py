@@ -9,7 +9,8 @@ from msg.plugins.communication import event_id
 from msg.plugins.schemas import obj, BOOLEAN, STRING
 
 
-MAINTENANCE_ACTIONS = ('cleanup_expired', 'rebuild_search', 'collect_garbage')
+MAINTENANCE_ACTIONS_V1 = ('cleanup_expired', 'rebuild_search', 'collect_garbage')
+MAINTENANCE_ACTIONS = (*MAINTENANCE_ACTIONS_V1, 'deliver_due_todos')
 RUNTIME_SCHEMA = obj({'accept_writes':BOOLEAN, 'status_message':{'type':'string','maxLength':300},
     'cleanup_enabled':BOOLEAN})
 
@@ -43,7 +44,10 @@ def install(app):
             before_digest=digest(before), after_digest=digest(after), previous_digest=None, entry_digest='', result='configured'))
         return HandlerOutput(data={'runtime':after})
 
-    @op('system.maintenance', obj({'action':{'enum':list(MAINTENANCE_ACTIONS)}},('action',)), effect='external', signature=True)
+    @op('system.maintenance', obj({'action':{'enum':list(MAINTENANCE_ACTIONS_V1)}},('action',)),
+        effect='external', signature=True)
+    @op('system.maintenance', obj({'action':{'enum':list(MAINTENANCE_ACTIONS)}},('action',)),
+        effect='external', signature=True, version=2)
     async def maintenance(ctx, request, tx):
         await authorized(ctx, request, tx, 'system.maintenance')
         eid = event_id(request, ctx.principal.subject)

@@ -8,10 +8,11 @@ import uvicorn
 
 import httpx
 import pytest
+from starlette.requests import ClientDisconnect
 
 from msg.core.codec import b64, canonical, unb64, wire
 from msg.core.requests import request_for
-from msg.extensions.repositories import NativeGitStore, _HTTP_RECEIVE
+from msg.extensions.repositories import NativeGitStore, _HTTP_RECEIVE, MAX_GIT_PACK_BYTES
 from msg.extensions.ssh_git import guarded_command
 from msg.security.capabilities import grant_for
 from msg.transports.http import create_app
@@ -59,7 +60,7 @@ async def test_git_push_advertisement_requires_token_and_ordinary_path_stays_rea
         assert ordinary_advertisement.status_code!=200
     assert created.data['read_url'].endswith('/@git-http-owner/code.git')
     assert created.data['push_url'].endswith('/-/git/'+rid)
-    assert created.data['push_max_bytes']==app.settings.server.limits.max_request_bytes
+    assert created.data['push_max_bytes']==MAX_GIT_PACK_BYTES
     refs=await call(app,'git.refs',{'id':rid})
     assert refs.data['read_url']==created.data['read_url']
     assert refs.data['push_url']==created.data['push_url']
@@ -93,7 +94,7 @@ async def test_git_http_receive_requires_explicit_request_id(installed):
                                       'Content-Type':'application/x-git-receive-pack-request'})
         assert noop.status_code==200,noop.text
         oversized=await http.post(f'/-/git/{rid}/git-receive-pack',
-                                  content=b'x'*(app.settings.server.limits.max_request_bytes+1),
+                                  content=b'x'*(MAX_GIT_PACK_BYTES+1),
                                   headers={'Authorization':'Basic '+basic,'X-Msg-Request-Id':'too-large',
                                            'Content-Type':'application/x-git-receive-pack-request'})
         assert oversized.status_code==413
@@ -105,6 +106,37 @@ async def test_git_http_receive_requires_explicit_request_id(installed):
         assert job.state=='done'
         assert tx.setting('job_status:'+job.id)['refs_changed'] is False
         assert tx.setting('git_http_result:'+job.id) is not None
+
+
+@pytest.mark.asyncio
+async def test_interrupted_pack_is_removed_and_request_id_can_retry(installed):
+    app, _ = installed
+    key, user, _ = await register(app, 'git-interrupted')
+    created=await call(app,'git.create',{'parent':'/@git-interrupted','name':'code.git'},
+                       key=key,subject=user)
+    rid=created.resources[0].id
+    grant=grant_for(app.registry.capability('git.basic'))
+    issued=await call(app,'identity.token_create',
+                      {'nonce':b64(os.urandom(32)),'ceiling':wire((grant,)),'ttl':3600},
+                      key=key,subject=user)
+    basic=base64.b64encode((issued.data['credential_id']+':'+issued.data['token']).encode()).decode()
+    headers={'Authorization':'Basic '+basic,'X-Msg-Request-Id':'interrupted-once',
+             'Content-Type':'application/x-git-receive-pack-request'}
+    async def interrupted():
+        yield b'0000'
+        raise ClientDisconnect()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        aborted=await http.post(f'/-/git/{rid}/git-receive-pack',content=interrupted(),headers=headers)
+        assert aborted.status_code==400
+        assert aborted.json()['error']['code']=='request_incomplete'
+        assert not list(app.settings.server.staging_dir.glob('msg-git-http-*'))
+        async with app.metadata.transaction(write=False) as tx:
+            assert tx.one("SELECT COUNT(*) FROM jobs WHERE kind='git.receive'")[0]==0
+        retried=await http.post(f'/-/git/{rid}/git-receive-pack',content=b'0000',headers=headers)
+        assert retried.status_code==200,retried.text
+    refs=await call(app,'git.refs',{'id':rid})
+    assert not refs.data['refs']
 
 
 @pytest.mark.asyncio
@@ -153,6 +185,7 @@ async def test_standard_git_push_uses_guarded_http_endpoint_once(installed,tmp_p
         assert git('config','user.name','Test').returncode==0
         assert git('config','user.email','test@example.invalid').returncode==0
         (work/'README.md').write_text('real HTTP push\n')
+        (work/'payload.bin').write_bytes(os.urandom(1_300_000))
         assert git('add','.').returncode==0
         assert git('commit','-m','initial').returncode==0
         command=['git','-C',str(work),'-c','http.extraHeader=Authorization: Basic '+basic,
@@ -160,7 +193,7 @@ async def test_standard_git_push_uses_guarded_http_endpoint_once(installed,tmp_p
                  f'http://127.0.0.1:{port}/-/git/{rid}','main']
         pushed=await asyncio.to_thread(subprocess.run,command,capture_output=True,text=True,timeout=60)
         assert pushed.returncode==0,pushed.stderr
-        assert len(captured)==1 and captured[0]
+        assert len(captured)==1 and len(captured[0])>app.settings.server.limits.max_request_bytes
         refs=await call(app,'git.refs',{'id':rid})
         assert refs.status=='ok' and refs.data['refs'][0]['name']=='refs/heads/main',wire(refs)
         async with app.metadata.transaction(write=False) as tx:

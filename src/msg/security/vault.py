@@ -3,6 +3,10 @@ from __future__ import annotations
 
 import os
 import hmac
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -72,6 +76,34 @@ def open_age_identity(app,tx,subject):
     require(encryption_key_id(public_from_recipient(recipient))==key_id,
             'custodial_vault_corrupt')
     return identity
+
+
+def rewrap_owned_age_ciphertext(identity,recipient,ciphertext):
+    """Bounded age-to-age conversion; never expose the decrypted bytes to a caller."""
+    from msg.security.age_keys import public_from_recipient
+    public_from_recipient(recipient)
+    require(type(ciphertext) is bytes and
+            ciphertext.startswith(b'age-encryption.org/v1\n') and
+            len(ciphertext)<=1048576,'custodial_rewrap_ciphertext_invalid')
+    executable=shutil.which('age')
+    require(executable is not None,'age_dependency_unavailable')
+    with tempfile.TemporaryDirectory(prefix='msg-custodial-rewrap-') as folder:
+        secret=Path(folder)/'identity'
+        secret.write_bytes((identity+'\n').encode('ascii'))
+        secret.chmod(0o600)
+        try:
+            opened=subprocess.run([executable,'--decrypt','--identity',str(secret)],
+                input=ciphertext,capture_output=True,timeout=15,check=False)
+            require(opened.returncode==0 and len(opened.stdout)<=1048576,
+                    'custodial_rewrap_decrypt_failed')
+            sealed=subprocess.run([executable,'--encrypt','--recipient',recipient],
+                input=opened.stdout,capture_output=True,timeout=15,check=False)
+            require(sealed.returncode==0 and
+                    sealed.stdout.startswith(b'age-encryption.org/v1\n') and
+                    len(sealed.stdout)<=1114112,'custodial_rewrap_encrypt_failed')
+        except (OSError,subprocess.TimeoutExpired) as exc:
+            raise Failure('custodial_rewrap_operation_failed') from exc
+        return sealed.stdout
 
 
 def _upgrade_aad(subject,challenge_id):

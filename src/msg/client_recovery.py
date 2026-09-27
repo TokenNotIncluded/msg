@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 from msg.client_secrets import write_private
-from msg.core.codec import canonical, loads, wire
+from msg.core.codec import canonical, digest, loads, wire
 from msg.core.errors import Failure, require
 from msg.security.age_keys import (
     encryption_key_id, public_from_recipient, recipient_from_identity,
@@ -152,3 +152,25 @@ async def rewrap_age_keystore_entry(client,resource_id,old_identity_path, *,
             'source':wire(uploaded.output)},
             expected=((resource_id,current.data['generation']),)))
     return result
+
+
+async def verify_custodial_rewrap_entry(client,resource_id,revision,new_identity_path, *,
+                                        expected_recipient,expected_ciphertext_digest):
+    """Owner-side age round trip; the plaintext stays in this process."""
+    identity=_protected_file(new_identity_path)
+    require(recipient_from_identity(identity.read_text().strip())==expected_recipient,
+            'custodial_rewrap_recipient_mismatch')
+    entry=client.checked(await client.call('keystore.get',{
+        'id':resource_id,'revision':revision}))
+    require(entry.data['format']=='age' and entry.data['size']<=1114112,
+            'custodial_rewrap_age_required')
+    with tempfile.TemporaryDirectory(prefix='verify-rewrap-',dir=client.state.directory) as folder:
+        path=Path(folder)/'ciphertext.age'
+        await client.download(entry.output,path)
+        ciphertext=path.read_bytes()
+        require(digest(ciphertext)==expected_ciphertext_digest,
+                'custodial_rewrap_ciphertext_mismatch')
+        _age('--decrypt','--identity',str(identity),input_data=ciphertext)
+    return {'id':resource_id,'revision':revision,'recipient':expected_recipient,
+            'ciphertext_digest':expected_ciphertext_digest,'decrypted_locally':True,
+            'upgrade_finalized':False}

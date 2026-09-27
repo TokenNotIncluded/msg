@@ -1,6 +1,6 @@
 # 架构与提交边界
 
-**当前状态：第四批hosting/Notes-Todo/ShareGrant/Sync边界，本地全套332 passed、conformance 8 passed、uv build成功，尚未提交、无本批CI，未部署。** 合并定向28项已包含在全套，不额外累加；短码162→173且旧义不变。真实DNS light.local→10.174.197.165的隔离服务18147验证root web GET/HEAD=200并含CSP sandbox、普通POST web/main=405；临时DB/服务/文件清理且端口无监听。旧ae3aac2的326/8/CI成功仅属前批。
+**当前状态：第五批Todo due、受控单条age rewrap与Git流式限制，本地全套336 passed、conformance 8 passed、uv build成功；尚未提交，无本批CI，未部署。** 短码173→175，旧义保留；此前定向8/11/10包含在全套内，不累加。第四批d4affbb的332/8/build及[CI 36292686957](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36292686957)已completed/success，仅对应旧提交。
 
 本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T00:35:34.164Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 
@@ -192,10 +192,16 @@ CLI search/grep为受限单页、显式cursor，相关CLI/Sync定向11 passed。
 
 真实/@root/web已有website/部署清单/文件Resource及Revision，不再只有代码响应样例；hosting.preview创建private候选、不切active指针。读取preview必须携匹配discovery.raw的签名header，不能把返回URL当可直接无凭据浏览器导航；保持禁JS sandbox。hosting切片已纳入332项全套，但不等于完整浏览器/部署矩阵。
 
-Notes已有专用archive/restore，Todo已有本人私有创建/更新/读/列表/归档/恢复，默认pending/neutral；notes定向4 passed。due_at存在不等于已实现到期本人Inbox提醒，该投递仍缺。
+Notes已有专用archive/restore，Todo已有本人私有创建/更新/读/列表/归档/恢复，默认pending/neutral；notes定向4 passed。第五批已增加到期本人Inbox维护投递与去重，完整feature仍待最终验收。
 
 ShareGrant工作树已有直接叶资源限时read/revoke/list，合并定向验证通过；不宣称组接收者、转授链或ShareLink完成。Sync仅补>64重放失败/GET零业务状态回归，定向1 passed；长期checkpoint/ack与无限容量同步未实现，不能以失败回归称为扩容。
 
 第四批已完成合并定向：`.venv/bin/python -m pytest -q tests/test_share_grants.py tests/test_notes_todos.py tests/test_hosting_same_origin.py tests/test_sync_cursor.py tests/test_dictionary.py` 为 **28 passed**；短码snapshot由162增至173项，旧码意义不变。此前各项定向不再累加。本批最终332/8/build通过，未提交、无对应CI。
 
 ShareGrant为直接叶资源限时read/revoke/list；私有Note可单项分享但不授父目录列举。SOUL、Todo、DM、system-managed及preview均排除，不等于组分享/转授链/ShareLink。旧安装Online CA证书的grants是冻结快照，新增sharing.basic不能自动扩入旧证书；启用前需受控重签并验证当前授权范围，不能以新安装测试代替存量迁移。
+
+## 第五批局部实现与边界
+
+Todo due由显式维护任务投递，仅本人Inbox且去重，定向8 passed；普通GET不发提醒，不外发给其他主体。custodial单条age rewrap定向11 passed，仅处理明确选择的条目；旧vault和token保留，结果client_decryption_verified=false，不因服务器产出新密文就自动完成升级或销毁旧钥。
+
+Git /-/receive-pack独立32MiB硬上限、每worker最多2并发、上传120秒deadline；staging流式SHA256、64KiB分块feed，定向10 passed。它不是完整Git/LFS交付：LFS未做，多ref原子性尚无证明，跨worker磁盘配额未做；每worker限流不等于全部署统一配额。当前336/8/build本地通过，尚未提交/无本批CI，不沿用d4affbb结果。
