@@ -2,9 +2,9 @@
 
 三项DCR的主要建议已经写入[权威项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，不再是“待用户批准”。本次实时读取迁移后修订 `ANLCKQmHD9c-ju8OTbJ2QIem9CjzQKIpNwVNIxKrhZ47O54VGNYCNnqIaJ8czWILEXFuaBxzxZ8_A9oocGySQwmmVmTnXAubcqo05Xpa6o8`，191个非空段。下文以该正文为规范，区分需求已生效与实现尚未完成。
 
-[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQmjW4TG7Ecy…`、71段，已含A19/A20等后续归档；首次19段归档中的5个整段和4句依据e126539与成功CI36306888836，不能将后续全部归档归因于该次迁移；不表示本文件讨论的秘密传输/恢复完整功能已完成。cfd9a30远端CI36308410947为433/8/build成功；fb9bb65远端CI36310779270为502/8/build成功，3bc06ad另有成功CI36311726265（503/8/build）。当前未提交临时双钥@3本地505/8/build/diff通过、尚无本批CI；手动跨模块链属于fb9，但不是官方market_e2e。
+[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQmjW4TG7Ecy…`、71段，已含A19/A20等后续归档；首次19段归档中的5个整段和4句依据e126539与成功CI36306888836，不能将后续全部归档归因于该次迁移；不表示本文件讨论的秘密传输/恢复完整功能已完成。cfd9a30远端CI36308410947为433/8/build成功；fb9bb65远端CI36310779270为502/8/build成功，3bc06ad另有成功CI36311726265（503/8/build）。c919216另有成功CI36313186799（505/8/build），临时双钥@3仍未生产部署；手动跨模块链属于fb9，但不是官方market_e2e。
 
-此前189/71是历史基线。A01/A16/A18归档范围已修正：首次DM介绍@2已按3bc成功CI归档；临时主体双钥@3待本批CI与存量迁移验收，复杂GET短码及完整模板/示例仍在待办。这是完成状态纠偏，不撤销DCR三项已生效规范。
+此前189/71是历史基线。A01/A16/A18归档范围已修正：首次DM介绍@2已按3bc成功CI归档；临时主体双钥@3已通过c919 CI，仍待存量迁移验收，复杂GET短码及完整模板/示例仍在待办。这是完成状态纠偏，不撤销DCR三项已生效规范。
 
 ## DCR-01：秘密传输与纯路径边界——已采纳并扩充
 
@@ -28,11 +28,11 @@
 
 现有副本mapping、冻结清单与ACK不等于完整实现。B类受限Envelope、新写入切换/增量、逐项解密闭环、状态拆分、备份退役与旧备份防复活均仍有差距；finalize继续拒绝不完整迁移，不能把已采纳规范写成已经交付。
 
-## DCR-04：临时主体的双钥边界——用户已决定，实施待CI
+## DCR-04：临时主体的双钥边界——用户已决定，核心实现已通过CI
 
 现行设计要求建号同步生成独立IdentityKey与EncryptionSubkey。此前`identity.temporary@1/@2`只发行短期token，后续`identity.upgrade@2`才要求客户端双钥；这些版本现已拒绝新建，但历史存量临时主体仍可能没有双钥。
 
-用户已选择保持现行“建号同步双钥”要求：临时创建也必须由客户端提供独立签名/加密公钥及签名持有证明，不设token-only例外。当前工作树新增`identity.temporary@3`并让标准客户端预存双钥、绑定请求与恢复journal；旧`@1/@2`新建明确拒绝，已有旧临时主体仍可走双钥升级。双钥创建、丢响应恢复、旧入口拒绝及升级复用已纳入本地505 core/8 conformance/build验证；本批CI和旧数据迁移验收尚未完成，A01暂不扩成所有入口完成。
+用户已选择保持现行“建号同步双钥”要求：临时创建也必须由客户端提供独立签名/加密公钥及签名持有证明，不设token-only例外。当前工作树新增`identity.temporary@3`并让标准客户端预存双钥、绑定请求与恢复journal；旧`@1/@2`新建明确拒绝，已有旧临时主体仍可走双钥升级。双钥创建、丢响应恢复、旧入口拒绝及升级复用已纳入本地505 core/8 conformance/build验证；c919216的CI已通过，旧数据迁移验收尚未完成，A01暂不扩成所有入口完成。
 
 ## 不因DCR采纳或条款迁出而减少的范围
 

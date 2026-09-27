@@ -4,13 +4,13 @@
 
 本次实时读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)修订 `ANLCKQmHD9c-ju8…`，191个非空段；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQmjW4TG7Ecy…`、71段，已含A19/A20等后续归档。此前189/71及更早196/19、首次5段+4句仅为历史迁移记录，不能将全部71段归为那次迁移；后续用户归档不取消回归要求。
 
-`fb9bb65` 的[CI36310779270](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36310779270)完成502 core/8 conformance/build；`3bc06ad` 的[CI36311726265](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36311726265)完成503 core/8 conformance/build，均只证明各自提交。当前main未提交的临时身份双钥切片新增`identity.temporary@3`：客户端创建前本地保存独立Ed25519/age钥，服务端验持有证明并同时登记公钥，升级复用双钥；旧@1/@2新建明确拒绝。当前工作树本地 **505 core passed in 459.14s、8 conformance passed in 83.29s、uv build及diff检查通过**，尚无对应CI或部署证据。旧无钥临时主体仍须按双钥升级，临时签名钥目前仅登记、临时业务继续以受限token执行；这不等于所有身份恢复和纯路径秘密传输已完成。fb9的手动市场链仍不等于官方market_e2e。
+`fb9bb65` 的[CI36310779270](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36310779270)完成502 core/8 conformance/build；`3bc06ad` 的[CI36311726265](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36311726265)完成503/8/build。最新 `c919216` 的[CI36313186799](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36313186799)已completed/success：**505 core / 8 conformance / build通过**，只归该提交。`identity.temporary@3`要求客户端创建前持有独立Ed25519/age钥，服务端验持有证明并同时登记公钥，升级复用双钥；旧@1/@2拒绝新建。历史无钥临时主体仍须双钥升级，临时签名凭据当前登记但业务继续用受限token；本批未生产部署，不能以CI代替存量迁移与完整恢复验收。fb9的手动市场链仍不等于官方market_e2e。
 
-归档A18的首次DM介绍已由3bc06ad成功CI验证并移回已完成部分。A01仍限定正式注册/托管创建：临时双钥@3虽经本地回归，尚待提交CI及存量迁移验收；A16复杂GET短码和完整模板/示例仍在待办。
+归档A18的首次DM介绍已由3bc06ad成功CI验证并移回已完成部分。A01仍限定正式注册/托管创建：临时双钥@3已通过c919成功CI，仍待存量迁移及临时签名凭据能力验收；A16复杂GET短码和完整模板/示例仍在待办。
 
 | 本批切片 | 当前实现事实 | 明确未完成项 |
 | --- | --- | --- |
-| 临时身份双钥 | @3客户端预存独立签名/加密钥，服务端PoP后同时登记；旧@1/@2新建拒绝；升级复用 | 本批CI未跑；旧无钥临时主体升级、临时签名凭据的业务能力及全部恢复/迁移矩阵仍缺 |
+| 临时身份双钥 | @3客户端预存独立签名/加密钥，服务端PoP后同时登记；旧@1/@2新建拒绝；升级复用 | c919 CI已通过；旧无钥临时主体升级、临时签名凭据的业务能力及全部恢复/迁移矩阵仍缺 |
 | 本机money与配置 | mint/burn、BankRole授撤、root transfer、offer set/disable，确认/根审计；MoneyConfig默认值和doctor检查 | 无purchasable类型/兑现器，offer set仍fail-closed；bank fund便利入口、真实物理控制台和生产恢复验收未据此完成 |
 | ServerOffer | 安全空目录；无有效类型/兑现器则redeem拒绝且不扣款 | 真实报价启用/ResourceEntitlement/异步settle-refund未完成；报价管理代码不等于已有可售资源 |
 | 凭据恢复 | 默认15m、1–60m可配；恢复后代继承原deadline、不扩大期限；备份恢复保留配置 | 旧@1重复秘密、全部适配器秘密URL拒绝、恢复响应再次丢失完整矩阵、历史钥在线/备份退役仍缺 |
@@ -31,7 +31,7 @@ Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get�
 
 `test_market_manual_flow.py` 已串起Test Root内部mint/银行登记/注资→10MSG预托管PoP奖励→5MSG固定bundle购买→买家显式prepare/get/accept→bank15/buyer5、total_supply20。它使用内部本机用例和手动交付，**不证明官方market_e2e要求的bank fund命令、自动Delivery、SMTP sink/未验证邮箱边界及全部失败矩阵**。DisputeResolver/仲裁和大型Transfer也仍缺。
 
-下一出口：3bc的DM@2已通过CI；临时双钥@3待提交/CI及存量迁移验证；再补系统LedgerAccount分型及跨模块备份/恢复、自动交付与状态故障恢复、大型Transfer；随后按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
+下一出口：3bc的DM@2已通过CI；临时双钥@3已通过CI，继续存量迁移验证；再补系统LedgerAccount分型及跨模块备份/恢复、自动交付与状态故障恢复、大型Transfer；随后按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
 
 ## 历史：文档迁移与此前验证归属
 
