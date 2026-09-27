@@ -9,9 +9,13 @@ concurrency:
   group: rewrite-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  contracts:
+  shards:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     services:
       postgres:
         # Ubuntu runner provides pg_dump 16; its client must not be older than the server.
@@ -56,7 +60,7 @@ jobs:
       - name: Install required recovery and ingress test tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age nginx openssl
+          sudo apt-get install -y -qq age nginx openssl git-lfs
           age --version
           nginx -v
           openssl version
@@ -65,17 +69,36 @@ jobs:
       - name: Compile all new modules
         run: python -m compileall -q src
       - name: Run core, business and security tests
-        run: python -m pytest tests --junitxml=artifacts/tests.xml
+        run: python scripts/ci_shards.py run ${{ matrix.shard }} 4
       - name: Require every transport and actual tokenizer
+        if: matrix.shard == 0
         env:
           MSG_BENCHMARK_PATH: artifacts/token-budget.json
         run: python -m pytest conformance --junitxml=artifacts/conformance.xml
       - name: Build installable artifacts
+        if: matrix.shard == 0
         run: python -m build
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: rewrite-verification
+          name: rewrite-verification-${{ matrix.shard }}
           path: |
             artifacts/
             dist/
+  contracts:
+    if: always()
+    needs: shards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rewrite-verification-*
+          merge-multiple: true
+      - name: Require complete disjoint test evidence
+        run: python scripts/ci_shards.py check 4
+      - name: Require all tests, conformance and build jobs to succeed
+        env:
+          SHARD_RESULT: ${{ needs.shards.result }}
+        run: test "$SHARD_RESULT" = success
