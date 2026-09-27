@@ -152,6 +152,8 @@ def install(app):
         raise Failure('encryption_subkey_required',details={'contract_version':2})
 
     @op('identity.custodial_create',obj({'handle':STRING,'nonce':BYTES},('handle','nonce')))
+    @op('identity.custodial_create',obj({'handle':STRING,'nonce':BYTES,'recovery_secret':BYTES},
+                                        ('handle','nonce','recovery_secret')),version=2)
     async def custodial_create(ctx,request,tx):
         token=app.issued_token(request,ctx.principal.subject)
         signer=Ed25519Signer.generate()
@@ -168,6 +170,7 @@ def install(app):
             not_before=ctx.now,expires_at=ctx.now+timedelta(seconds=app.settings.temporary_ttl),
             revoked_at=None)
         await tx.save_credential(credential,0)
+        app.record_token_delivery(tx,request,credential,ctx.now)
         tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,?,?)',
                    (signer.key_id,user.id,b64(signer.public_key),wire(ctx.now),None,1),write=True)
         tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,?,?)',
@@ -806,6 +809,8 @@ def install(app):
                                    'expires_at':wire(cert.expires_at)})
 
     @op('identity.temporary',obj({'nonce':BYTES},('nonce',)))
+    @op('identity.temporary',obj({'nonce':BYTES,'recovery_secret':BYTES},
+                                 ('nonce','recovery_secret')),version=2)
     async def temporary(ctx,request,tx):
         token=app.issued_token(request,ctx.principal.subject)
         user=await make_user(app,tx,ctx,ctx.principal.subject,'tmp-'+ctx.principal.subject[-24:],'temporary')
@@ -813,10 +818,13 @@ def install(app):
             verifier=hashlib.sha256(token).digest(),ceiling=app.temporary_ceiling(),not_before=ctx.now,
             expires_at=ctx.now+timedelta(seconds=app.settings.temporary_ttl),revoked_at=None)
         await tx.save_credential(credential,0)
+        app.record_token_delivery(tx,request,credential,ctx.now)
         return HandlerOutput(resources=(ResourceRef(id=user.id),),data={'subject_id':user.id,
             'credential_id':credential.id,'expires_at':wire(credential.expires_at)})
 
     @op('identity.token_rotate',obj({'nonce':BYTES},('nonce',)))
+    @op('identity.token_rotate',obj({'nonce':BYTES,'recovery_secret':BYTES},
+                                    ('nonce','recovery_secret')),version=2)
     async def token_rotate(ctx,request,tx):
         await controlled_owner(app,ctx,request,tx)
         old=await tx.credential(ctx.principal.credential_id)
@@ -828,6 +836,7 @@ def install(app):
             kind='token',verifier=hashlib.sha256(token).digest(),ceiling=old.ceiling,not_before=ctx.now,
             expires_at=ctx.now+timedelta(seconds=app.settings.temporary_ttl),revoked_at=None)
         await tx.save_credential(credential,subject.auth_version)
+        app.record_token_delivery(tx,request,credential,ctx.now)
         await tx.save_credential(replace(old,revoked_at=ctx.now),subject.auth_version)
         return HandlerOutput(data={'subject_id':subject.resource_id,'credential_id':credential.id,
             'previous_credential':old.id,'expires_at':wire(credential.expires_at)})
@@ -917,6 +926,9 @@ def install(app):
 
     @op('identity.token_create',obj({'nonce':BYTES,'ceiling':GRANTS,'ttl':{'type':'integer','minimum':1,'maximum':86400}},
                                     ('nonce','ceiling','ttl')),signature=True)
+    @op('identity.token_create',obj({'nonce':BYTES,'ceiling':GRANTS,'ttl':{'type':'integer','minimum':1,'maximum':86400},
+                                     'recovery_secret':BYTES},('nonce','ceiling','ttl','recovery_secret')),
+        signature=True,version=2)
     async def token_create(ctx,request,tx):
         subject=await controlled_owner(app,ctx,request,tx)
         ceiling=tuple(decode(CapabilityGrant,g) for g in request.arguments['ceiling'])
@@ -926,7 +938,42 @@ def install(app):
             kind='token',verifier=hashlib.sha256(app.issued_token(request,subject.resource_id)).digest(),ceiling=ceiling,
             not_before=ctx.now,expires_at=ctx.now+timedelta(seconds=request.arguments['ttl']),revoked_at=None)
         await tx.save_credential(credential,subject.auth_version)
+        app.record_token_delivery(tx,request,credential,ctx.now)
         return HandlerOutput(data={'subject_id':subject.resource_id,'credential_id':credential.id,'expires_at':wire(credential.expires_at)})
+
+    @op('identity.token_recover',obj({
+        'credential_id':STRING,'original_request_id':STRING,
+        'recovery_secret':BYTES,'nonce':BYTES,
+        'new_recovery_secret':BYTES},
+        ('credential_id','original_request_id','recovery_secret','nonce','new_recovery_secret')))
+    async def token_recover(ctx,request,tx):
+        # Authentication checked the pre-bound recovery verifier in this same
+        # transaction. The one-use state and revocation commit with the result.
+        subject=await controlled_owner(app,ctx,request,tx)
+        old=await tx.credential(request.arguments['credential_id'])
+        require(old.subject_id==subject.resource_id and old.kind=='token' and
+                old.revoked_at is None and old.expires_at>ctx.now,'recovery_unavailable')
+        row=tx.one('''SELECT request_id,consumed_at,recovery_expires_at FROM token_deliveries
+            WHERE credential_id=? AND subject=?''',(old.id,subject.resource_id))
+        require(row is not None and row[0]==request.arguments['original_request_id']
+                and row[1] is None and parse_time(row[2])>ctx.now
+                and request.request_id!=row[0],'recovery_unavailable')
+        require(len(unb64(request.arguments['nonce'],limit=64))>=24,'invalid_bootstrap_nonce')
+        new_id='t_'+digest((request.request_id,subject.resource_id))[7:39]
+        require(new_id!=old.id,'recovery_unavailable')
+        token=app.issued_token(request,subject.resource_id)
+        credential=Credential(id=new_id,subject_id=subject.resource_id,kind='token',
+            verifier=hashlib.sha256(token).digest(),ceiling=old.ceiling,
+            not_before=ctx.now,expires_at=old.expires_at,revoked_at=None)
+        app.record_token_delivery(tx,request,credential,ctx.now)
+        await tx.save_credential(credential,subject.auth_version)
+        await tx.save_credential(replace(old,revoked_at=ctx.now),subject.auth_version)
+        consumed=tx.execute('''UPDATE token_deliveries SET consumed_at=? WHERE credential_id=?
+            AND consumed_at IS NULL''',(wire(ctx.now),old.id),write=True)
+        require(consumed.rowcount==1,'recovery_unavailable')
+        return HandlerOutput(data={'subject_id':subject.resource_id,
+            'credential_id':credential.id,'previous_credential':old.id,
+            'expires_at':wire(credential.expires_at)})
 
     @op('group.create',obj({'name':STRING},('name',)),signature=True)
     async def group_create(ctx,request,tx):

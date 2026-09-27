@@ -433,6 +433,9 @@ def install(app):
                    'credential_id':ctx.principal.credential_id}
         watches={row[0] for row in tx.rows('SELECT resource FROM watches WHERE subject=?',(subject,))}
         watch_hash=digest(sorted(watches))
+        authorization_epoch=tx.setting('authorization_epoch',0)
+        topic_membership_hash=digest([tuple(row) for row in tx.rows(
+            'SELECT topic,role,status FROM topic_memberships WHERE subject=? ORDER BY topic',(subject,))])
         floor=tx.setting('sync_floor',0)
         if request.arguments.get('cursor'):
             saved=app.cursors.inspect(request.arguments['cursor'])
@@ -462,6 +465,19 @@ def install(app):
                 if exc.code in {'not_found','resource_purged','ancestor_inactive'}:
                     return False
                 raise
+        if request.arguments.get('cursor') and (
+            position.get('authorization_epoch')!=authorization_epoch or
+            position.get('topic_membership_digest')!=topic_membership_hash
+        ):
+            # A permission gain can expose events before the saved sequence.  A
+            # cursor cannot prove that replay is complete, so never advance it.
+            # Known losses may still be reported without exposing event content.
+            revoked=[{'kind':'revoked','ref':{'id':rid}} for rid in seen
+                     if not await can_read(rid)]
+            if revoked:
+                return HandlerOutput(data={'items':revoked[:limit],
+                                           'resync_required':True})
+            raise Failure('resync_required')
         for rid in tuple(seen):
             if not await can_read(rid):
                 if len(items)==limit:break
@@ -508,6 +524,8 @@ def install(app):
         token=app.cursors.encode('sync-v2',{'subject':subject},
             {'seq':sequence,'seen_ciphertext':seal_sync_seen(app,seen,context),
              'principal':principal,'watch_digest':watch_hash,
+             'authorization_epoch':authorization_epoch,
+             'topic_membership_digest':topic_membership_hash,
              'expires_at':expiration})
         require(len('/_r/s/'+token)<=min(8192,app.settings.server.limits.max_path_bytes),
                 'resync_required')

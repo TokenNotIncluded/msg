@@ -1,6 +1,6 @@
 # 架构与提交边界
 
-**当前状态：本批SearchQuery/Grep与LegacyDirective本地309 passed、8 conformance、uv build、git diff --check通过；尚未提交，无对应CI，未发布部署。** light.local:18146真实DNS HTTP验证 /、旧search、/_s/q/2、/_search/grep均200，普通POST为405，临时服务已清理。前一提交d365858的295/8/build及CI 36288621652已成功，属于历史证据。
+**当前状态：CLI Search/Grep、SyncCursor resync与token @2一次交付批次，本地全套319 passed、conformance 8 passed、uv build成功；仍未提交，无本批CI，未部署。** 短码snapshot由157增至162项，旧码意义不变。此前CLI/Sync定向11和token相关20已被本批全套覆盖，不额外累加。前一提交c62e516的CI 36290261781成功（309/8/build），不代替当前改动验证。
 
 本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T00:35:34.164Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 
@@ -169,3 +169,13 @@ LegacyDirective已有identity.legacy_put/get/archive/status与/last-will/本人�
 新操作/q/2/grep及DM/Recovery/Legacy CLI切片已纳入本批309项本地全套；本批未提交/无CI，不继承d365858的结果。
 
 Legacy当前限制：已有私有历史的遗言不能切换为公开（legacy_private_history_cannot_be_published），避免通用discovery.get/raw借当前公开mode暴露历史Revision；legacy_get另按所选版本visibility校验。不是逐版本公开发布机制，不能将该限制描述为支持安全公开旧私有历史。
+
+后续未提交Sync改动以authorization_epoch及Topic成员摘要识别授权视图改变，不推进旧cursor；只返回已知撤权的最小引用并要求resync。seen仍最多64，输出路径预算超限不发无效cursor；HTTP入口过长路径单独413。CLI Search/Grep仅复用公共操作，不直接访问存储。
+
+## 当前未提交token @2交付边界
+
+identity.temporary/custodial_create/token_create/token_rotate新增@2，要求独立于nonce的至少32字节恢复材料，恢复窗口最多15分钟且不超过原凭据期限。业务提交仅存verifier和绑定事实，response hook通过持久原子claim最多返回一次token；已claim的相同请求返回token_delivery_unavailable。claim提交后丢响应通过identity.token_recover显式换新token，旧token撤销、旧恢复材料单次消费；新凭据保持原ceiling及expires_at，并绑定新的独立恢复材料。服务器不承诺网络恰好送达一次。
+
+该严格模式目前是选择@2才启用，旧@1仍可重放交付，现有客户端默认尚未切换；不能宣称全平台token一次展示已经完成。token定向20 passed包含竞态、丢响应/恢复、重启和过期等切片，已纳入319项全套，不额外累加；仍无本批CI。
+
+CLI search/grep为受限单页、显式cursor，相关CLI/Sync定向11 passed。Sync v2在授权epoch/Topic成员摘要变化时，只能返回已知撤权最小ID+resync_required且无续cursor，其余要求resync；>64引用明确失败，不静默淘汰。完整signed proof嵌入URL时，即使50 seen也可能触发路径413，可用既有header承载proof；这意味着全量纯路径体验仍有缺口，不宣称只靠路径可支持所有窗口。

@@ -51,6 +51,32 @@ def parser():
     read=commands.add_parser('read');read.add_argument('resource');read.add_argument('--revision')
     read.add_argument('--field',action='append',default=[]);read.add_argument('--meta',action='store_true')
     read.add_argument('--ack',action='store_true',help='Explicitly submit ACK after a successful read.')
+    search=commands.add_parser('search',help='One bounded page of scoped lexical results.')
+    search.add_argument('scope',nargs='?',help='Required for a new search; omit with --cursor.')
+    search.add_argument('terms',nargs='?',help='Words to find; omit with --cursor.')
+    search.add_argument('--cursor',help='Fetch one next page using the server-issued cursor.')
+    search.add_argument('--limit',type=int,default=50)
+    search.add_argument('--mode',choices=('all','any'),default='all')
+    search.add_argument('--field',choices=('all','name','body','metadata'),default='all')
+    search.add_argument('--exact');search.add_argument('--exclude',dest='not_terms')
+    search.add_argument('--type');search.add_argument('--owner');search.add_argument('--author')
+    search.add_argument('--tag');search.add_argument('--state',choices=('active','archived'))
+    search.add_argument('--created-after');search.add_argument('--created-before')
+    search.add_argument('--updated-after');search.add_argument('--updated-before')
+    search.add_argument('--has-attachment',action='store_true')
+    search.add_argument('--depth',type=int);search.add_argument('--no-recursive',action='store_true')
+    search.add_argument('--order',choices=('relevance','updated','created','name'))
+    search.add_argument('--no-snippet',action='store_true')
+    search.add_argument('--explain',action='store_true')
+    grep=commands.add_parser('grep',help='Search a known scope with explicit result caps.')
+    grep.add_argument('scope');grep.add_argument('pattern')
+    grep.add_argument('--regex',action='store_true');grep.add_argument('--ignore-case',action='store_true')
+    grep.add_argument('--glob');grep.add_argument('--exclude-glob')
+    grep.add_argument('--before',type=int,default=0);grep.add_argument('--after',type=int,default=0)
+    grep.add_argument('--max-matches',type=int,default=50);grep.add_argument('--max-files',type=int,default=50)
+    grep_mode=grep.add_mutually_exclusive_group()
+    grep_mode.add_argument('--files-with-matches',action='store_true')
+    grep_mode.add_argument('--count-only',action='store_true')
     post=commands.add_parser('post');post.add_argument('topic')
     body=post.add_mutually_exclusive_group(required=True);body.add_argument('--text');body.add_argument('--file',type=Path)
     reply=commands.add_parser('reply');reply.add_argument('resource');reply.add_argument('--text',required=True)
@@ -170,6 +196,48 @@ async def run(args):
                 require(result.data.get('revision'),'ack_revision_required')
                 ack=await client.ack(ResourceRef(id=result.data['id'],revision=result.data['revision']))
                 result={'read':result_wire(result),'ack':result_wire(ack)}
+        elif command=='search':
+            require(1<=args.limit<=100,'invalid_search_limit')
+            if args.cursor:
+                require(args.scope is None and args.terms is None,'cursor_query_mismatch')
+                require(args.limit==50 and args.mode=='all' and args.field=='all' and
+                        args.exact is None and args.not_terms is None and args.type is None and
+                        args.owner is None and args.author is None and args.tag is None and
+                        args.state is None and args.created_after is None and
+                        args.created_before is None and args.updated_after is None and
+                        args.updated_before is None and not args.has_attachment and
+                        args.depth is None and not args.no_recursive and args.order is None and
+                        not args.no_snippet and not args.explain,'cursor_query_mismatch')
+                params={'cursor':args.cursor}
+            else:
+                require(args.scope is not None and (args.terms or args.exact),
+                        'search_query_required')
+                params={'scope':args.scope,'mode':args.mode,'field':args.field,'limit':args.limit}
+                if args.terms:params['terms']=args.terms
+                for key in ('exact','not_terms','type','owner','author','tag','state',
+                            'created_after','created_before','updated_after','updated_before',
+                            'depth','order'):
+                    value=getattr(args,key)
+                    if value is not None:params[key]=value
+                if args.has_attachment:params['has_attachment']=True
+                if args.no_recursive:params['recursive']=False
+                if args.no_snippet:params['snippet']=False
+                if args.explain:params['explain']='compact'
+            result=await client.call('discovery.lexical_search',params)
+        elif command=='grep':
+            require(0<=args.before<=3 and 0<=args.after<=3,'invalid_grep_context')
+            require(1<=args.max_matches<=100 and 1<=args.max_files<=100,
+                    'invalid_grep_limit')
+            params={'scope':args.scope,'pattern':args.pattern,'regex':args.regex,
+                    'case_sensitive':not args.ignore_case,'before':args.before,
+                    'after':args.after,'max_matches':args.max_matches,
+                    'max_files':args.max_files}
+            for key in ('glob','exclude_glob'):
+                value=getattr(args,key)
+                if value is not None:params[key]=value
+            if args.files_with_matches:params['files_with_matches']=True
+            if args.count_only:params['count_only']=True
+            result=await client.call('discovery.grep',params)
         elif command=='post':
             if args.file:
                 uploaded=await client.upload(args.file,media_type='text/markdown')

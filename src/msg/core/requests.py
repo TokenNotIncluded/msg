@@ -42,6 +42,7 @@ def receipt_bytes(result):
     for field in ('receipt','replayed','prefer_cli','cli_url'):
         value.pop(field,None)
     if result.operation in {'identity.temporary','identity.custodial_create',
-                            'identity.token_rotate','identity.token_create'} and value.get('data'):
+                            'identity.token_rotate','identity.token_create',
+                            'identity.token_recover'} and value.get('data'):
         value['data'].pop('token',None)
     return canonical(value)

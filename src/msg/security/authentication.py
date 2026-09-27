@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+from dataclasses import replace
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import digest,unb64
+from msg.core.codec import digest,unb64,parse_time
 from msg.core.errors import Failure,require
 from msg.core.models import Principal,SignatureProof,TokenProof
 from msg.core.requests import payload_fields,signing_bytes
@@ -51,6 +52,33 @@ class AuthenticationService:
             subject=prefix+hashlib.sha256(nonce).hexdigest()[:32]
             return Principal(actor=subject,subject=subject,credential_id='t_'+subject[2:],method='token',
                              certificates=(),ceiling=self.temporary_ceiling())
+        if request.operation=='identity.token_recover':
+            require(proof is None and request.subject is not None,'invalid_recovery_proof')
+            old=await session.credential(request.arguments['credential_id'])
+            require(old.kind=='token' and old.subject_id==request.subject,'recovery_unavailable')
+            actor=await session.subject(old.subject_id)
+            require(not actor.local_only and actor.resource_id!=ROOT_SUBJECT,'local_only')
+            raw=unb64(request.arguments['recovery_secret'],limit=64)
+            require(len(raw)>=32,'invalid_recovery_secret')
+            verifier=hashlib.sha256(b'token-recovery-v1\0'+raw).hexdigest()
+            row=session.one('''SELECT recovery_verifier,recovery_expires_at,consumed_at,request_id
+                FROM token_deliveries WHERE credential_id=? AND subject=?''',
+                (old.id,actor.resource_id))
+            require(row is not None and hmac.compare_digest(row[0],verifier) and
+                    parse_time(row[1])>now and row[3]==request.arguments['original_request_id'],
+                    'recovery_unavailable')
+            if row[2] is not None:
+                previous=await session.request_result(actor.resource_id,request.request_id,request.payload_digest)
+                require(previous is not None and previous.data.get('previous_credential')==old.id,
+                        'recovery_unavailable')
+            else:
+                require(old.revoked_at is None and old.expires_at>now,'recovery_unavailable')
+            operation='identity.token_recover@1'
+            ceiling=tuple(replace(g,operations=frozenset({operation})) for g in self.primary_ceiling()
+                          if g.capability=='identity.basic' and operation in g.operations)
+            require(bool(ceiling),'recovery_unavailable')
+            return Principal(actor=actor.resource_id,subject=actor.resource_id,
+                             credential_id=old.id,method='recovery',certificates=(),ceiling=ceiling)
         if proof is None:
             require(request.subject is None and spec.effect=='read','authentication_required')
             return Principal(actor=None,subject=None,credential_id=None,method='anonymous',certificates=(),ceiling=())

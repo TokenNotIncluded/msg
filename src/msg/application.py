@@ -2,14 +2,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import hashlib
 import hmac
 import importlib
 
 from msg.constants import ROOT_SPACE, ROOT_SUBJECT
-from msg.core.codec import loads, decode, unb64, b64, canonical
+from msg.core.codec import loads, decode, unb64, b64, canonical, wire
 from msg.core.cursors import CursorCodec
 from msg.core.errors import Failure, require
 from msg.core.executor import OperationExecutor
@@ -127,18 +127,51 @@ class Application:
         return hmac.digest(self._token_secret,b'issued-token-v1\0'+canonical({
             'subject':subject,'request_id':request.request_id,'nonce':request.arguments['nonce']}),'sha256')
 
+    @staticmethod
+    def recovery_verifier(value):
+        secret=unb64(value,limit=64)
+        require(len(secret)>=32,'invalid_recovery_secret')
+        return hashlib.sha256(b'token-recovery-v1\0'+secret).hexdigest()
+
+    def record_token_delivery(self,tx,request,credential,now):
+        """Bind recovery before commit; neither token nor recovery secret is stored."""
+        if request.contract_version!=2 and request.operation!='identity.token_recover':
+            return
+        field='new_recovery_secret' if request.operation=='identity.token_recover' else 'recovery_secret'
+        secret=unb64(request.arguments[field],limit=64)
+        require(secret!=unb64(request.arguments['nonce'],limit=64),'recovery_secret_not_independent')
+        if request.operation=='identity.token_recover':
+            require(secret!=unb64(request.arguments['recovery_secret'],limit=64),
+                    'recovery_secret_not_independent')
+        expires=min(credential.expires_at,now+timedelta(minutes=15))
+        tx.execute('''INSERT INTO token_deliveries
+            (credential_id,subject,request_id,request_digest,recovery_verifier,recovery_expires_at,
+             claimed_at,consumed_at) VALUES (?,?,?,?,?,?,NULL,NULL)''',
+            (credential.id,credential.subject_id,request.request_id,request.payload_digest,
+             self.recovery_verifier(request.arguments[field]),wire(expires)),write=True)
+
     async def _secrets_for_caller(self,request,result):
         if result.status!='ok' or request.operation not in {'identity.temporary','identity.custodial_create',
-                'identity.token_rotate','identity.token_create'}:
+                'identity.token_rotate','identity.token_create','identity.token_recover'}:
             return result
         token=self.issued_token(request,result.subject)
-        async with self.metadata.transaction(write=False) as tx:
+        strict=request.contract_version==2 or request.operation=='identity.token_recover'
+        async with self.metadata.transaction(write=strict) as tx:
             credential=await tx.credential(result.data['credential_id'])
             require(credential.revoked_at is None and credential.expires_at>self.clock(),'credential_expired')
             require(hmac.compare_digest(credential.verifier,hashlib.sha256(token).digest()),'invalid_token_result')
-        # Request-bound credential delivery is excluded from durable metadata and
-        # the signed receipt. An identical retry can recover the same token after
-        # a lost response; strict single-display delivery is not guaranteed.
+            if strict:
+                row=tx.one('''SELECT subject,request_id,request_digest,claimed_at,consumed_at
+                    FROM token_deliveries WHERE credential_id=?''',(credential.id,))
+                require(row is not None and row[0]==result.subject and row[1]==request.request_id
+                        and row[2]==request.payload_digest and row[4] is None,'token_delivery_unavailable')
+                require(row[3] is None,'token_delivery_unavailable')
+                updated=tx.execute('''UPDATE token_deliveries SET claimed_at=? WHERE credential_id=?
+                    AND claimed_at IS NULL AND consumed_at IS NULL''',
+                    (wire(self.clock()),credential.id),write=True)
+                require(updated.rowcount==1,'token_delivery_unavailable')
+        # The claim commits before the adapter sees the token. A dropped response
+        # must use a separate, pre-bound recovery secret to rotate the credential.
         return replace(result,data=dict(result.data,token=b64(token)))
 
     async def close(self):

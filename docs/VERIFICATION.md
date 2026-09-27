@@ -1,10 +1,19 @@
 # 本地与 CI 验收记录
 
+## 2026-09-27 CLI Search/Grep、Sync resync 与 token @2（未提交，本地全套通过）
+
+当前工作树未提交、无本批远端CI。`.venv/bin/python -m pytest -q` 为 **319 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q` 成功。短码snapshot由157增至162项且旧码意义不变。此前CLI/Sync定向11、token相关20已包含在全套内，不额外累加；不借用c62e516已通过的309/8/build CI。
+
+CLI search/grep采用单页与显式cursor；Sync授权epoch/Topic成员摘要变化要求resync，只披露已知撤权最小ID且不给续cursor；>64引用明确失败。50个seen叠加完整路径proof可能超过URL限制返回413，已有header proof可用，但纯路径大窗口仍有限。
+
+四种token发行操作新增@2严格原子claim，独立至少32B恢复材料窗口最多15分钟；identity.token_recover消费旧恢复材料、撤销旧token并保持原scope/期限换发。定向覆盖一次交付、并发、丢响应恢复、重启和过期。旧@1及默认客户端仍未切换，不能声明全平台一次展示完成。
+
+
 ## 2026-09-27 SearchQuery、Grep、Legacy 登记与 CLI 批次
 
-权威需求仍为 Google Drive `ChatGPT` 文件夹《msg.lmm.best｜项目设计》，修订时间 `2026-09-27T00:35:34.164Z`。本批提交前本地 Python 3.15/PostgreSQL 下 `UV_CACHE_DIR=/tmp/msg-uv-cache uv run python -m pytest -q` 为 **309 passed**，conformance 为 **8 passed**，`uv build` 与 `git diff --check` 通过。新增受限词法 SearchQuery、限定已知范围的 Grep、搜索 QueryRef 分页、纯路径读取等价；旧 `discovery.search@1` 契约及已发布短码保持不变。针对 2001 条范围外资源，新增先红后绿回归：scope 在 SQL 候选阶段限定，预算只计当前可见且通过基础筛选的结果。Grep 仍是受限正则、无分页；facets、suggest、语义搜索、关系/来源筛选等未完成。LegacyDirective 只登记本人签名声明，不执行遗言或授权；私有历史不能变为公开，选定历史版本也检查其当时的可见性。CLI 增加 DM、Recovery、Legacy 入口。
+权威需求仍为 Google Drive `ChatGPT` 文件夹《msg.lmm.best｜项目设计》，修订时间 `2026-09-27T00:35:34.164Z`。提交 `c62e516` 前本地 Python 3.15/PostgreSQL 下 `UV_CACHE_DIR=/tmp/msg-uv-cache uv run python -m pytest -q` 为 **309 passed**，conformance 为 **8 passed**，`uv build` 与 `git diff --check` 通过。新增受限词法 SearchQuery、限定已知范围的 Grep、搜索 QueryRef 分页、纯路径读取等价；旧 `discovery.search@1` 契约及已发布短码保持不变。针对 2001 条范围外资源，新增先红后绿回归：scope 在 SQL 候选阶段限定，预算只计当前可见且通过基础筛选的结果。Grep 仍是受限正则、无分页；facets、suggest、语义搜索、关系/来源筛选等未完成。LegacyDirective 只登记本人签名声明，不执行遗言或授权；私有历史不能变为公开，选定历史版本也检查其当时的可见性。CLI 增加 DM、Recovery、Legacy 入口。
 
-隔离测试实例以本机 DNS `light.local` 解析的 `10.174.197.165` 监听 `18146`，真实 HTTP 请求 `/`、旧搜索、`/_s/q/2/...` 新词法搜索和 `/_search/grep` 均为 200；普通 `/main` POST 为 405。首次探针把旧搜索参数写成 `q`，收到预期的 `unknown_query_parameter`；改为契约参数 `query` 后，又发现测试实例原先的认证目标仍为 `testserver`，调整探针实例目标地址后最终通过。临时探针文件、数据库和服务已清理，端口无监听。此结果证明本地路由与 Host 端到端可用，不代表生产部署或浏览器中更广泛的安全矩阵。本批远端 CI 结果待提交后记录。
+隔离测试实例以本机 DNS `light.local` 解析的 `10.174.197.165` 监听 `18146`，真实 HTTP 请求 `/`、旧搜索、`/_s/q/2/...` 新词法搜索和 `/_search/grep` 均为 200；普通 `/main` POST 为 405。首次探针把旧搜索参数写成 `q`，收到预期的 `unknown_query_parameter`；改为契约参数 `query` 后，又发现测试实例原先的认证目标仍为 `testserver`，调整探针实例目标地址后最终通过。临时探针文件、数据库和服务已清理，端口无监听。此结果证明本地路由与 Host 端到端可用，不代表生产部署或浏览器中更广泛的安全矩阵。提交 `c62e516` 已推送；[远端 CI 36290261781](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36290261781) 为 completed/success，309 core、8 conformance、构建通过。尚未部署。当前后续 CLI Search/Grep 与 SyncCursor 改动尚未提交，不能借用该 CI。
 
 ## 2026-09-27 托管升级与同域托管批次
 

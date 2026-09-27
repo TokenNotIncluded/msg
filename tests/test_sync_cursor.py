@@ -19,6 +19,13 @@ def signed_path(app,key,subject,path,args):
     return path+'/p/'+b64(canonical(packet))
 
 
+def signed_header(app,key,subject,args):
+    packet=request_for('communication.sync',args,app.settings.service_url,
+                       signer=key,subject=subject,
+                       expires_at=NOW+timedelta(seconds=60))
+    return {'x-msg-request':b64(canonical(packet))}
+
+
 async def state(app):
     async with app.metadata.transaction(write=False) as tx:
         return (tx.one('SELECT COUNT(*) FROM events')[0],
@@ -82,9 +89,13 @@ async def test_sync_cursor_tracks_visible_create_modify_archive_and_known_revoca
                             expected=((rid,edited.data['generation']),))
         assert archived.status=='ok'
         archive=await http.get(signed_path(app,key,user,'/_r/s/'+cursor,{'cursor':cursor}))
+        assert archive.status_code==400
+        assert archive.json()['error']['code']=='resync_required'
+        restarted=await http.get(signed_path(app,key,user,'/_r/s/start',{}))
+        assert restarted.status_code==200
         assert any(item['kind']=='archived' and item['ref']['id']==rid
-                   for item in archive.json()['items'])
-        cursor=archive.json()['sync_cursor']
+                   for item in restarted.json()['items'])
+        cursor=restarted.json()['sync_cursor']
         async with app.metadata.transaction(write=False) as tx:
             generation=(await tx.resource(second.resources[0].id)).generation
         locked=await call(app,'content.chmod',
@@ -95,6 +106,8 @@ async def test_sync_cursor_tracks_visible_create_modify_archive_and_known_revoca
         assert revoked.status_code==200
         lost=[item for item in revoked.json()['items'] if item['kind']=='revoked']
         assert lost==[{'kind':'revoked','ref':{'id':second.resources[0].id}}]
+        assert revoked.json()['resync_required'] is True
+        assert 'sync_cursor' not in revoked.json() and 'next' not in revoked.json()
         assert 'second' not in revoked.text
 
 
@@ -144,7 +157,8 @@ async def test_sync_never_emits_unseen_private_reference(installed):
         before=await state(app)
         result=await http.get(signed_path(app,observer,observer_id,'/_r/s/'+token,
                                           {'cursor':token}))
-        assert result.status_code==200
+        assert result.status_code==400
+        assert result.json()['error']['code']=='resync_required'
         assert rid not in result.text and 'unseen secret' not in result.text
         assert await state(app)==before
 
@@ -154,3 +168,86 @@ async def test_sync_seen_window_has_a_hard_bounded_size(installed):
     app, _ = installed
     with pytest.raises(Failure,match='resync_required'):
         seal_sync_seen(app,[f'r_{index}' for index in range(65)])
+
+
+@pytest.mark.asyncio
+async def test_sync_permission_gain_requires_replay_of_old_events(installed):
+    app, _ = installed
+    observer,observer_id,_=await register(app,'sync-gain-observer')
+    writer,writer_id,_=await register(app,'sync-gain-writer')
+    watched=await call(app,'communication.watch',{'id':'/main'},
+                       key=observer,subject=observer_id)
+    assert watched.status=='ok'
+    post=await call(app,'content.post_create',{'parent':'/main','body':'old private body'},
+                    key=writer,subject=writer_id)
+    rid=post.resources[0].id
+    private=await call(app,'content.chmod',{'id':rid,'mode':'0600'},key=writer,
+                       subject=writer_id,expected=((rid,post.data['generation']),))
+    assert private.status=='ok'
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        opened=await http.get(signed_path(app,observer,observer_id,'/_r/s/start',{}))
+        assert opened.status_code==200
+        assert rid not in opened.text
+        cursor=opened.json()['sync_cursor']
+        public=await call(app,'content.chmod',{'id':rid,'mode':'0644'},key=writer,
+                          subject=writer_id,expected=((rid,private.data['generation']),))
+        assert public.status=='ok'
+        before=await state(app)
+        stale=await http.get(signed_path(app,observer,observer_id,'/_r/s/'+cursor,
+                                         {'cursor':cursor}))
+        assert stale.status_code==400
+        assert stale.json()['error']['code']=='resync_required'
+        assert rid not in stale.text and 'old private body' not in stale.text
+        assert await state(app)==before
+        restarted=await http.get(signed_path(app,observer,observer_id,'/_r/s/start',{}))
+        assert restarted.status_code==200
+        # A fresh bounded replay can discover the now-visible old event.
+        assert rid in restarted.text
+
+
+@pytest.mark.asyncio
+async def test_sync_over_64_refs_fails_without_advancing_cursor(installed):
+    app, _ = installed
+    key,user,_=await register(app,'sync-over-64')
+    for index in range(65):
+        post=await call(app,'content.post_create',{'parent':'/main','body':f'item {index}'},
+                        key=key,subject=user)
+        assert post.status=='ok'
+    before=await state(app)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        first=await http.get(signed_path(app,key,user,'/_r/s/start',{}))
+        assert first.status_code==200
+        cursor=first.json()['sync_cursor']
+        over=await http.get('/_r/s/'+cursor,
+                            headers=signed_header(app,key,user,{'cursor':cursor}))
+        assert over.status_code==400,over.text
+        assert over.json()['error']['code']=='resync_required'
+        assert 'sync_cursor' not in over.json() and 'next' not in over.json()
+    assert await state(app)==before
+
+
+@pytest.mark.asyncio
+async def test_sync_topic_membership_change_invalidates_old_cursor(installed):
+    app, _ = installed
+    key,user,_=await register(app,'sync-topic-member')
+    creator,creator_id,_=await register(app,'sync-topic-creator')
+    topic=await call(app,'content.topic_create',{'parent':'/main','name':'sync-topic'},
+                     key=creator,subject=creator_id)
+    assert topic.status=='ok'
+    rid=topic.resources[0].id
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        opened=await http.get(signed_path(app,key,user,'/_r/s/start',{}))
+        assert opened.status_code==200
+        cursor=opened.json()['sync_cursor']
+        joined=await call(app,'content.topic_join',{'id':rid},key=key,subject=user)
+        assert joined.status=='ok'
+        before=await state(app)
+        stale=await http.get(signed_path(app,key,user,'/_r/s/'+cursor,{'cursor':cursor}))
+        assert stale.status_code==400
+        assert stale.json()['error']['code']=='resync_required'
+        assert await state(app)==before
+        restarted=await http.get(signed_path(app,key,user,'/_r/s/start',{}))
+        assert restarted.status_code==200

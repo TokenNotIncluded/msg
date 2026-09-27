@@ -10,7 +10,8 @@ from msg.plugins.schemas import NETWORK_CONSTRAINTS
 # stand in for a special capability or a trusted local execution entry.
 BASE_FAMILIES = {
     'identity.basic': ('identity.register', 'identity.temporary', 'identity.custodial_create', 'identity.upgrade',
-        'identity.token_rotate', 'identity.token_create', 'identity.key_add', 'identity.key_revoke',
+        'identity.token_rotate', 'identity.token_create', 'identity.token_recover',
+        'identity.key_add', 'identity.key_revoke',
         'identity.email_set', 'identity.email_verify', 'identity.email_get', 'identity.email_notifications',
         'identity.delegate', 'identity.delegation_revoke', 'identity.certificate_renew',
         'identity.ssh_key_add', 'identity.ssh_key_revoke', 'identity.ssh_certificates',
@@ -126,6 +127,8 @@ def base_grants(registry,scope=None):
 
 
 def temporary_ceiling(registry,scope=None):
-    temporary=frozenset(f'{name}@1' for name in TEMPORARY_OPERATIONS)|{'identity.upgrade@2'}
+    temporary=frozenset(f'{name}@1' for name in TEMPORARY_OPERATIONS)|{
+        'identity.upgrade@2','identity.temporary@2','identity.custodial_create@2',
+        'identity.token_rotate@2'}
     return tuple(grant_for(spec,scope=scope,operations=spec.operations&temporary) for spec in registry.capabilities()
         if spec.name in BASE_FAMILIES and spec.operations&temporary)

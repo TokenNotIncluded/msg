@@ -2,7 +2,7 @@
 
 权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T00:35:34.164Z`。
 
-**当前状态：本批SearchQuery/Grep与LegacyDirective本地309 passed、8 conformance、uv build、git diff --check通过；尚未提交，无对应CI，未发布部署。** light.local:18146真实DNS HTTP验证 /、旧search、/_s/q/2、/_search/grep均200，普通POST为405，临时服务已清理。前一提交d365858的295/8/build及CI 36288621652已成功，属于历史证据。
+**当前状态：CLI Search/Grep、SyncCursor resync与token @2一次交付批次，本地全套319 passed、conformance 8 passed、uv build成功；仍未提交，无本批CI，未部署。** 短码snapshot由157增至162项，旧码意义不变。此前CLI/Sync定向11和token相关20已被本批全套覆盖，不额外累加。前一提交c62e516的CI 36290261781成功（309/8/build），不代替当前改动验证。
 
 历史证据单独保留：`e01dacc` 本地 228/8/build 与[CI 36281301900](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)通过；`f085e7f` 本地 206/8/build 与 CI 通过。220 是双钥加入前的中间结果，不是当前基线，不与任何测试数量累加。详细命令见 [VERIFICATION](VERIFICATION.md)。
 
@@ -76,3 +76,19 @@ identity.legacy_put/get/archive/status与/last-will/登记已添加，本人签�
 当前增量309/8/build/diff检查通过，未提交/无本批CI；d365858的295/8/CI是前批历史证据。
 
 Legacy当前限制：已有私有历史的遗言不能切换为公开（legacy_private_history_cannot_be_published），避免通用discovery.get/raw借当前公开mode暴露历史Revision；legacy_get另按所选版本visibility校验。不是逐版本公开发布机制，不能将该限制描述为支持安全公开旧私有历史。
+
+## 后续未提交CLI与Sync切片
+
+当前后续工作树CLI入口：msg search <scope> <terms>调用discovery.lexical_search，默认一页50条、--cursor显式取下一页，支持已登记筛选/排序；msg grep <scope> <pattern>调用discovery.grep，显式max-files/max-matches，count-only与files-with-matches互斥，无自动全量翻页。
+
+SyncCursor后续工作树改动仍保留最多64个seen引用，并未实现无限扩容。授权epoch/Topic成员摘要变化时不推进旧序号：已知撤权可返回最小revoked items加resync_required=true且不给新cursor，无已知撤权则返回resync_required错误；客户端须重建可见基线。过期、保留窗口外、单事件超过页容量、超过64或输出cursor无法装入路径预算均要求resync，不能静默丢引用。进入HTTP时原始路径已超限则path_too_large映射413；这是传输长度错误，不等于Sync自动续页或已完成重同步。
+
+## 当前未提交token @2交付边界
+
+identity.temporary/custodial_create/token_create/token_rotate新增@2，要求独立于nonce的至少32字节恢复材料，恢复窗口最多15分钟且不超过原凭据期限。业务提交仅存verifier和绑定事实，response hook通过持久原子claim最多返回一次token；已claim的相同请求返回token_delivery_unavailable。claim提交后丢响应通过identity.token_recover显式换新token，旧token撤销、旧恢复材料单次消费；新凭据保持原ceiling及expires_at，并绑定新的独立恢复材料。服务器不承诺网络恰好送达一次。
+
+该严格模式目前是选择@2才启用，旧@1仍可重放交付，现有客户端默认尚未切换；不能宣称全平台token一次展示已经完成。token定向20 passed包含竞态、丢响应/恢复、重启和过期等切片，已纳入319项全套，不额外累加；仍无本批CI。
+
+CLI search/grep为受限单页、显式cursor，相关CLI/Sync定向11 passed。Sync v2在授权epoch/Topic成员摘要变化时，只能返回已知撤权最小ID+resync_required且无续cursor，其余要求resync；>64引用明确失败，不静默淘汰。完整signed proof嵌入URL时，即使50 seen也可能触发路径413，可用既有header承载proof；这意味着全量纯路径体验仍有缺口，不宣称只靠路径可支持所有窗口。
+
+@2的recovery_secret/new_recovery_secret目前仍是请求参数；若客户端选择GET packet路径，会进入URL，可能被客户端历史、代理/access/error日志或trace记录。数据库只存verifier不等于全链路无秘密泄漏风险。默认客户端尚未接@2；安全上线前须强制含恢复秘密的请求走POST body/TLS，并实测应用、代理及可观测链路日志脱敏，不能以服务端不落明文替代该验证。
