@@ -1,0 +1,72 @@
+# Temporary transport for a locally tested patch. Removed before the review PR.
+# Only the named branch may be updated, with verified inputs and no force push.
+name: Apply recovery safety patch
+on:
+  push:
+    branches: [fix/issues-68-70-recovery-safety]
+    paths:
+      - .github/workflows/apply-recovery-safety.yml
+      - .github/recovery-safety-transfer/**
+permissions:
+  contents: read
+jobs:
+  apply:
+    if: github.repository == 'TokenNotIncluded/msg.lmm.best' && github.ref == 'refs/heads/fix/issues-68-70-recovery-safety'
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Verify and apply the exact reviewed patch
+        run: |
+          python - <<'PY'
+          import base64, gzip, hashlib, json, pathlib, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          assert git('rev-parse', 'HEAD^') == '2dd6a0d0260f8c230a1d5b2f4ff75241113835b2', 'unexpected base'
+          root = pathlib.Path('.github/recovery-safety-transfer')
+          sums = ['a8da1550789b65faf7be14fd8b8a914cad9a5bb83a9e2f913872134369644d9a',
+                  '669d1ca8578b425f75bb40235364dfd01baa3ceab1d7f1db55f748968c51f029',
+                  '904b69043eeb1642345b4a2a57cb3662a60dabd1aaad387bac619ab5cb1b7fd8',
+                  '5ee77c5ed031caa962dd1e4b782e84c18b1cac960ae82d0f58cd73ca6f40bce1']
+          parts = [root.joinpath('0.b64').read_text().strip()]
+          for i in range(1, 4):
+              parts.append(''.join(root.joinpath(f'{i}.{j}.b64').read_text().strip() for j in range(4)))
+          for i, (part, expected) in enumerate(zip(parts, sums, strict=True)):
+              assert hashlib.sha256(part.encode()).hexdigest() == expected, f'chunk {i} integrity'
+          patch = gzip.decompress(base64.b64decode(''.join(parts), validate=True))
+          assert len(patch) == 89021
+          assert hashlib.sha256(patch).hexdigest() == 'bbc1caf4fcf410ab75560865d6b3cccceec1bed5b5100acfd3f27da368a2239e'
+          path = pathlib.Path('/tmp/recovery-safety.patch')
+          path.write_bytes(patch)
+          subprocess.run(['git', 'apply', '--check', str(path)], check=True)
+          subprocess.run(['git', 'apply', '--index', str(path)], check=True)
+          expected = json.loads(root.joinpath('expected-blobs.json').read_text())
+          assert set(git('diff', '--cached', '--name-only').splitlines()) == set(expected)
+          for name, sha in expected.items():
+              assert name.startswith(('src/', 'tests/', 'docs/'))
+              assert git('rev-parse', ':' + name) == sha, name
+          print('Verified all 21 source/test/document blobs against the local patch.')
+          PY
+      - name: Install isolated unit dependencies
+        run: python -m pip install 'cryptography>=46,<52' 'jsonschema>=4.25,<5' 'pytest>=8.4' 'pytest-asyncio>=1.1'
+      - name: Compile and repeat the 34 isolated units on Python 3.15
+        run: |
+          python -m compileall -q src
+          mkdir /tmp/recovery-units
+          cp tests/test_recovery_safety_units.py /tmp/recovery-units/
+          PYTHONPATH="$PWD/src" python -m pytest -q -c /dev/null --confcutdir=/tmp/recovery-units /tmp/recovery-units/test_recovery_safety_units.py --asyncio-mode=auto
+          git diff --cached --check
+      - name: Commit verified source changes to this branch only
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git -c core.hooksPath=/dev/null commit -m 'fix: bind recovery evidence, quarantine restores, and protect root rotation'
+          git push origin HEAD:refs/heads/fix/issues-68-70-recovery-safety
