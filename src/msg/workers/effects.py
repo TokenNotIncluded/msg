@@ -141,32 +141,24 @@ class EffectWorker:
             await tx.save_job(replace(current, state=state, lease_until=None))
             tx.set_setting('job_status:' + job.id, {'code': code})
 
-    async def _retry_mail(self,job,code):
+    async def _retry(self, job, retry_code, exhausted_code):
         async with self.app.metadata.transaction(write=True) as tx:
-            current=await tx.job(job.id)
-            if current.state!='running' or current.attempts!=job.attempts:
+            current = await tx.job(job.id)
+            if current.state != 'running' or current.attempts != job.attempts:
                 return
-            if current.attempts>=8:
-                await tx.save_job(replace(current,state='failed',lease_until=None))
-            else:
-                delay=min(3600,30*2**(current.attempts-1))
-                await tx.save_job(replace(current,state='pending',lease_until=None,
-                    next_attempt_at=self.app.clock()+timedelta(seconds=delay)))
-            tx.set_setting('job_status:'+job.id,{'code':code})
+            exhausted = current.attempts >= 8
+            next_at = (current.next_attempt_at if exhausted else
+                       self.app.clock() + timedelta(seconds=min(3600, 30 * 2**(current.attempts - 1))))
+            await tx.save_job(replace(current, state='failed' if exhausted else 'pending',
+                                     lease_until=None, next_attempt_at=next_at))
+            tx.set_setting('job_status:' + job.id,
+                           {'code': exhausted_code if exhausted else retry_code})
 
-    async def _retry_webhook(self,job):
-        async with self.app.metadata.transaction(write=True) as tx:
-            current=await tx.job(job.id)
-            if current.state!='running' or current.attempts!=job.attempts:
-                return
-            if current.attempts>=8:
-                await tx.save_job(replace(current,state='failed',lease_until=None))
-                tx.set_setting('job_status:'+job.id,{'code':'webhook_attempts_exhausted'})
-            else:
-                delay=min(3600,30*2**(current.attempts-1))
-                await tx.save_job(replace(current,state='pending',lease_until=None,
-                    next_attempt_at=self.app.clock()+timedelta(seconds=delay)))
-                tx.set_setting('job_status:'+job.id,{'code':'webhook_retry_scheduled'})
+    async def _retry_mail(self, job, code):
+        await self._retry(job, code, code)
+
+    async def _retry_webhook(self, job):
+        await self._retry(job, 'webhook_retry_scheduled', 'webhook_attempts_exhausted')
 
     async def _tool(self, job, directory):
         from msg.extensions.tools import read_tool, tool_policies
