@@ -26,10 +26,12 @@ _LEDGER_ACCOUNT_FKS = (
 def _escrow_sources(conn):
     escrow = {}
     for table, kind, source in (('store_orders', 'order_escrow', 'id'),
-                                ('bounty_listings', 'bounty_escrow', 'listing_id')):
+                                ('bounty_listings', 'bounty_escrow', 'listing_id'),
+                                ('money_purchases', 'purchase_escrow', 'id')):
+        column = 'escrow_account' if table == 'money_purchases' else 'escrow_subject'
         for account_id, source_id in conn.execute(sql.SQL(
-                'SELECT escrow_subject,{} FROM {}').format(
-                    sql.Identifier(source), sql.Identifier(table))):
+                'SELECT {},{} FROM {}').format(
+                    sql.Identifier(column), sql.Identifier(source), sql.Identifier(table))):
             expected = (kind, None, source_id)
             if account_id in escrow and escrow[account_id] != expected:
                 raise RuntimeError('ledger escrow account collision')
@@ -67,7 +69,7 @@ def _install_accounts(conn, escrow):
             raise RuntimeError('ledger account type/source mismatch')
     for account_id, kind, subject_id, source_id in conn.execute('''
         SELECT id,kind,subject_id,source_id FROM ledger_accounts
-        WHERE kind IN ('order_escrow','bounty_escrow')'''):
+        WHERE kind IN ('order_escrow','bounty_escrow','purchase_escrow')'''):
         if escrow.get(account_id) != (kind, subject_id, source_id):
             raise RuntimeError('orphan or mistyped escrow account')
 

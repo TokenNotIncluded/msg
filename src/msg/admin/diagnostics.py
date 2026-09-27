@@ -170,6 +170,11 @@ async def _doctor(config_dir,clock):
             require(tx.one('SELECT version FROM schema_version')[0]==1,'schema_version_unknown')
             success('storage')
             try:
+                from msg.admin.market_check import inspect_clearing
+                success('market_clearing',**inspect_clearing(app,tx))
+            except (Failure,OSError,ValueError,KeyError) as exc:
+                failed('market_clearing',getattr(exc,'code','market_inspection_failed'))
+            try:
                 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
                 columns={row[0] for row in tx.rows("SELECT column_name FROM information_schema.columns "
                     "WHERE table_schema='public' AND table_name='token_deliveries'")}
@@ -600,6 +605,8 @@ async def selftest():
             checks['identity_upgrade_recovery']=await check_upgrade_recovery(app,now)
             from msg.admin.token_delivery_check import check_token_delivery
             checks['credential_delivery_recovery']=await check_token_delivery(app,now)
+            from msg.admin.market_check import check_market_e2e
+            checks['market_e2e']=await check_market_e2e(app,root,call,register)
         except Failure as exc:
             checks['failure']={'code':exc.code}
         finally:

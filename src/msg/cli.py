@@ -199,6 +199,8 @@ def parser():
     hosting_activate.add_argument('website');hosting_activate.add_argument('revision')
     hosting_history=hosting_actions.add_parser('history')
     hosting_history.add_argument('website')
+    from msg.client_market import add_commands
+    add_commands(commands)
     return cli
 
 
@@ -248,6 +250,9 @@ async def run(args):
                 expected.append((rid,int(generation)))
             result=await client.call(args.operation,arguments(args.arguments),request_id=args.request_id,
                                      expected=expected,return_fields=args.return_field)
+        elif command in {'money','store','bounty','orders','delivery'}:
+            from msg.client_market import run_command
+            result=await run_command(client,args,arguments)
         elif command=='operations': result=await client.call('discovery.operations')
         elif command=='schema': result=await client.call('discovery.schema',{'operation':args.operation})
         elif command=='read':

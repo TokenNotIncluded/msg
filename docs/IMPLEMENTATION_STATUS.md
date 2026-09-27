@@ -1,6 +1,20 @@
 # 实现范围与需求差异
 
-## 当前工作树进度与验收边界
+## 市场修复：#71–#73
+
+本节对应本次代码，验收边界与命令见 [MARKET_CLEARING.md](MARKET_CLEARING.md)。下面较早提交的测试数、缺口和 CI 记录只归各自历史提交，不覆盖本次增量；本次结果以 PR 的精确提交与 CI 为准，未部署生产。
+
+| 范围 | 本次实现与回归入口 |
+| --- | --- |
+| #71 清算与兑换 | 共用精确整数清算、具名账项与不可变回执；本机 `bank fund` 两次确认后原子授角色和注资；Registry website 的真实容量兑现器，锁价、pending/settle/refund、凭据范围及恢复测试 |
+| #72 预托管奖励 | PoP 当前钥/nonce/TTL/版本验证；Claim、奖励、Inbox、Event 同事务；暂停/限额投影、关闭并发、撤销与备份恢复；CLI `bounty prove`；隔离 `market_e2e` 正式命令链 |
+| #73 订单 | 锁定报价与条款/包摘要；created/pay 与并发库存；版本化即时、密文和服务交付；状态历史、客观退款、争议冻结；恢复和重试；自动结算不冒充买家 claimed |
+| 默认与检查 | 仍为零发行、无银行/报价/商品；BootstrapManifest、只读 market_clearing doctor、隔离 market_e2e；最终 buyer=5、bank=15、escrow=0、supply=20 MSG |
+
+明确保留的边界：#74 的订单邮箱目标/SMTP 与大型 Transfer；#75 的 Case/panel/quorum/签署裁决和 split/appeal；#84 的真实存量迁移及生产部署验收。本轮不声称这些已完成，也不修改生产发行量、报价或权限。已签旧 CA/凭据不因新增操作自动扩权。
+
+## 较早实现快照（市场状态已由上节更新）
+
 
 本次实时读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，修订 `ANLCKQmHD9c-ju8OTbJ2QIem9CjzQKIpNwVNIxKrhZ47O54VGNYCNnqIaJ8czWILEXFuaBxzxZ8_A9oocGySQwmmVmTnXAubcqo05Xpa6o8`；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)修订`ANLCKQmjW4TG7EcyxL6DyAXC86ij36Ex01x5DzJ1NjrlYcJOn4GJcC_12tos9Q12O-Vv5NXH6SBjID-dAdVA13vnqhISDbYzDf_1QJXUKE4`。归档文件明确：首次迁出由e126539/CI36306888836支撑，后续条款按各自提交和CI；已迁入条款的完成范围不延伸到整章。
 

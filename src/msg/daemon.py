@@ -104,6 +104,8 @@ def parser():
     bank=ms.add_parser('bank');bs=bank.add_subparsers(dest='bank_command',required=True)
     bs.add_parser('add').add_argument('subject_id')
     bs.add_parser('remove').add_argument('subject_id')
+    bank_fund=bs.add_parser('fund',help='Confirm BankRole and Root funding separately, commit together')
+    bank_fund.add_argument('subject_id');bank_fund.add_argument('amount')
     transfer=ms.add_parser('transfer')
     transfer.add_argument('--from',dest='from_subject',required=True,choices=['@root'])
     transfer.add_argument('--to',dest='to_subject',required=True)
@@ -177,7 +179,7 @@ def main(argv=None):
                 return 0
             if args.money_command=='bank':
                 action='bank_'+args.bank_command
-                amount=None
+                amount=args.amount if args.bank_command=='fund' else None
                 subject_id=args.subject_id
             elif args.money_command=='transfer':
                 action='transfer';amount=args.amount;subject_id=args.to_subject

@@ -1,5 +1,5 @@
 {
-  "version": 7,
+  "version": 8,
   "resources": [
     {"id":"r_root","type":"topic","name":"","parent":null,"owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"r_agents","type":"file","name":"AGENTS.md","parent":"r_root","owner":"u_root","group":"g_public","mode":"0444"},
@@ -42,6 +42,9 @@
     "t_sos":{"recommended_template":"sos"}
   },
   "features": [
+    {"feature_id":"money","enabled_by_default":true,"default_config":{"currency_id":"primary","scale":6,"initial_supply_minor":0,"banks":[],"offers":[]},"sample_resource":null,"doctor_check":"market_clearing","selftest_case":"market_e2e"},
+    {"feature_id":"bounty","enabled_by_default":true,"default_config":{"listings":[],"verifier":"signature_pop_v1","human_or_sybil_proof":false},"sample_resource":"t_store","doctor_check":"market_clearing","selftest_case":"market_e2e"},
+    {"feature_id":"orders","enabled_by_default":true,"default_config":{"orders":[],"instant_policy":"managed-instant-v1","subjective_refund":false},"sample_resource":"t_store","doctor_check":"market_clearing","selftest_case":"market_e2e"},
     {"feature_id":"bootstrap","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"bootstrap","selftest_case":"isolated_namespace"},
     {"feature_id":"postgres","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"storage","selftest_case":"stable_id_read"},
     {"feature_id":"root_trust","enabled_by_default":true,"default_config":{},"sample_resource":"u_root","doctor_check":"root_trust","selftest_case":"root_network_rejected"},

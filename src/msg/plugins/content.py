@@ -651,6 +651,9 @@ def install(app):
         await removable(app,ctx,request,tx,resource)
         require(resource.state!='purged','resource_purged')
         state='archived' if request.operation=='content.archive' else 'active'
+        if state=='active' and resource.type=='website':
+            from msg.plugins.hosting_capacity import manifest_size,require_capacity
+            await require_capacity(app,tx,resource,await manifest_size(app,tx,resource),ctx.now)
         if state=='active' and resource.type=='repo':
             await ensure_public_repositories(tx,resource,mode=resource.mode,parent=resource.parent)
         updated=replace(resource,state=state,generation=resource.generation+1,modified_at=ctx.now,modified_by=ctx.principal.actor)
@@ -735,6 +738,9 @@ def install(app):
         owner=await resolve(tx,request.arguments['owner'])
         subject=await tx.subject(owner)
         require(not subject.local_only,'local_only')
+        if resource.type=='website' and resource.state=='active':
+            from msg.plugins.hosting_capacity import manifest_size,require_capacity
+            await require_capacity(app,tx,resource,await manifest_size(app,tx,resource),ctx.now,owner=owner)
         updated=replace(resource,owner=owner,generation=resource.generation+1,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.replace(updated,resource.generation)
         if resource.type=='topic':
