@@ -111,6 +111,7 @@ class Application:
         self.executor=OperationExecutor(self.registry,self.metadata,self.contents,self.authenticator,self.authorizer,
                                        self.clock,self.receipt_signer)
         self.executor.application=self
+        self.executor.recovery_drill_marker=self.settings.config_dir/'recovery-drill.json'
         self.executor.response_hook=self._secrets_for_caller
         self._loaded=True
         return self

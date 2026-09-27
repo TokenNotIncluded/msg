@@ -171,6 +171,35 @@ async def ensure_public_repositories(tx,resource, *, mode=None,parent=None):
         require(p.mode&1 and all(a.mode&1 for a in await tx.ancestors(parent)),'repo_public_read_required')
 
 
+PATCH_LIMIT=1048576
+PATCH_CONTEXT_LIMIT=256
+PATCH_CANDIDATE_LIMIT=4096
+
+
+def apply_text_patch(source,exact,replacement,before='',after=''):
+    """Apply one contextual replacement, never guessing between identical matches."""
+    require(bool(exact),'patch_exact_required')
+    match=None
+    start=0
+    candidates=0
+    while True:
+        index=source.find(exact,start)
+        if index<0:
+            break
+        candidates+=1
+        require(candidates<=PATCH_CANDIDATE_LIMIT,'patch_too_complex')
+        end=index+len(exact)
+        if index>=len(before) and source.startswith(before,index-len(before)) and source.startswith(after,end):
+            require(match is None,'patch_ambiguous')
+            match=index
+        start=index+1
+    require(match is not None,'patch_no_match')
+    index=match
+    result=source[:index]+replacement+source[index+len(exact):]
+    require(len(result.encode('utf-8'))<=PATCH_LIMIT,'patch_too_large')
+    return result
+
+
 def install(app):
     op,finish=registration(app,'content',('identity',))
     post_fields={'parent':IDENTIFIER,'name':STRING,'body':STRING,'template':{'anyOf':[STRING,obj({'id':IDENTIFIER,'version':INTEGER},('id',))]},
@@ -456,6 +485,41 @@ def install(app):
             body,media=request.arguments['body'],'text/markdown'
         updated=await revise_resource(app,ctx,request,tx,resource,body,media,relations=relations,author=old.author,
             signature=request.arguments.get('content_signature'),revision_id=request.arguments.get('revision_id'))
+        return output_for(updated)
+
+    @op('content.text_patch',obj({'id':IDENTIFIER,'base_revision':IDENTIFIER,
+        'exact':{'type':'string','minLength':1,'maxLength':PATCH_LIMIT},
+        'replacement':{'type':'string','maxLength':PATCH_LIMIT},
+        'before':{'type':'string','maxLength':PATCH_CONTEXT_LIMIT},
+        'after':{'type':'string','maxLength':PATCH_CONTEXT_LIMIT}},
+        ('id','base_revision','exact','replacement')),requirements=requirement('id','write'))
+    async def text_patch(ctx,request,tx):
+        a=request.arguments
+        resource=await tx.resource(await resolve(tx,a['id']))
+        require(resource.type in {'post','file'} and resource.state=='active','not_editable')
+        chain=(*await tx.ancestors(resource.id),resource)
+        require(not any(item.id=='t_last_will' for item in chain),'legacy_directive_only')
+        require(resource.id!='r_agents' and all(item.id!='r_rules' for item in chain),
+                'system_managed_resource')
+        await require_unmanaged_personal(tx,resource)
+        await assert_generation(request,resource)
+        require(resource.revision==a['base_revision'],'revision_conflict',
+                details={'revision':resource.revision})
+        require((await topic_policy(tx,resource)).get('editable',True),'content_frozen')
+        old=await tx.revision(ResourceRef(id=resource.id,revision=resource.revision))
+        media=old.content.media_type
+        require(media in {'text/plain','text/markdown'},'text_patch_required')
+        require(old.content.size<=PATCH_LIMIT,'patch_too_large')
+        pieces=(a['exact'],a['replacement'],a.get('before',''),a.get('after',''))
+        require(sum(len(piece.encode('utf-8')) for piece in pieces)<=PATCH_LIMIT,
+                'patch_too_large')
+        try:
+            source=(await app.contents.read_bytes(old.content,limit=PATCH_LIMIT)).decode('utf-8')
+        except UnicodeError as exc:
+            raise Failure('invalid_utf8') from exc
+        patched=apply_text_patch(source,a['exact'],a['replacement'],a.get('before',''),a.get('after',''))
+        updated=await revise_resource(app,ctx,request,tx,resource,patched,media,
+            relations=old.relations,author=old.author)
         return output_for(updated)
 
     async def lifecycle(ctx,request,tx):

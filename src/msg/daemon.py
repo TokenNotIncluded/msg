@@ -47,6 +47,12 @@ async def worker_loop(app, *, once=False):
     next_cleanup=0.0
     try:
         while not stop.is_set():
+            executor=getattr(app,'executor',None)
+            if executor is not None and executor.recovery_drill_active():
+                if once:return {'processed':False,'recovery_drill':True}
+                try:await asyncio.wait_for(stop.wait(),1)
+                except TimeoutError:pass
+                continue
             if loop.time()>=next_cleanup:
                 await run_maintenance(app,'cleanup_expired',scheduled=True)
                 await run_maintenance(app,'deliver_due_todos',scheduled=True)

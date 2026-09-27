@@ -1,8 +1,8 @@
 # 架构与提交边界
 
-**当前状态：第十批Webhook Inbox、只读TUI与Search suggest，在GIT_CONFIG_GLOBAL=/dev/null下本地全套379 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码192→196保旧义。前批e18d0b6的[CI 36297201348](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36297201348)completed/success（363/8/build），不覆盖当前工作树。
+**当前状态：第十一批在GIT_CONFIG_GLOBAL=/dev/null下本地全套392 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码196→200保旧义；权威修订05:54:08.096Z、185段仅压缩去重、不减验收范围。前批e89b972的CI36298075880已completed/success（379/8/build），不覆盖当前增量。
 
-本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T00:35:34.164Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
+本文说明当前底座与必须保持的边界，不表示最新云盘需求已全部实现。需求差异见 [IMPLEMENTATION_STATUS](IMPLEMENTATION_STATUS.md)，实施顺序见 [ITERATION_PLAN](ITERATION_PLAN.md)。需求基线是 ChatGPT 文件夹中的[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，本轮通过 Google Drive connector 实时核对其修改时间为 `2026-09-27T05:54:08.096Z`、正文为 01–15 章。最新版已明确 PostgreSQL 为长期主数据库；Valkey 保留用户指定的可选唤醒用途。
 
 ## 有限资源模型
 
@@ -58,7 +58,7 @@ PageCursor 与 ReadCursor 使用 `/_read/c/<opaque_cursor>`，SyncCursor 使用 
 
 ## 荣誉与安全证书隔离（已有 self-custody 切片）
 
-实时重读 01–15 章并核对修订 `2026-09-27T00:35:34.164Z`；以下对应第 03、15 章，荣誉核心最早随历史提交 `f085e7f` 交付。AchievementSpec、可信 evaluator、AchievementIssuer 和 AchievementGrant/HonorCertificate 是展示事实体系，与安全 Certificate、OnlineIssuer 完全分离，不进入其签发权、CA 链或 capability 判断。Authorizer 不读取荣誉来授权，获证、撤销、隐藏或置顶均不得改变登录凭据、资源权限、额度、排队优先级或“可信 Agent”判断。
+实时重读 01–15 章并核对修订 `2026-09-27T05:54:08.096Z`；以下对应第 03、15 章，荣誉核心最早随历史提交 `f085e7f` 交付。AchievementSpec、可信 evaluator、AchievementIssuer 和 AchievementGrant/HonorCertificate 是展示事实体系，与安全 Certificate、OnlineIssuer 完全分离，不进入其签发权、CA 链或 capability 判断。Authorizer 不读取荣誉来授权，获证、撤销、隐藏或置顶均不得改变登录凭据、资源权限、额度、排队优先级或“可信 Agent”判断。
 
 AchievementGrant 记录 id、subject_id、achievement_id、spec_version、issuer、issued_at、claim、auth_method、evidence_digest、automatic、revoked_at 及可验签证明；以 `(subject_id, achievement_id, spec_version)` 唯一约束保证一次性成就并发只发一证。事实放 PostgreSQL，展示/搜索索引可重建；重建和 Event 重放不能重新发证。evaluator 只处理已提交 Event 或明确 challenge，只引用已安装的可信代码，不执行用户提供的策略。
 
@@ -246,8 +246,22 @@ CLI已有hosting preview/deploy/activate/history；private preview使用签名he
 
 ## 第十批局部实现与未验范围
 
-Webhook仅Inbox-based显式opt-in，secret由vault封存；HMAC签名、投递去重、SSRF限制与uncertain有定向并纳入本地全套。真实公网接收端/完整网络部署矩阵及Domain Event订阅未验，不能声称外部投递端到端已完成；默认关闭和当前授权裁剪不放宽。
+Webhook仅Inbox-based显式opt-in，secret由vault封存；HMAC签名、投递去重、SSRF限制与uncertain有定向并纳入本地全套。真实公网接收端/完整网络部署矩阵及Domain Event已有受限owner订阅切片，公网未验，不能声称外部投递端到端已完成；默认关闭和当前授权裁剪不放宽。
 
 TUI仅第一片只读Home/Inbox/Search/Thread，复用公共客户端契约且不自动ACK；没有完整产品功能、写交互或全部终端/恢复矩阵。Search@4的suggest为显式请求、不默认改写查询；spell未实现，旧版本schema与短码不改义。
 
 当前379/8/build只是未提交本地证据，短码192→196；不借用e18d0b6的363/8成功CI，不表示生产部署。
+
+## 第十一批备份、文本patch与Domain Event切片
+
+backup v4验证PostgreSQL/Git/CAS/LFS引用，恢复仅接受v4，隔离restore带写暂停与worker/daemon禁外发marker，必须显式人工提升后才作为运行实例；root秘密单独备份。生产在线备份未演练，外部Git写入可能使一致性检查fail-closed，不能宣称任意在线负载下无中断备份。
+
+content.text_patch支持exact/context唯一匹配，正文上限1MiB，歧义拒绝；尚无安全rebase或atomic batch。Domain Event Webhook仅支持post_create/reply/post_edit，需owner显式订阅；这不是任意全站事件授权，真实公网发送/接收矩阵仍未验。
+
+## 05:54权威修订复核
+
+已完整实时读取ChatGPT文件夹唯一项目设计，修改时间2026-09-27T05:54:08.096Z，共185段、01–15章。相较00:35版主要压缩重复描述；未据段数减少认定功能删除。第15章明确第01–14章每条字段、默认、允许/禁止、状态转换、路径/别名/表示/查询均需逐项测试，完成仍须实现/默认/样例/doctor/selftest/CI，优先级仍以权限、零副作用、一致性与恢复为先。
+
+本批392/8/build只证明当前局部代码。backup v4及recovery-drill硬闸是本地实现选择，权威要求是一致数据库快照/引用内容验证与根秘密另备，并未指定v4兼容版本。生产在线备份/外部Git并发仍未演练。text_patch只覆盖exact/context唯一匹配、1MiB；完整file/post命名契约、unified/heading/block patch、rebase/batch仍缺。Domain Event仍要求capability：当前owner签名/manage约束仅是受限切片，独立webhook.domain capability及无权/撤销回归已补，完整公网矩阵仍待验收，公网未验。
+
+本批Domain Event Webhook已加独立webhook.domain capability，Basic OnlineIssuer普通issue_grants白名单不含该能力；订阅及每次投递复核owner/ACL与当前证书，无cap拒绝、证书撤销后停止投递。当前仅post_create/reply/post_edit，公网端到端仍未验。备份v4仅接v4、恢复drill写/worker硬闸及text_patch exact/context局部边界不变；392/8/build为未提交本地证据，无本批CI。

@@ -61,7 +61,7 @@ HTTP 默认监听 127.0.0.1:8042。反向代理 Host 必须与 service_url 匹�
 
 ## 可选扩展
 
-当前源码的静态托管仍使用独立 origin，与最新版需求的同域托管和强制 HTML `Content-Security-Policy: sandbox` 契约不一致。该扩展在改造并完成浏览器隔离、preview→deploy→rollback 和 `@root` 示例验收前不得当作需求已完成或直接开放生产流量。
+当前托管由主app同域匿名只读服务，所有托管响应强制CSP sandbox且当前禁JS，危险格式按附件下载。@root/web已有真实Resource；private preview需签名header，不能把URL当无凭据浏览器导航。已有局部发布/回滚和浏览器证据不等于完整同域安全矩阵，生产开放前仍须验证当前部署。
 
 邮件默认关闭。复制 mail.example.toml 到 `/etc/msgd/mail.toml` 后填写真实 TLS SMTP参数。认证凭据使用独立 0640 文件引用，不放入根目录、不提交仓库。worker发送失败不回滚业务；未知 DATA 结果由管理员或上层投递策略处理。
 
@@ -76,7 +76,7 @@ msgd backup /secure-backup/service.zip
 msgd --config-dir /new/etc/msgd restore /secure-backup/service.zip --data-dir /new/var/lib/msgd
 ```
 
-`msgd backup` 的 v3 归档包含 PostgreSQL dump、内部文本 Git、公开仓库、Blob/CAS、可恢复暂存、公共信任及服务密钥，**不含根私钥**；旧 SQLite 文件或 v2 归档不能直接按 v3 恢复。恢复命令默认使用 libpq 的 `service=msgd`，该 service 必须指向新建的空目标数据库；目标配置目录与数据目录也必须不存在。先在隔离环境核验归档和恢复结果，再切换服务流量。Valkey 的短期数据无需备份。备份是敏感文件，保存为 0600 并在外部加密。根材料单独从本机控制台执行 `msgd root backup PATH`，恢复时核验现有信任锚。
+`msgd backup` 的 v4 归档包含 PostgreSQL dump、内部文本 Git、公开仓库、Blob/CAS、可恢复暂存、公共信任及服务密钥，**不含根私钥**；恢复只接受v4，旧SQLite、v2/v3归档不能直接恢复。恢复命令默认使用 libpq 的 `service=msgd`，该 service 必须指向新建的空目标数据库；目标配置目录与数据目录也必须不存在。v4核验PostgreSQL/Git/CAS/LFS引用。隔离restore默认写暂停，并设置worker/daemon禁外发marker；必须显式人工核验并提升后才能运行或切流，不能恢复完自动作为生产启动。生产在线备份尚未演练，外部Git写可能使一致性检查fail-closed。Valkey 的短期数据无需备份。备份是敏感文件，保存为 0600 并在外部加密。根材料单独从本机控制台执行 `msgd root backup PATH`，恢复时核验现有信任锚。
 
 改 PIN 使用 `msgd root change-pin`，不改变公钥。轮换使用 `msgd root rotate`，根遗失则显式 `--lost-key`，中断恢复用 `--resume`。轮换前停止服务和 worker，完成后重新签发基础在线 CA、复核权限、重启，通知客户端更新信任 / 重新申请授权。普通账号可以 `msg cert renew` 获取新的基础证书；特殊授权与下级 CA 仍需重新审核。
 
@@ -88,6 +88,8 @@ msgd --config-dir /new/etc/msgd restore /secure-backup/service.zip --data-dir /n
 
 ## 本轮改造状态
 
-需求已通过 ChatGPT 文件夹实时核对为 `2026-09-26T22:19:27.354Z`、01–15 章。当前开发批次已加入新安装数据布局、备份 v3、CA 三级硬限和 `/_r/` 稳定 ID 投影；Basic Online CA 白名单与相关检查仍在推进。最终全套尚未完成，此前提交的测试/CI 数字仅为历史证据，不证明本批完成。新安装默认值不等于存量根材料、目录或归档已自动迁移。
+权威需求修订为2026-09-27T05:54:08.096Z。当前v4批次本地392/8/build通过，未提交/无本批CI；新安装与隔离恢复不证明存量生产迁移已完成。
 
-新生产根目录固定 `/var/lib/msgd-root`；测试的自定义 config/root 目录只是隔离夹具，不能据此改变生产默认边界。doctor 必须只读检查根与在线 CA 的链、issuer、key_id、scope、issue_grants、TTL、深度、撤销和禁止能力。selftest 仅在 `/_test/<run_id>/` 使用独立 Test Root，不读取、解锁或签署真实 Root；OnlineIssuer 自动签发、收缩与拒绝/待审行为还须完整验收。不得把本批定向测试记成最终全套或宿主部署验收。
+最新权威修订05:54:08.096Z仍要求一致数据库快照、引用内容核验、根秘密单独本机/离线备份；v4仅接v4及recovery-drill硬闸是当前实现策略。恢复先保留runtime accept_writes=false和recovery-drill.json；运行daemon/worker前须人工核对目标DB、信任/服务密钥、内容引用、邮件/Webhook目的地并显式提升，禁止仅为启动方便绕过硬闸。恢复成功不等于生产在线备份已演练。
+
+本批Domain Event Webhook已加独立webhook.domain capability，Basic OnlineIssuer普通issue_grants白名单不含该能力；订阅及每次投递复核owner/ACL与当前证书，无cap拒绝、证书撤销后停止投递。当前仅post_create/reply/post_edit，公网端到端仍未验。备份v4仅接v4、恢复drill写/worker硬闸及text_patch exact/context局部边界不变；392/8/build为未提交本地证据，无本批CI。

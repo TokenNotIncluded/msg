@@ -264,9 +264,12 @@ class EffectWorker:
         await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
 
     async def _webhook(self, job):
-        from msg.core.codec import canonical
+        from msg.core.codec import canonical,decode,loads
+        from msg.core.models import Event
+        from msg.plugins.communication import WEBHOOK_DOMAIN_EVENTS,_webhook_subscription_key
         from msg.workers.webhook import open_secret, validate_endpoint
-        require(job.operation=='communication.send','invalid_webhook_event')
+        require(job.operation in {'communication.send','communication.webhook_subscribe'},
+                'invalid_webhook_event')
         async with self.app.metadata.transaction(write=False) as tx:
             principal=await current_principal(self.app,job.principal,tx)
             recipient=job.arguments['recipient_subject']
@@ -276,18 +279,52 @@ class EffectWorker:
                           WHERE subject=?''',(recipient,))
             require(row is not None and row[3]==1 and
                     row[4]==job.arguments['endpoint_generation'],'webhook_disabled')
-            message=tx.one('SELECT sender,recipient,event_id FROM messages WHERE id=?',
-                           (job.arguments['message_id'],))
-            require(message is not None and message==(principal.subject,recipient,job.event_id),
-                    'webhook_event_missing')
+            if job.operation=='communication.send':
+                message=tx.one('SELECT sender,recipient,event_id FROM messages WHERE id=?',
+                               (job.arguments['message_id'],))
+                require(message is not None and message==(principal.subject,recipient,job.event_id),
+                        'webhook_event_missing')
+                category='inbox.reference'
+                reference={}
+            else:
+                require(principal.subject==recipient and principal.actor==recipient and
+                        principal.method=='signature','webhook_subscription_owner')
+                rid=job.arguments['resource_id']
+                scope_id=job.arguments['scope_id']
+                category=job.arguments['category']
+                subscription=tx.setting(_webhook_subscription_key(recipient,scope_id))
+                require(subscription is not None and subscription.get('enabled') and
+                        subscription.get('generation')==job.arguments['subscription_generation'] and
+                        subscription.get('endpoint_generation')==row[4] and
+                        category in subscription.get('events',()) and
+                        subscription['principal']['credential_id']==principal.credential_id,
+                        'webhook_subscription_disabled')
+                event_row=tx.one('SELECT body FROM events WHERE id=?',(job.event_id,))
+                require(event_row is not None,'webhook_event_missing')
+                event=decode(Event,loads(event_row[0]))
+                require(WEBHOOK_DOMAIN_EVENTS.get(event.type)==category and
+                        any(ref.id==rid for ref in event.resources),'invalid_webhook_event')
+                scope=await tx.resource(scope_id)
+                resource=await tx.resource(rid)
+                require(scope.owner==recipient and scope.state=='active' and
+                        resource.state=='active' and
+                        (scope.id==resource.id or resource.parent==scope.id),
+                        'webhook_scope_changed')
+                require(await self.app.authorizer.has(principal,'webhook.domain',
+                    'communication.webhook_subscribe@1',scope.id,tx),'capability_required')
+                context=worker_context(self.app,job,principal)
+                request=effect_request(self.app,job,principal)
+                await check_access(self.app,context,request,tx,scope.id,'read')
+                await check_access(self.app,context,request,tx,resource.id,'read')
+                reference={'resource_id':rid}
             url=row[0]
             validate_endpoint(url)
             secret=open_secret(self.app,recipient,row[1],row[2])
         timestamp=str(int(self.app.clock().timestamp()))
-        # No resource ref or body: current resource permissions cannot leak into
-        # an external delivery through a delayed job.
+        # Inbox carries no resource. Domain Event carries only a resource ID
+        # after the current subscription, endpoint and ACL checks above.
         body=canonical({'event_id':job.event_id,'delivery_id':job.id,
-                        'timestamp':timestamp,'subject_id':recipient,'type':'inbox.reference'})
+                        'timestamp':timestamp,'subject_id':recipient,'type':category,**reference})
         state=await self.webhook_sender.send(url,secret,body,timestamp=timestamp,
                                              event_id=job.event_id,delivery_id=job.id)
         require(state in {'delivered','retry','failed'},'invalid_delivery_result')
@@ -297,6 +334,8 @@ class EffectWorker:
             await self._finish(job,'done' if state=='delivered' else 'failed',state)
 
     async def run_once(self):
+        if self.app.executor.recovery_drill_active():
+            return False
         job, execute = await self._claim()
         if job is None:
             return False

@@ -9,7 +9,7 @@ from msg.constants import ROOT_SPACE
 from datetime import timedelta
 from msg.core.codec import wire,canonical,loads,decode,digest,parse_time,b64,unb64
 from msg.core.errors import Failure,require
-from msg.core.models import HandlerOutput,ResourceRef,ResourceTypeSpec,EmailSettings,EffectJob
+from msg.core.models import HandlerOutput,ResourceRef,ResourceTypeSpec,EmailSettings,EffectJob,Principal
 from msg.core.requests import signing_bytes
 from msg.plugins.common import *
 from msg.plugins.schemas import *
@@ -18,6 +18,50 @@ from msg.plugins.discovery import visible
 
 def event_id(request,subject):
     return 'e_'+digest((subject,request.request_id))[7:39]
+
+
+# A deliberately small event vocabulary. An Event is an audit fact, not blanket
+# permission to disclose its data to an external receiver.
+WEBHOOK_DOMAIN_EVENTS = {
+    'content.post_create': 'resource.created',
+    'discussion.reply': 'resource.created',
+    'content.post_edit': 'resource.updated',
+}
+
+
+def _webhook_subscription_key(subject,resource_id):
+    return 'webhook_subscription:'+subject+':'+resource_id
+
+
+async def enqueue_domain_webhooks(app,tx,event):
+    """Project an explicit owner's Event subscription inside the Event transaction."""
+    category=WEBHOOK_DOMAIN_EVENTS.get(event.type)
+    if category is None:
+        return
+    for ref in event.resources:
+        resource=await tx.resource(ref.id)
+        for scope in (resource, await tx.resource(resource.parent) if resource.parent else None):
+            if scope is None:
+                continue
+            owner=scope.owner
+            subscription=tx.setting(_webhook_subscription_key(owner,scope.id))
+            if not subscription or not subscription.get('enabled') or category not in subscription.get('events',()):
+                continue
+            endpoint=tx.one('SELECT enabled,generation FROM webhook_endpoints WHERE subject=?',(owner,))
+            if not endpoint or endpoint[0]!=1 or endpoint[1]!=subscription['endpoint_generation']:
+                continue
+            principal=decode(Principal,subscription['principal'])
+            # It must remain an owner-controlled subscription, not a delegation
+            # that can be retargeted by an event emitted from another account.
+            if principal.subject!=owner or principal.actor!=owner or principal.method!='signature':
+                continue
+            await tx.enqueue(EffectJob(id=new_id('job'),event_id=event.id,kind='webhook',
+                dedupe_key=f'{event.id}:{owner}:{scope.id}:{ref.id}:{category}:webhook',
+                principal=principal,operation='communication.webhook_subscribe',
+                arguments={'recipient_subject':owner,'resource_id':ref.id,'scope_id':scope.id,
+                           'category':category,'endpoint_generation':endpoint[1],
+                           'subscription_generation':subscription['generation']},
+                state='pending',attempts=0,next_attempt_at=event.time,lease_until=None))
 
 
 def sync_seen_context(subject,sequence,expires_at):
@@ -149,6 +193,50 @@ def install(app):
         row=tx.one('SELECT url,enabled,generation FROM webhook_endpoints WHERE subject=?',(subject,))
         return HandlerOutput(data={'enabled':bool(row and row[1]),'url':row[0] if row else None,
                                    'generation':row[2] if row else 0})
+
+    @op('communication.webhook_subscribe',obj({
+        'resource_id':IDENTIFIER,
+        'events':{'type':'array','items':{'enum':sorted(set(WEBHOOK_DOMAIN_EVENTS.values()))},
+                  'minItems':1,'maxItems':2,'uniqueItems':True}},('resource_id','events')),signature=True)
+    async def webhook_subscribe(ctx,request,tx):
+        owner=_signed_subject(ctx)
+        rid=await resolve(tx,request.arguments['resource_id'])
+        resource=await tx.resource(rid)
+        require(resource.owner==owner and resource.state=='active','webhook_scope_not_owned')
+        await check_access(app,ctx,request,tx,rid,'manage')
+        require(await app.authorizer.has(ctx.principal,'webhook.domain',operation_id(request),rid,tx),
+                'capability_required')
+        row=tx.one('SELECT enabled,generation FROM webhook_endpoints WHERE subject=?',(owner,))
+        require(row is not None and row[0]==1,'webhook_disabled')
+        key=_webhook_subscription_key(owner,rid)
+        previous=tx.setting(key,{})
+        events=sorted(request.arguments['events'])
+        generation=previous.get('generation',0)+1
+        tx.set_setting(key,{'enabled':True,'events':events,'endpoint_generation':row[1],
+                            'generation':generation,'principal':wire(ctx.principal)})
+        return HandlerOutput(data={'resource_id':rid,'events':events,'enabled':True,
+                                   'generation':generation})
+
+    @op('communication.webhook_unsubscribe',obj({'resource_id':IDENTIFIER},('resource_id',)),signature=True)
+    async def webhook_unsubscribe(ctx,request,tx):
+        owner=_signed_subject(ctx)
+        rid=await resolve(tx,request.arguments['resource_id'])
+        key=_webhook_subscription_key(owner,rid)
+        previous=tx.setting(key,{})
+        # Removal is always allowed by the signing owner even after a resource
+        # is archived or permissions changed; pending deliveries must stop.
+        tx.set_setting(key,{'enabled':False,'events':[],
+                            'generation':previous.get('generation',0)+1})
+        return HandlerOutput(data={'resource_id':rid,'enabled':False})
+
+    @op('communication.webhook_subscription',obj({'resource_id':IDENTIFIER},('resource_id',)),effect='read')
+    async def webhook_subscription(ctx,request,tx):
+        owner=_signed_subject(ctx)
+        rid=await resolve(tx,request.arguments['resource_id'])
+        record=tx.setting(_webhook_subscription_key(owner,rid),{})
+        return HandlerOutput(data={'resource_id':rid,'enabled':bool(record.get('enabled')),
+                                   'events':record.get('events',[]),
+                                   'generation':record.get('generation',0)})
 
     @op('communication.presence_get',obj({'subject_id':IDENTIFIER},('subject_id',)),effect='read')
     async def presence_get(ctx,request,tx):

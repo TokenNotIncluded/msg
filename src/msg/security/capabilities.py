@@ -100,6 +100,7 @@ def install_capabilities(registry):
         'tool.use': (_selected(operations,('tool.run','discovery.get','discovery.list','transfer.open',
                                           'transfer.part_get','transfer.status','transfer.seal','transfer.cancel','discovery.raw','job.get')),('tool_use',)),
         'tool.net.private': (_selected(operations,('tool.run',)),()),
+        'webhook.domain': (_selected(operations,('communication.webhook_subscribe',)),()),
         'system.namespace': (all_ops,()),
         'cert.issue': (_selected(operations,('cert.publish','cert.get','discovery.get')),()),
         'cert.revoke': (_selected(operations,('cert.revoke',)),()),

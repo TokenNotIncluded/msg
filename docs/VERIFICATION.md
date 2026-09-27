@@ -1,8 +1,17 @@
 # 本地与 CI 验收记录
 
-## 2026-09-27 Inbox Webhook、只读TUI与Search suggest @4（未提交，本地全套通过）
+## 2026-09-27 backup v4、text_patch与Domain Event Webhook（未提交，本地全套通过）
 
-GIT_CONFIG_GLOBAL=/dev/null下全套 **379 passed**、conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；短码192→196旧义保留。未提交、无本批CI，不借用e18d0b6的363/8/build CI。
+GIT_CONFIG_GLOBAL=/dev/null下全套 **392 passed**，conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；短码196→200旧义保留。未提交、无本批CI。backup v4验证PG/Git/CAS/LFS引用，隔离restore写暂停及worker/daemon禁外发marker，需显式人工提升；只接v4，root秘密另备。生产在线备份仍未演练，外部Git写可能导致fail-closed。
+
+content.text_patch为exact/context唯一匹配、1MiB上限，无rebase/batch。Domain Event Webhook只允许post_create/reply/post_edit的owner显式订阅，公网实测未做。旧e89b972的379/8/成功CI不覆盖本批。
+
+
+本批重新完整读取权威文档2026-09-27T05:54:08.096Z（185段01–15章），主要为压缩去重，不减少逐字段/状态/路径等验收要求。v4归档版本和恢复drill硬闸为本地实现，非权威指定版本。独立webhook.domain capability已补：owner/ACL与证书每次投递复核，无cap拒绝、撤销停投；公网矩阵仍未验收。
+
+## 2026-09-27 Inbox Webhook、只读TUI与Search suggest @4（e89b972已推送、CI成功）
+
+GIT_CONFIG_GLOBAL=/dev/null下全套 **379 passed**、conformance **8 passed**，`UV_CACHE_DIR=/tmp/msg-uv-cache uv build -q`成功；短码192→196旧义保留。已提交e89b972，CI36298075880 completed/success（379/8/build），不借用e18d0b6的363/8/build CI。
 
 Webhook为Inbox opt-in、vault封存secret，HMAC/去重/SSRF/uncertain定向已纳入全套；真实公网/Domain Events未验。TUI第一片Home/Inbox/Search/Thread只读、零自动ACK。Search@4显式suggest，spell未做。以上不等于完整Webhook/TUI/Search feature或生产部署。
 
@@ -178,3 +187,5 @@ CLI search/grep采用单页与显式cursor；Sync授权epoch/Topic成员摘要�
 ShareGrant为直接叶资源限时read/revoke/list；私有Note可单项分享但不授父目录列举。SOUL、Todo、DM、system-managed及preview均排除，不等于组分享/转授链/ShareLink。旧安装Online CA证书的grants是冻结快照，新增sharing.basic不能自动扩入旧证书；启用前需受控重签并验证当前授权范围，不能以新安装测试代替存量迁移。
 
 第五批契约修正：system.maintenance@1保留原三种action不变，新增@2才包含deliver_due_todos；短码snapshot从173增至175，旧码含义保持，不在已发布@1中扩改枚举。Git上传新增120秒deadline，避免慢连接长期占据每worker两个slot；这只是当前未提交增量，当前本地336/8/build通过，仍未提交/无本批CI，不借用旧提交结果。
+
+本批Domain Event Webhook已加独立webhook.domain capability，Basic OnlineIssuer普通issue_grants白名单不含该能力；订阅及每次投递复核owner/ACL与当前证书，无cap拒绝、证书撤销后停止投递。当前仅post_create/reply/post_edit，公网端到端仍未验。备份v4仅接v4、恢复drill写/worker硬闸及text_patch exact/context局部边界不变；392/8/build为未提交本地证据，无本批CI。

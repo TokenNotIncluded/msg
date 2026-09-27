@@ -18,6 +18,12 @@ class OperationExecutor:
         self.authenticator,self.authorizer,self.clock=authenticator,authorizer,clock
         self.receipt_signer=receipt_signer
         self.response_hook=None
+        self.recovery_drill_marker=None
+        self.application=None
+
+    def recovery_drill_active(self):
+        marker=self.recovery_drill_marker
+        return marker is not None and (marker.exists() or marker.is_symlink())
 
     async def execute(self,request, *, entry='network'):
         principal=None
@@ -25,6 +31,8 @@ class OperationExecutor:
             spec=self.registry.operation(request.operation,request.contract_version)
             require(entry in spec.entries,'entry_not_allowed')
             self.registry.validate(spec.input_schema,request.arguments)
+            require(not (spec.effect!='read' and self.recovery_drill_active()),
+                    'writes_paused')
             if spec.name=='batch.independent':
                 return await self._independent(request,spec,entry)
             async with self.metadata.transaction(write=spec.effect!='read') as session:
@@ -96,6 +104,9 @@ class OperationExecutor:
                                     actor=principal.actor,subject=principal.subject,resources=output.resources,
                                     data={'operation':spec.name})
                         await session.append_event(event)
+                        from msg.plugins.communication import WEBHOOK_DOMAIN_EVENTS,enqueue_domain_webhooks
+                        if event.type in WEBHOOK_DOMAIN_EVENTS and self.application is not None:
+                            await enqueue_domain_webhooks(self.application,session,event)
                         result=replace(result,receipt=self.receipt_signer.sign(receipt_bytes(result),purpose='receipt'))
                         await session.save_result(principal.subject,request.payload_digest,result)
             # Only after the enclosing transaction commits may success reach the adapter.

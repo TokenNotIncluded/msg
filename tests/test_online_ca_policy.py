@@ -14,6 +14,7 @@ from test_service import register
 @pytest.mark.parametrize('capability', (
     'cert.ca.issue', 'system.inspect', 'resource.purge',
     'tool.net.private', 'group.manage_override',
+    'webhook.domain',
 ))
 async def test_online_ca_rejects_forbidden_issue_grant_even_when_root_signed(installed, capability):
     app, root = installed
