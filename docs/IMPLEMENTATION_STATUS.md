@@ -2,19 +2,22 @@
 
 ## 当前工作树进度与验收边界
 
-本次实时读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)修订 `ANLCKQmHD9c-ju8…`，191个非空段；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQmjW4TG7Ecy…`、71段，已含A19/A20等后续归档。此前189/71及更早196/19、首次5段+4句仅为历史迁移记录，不能将全部71段归为那次迁移；后续用户归档不取消回归要求。
+本次实时读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，修订 `ANLCKQmHD9c-ju8OTbJ2QIem9CjzQKIpNwVNIxKrhZ47O54VGNYCNnqIaJ8czWILEXFuaBxzxZ8_A9oocGySQwmmVmTnXAubcqo05Xpa6o8`；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)修订`ANLCKQmjW4TG7EcyxL6DyAXC86ij36Ex01x5DzJ1NjrlYcJOn4GJcC_12tos9Q12O-Vv5NXH6SBjID-dAdVA13vnqhISDbYzDf_1QJXUKE4`。归档文件明确：首次迁出由e126539/CI36306888836支撑，后续条款按各自提交和CI；已迁入条款的完成范围不延伸到整章。
 
-`fb9bb65` 的[CI36310779270](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36310779270)完成502 core/8 conformance/build；`3bc06ad` 的[CI36311726265](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36311726265)完成503/8/build。最新 `c919216` 的[CI36313186799](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36313186799)已completed/success：**505 core / 8 conformance / build通过**，只归该提交。`identity.temporary@3`要求客户端创建前持有独立Ed25519/age钥，服务端验持有证明并同时登记公钥，升级复用双钥；旧@1/@2拒绝新建。历史无钥临时主体仍须双钥升级，临时签名凭据当前登记但业务继续用受限token；本批未生产部署，不能以CI代替存量迁移与完整恢复验收。fb9的手动市场链仍不等于官方market_e2e。
+提交 `135a190` 已推送到 main。本地完整验证为 **541 passed、8 conformance passed、隔离 build 成功**；该提交的[GitHub CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014)另 completed/success，日志为 **541 core passed、8 conformance passed、build成功**。PG LedgerAccount引用迁移定向现为9项通过。executor在幂等读取前拒绝旧 `identity.token_create@1` 发行、batch禁止秘密子操作，相关定向17项通过；temporary@3受限签名发帖及同等临时凭据上限相关定向6项通过。尚未生产部署。此前 `ac083b3` 的[CI 36314076022](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36314076022)和 `c919216` 的[CI 36313186799](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36313186799)均只归各自旧提交。局部功能及本地/CI结果不代表整章完成或完整恢复验收。
 
-归档A18的首次DM介绍已由3bc06ad成功CI验证并移回已完成部分。A01仍限定正式注册/托管创建：临时双钥@3已通过c919成功CI，仍待存量迁移及临时签名凭据能力验收；A16复杂GET短码和完整模板/示例仍在待办。
+身份、发现、通信和文件等核心功能已有可用实现；市场自动闭环、旧无钥主体的完整恢复矩阵、托管钥备份退役、代理日志检查与生产验收仍缺。
+
+归档A18的首次DM介绍已由3bc06ad成功CI验证并移回已完成部分。A01仍限定正式注册/托管创建：临时双钥@3的c919 CI只归该历史提交；135a190中的temporary@3受限签名发帖已由本地定向验证，仍不等于完整临时业务范围或旧无钥主体恢复矩阵完成。历史无钥主体升级切片已进入本地全套与[CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014)验证范围；A16复杂GET短码和完整模板/示例仍在待办。
 
 | 本批切片 | 当前实现事实 | 明确未完成项 |
 | --- | --- | --- |
-| 临时身份双钥 | @3客户端预存独立签名/加密钥，服务端PoP后同时登记；旧@1/@2新建拒绝；升级复用 | c919 CI已通过；旧无钥临时主体升级、临时签名凭据的业务能力及全部恢复/迁移矩阵仍缺 |
+| 临时身份双钥与旧主体迁移 | @3客户端预存独立签名/加密钥，服务端PoP后同时登记；旧@1/@2新建拒绝；135a190包含历史无钥主体升级切片；temporary@3受限签名发帖本地通过，6项相关定向包含同等凭据上限检查 | 本地541/8/build通过；[CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014)成功；未部署；旧无钥主体完整恢复矩阵仍待验 |
+| 系统LedgerAccount | 135a190包含专用账户分型及历史托管账户迁移引用；PG引用迁移定向9项通过 | 本地541/8/build通过；[CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014)成功；未部署；注册/恢复/委托/银行管理隔离负例与跨模块恢复仍待验，不能据此宣称整章完成 |
 | 本机money与配置 | mint/burn、BankRole授撤、root transfer、offer set/disable，确认/根审计；MoneyConfig默认值和doctor检查 | 无purchasable类型/兑现器，offer set仍fail-closed；bank fund便利入口、真实物理控制台和生产恢复验收未据此完成 |
 | ServerOffer | 安全空目录；无有效类型/兑现器则redeem拒绝且不扣款 | 真实报价启用/ResourceEntitlement/异步settle-refund未完成；报价管理代码不等于已有可售资源 |
-| 凭据恢复 | 默认15m、1–60m可配；恢复后代继承原deadline、不扩大期限；备份恢复保留配置 | 旧@1重复秘密、全部适配器秘密URL拒绝、恢复响应再次丢失完整矩阵、历史钥在线/备份退役仍缺 |
-| Bounty | 预算预托管、当前IdentityKey PoP/nonce/TTL、原子Claim与奖励、top_up、close剩余退款 | 完整账户分型/全部公开投影/CLI/default/doctor/selftest；不宣称全部并发/撤权/恢复矩阵齐备 |
+| 凭据恢复与秘密URL | 默认15m、1–60m可配；恢复后代继承原deadline、不扩大期限；executor在幂等读取前拒绝旧 `identity.token_create@1`，batch禁止秘密子操作，相关定向17项通过 | 本地541/8/build通过；[CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014)成功；未部署；恢复响应再次丢失、历史钥在线/备份退役完整矩阵仍缺 |
+| Bounty | 预算预托管、当前IdentityKey PoP/nonce/TTL、原子Claim与奖励、top_up、close剩余退款 | LedgerAccount注册/恢复/委托/银行管理隔离负例、全部公开投影/CLI/default/doctor/selftest仍待验；不宣称全部并发/撤权/恢复矩阵齐备 |
 | Sale订单与退款 | 签名买家入系统escrow、funded状态；funded买家取消原子退款 | 完整客观故障退款、争议/仲裁/申诉及所有状态组合未实现 |
 | 手动站内交付 | managed_instant且合计≤1MiB，买家显式签名prepare、只读get、签名accept校验digest后结算给seller | 非自动交付；大型Transfer、sealed_manual/secret加密交付、Email/DeliveryTarget四方校验、全部商品类型/状态生命周期未完成 |
 | HTTP读取 | money/order/delivery只读路径已接已有授权契约 | 完整纯路径/所有表示/缓存/错误/字段裁剪与分页矩阵仍待验收；GET不能prepare、claim或settle |
@@ -23,7 +26,7 @@
 
 资金按整数minor_units入不可变PG账本，当前写事务串行化保护余额/总量/并发，签名收据有policy_version/digest/sequence。不能以此宣称完整ClearingPolicy/恢复矩阵完成。本机重复手动执行使用新的request_id，不能套用同ID网络重试的防重复承诺。
 
-Order/Bounty escrow仍以无Resource/key/credential的local_only system Subject承载，普通money.transfer拒绝system账户；设计要求系统LedgerAccount、非用户。专用账户分型及注册/恢复/委托/银行管理不能激活托管身份的完整负例尚缺，不能只凭没有钥认定全部隔离完成。
+Order/Bounty escrow当前使用专用系统LedgerAccount（PG记录kind及来源、subject_id为空），不是local_only system Subject；它没有Resource、身份钥或凭据，普通money.transfer也不能通过网络操作该账户。135a190已包含账户分型和历史身份到账户的迁移引用，本地PG引用迁移定向9项通过。注册/恢复/委托/银行管理隔离负例与跨模块备份恢复仍待验，不能据此认定托管体系或整章完成。
 
 Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get一致；历史Revision保留原值并附current_*。搜索与其他投影仍待全面验证。奖励支付复核当前bounty事实，未来缩小写锁需重测最后一份预算和主体限额。
 
@@ -31,9 +34,11 @@ Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get�
 
 `test_market_manual_flow.py` 已串起Test Root内部mint/银行登记/注资→10MSG预托管PoP奖励→5MSG固定bundle购买→买家显式prepare/get/accept→bank15/buyer5、total_supply20。它使用内部本机用例和手动交付，**不证明官方market_e2e要求的bank fund命令、自动Delivery、SMTP sink/未验证邮箱边界及全部失败矩阵**。DisputeResolver/仲裁和大型Transfer也仍缺。
 
-下一出口：3bc的DM@2已通过CI；临时双钥@3已通过CI，继续存量迁移验证；再补系统LedgerAccount分型及跨模块备份/恢复、自动交付与状态故障恢复、大型Transfer；随后按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
+下一出口：135a190的本地541/8/build与[CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014)均已成功，PG引用迁移9项定向通过；尚未部署。临时受限签名发帖已有本地证据，继续完成旧无钥主体恢复矩阵。再补托管钥备份退役、代理日志检查与生产验收，随后完善市场自动交付和状态故障恢复、大型Transfer；再按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
 
 ## 历史：文档迁移与此前验证归属
+
+本节以下按各自记录时点保留旧状态；其中“当前”“本批”等字样只描述当时的工作树与验证结果，不代表当前main状态。提交、测试与CI归属不因本轮刷新而改变。
 
 已实时读取[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)迁移后修订 `ANLCKQmFOHtA75…`，196个非空段；以本节和当前正文为准，以下08:51等记录属于修订沿革，不再是最新基线。
 

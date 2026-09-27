@@ -2,18 +2,26 @@
 
 ## 当前工作树进度与验收边界
 
+### 最新验证记录（main `135a190`）
+
+本批代码已提交并推送至 main，提交为 `135a190`。完整本地测试命令 `UV_CACHE_DIR=/tmp/msg-uv-cache uv run --locked pytest -q tests`：**541 passed in 478.14s**。独立定向组 `tests/test_dictionary.py tests/test_url_secrets.py` 与 conformance 合计 **35 passed**（其中 conformance 8）；隔离 `uv run --locked python -m build`、`compileall`、`git diff --check` 均通过。该提交的 [GitHub CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014) completed/success：core **541 passed in 724.33s**、conformance **8 passed in 95.29s**、build成功。生产未部署。
+
+该提交的定向证据：PG ledger 迁移引用检查及账户测试 **9 passed**（`tests/test_ledger_migration_references.py`、`tests/test_ledger_accounts.py`）；legacy发行拒绝/缓存重放、token delivery、batch 与 temporary signer **17 passed**（`tests/test_legacy_token_release.py`、`tests/test_token_delivery.py`、`tests/test_batch_secret_release.py`、`tests/test_batch.py`、`tests/test_temporary_signed_business.py`）；访问日志测试使用 Uvicorn **2 passed**。反向代理日志与生产验收仍待；Uvicorn 结果不能替代实际 proxy 验证。此前 `--no-isolation` 因缺少 `setuptools` 失败属于环境依赖；隔离 build 已成功。
+
+旧 `@1` token 重放与 batch recover secret 绕过已包含在 `135a190`，由定向及完整本地测试覆盖；该提交的 CI 也已通过，生产未部署。以上结果只归属于 `135a190`，不回溯改变后文旧批次的测试、CI 或部署归属。
+
 本次实时读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)修订 `ANLCKQmHD9c-ju8…`，191个非空段；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQmjW4TG7Ecy…`、71段，已含A19/A20等后续归档。此前189/71及更早196/19、首次5段+4句仅为历史迁移记录，不能将全部71段归为那次迁移；后续用户归档不取消回归要求。
 
-`fb9bb65` 的[CI36310779270](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36310779270)完成502 core/8 conformance/build；`3bc06ad` 的[CI36311726265](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36311726265)完成503/8/build。最新 `c919216` 的[CI36313186799](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36313186799)已completed/success：**505 core / 8 conformance / build通过**，只归该提交。`identity.temporary@3`要求客户端创建前持有独立Ed25519/age钥，服务端验持有证明并同时登记公钥，升级复用双钥；旧@1/@2拒绝新建。历史无钥临时主体仍须双钥升级，临时签名凭据当前登记但业务继续用受限token；本批未生产部署，不能以CI代替存量迁移与完整恢复验收。fb9的手动市场链仍不等于官方market_e2e。
+`fb9bb65` 的[CI36310779270](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36310779270)完成502 core/8 conformance/build；`3bc06ad` 的[CI36311726265](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36311726265)完成503/8/build。历史提交 `c919216` 的[CI36313186799](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36313186799)为completed/success：**505 core / 8 conformance / build通过**，只证明该提交。`identity.temporary@3`的创建时双钥持有证明、服务端登记及升级复用由该历史提交实现；提交 `135a190`另含临时 signer 业务切片，见上方定向测试记录。旧无钥主体迁移及完整恢复验收仍待；没有本批生产部署。fb9的手动市场链仍不等于官方market_e2e。
 
-归档A18的首次DM介绍已由3bc06ad成功CI验证并移回已完成部分。A01仍限定正式注册/托管创建：临时双钥@3已通过c919成功CI，仍待存量迁移及临时签名凭据能力验收；A16复杂GET短码和完整模板/示例仍在待办。
+归档A18的首次DM介绍已由3bc06ad成功CI验证并移回已完成部分。A01仍限定正式注册/托管创建：临时双钥@3的创建协议由历史c919 CI验证；提交 `135a190`的临时 signer 业务切片已获定向测试及完整本地测试，存量主体迁移及完整临时签名凭据验收仍待。A16复杂GET短码和完整模板/示例仍在待办。
 
 | 本批切片 | 当前实现事实 | 明确未完成项 |
 | --- | --- | --- |
-| 临时身份双钥 | @3客户端预存独立签名/加密钥，服务端PoP后同时登记；旧@1/@2新建拒绝；升级复用 | c919 CI已通过；旧无钥临时主体升级、临时签名凭据的业务能力及全部恢复/迁移矩阵仍缺 |
+| 临时身份双钥 | 历史c919提交实现@3创建PoP/双钥登记与升级复用；`135a190`含temporary signer业务切片，本地定向及完整测试通过；CI 36318026014通过 | 旧无钥临时主体升级及全部恢复/迁移矩阵仍缺 |
 | 本机money与配置 | mint/burn、BankRole授撤、root transfer、offer set/disable，确认/根审计；MoneyConfig默认值和doctor检查 | 无purchasable类型/兑现器，offer set仍fail-closed；bank fund便利入口、真实物理控制台和生产恢复验收未据此完成 |
 | ServerOffer | 安全空目录；无有效类型/兑现器则redeem拒绝且不扣款 | 真实报价启用/ResourceEntitlement/异步settle-refund未完成；报价管理代码不等于已有可售资源 |
-| 凭据恢复 | 默认15m、1–60m可配；恢复后代继承原deadline、不扩大期限；备份恢复保留配置 | 旧@1重复秘密、全部适配器秘密URL拒绝、恢复响应再次丢失完整矩阵、历史钥在线/备份退役仍缺 |
+| 凭据恢复 | 默认15m、1–60m可配；恢复后代继承原deadline、不扩大期限；备份恢复保留配置；URL 凭据定向4项通过；旧@1重放与batch secret绕过由`135a190`定向及完整本地测试覆盖；CI 36318026014通过 | 恢复响应再次丢失完整矩阵、历史钥在线/备份退役仍缺 |
 | Bounty | 预算预托管、当前IdentityKey PoP/nonce/TTL、原子Claim与奖励、top_up、close剩余退款 | 完整账户分型/全部公开投影/CLI/default/doctor/selftest；不宣称全部并发/撤权/恢复矩阵齐备 |
 | Sale订单与退款 | 签名买家入系统escrow、funded状态；funded买家取消原子退款 | 完整客观故障退款、争议/仲裁/申诉及所有状态组合未实现 |
 | 手动站内交付 | managed_instant且合计≤1MiB，买家显式签名prepare、只读get、签名accept校验digest后结算给seller | 非自动交付；大型Transfer、sealed_manual/secret加密交付、Email/DeliveryTarget四方校验、全部商品类型/状态生命周期未完成 |
@@ -23,7 +31,7 @@
 
 资金按整数minor_units入不可变PG账本，当前写事务串行化保护余额/总量/并发，签名收据有policy_version/digest/sequence。不能以此宣称完整ClearingPolicy/恢复矩阵完成。本机重复手动执行使用新的request_id，不能套用同ID网络重试的防重复承诺。
 
-Order/Bounty escrow仍以无Resource/key/credential的local_only system Subject承载，普通money.transfer拒绝system账户；设计要求系统LedgerAccount、非用户。专用账户分型及注册/恢复/委托/银行管理不能激活托管身份的完整负例尚缺，不能只凭没有钥认定全部隔离完成。
+`135a190`以专用 LedgerAccount 承载 Order/Bounty escrow，PG ledger 迁移引用检查及账户定向测试 **9 passed**，完整本地测试也通过；普通 money.transfer 对 system 账户的边界按账户类型处理。更早历史实现曾以无 Resource/key/credential 的 local_only system Subject 承载，不能把该历史状态当作当前实现。跨模块恢复及注册/恢复/委托/银行管理不能激活托管身份的完整负例仍待进一步验证。
 
 Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get一致；历史Revision保留原值并附current_*。搜索与其他投影仍待全面验证。奖励支付复核当前bounty事实，未来缩小写锁需重测最后一份预算和主体限额。
 
@@ -31,7 +39,7 @@ Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get�
 
 `test_market_manual_flow.py` 已串起Test Root内部mint/银行登记/注资→10MSG预托管PoP奖励→5MSG固定bundle购买→买家显式prepare/get/accept→bank15/buyer5、total_supply20。它使用内部本机用例和手动交付，**不证明官方market_e2e要求的bank fund命令、自动Delivery、SMTP sink/未验证邮箱边界及全部失败矩阵**。DisputeResolver/仲裁和大型Transfer也仍缺。
 
-下一出口：3bc的DM@2已通过CI；临时双钥@3已通过CI，继续存量迁移验证；再补系统LedgerAccount分型及跨模块备份/恢复、自动交付与状态故障恢复、大型Transfer；随后按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
+下一出口：3bc的DM@2及历史c919的临时双钥创建协议已有对应提交CI；当前继续验证temporary signer业务切片、LedgerAccount跨模块备份/恢复、自动交付与状态故障恢复、大型Transfer；随后按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
 
 ## 历史：文档迁移与此前验证归属
 

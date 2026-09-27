@@ -1,19 +1,44 @@
 # 迭代路线与验收出口
 
+## 下一迭代顺序（2026-09-27 当前状态）
+
+依据[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)最新修订 `ANLCKQmHD9c-ju8…`（191段）及[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)最新修订 `ANLCKQmjW4TG7Ecy…`（71段）复核。已完成文档归档的是有各自证据的条款，不表示相邻或整章需求完成。
+
+当前代码已提交并推送到 `main`，提交 `135a190`。本地完整测试 **541 passed**、conformance **8 passed**、隔离 build 成功；PG Ledger 定向测试 **9 passed**。[GitHub CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014) 已 completed/success，日志为 **541 core passed、8 conformance passed、build成功**。本地结果与CI结果分别记录；生产未部署。旧提交的CI与旧批次测试数字只归其各自提交/快照，不代替本次证据。
+
+进度补充：旧发行 `@1` 明确拒绝新的执行及历史重放，不承诺对旧协议提供安全兼容发行；batch 中返回秘密的子操作也已拒绝。这两项及已知账本引用问题已由当前提交解决，并有定向/全套本地验证。`identity.temporary@3` 的受限签名发帖测试已本地通过；这不代表完整托管身份生命周期或生产验收完成。
+
+### P0：凭据释放、秘密边界与账本引用完整性
+
+1. **旧发行 `@1` 拒绝路径：已解决**。明确拒绝新的旧版发行执行和历史重放，不承诺安全兼容发行；当前提交中定向和全套本地验证通过。
+2. **batch secret 子操作拒绝：已解决**。返回秘密的恢复/发行子操作拒绝批处理入口；当前提交中定向和全套本地验证通过。
+3. **URL 秘密与代理日志：待补验**。仍需收口代理/访问日志路径，覆盖所有传输适配器和编码入口，确认 token、recovery_secret 及等价凭据不进入 path/query/fragment，也不被错误响应、访问日志或调试日志回显；不含秘密的纯路径读取须保持可用。
+4. **LedgerAccount：已知引用问题已解决，完整迁移/恢复矩阵待验**。PG Ledger 定向测试9 passed。仍需覆盖更多历史数据库引用、迁移重复启动/异常回滚、余额与供应守恒、账本append-only以及备份恢复，确保退款/纠错只追加且历史行/receipt/sequence不重写。
+
+### P1：托管身份退出与备份重放
+
+**仍未完成。** 完成托管主体退出/销毁流程与审计，明确撤销在线凭据、销毁服务端持有钥、备份/快照退役的独立状态；演练恢复旧备份后重放撤销、密钥退役和授权状态，证明已撤销 token、权限或旧签名能力不会复活。不能以在线删除代替备份退役，也不能在备份仍可恢复旧钥时宣称退役完成。
+
+### 后续：市场官方闭环
+
+上述 P0/P1 收口并有对应验证后，再推进官方 `market_e2e` 全闭环及失败矩阵，包括 bank fund、预托管悬赏与签名挑战、自动商品交付和结算、邮件本地 sink/秘密裁剪、退款/仲裁及一致备份恢复。现有手动市场流或局部成功不代替官方验收，也不构成生产启用依据。
+
 ## 当前工作树进度与验收边界
 
 本次实时读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)修订 `ANLCKQmHD9c-ju8…`，191个非空段；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQmjW4TG7Ecy…`、71段，已含A19/A20等后续归档。此前189/71及更早196/19、首次5段+4句仅为历史迁移记录，不能将全部71段归为那次迁移；后续用户归档不取消回归要求。
 
-`fb9bb65` 的[CI36310779270](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36310779270)完成502 core/8 conformance/build；`3bc06ad` 的[CI36311726265](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36311726265)完成503/8/build。最新 `c919216` 的[CI36313186799](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36313186799)已completed/success：**505 core / 8 conformance / build通过**，只归该提交。`identity.temporary@3`要求客户端创建前持有独立Ed25519/age钥，服务端验持有证明并同时登记公钥，升级复用双钥；旧@1/@2拒绝新建。历史无钥临时主体仍须双钥升级，临时签名凭据当前登记但业务继续用受限token；本批未生产部署，不能以CI代替存量迁移与完整恢复验收。fb9的手动市场链仍不等于官方market_e2e。
+提交 `135a190` 已推送 `main`。本地结果：541 passed、8 conformance passed、隔离 build 成功，PG Ledger 定向9 passed。CI结果：[GitHub CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014) completed/success，日志为541 core passed、8 conformance passed、build成功。生产未部署。
 
-归档A18的首次DM介绍已由3bc06ad成功CI验证并移回已完成部分。A01仍限定正式注册/托管创建：临时双钥@3已通过c919成功CI，仍待存量迁移及临时签名凭据能力验收；A16复杂GET短码和完整模板/示例仍在待办。
+历史验证（截至 `c919216` / CI36313186799，505 core / 8 conformance / build，结果仅归该提交）：`identity.temporary@3`要求客户端创建前持有独立Ed25519/age钥，服务端验持有证明并同时登记公钥，升级复用双钥；当时旧@1/@2拒绝新建。该提交时历史无钥临时主体仍待双钥升级，临时签名凭据仅完成登记、尚未覆盖业务使用。后续本地切片已通过 temporary@3 受限签名发帖定向测试，当前完整本地测试和CI状态以上方 `135a190` 记录为准。该本地证据不代表生产部署或完整恢复验收。fb9的手动市场链仍不等于官方market_e2e。
+
+归档A18的首次DM介绍已由3bc06ad成功CI验证并移回已完成部分。A01限定正式注册/托管创建；截至c919 CI时，临时双钥@3已通过CI，但存量迁移及临时签名凭据业务能力当时仍待验收。后续本地切片已有temporary@3受限签名发帖定向测试通过，完整托管迁移/恢复矩阵仍待验收。A16复杂GET短码和完整模板/示例仍在待办。
 
 | 本批切片 | 当前实现事实 | 明确未完成项 |
 | --- | --- | --- |
-| 临时身份双钥 | @3客户端预存独立签名/加密钥，服务端PoP后同时登记；旧@1/@2新建拒绝；升级复用 | c919 CI已通过；旧无钥临时主体升级、临时签名凭据的业务能力及全部恢复/迁移矩阵仍缺 |
+| 临时身份双钥 | @3客户端预存独立签名/加密钥，服务端PoP后同时登记；旧@1/@2新建拒绝；升级复用；受限签名发帖已有本地定向测试 | 旧无钥主体完整升级及全部恢复/迁移矩阵仍待验；生产未部署 |
 | 本机money与配置 | mint/burn、BankRole授撤、root transfer、offer set/disable，确认/根审计；MoneyConfig默认值和doctor检查 | 无purchasable类型/兑现器，offer set仍fail-closed；bank fund便利入口、真实物理控制台和生产恢复验收未据此完成 |
 | ServerOffer | 安全空目录；无有效类型/兑现器则redeem拒绝且不扣款 | 真实报价启用/ResourceEntitlement/异步settle-refund未完成；报价管理代码不等于已有可售资源 |
-| 凭据恢复 | 默认15m、1–60m可配；恢复后代继承原deadline、不扩大期限；备份恢复保留配置 | 旧@1重复秘密、全部适配器秘密URL拒绝、恢复响应再次丢失完整矩阵、历史钥在线/备份退役仍缺 |
+| 凭据恢复 | 默认15m、1–60m可配；恢复后代继承原deadline、不扩大期限；备份恢复保留配置；旧发行@1新执行及历史重放已明确拒绝 | 代理/访问日志的秘密拒绝，恢复响应再次丢失完整矩阵、历史钥在线/备份退役仍待验 |
 | Bounty | 预算预托管、当前IdentityKey PoP/nonce/TTL、原子Claim与奖励、top_up、close剩余退款 | 完整账户分型/全部公开投影/CLI/default/doctor/selftest；不宣称全部并发/撤权/恢复矩阵齐备 |
 | Sale订单与退款 | 签名买家入系统escrow、funded状态；funded买家取消原子退款 | 完整客观故障退款、争议/仲裁/申诉及所有状态组合未实现 |
 | 手动站内交付 | managed_instant且合计≤1MiB，买家显式签名prepare、只读get、签名accept校验digest后结算给seller | 非自动交付；大型Transfer、sealed_manual/secret加密交付、Email/DeliveryTarget四方校验、全部商品类型/状态生命周期未完成 |
@@ -23,7 +48,7 @@
 
 资金按整数minor_units入不可变PG账本，当前写事务串行化保护余额/总量/并发，签名收据有policy_version/digest/sequence。不能以此宣称完整ClearingPolicy/恢复矩阵完成。本机重复手动执行使用新的request_id，不能套用同ID网络重试的防重复承诺。
 
-Order/Bounty escrow仍以无Resource/key/credential的local_only system Subject承载，普通money.transfer拒绝system账户；设计要求系统LedgerAccount、非用户。专用账户分型及注册/恢复/委托/银行管理不能激活托管身份的完整负例尚缺，不能只凭没有钥认定全部隔离完成。
+早期实现曾以无Resource/key/credential的local_only system Subject承载Order/Bounty escrow。提交 `135a190` 已引入专用系统LedgerAccount及旧escrow引用迁移，普通money.transfer仍拒绝system账户；PG Ledger定向9 passed。更多历史引用、append-only/守恒与备份恢复负例仍待CI及完整迁移/恢复矩阵验证，不能只凭账户无钥认定隔离完成。
 
 Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get一致；历史Revision保留原值并附current_*。搜索与其他投影仍待全面验证。奖励支付复核当前bounty事实，未来缩小写锁需重测最后一份预算和主体限额。
 
@@ -31,9 +56,11 @@ Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get�
 
 `test_market_manual_flow.py` 已串起Test Root内部mint/银行登记/注资→10MSG预托管PoP奖励→5MSG固定bundle购买→买家显式prepare/get/accept→bank15/buyer5、total_supply20。它使用内部本机用例和手动交付，**不证明官方market_e2e要求的bank fund命令、自动Delivery、SMTP sink/未验证邮箱边界及全部失败矩阵**。DisputeResolver/仲裁和大型Transfer也仍缺。
 
-下一出口：3bc的DM@2已通过CI；临时双钥@3已通过CI，继续存量迁移验证；再补系统LedgerAccount分型及跨模块备份/恢复、自动交付与状态故障恢复、大型Transfer；随后按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
+当前下一出口：补验URL代理/访问日志秘密拒绝及LedgerAccount更多迁移/恢复矩阵。随后完成托管主体退出、备份重放防复活；自动交付、市场官方market_e2e与仲裁矩阵排在这些安全/恢复工作之后。`135a190` 的本地及CI证据见上；temporary@3受限签名发帖已有本地定向验证。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
 
 ## 历史：文档迁移与此前验证归属
+
+本节及后续批次记录保留各自写作时的“当前”状态和验证数字，属于历史快照；如与文首“当前工作树进度”冲突，以文首为准，不将旧快照的本地结果、CI或缺口描述成现状。
 
 已实时读取[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)迁移后修订 `ANLCKQmFOHtA75…`，196个非空段；以本节和当前正文为准，以下08:51等记录属于修订沿革，不再是最新基线。
 
@@ -41,12 +68,12 @@ Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get�
 
 当前未提交下一批（协作路径/CLI、货币基础、sale Listing/固定文件寄售包）此前完整本地 **432 core passed、8 conformance passed、uv build成功**；这发生在Listing mode小修之前。其后显式mode=sale、旧记录按sale兼容、bounty返回listing_mode_unsupported，store定向5 passed、综合定向40 passed；未声称修后全套再次通过。9/38/16定向组已包含在全套，不累加。e126539的423/8/build及成功CI归旧提交，不能当作432项工作树CI；没有本批生产部署或market_e2e完整闭环证据。
 
-### 新规范已生效、下一实现出口
+### 历史状态快照：新规范已生效、下一实现出口（2026-09-27较早记录）
 
 DCR-01/02/03主要建议已写入权威正文并进一步扩充，详见[变更记录](DESIGN_CHANGE_REQUESTS.md)，不再统称待批准。
 
 1. 所有等价可重放秘密禁止URL；私有纯路径proof需绑定查询/主体/ID/expiry且重验授权。机密发行无安全通道返回secure_channel_required；接收者绑定密文、敏感查询保密、遗留服务端token URL分支与全入口/日志拒绝矩阵尚需验收。
-2. 一次释放先原子消费资格、再发送响应；默认15m从业务提交起算，配置有界且重试不续期。@2/journal已有切片，旧@1重复秘密仍是实现缺口；可配置窗口、恢复再次丢失、原谱系撤销/不扩权全矩阵不能仅凭现有测试称完成。
+2. 一次释放先原子消费资格、再发送响应；默认15m从业务提交起算，配置有界且重试不续期。该历史记录时，@2/journal已有切片、旧@1重复秘密被记为实现缺口；当前旧@1策略已改为拒绝新执行和历史重放，见文首。可配置窗口、恢复再次丢失、原谱系撤销/不扩权全矩阵仍不能仅凭局部测试称完成。
 3. 历史A类rewrap副本与B类仅退役EncryptionSubkey的RecoveryEnvelope均须明确边界；冻结全保留历史、并发增量、新写入新钥、实际逐项解密ACK、identity_switched/history_recoverable/server_key_retired及online_retired/backup_retired、旧备份防复活仍未完整实现。旧vault仍可解密时不能宣称完整退役。
 
 bounty、完整清算/托管、Order/Delivery/仲裁和官方market_e2e仍缺；本地432项覆盖既有切片，不把sale基础或归档条款扩写为整章完成。
@@ -62,7 +89,7 @@ bounty、完整清算/托管、Order/Delivery/仲裁和官方market_e2e仍缺；
 
 上述预算账户、挑战状态、Claim与订单/交付都必须作为PG权威事实一致备份恢复。当前没有该官方fixture完整闭环通过证据；普通签名transfer、sale寄售包或旧成就挑战均不能替代它。
 
-## 最新修订与下一批进度
+## 历史进度快照（2026-09-27 08:51；当前状态见文首）
 
 已实时重读权威设计 `2026-09-27T08:51:45.979Z`（198段，01–15章）。本轮进一步明确ClearingEngine为msgd内置确定性程序：不是subject，无账户/余额/私钥/主动交易或自由裁量；同输入、账本状态、ClearingPolicy版本必须同结果。货币receipt含policy_version/digest与ledger_sequence，纠错只能追加refund/reversal。EscrowAccount是系统LedgerAccount而非用户；EscrowEngine只按订单状态和有效决议执行，仲裁员不能写Ledger。
 
@@ -95,7 +122,7 @@ bounty、完整清算/托管、Order/Delivery/仲裁和官方market_e2e仍缺；
 
 保持当前协作/ReadQuery切片单独收口；随后先做精确账本、本机中央银行边界、余额隐私与恢复，再做Registry可购买资源报价/兑换，之后才接Listing/寄售包、Order/Escrow资金状态机、买家交付目标与只读视图，最后补客观纠纷/确定性仲裁及CLI。各步先负例/并发/失效，再完整默认/样例/doctor/selftest/CI；不以当前logo或423项替代新增领域验收，不自动启用生产货币或切流。
 
-## 当前批次：协作、嵌套读取与标识（core 423，通过范围有限）
+## 历史批次：协作、嵌套读取与标识（当时 core 423，通过范围有限）
 
 需求修订：`2026-09-27T08:51:45.979Z`，ChatGPT 文件夹的权威项目设计。本批只更新实现事实，不修改需求。
 
@@ -125,15 +152,15 @@ Legacy当前限制：已有私有历史的遗言不能切换为公开（legacy_p
 
 后续CLI按受限单页与显式cursor验收；Sync仍有64引用上限，授权变化要求resync而非宣称自动回补。分别测试数据内resync_required和HTTP超长路径413，未提交改动不沿用c62e516 CI。
 
-## 当前未提交token @2交付边界
+## 历史快照：未提交token @2交付边界（2026-09-27较早批次）
 
 identity.temporary/custodial_create/token_create/token_rotate新增@2，要求独立于nonce的至少32字节恢复材料，恢复窗口最多15分钟且不超过原凭据期限。业务提交仅存verifier和绑定事实，response hook通过持久原子claim最多返回一次token；已claim的相同请求返回token_delivery_unavailable。claim提交后丢响应通过identity.token_recover显式换新token，旧token撤销、旧恢复材料单次消费；新凭据保持原ceiling及expires_at，并绑定新的独立恢复材料。服务器不承诺网络恰好送达一次。
 
-该严格模式目前是选择@2才启用，旧@1仍可重放交付；标准客户端当前已默认切换@2；不能宣称全平台token一次展示已经完成。token定向20 passed包含竞态、丢响应/恢复、重启和过期等切片，已纳入319项全套，不额外累加；仍无本批CI。
+该严格模式在此历史快照时仅选择@2启用，旧@1仍可重放交付；标准客户端已默认切换@2。token定向20 passed包含竞态、丢响应/恢复、重启和过期等切片，已纳入319项全套；该历史批次无对应CI。此处关于旧@1可重放的描述已过时：当前已明确拒绝旧发行@1的新执行及历史重放。后续提交 `135a190` 的本地完整测试为541 passed、conformance 8 passed、隔离 build成功；[GitHub CI 36318026014](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36318026014) completed/success，日志为541 core passed、8 conformance passed、build成功。生产未部署，详见文首。
 
 CLI search/grep为受限单页、显式cursor，相关CLI/Sync定向11 passed。Sync v2在授权epoch/Topic成员摘要变化时，只能返回已知撤权最小ID+resync_required且无续cursor，其余要求resync；>64引用明确失败，不静默淘汰。完整signed proof嵌入URL时，即使50 seen也可能触发路径413，可用既有header承载proof；这意味着全量纯路径体验仍有缺口，不宣称只靠路径可支持所有窗口。
 
-## 当前规则迁移与客户端安全边界
+## 历史快照：规则迁移与客户端安全边界
 
 规则源按稳定rule_id识别，source_paths与显式old→new迁移声明控制移动；保持Resource ID/历史，逐文件digest/version同步。未知/重复rule_id、未声明移位、缺源/删除、悬空requires_rules均fail-closed；文件清单先完整校验再写，重复load不重复Revision。该切片不是任意规则删除/退休机制或完整规则全文迁移。
 
@@ -141,7 +168,7 @@ CLI search/grep为受限单页、显式cursor，相关CLI/Sync定向11 passed。
 
 当前326/8/build仅本地，未提交/无对应CI。公开发布仍缺长期Sync（64引用/15分钟、权限变化resync及路径长度边界）、非空托管库存通用迁移/恢复、完整hosting preview/JS/root Resource与宿主矩阵、完整feature默认/doctor/selftest；不能用新客户端默认@2宣称旧@1已消失或整个服务全部完成。
 
-## 当前第四批实现与验收限制
+## 历史第四批实现与验收限制
 
 真实/@root/web已有website/部署清单/文件Resource及Revision，不再只有代码响应样例；hosting.preview创建private候选、不切active指针。读取preview必须携匹配discovery.raw的签名header，不能把返回URL当可直接无凭据浏览器导航；保持禁JS sandbox。hosting切片已纳入332项全套，但不等于完整浏览器/部署矩阵。
 
@@ -187,7 +214,7 @@ lexical_search@1保持已发布schema，facets只进入@2；QueryRef、续页、
 
 doctor.authority_snapshot只读比较当前Registry与旧Root/Online CA签名grants快照，不修改证书、不自动扩权。旧签名快照不能原位安全增加能力；需要的新增授权必须显式本机Root流程处理，若需Root轮换会使旧信任链失效，必须先评估迁移/重签影响。诊断结果不是升级生产授权的许可，本批不自动修改生产。
 
-## 第九批当前切片
+## 历史第九批切片
 
 SearchQuery@3新增source_kind/relation_type过滤，HTTP q/3、query-string、QueryRef/续页使用同版本，旧@1/@2不改义；关系条件只匹配当前Revision关系类型，不等于任意图查询或全套高级搜索，suggest已有第十批@4显式切片，spell仍缺。
 
