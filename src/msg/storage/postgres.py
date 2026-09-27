@@ -124,6 +124,91 @@ CREATE TABLE IF NOT EXISTS store_packages (
  seller TEXT NOT NULL, revision TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
  manifest TEXT NOT NULL, payload_refs TEXT NOT NULL, digest TEXT NOT NULL,
  total_size BIGINT NOT NULL, delivery_mode TEXT NOT NULL, deposited_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS bounty_listings (
+ listing_id TEXT PRIMARY KEY REFERENCES resources(id),
+ publisher TEXT NOT NULL REFERENCES identities(id),
+ escrow_subject TEXT NOT NULL UNIQUE REFERENCES identities(id),
+ reward_minor BIGINT NOT NULL CHECK(reward_minor>0),
+ budget_minor BIGINT NOT NULL CHECK(budget_minor>0),
+ max_claims INTEGER NOT NULL CHECK(max_claims>0),
+ claim_limit_per_subject INTEGER NOT NULL CHECK(claim_limit_per_subject>0),
+ verifier_id TEXT NOT NULL, verifier_version INTEGER NOT NULL CHECK(verifier_version>0),
+ eligibility TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('draft','active','paused','closed')),
+ pause_reason TEXT, expires_at TEXT, created_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS bounty_listings_publisher ON bounty_listings(publisher,listing_id);
+CREATE TABLE IF NOT EXISTS bounty_challenges (
+ id TEXT PRIMARY KEY,
+ listing_id TEXT NOT NULL REFERENCES bounty_listings(listing_id),
+ claimant TEXT NOT NULL REFERENCES identities(id),
+ key_id TEXT NOT NULL, nonce TEXT NOT NULL,
+ issued_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+ verifier_version INTEGER NOT NULL CHECK(verifier_version>0),
+ payload TEXT NOT NULL, consumed_at TEXT);
+CREATE INDEX IF NOT EXISTS bounty_challenges_claimant ON bounty_challenges(listing_id,claimant);
+CREATE TABLE IF NOT EXISTS bounty_claims (
+ id TEXT PRIMARY KEY,
+ listing_id TEXT NOT NULL REFERENCES bounty_listings(listing_id),
+ claimant TEXT NOT NULL REFERENCES identities(id),
+ challenge_id TEXT NOT NULL UNIQUE REFERENCES bounty_challenges(id),
+ proof_digest TEXT NOT NULL, status TEXT NOT NULL CHECK(status='paid'),
+ reward_minor BIGINT NOT NULL CHECK(reward_minor>0),
+ transaction_id TEXT NOT NULL UNIQUE REFERENCES money_ledger(id),
+ claimed_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS bounty_claims_claimant ON bounty_claims(listing_id,claimant);
+CREATE TABLE IF NOT EXISTS store_orders (
+ id TEXT PRIMARY KEY,
+ buyer TEXT NOT NULL REFERENCES identities(id),
+ seller TEXT NOT NULL REFERENCES identities(id),
+ listing_id TEXT NOT NULL REFERENCES resources(id),
+ listing_revision TEXT NOT NULL,
+ package_id TEXT, package_revision TEXT, package_digest TEXT,
+ quantity INTEGER NOT NULL CHECK(quantity>0),
+ unit_price_minor BIGINT NOT NULL CHECK(unit_price_minor>0),
+ total_price_minor BIGINT NOT NULL CHECK(total_price_minor>0),
+ currency_id TEXT NOT NULL CHECK(currency_id='primary'),
+ escrow_subject TEXT NOT NULL UNIQUE REFERENCES identities(id),
+ escrow_policy TEXT NOT NULL, dispute_policy TEXT NOT NULL,
+ terms_digest TEXT NOT NULL, delivery_target TEXT NOT NULL,
+ payment_intent_digest TEXT NOT NULL,
+ payment_transaction_id TEXT NOT NULL UNIQUE REFERENCES money_ledger(id),
+ state TEXT NOT NULL CHECK(state IN
+  ('funded','delivered','accepted','settled','cancelled','refunded','disputed')),
+ created_at TEXT NOT NULL, funded_at TEXT NOT NULL,
+ delivered_at TEXT, settled_at TEXT, receipt_refs TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS store_orders_buyer ON store_orders(buyer,id);
+CREATE INDEX IF NOT EXISTS store_orders_seller ON store_orders(seller,id);
+CREATE INDEX IF NOT EXISTS store_orders_listing ON store_orders(listing_id,state);
+CREATE TABLE IF NOT EXISTS store_deliveries (
+ id TEXT PRIMARY KEY,
+ order_id TEXT NOT NULL UNIQUE REFERENCES store_orders(id),
+ recipient_subject TEXT NOT NULL REFERENCES identities(id),
+ kind TEXT NOT NULL,
+ payload_refs TEXT NOT NULL, manifest TEXT NOT NULL,
+ package_digest TEXT NOT NULL, delivery_digest TEXT NOT NULL,
+ channel TEXT NOT NULL CHECK(channel='site'),
+ state TEXT NOT NULL CHECK(state IN ('prepared','claimed')),
+ prepared_at TEXT NOT NULL, claimed_at TEXT, receipt TEXT);
+CREATE TABLE IF NOT EXISTS server_offers (
+ offer_id TEXT PRIMARY KEY,
+ resource_kind TEXT NOT NULL, unit TEXT NOT NULL,
+ price_minor BIGINT NOT NULL CHECK(price_minor>0),
+ min_quantity BIGINT NOT NULL CHECK(min_quantity>0),
+ max_quantity BIGINT NOT NULL CHECK(max_quantity>=min_quantity),
+ entitlement_kind TEXT NOT NULL,
+ duration_seconds BIGINT CHECK(duration_seconds IS NULL OR duration_seconds>0),
+ enabled BOOLEAN NOT NULL DEFAULT FALSE,
+ price_revision TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS resource_entitlements (
+ id TEXT PRIMARY KEY,
+ subject_id TEXT NOT NULL REFERENCES identities(id),
+ offer_id TEXT NOT NULL REFERENCES server_offers(offer_id),
+ purchase_request_id TEXT NOT NULL,
+ quantity BIGINT NOT NULL CHECK(quantity>0),
+ entitlement_kind TEXT NOT NULL,
+ granted_at TEXT NOT NULL, expires_at TEXT,
+ redeem_transaction_id TEXT UNIQUE REFERENCES money_ledger(id),
+ UNIQUE(subject_id,purchase_request_id));
 CREATE OR REPLACE FUNCTION msg_audit_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'append_only_audit' USING ERRCODE = '23514'; END;
 $$;

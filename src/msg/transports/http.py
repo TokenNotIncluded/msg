@@ -358,7 +358,10 @@ def json_response(value,status=200,headers=None):
 
 def error_status(code):
     if code=='range_not_satisfiable':return 416
-    if code in {'not_found','resource_purged','revision_not_found','csr_not_found','certificate_not_found'}: return 404
+    if code in {'not_found','resource_purged','revision_not_found','csr_not_found',
+                'certificate_not_found','listing_not_found','package_not_found',
+                'bounty_not_found','order_not_found','delivery_not_found',
+                'offer_not_found'}: return 404
     if code in {'authentication_required','invalid_token','invalid_signature','credential_revoked','credential_expired','request_expired'}: return 401
     if code in {'permission_denied','local_only','credential_ceiling','certificate_gate','tool_certificate_required','forbidden_origin','forbidden_host','passive_client_forbidden','query_ref_principal_mismatch','cursor_principal_mismatch'}: return 403
     if code in {'generation_conflict','revision_conflict','idempotency_conflict','chunk_conflict','constraint_conflict'}: return 409
@@ -1135,6 +1138,29 @@ def create_app(service):
                          'Content-Length':str(len(payload))}
                 return Response(b'' if request.method=='HEAD' else payload,
                                 media_type='text/html' if html else 'text/markdown',headers=headers)
+            money_public={'/_money':'money.state','/_money/banks':'money.banks',
+                          '/_money/offers':'money.offers'}
+            if path in money_public:
+                require(not request.url.query,'unknown_query_parameter')
+                operation=money_public[path]
+                require(service.registry.operation(operation).effect=='read','effect_mismatch')
+                header=request.headers.get('x-msg-request')
+                packet=(path_packet(header,'j',limits.max_request_bytes) if header else
+                        request_for(operation,{},service.settings.service_url,source='manual'))
+                require(packet.operation==operation and not packet.arguments,
+                        'representation_mismatch')
+                result=await service.executor.execute(packet,entry='network')
+                if result.error:
+                    return json_response(result_wire(result),error_status(result.error.code))
+                value=wire(result.data)
+                payload=canonical(value)
+                require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                etag='"'+digest(value)[7:]+'"'
+                headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'no-store'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
+                return Response(b'' if request.method=='HEAD' else payload,
+                                media_type='application/json',headers=headers)
             if path in {'/_rules','/_rules/'}:
                 path='/_rules/_index.md'
             topic_history=re.fullmatch(
@@ -1177,11 +1203,135 @@ def create_app(service):
                     return Response(status_code=304,headers=headers)
                 return Response(b'' if request.method=='HEAD' else body,media_type='application/json',
                                 headers=headers)
+            order_path=re.fullmatch(
+                r'/_orders/(ord_[a-z2-7]{32})(?:/(_payment|_delivery))?(?:/json)?',path)
+            if order_path:
+                require(not request.url.query and b'%' not in raw_path,
+                        'unknown_query_parameter')
+                order_id,section=order_path.groups()
+                operation=('orders.payment' if section=='_payment' else
+                           'delivery.get' if section=='_delivery' else 'orders.get')
+                args={'order_id':order_id}
+                require(service.registry.operation(operation).effect=='read',
+                        'effect_mismatch')
+                header=request.headers.get('x-msg-request')
+                packet=(path_packet(header,'j',limits.max_request_bytes) if header else
+                        request_for(operation,args,service.settings.service_url,
+                                    source='manual'))
+                require(packet.operation==operation and
+                        canonical(packet.arguments)==canonical(args),
+                        'representation_mismatch')
+                result=await service.executor.execute(packet,entry='network')
+                if result.error:
+                    return json_response(result_wire(result),error_status(result.error.code))
+                value=wire(result.data)
+                payload=canonical(value)
+                require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                etag='"'+digest(value)[7:]+'"'
+                headers={**BASE_HEADERS,'ETag':etag,
+                         'Cache-Control':'private, no-cache'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
+                return Response(b'' if request.method=='HEAD' else payload,
+                                media_type='application/json',headers=headers)
             subject_alias=re.fullmatch(r'/@([^/]+)/([^/]+)(/.*)?',path)
             ssh_projection=False
             ssh_key_id=None
             if subject_alias:
                 handle,name,remainder=subject_alias.groups()
+                if name=='orders':
+                    require(b'%' not in raw_path,'not_found')
+                    tail=(remainder or '').strip('/')
+                    if tail.endswith('/json'):
+                        tail=tail[:-5]
+                    listing=tail in {'','json'}
+                    parts=[] if listing else tail.split('/')
+                    require(listing or (len(parts) in {1,2} and
+                        re.fullmatch(r'ord_[a-z2-7]{32}',parts[0]) is not None and
+                        (len(parts)==1 or parts[1] in {'_payment','_delivery'})),
+                        'not_found')
+                    operation=('orders.list' if listing else
+                               'orders.payment' if len(parts)==2 and parts[1]=='_payment' else
+                               'delivery.get' if len(parts)==2 else 'orders.get')
+                    pairs=request.query_params.multi_items()
+                    require(len(pairs)==len({key for key,_ in pairs}),
+                            'duplicate_query_parameter')
+                    query=dict(pairs)
+                    require(not query or listing,'unknown_query_parameter')
+                    require(set(query)<={'role','status','limit'},
+                            'unknown_query_parameter')
+                    args={} if listing else {'order_id':parts[0]}
+                    for field in ('role','status'):
+                        if field in query: args[field]=query[field]
+                    if 'limit' in query:
+                        require(query['limit'].isdecimal(),'invalid_limit')
+                        args['limit']=int(query['limit'])
+                    async with service.metadata.transaction(write=False) as tx:
+                        subject_id=await tx.resolve('/@'+handle)
+                        require((await tx.resource(subject_id)).type=='user','not_found')
+                    require(service.registry.operation(operation).effect=='read',
+                            'effect_mismatch')
+                    header=request.headers.get('x-msg-request')
+                    packet=(path_packet(header,'j',limits.max_request_bytes) if header else
+                            request_for(operation,args,service.settings.service_url,
+                                        source='manual'))
+                    require(packet.operation==operation and
+                            canonical(packet.arguments)==canonical(args),
+                            'representation_mismatch')
+                    result=await service.executor.execute(packet,entry='network')
+                    if result.error:
+                        return json_response(result_wire(result),error_status(result.error.code))
+                    require(result.subject==subject_id,'permission_denied')
+                    value=wire(result.data)
+                    payload=canonical(value)
+                    require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                    etag='"'+digest(value)[7:]+'"'
+                    headers={**BASE_HEADERS,'ETag':etag,
+                             'Cache-Control':'private, no-cache'}
+                    if request.headers.get('if-none-match')==etag:
+                        return Response(status_code=304,headers=headers)
+                    return Response(b'' if request.method=='HEAD' else payload,
+                                    media_type='application/json',headers=headers)
+                if name in {'bal','balance','ledger'}:
+                    require(remainder in {None,'/','/json'},'not_found')
+                    require(b'%' not in raw_path,'not_found')
+                    operation='money.ledger' if name=='ledger' else 'money.balance'
+                    pairs=request.query_params.multi_items()
+                    require(len(pairs)==len({key for key,_ in pairs}),
+                            'duplicate_query_parameter')
+                    query=dict(pairs)
+                    require(not query or name=='ledger','unknown_query_parameter')
+                    require(set(query)<={'cursor','limit'},'unknown_query_parameter')
+                    args={}
+                    for field in ('cursor','limit'):
+                        if field in query:
+                            require(query[field].isdecimal(),'invalid_query_parameter')
+                            args[field]=int(query[field])
+                    async with service.metadata.transaction(write=False) as tx:
+                        subject_id=await tx.resolve('/@'+handle)
+                        require((await tx.resource(subject_id)).type=='user','not_found')
+                    require(service.registry.operation(operation).effect=='read',
+                            'effect_mismatch')
+                    header=request.headers.get('x-msg-request')
+                    packet=(path_packet(header,'j',limits.max_request_bytes) if header else
+                            request_for(operation,args,service.settings.service_url,source='manual'))
+                    require(packet.operation==operation and
+                            canonical(packet.arguments)==canonical(args),
+                            'representation_mismatch')
+                    result=await service.executor.execute(packet,entry='network')
+                    if result.error:
+                        return json_response(result_wire(result),error_status(result.error.code))
+                    require(result.subject==subject_id,'permission_denied')
+                    value=wire(result.data)
+                    payload=canonical(value)
+                    require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                    etag='"'+digest(value)[7:]+'"'
+                    headers={**BASE_HEADERS,'ETag':etag,
+                             'Cache-Control':'private, no-cache'}
+                    if request.headers.get('if-none-match')==etag:
+                        return Response(status_code=304,headers=headers)
+                    return Response(b'' if request.method=='HEAD' else payload,
+                                    media_type='application/json',headers=headers)
                 if name in {'handoffs','leases'}:
                     require(request.method in {'GET','HEAD'},'method_not_allowed')
                     require(raw_path.decode('utf-8')==request.url.path and b'%' not in raw_path,

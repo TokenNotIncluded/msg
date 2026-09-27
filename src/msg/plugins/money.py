@@ -51,8 +51,9 @@ def _supply(tx):
 
 
 def _post_transfer(tx, *, sender, recipient, amount, actor, request_id, now,
-                   receipt_signer, reference=None):
+                   receipt_signer, reference=None, kind='transfer'):
     """Called only within the executor's serialized write transaction."""
+    require(kind in {'transfer', 'refund'}, 'invalid_money_kind')
     amount = _amount(amount)
     require(sender != recipient, 'self_transfer_forbidden')
     require(sender not in {ROOT_SUBJECT,'@root'}, 'root_local_only')
@@ -64,7 +65,7 @@ def _post_transfer(tx, *, sender, recipient, amount, actor, request_id, now,
                'ON CONFLICT(subject_id,currency_id) DO NOTHING', (recipient,CURRENCY_ID), write=True)
     transaction_id = 'lt_' + uuid4().hex
     sequence = tx.one("SELECT nextval(pg_get_serial_sequence('money_ledger','seq'))")[0]
-    body = {'transaction_id': transaction_id, 'kind': 'transfer', 'currency_id': CURRENCY_ID,
+    body = {'transaction_id': transaction_id, 'kind': kind, 'currency_id': CURRENCY_ID,
             'amount_minor': amount, 'from_subject': sender, 'to_subject': recipient,
             'committed_at': wire(now), 'policy_version': POLICY_VERSION,
             'policy_digest': POLICY_DIGEST, 'ledger_sequence': sequence}
@@ -73,7 +74,7 @@ def _post_transfer(tx, *, sender, recipient, amount, actor, request_id, now,
         (seq,id,kind,currency_id,amount_minor,debit_account,credit_account,actor,request_id,
          reference,committed_at,policy_version,policy_digest,receipt)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
-        (sequence,transaction_id,'transfer',CURRENCY_ID,amount,sender,recipient,actor,
+        (sequence,transaction_id,kind,CURRENCY_ID,amount,sender,recipient,actor,
          request_id,reference,wire(now),POLICY_VERSION,POLICY_DIGEST,
          canonical(receipt).decode()),write=True)
     return receipt
@@ -85,8 +86,9 @@ def install(app):
 
     @op('money.state', obj(), effect='read')
     async def state(ctx, request, tx):
-        return HandlerOutput(data={'currency_id': CURRENCY_ID, 'display_name': CODE,
-                                   'code': CODE, 'scale': SCALE,
+        return HandlerOutput(data={'currency_id': CURRENCY_ID,
+                                   'display_name': app.settings.money.display_name,
+                                   'code': app.settings.money.code, 'scale': SCALE,
                                    'total_supply_minor': _supply(tx)})
 
     @op('money.banks', obj(), effect='read')

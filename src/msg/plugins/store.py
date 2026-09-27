@@ -138,6 +138,7 @@ def install(app):
         await check_access(app, ctx, request, tx, resource.id, 'write')
         await assert_generation(request, resource)
         old, _ = await _body(app, tx, resource)
+        require(old['mode'] == 'sale', 'listing_mode_unsupported')
         updates = {key:value for key,value in request.arguments.items() if key != 'id'}
         require(bool(updates), 'empty_listing_update')
         body = {**old, **updates}
@@ -161,6 +162,16 @@ def install(app):
         revision = request.arguments.get('revision')
         body, rev = await _body(app, tx, resource, revision)
         result = _public(resource, body)
+        if body['mode'] == 'bounty':
+            state = tx.one('SELECT state,pause_reason,budget_minor FROM bounty_listings WHERE listing_id=?',
+                           (resource.id,))
+            require(state is not None, 'listing_not_found')
+            result['current_state'] = state[0]
+            result['pause_reason'] = state[1]
+            result['current_budget_minor'] = state[2]
+            if revision is None:
+                result['state'] = state[0]
+                result['budget_minor'] = state[2]
         result['listing_revision'] = rev.id
         result['terms_revision'] = rev.id
         return HandlerOutput(resources=(ResourceRef(id=resource.id, revision=rev.id),),
@@ -175,6 +186,7 @@ def install(app):
         from msg.plugins.communication import direct_ancestor
         resource = await _listing(app, ctx, request, tx, request.arguments['listing_id'], seller=True)
         body, _ = await _body(app, tx, resource)
+        require(body['mode'] == 'sale', 'listing_mode_unsupported')
         require(resource.revision == request.arguments['listing_revision'],
                 'listing_revision_conflict')
         require(body['delivery_mode'] == 'managed_instant' and

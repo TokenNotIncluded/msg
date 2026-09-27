@@ -41,7 +41,7 @@ class Application:
         self.executor=None
         self._loaded=False
         # Plugins are installed code, never resources, posts, or configuration expressions.
-        implemented=('identity','content','discussion','communication','discovery','achievements','recovery','sharing','money','store')
+        implemented=('identity','content','discussion','communication','discovery','achievements','recovery','sharing','money','offers','store','bounty','orders','delivery')
         configured=set(settings.server.plugins)
         require(configured<=set(implemented)|{'transfer','extensions','system','batch'},'unknown_plugin')
         for plugin in implemented:
@@ -134,7 +134,7 @@ class Application:
         require(len(secret)>=32,'invalid_recovery_secret')
         return hashlib.sha256(b'token-recovery-v1\0'+secret).hexdigest()
 
-    def record_token_delivery(self,tx,request,credential,now):
+    def record_token_delivery(self,tx,request,credential,now,*,recovery_deadline=None):
         """Bind recovery before commit; neither token nor recovery secret is stored."""
         if request.contract_version!=2 and request.operation!='identity.token_recover':
             return
@@ -144,7 +144,10 @@ class Application:
         if request.operation=='identity.token_recover':
             require(secret!=unb64(request.arguments['recovery_secret'],limit=64),
                     'recovery_secret_not_independent')
-        expires=min(credential.expires_at,now+timedelta(minutes=15))
+        expires=min(credential.expires_at,
+                    recovery_deadline if recovery_deadline is not None else
+                    now+timedelta(seconds=self.settings.credential_delivery_recovery_window))
+        require(expires>now,'recovery_unavailable')
         tx.execute('''INSERT INTO token_deliveries
             (credential_id,subject,request_id,request_digest,recovery_verifier,recovery_expires_at,
              claimed_at,consumed_at) VALUES (?,?,?,?,?,?,NULL,NULL)''',

@@ -1,8 +1,10 @@
 # 项目设计变更记录与实施差距
 
-三项DCR的主要建议已经写入[权威项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，不再是“待用户批准”。本次实时读取迁移后修订 `ANLCKQmFOHtA75ojuhApX4DGNrLzJXmy0IoG5HxGR9C0aUfjbbvunVxbJG8vupGY68zPAfJvjFidOceHU12DfWflSZhTR6IhokkS_mSE1f0`，196个非空段。下文以该正文为规范，区分需求已生效与实现尚未完成。
+三项DCR的主要建议已经写入[权威项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，不再是“待用户批准”。本次实时读取迁移后修订 `ANLCKQn-8pecglFOz3FbfUUAK2pRUi9ILo-7l73yyV6-L-YLF2Bsho40Yx-AIgGXELv-eUikApTStBiuHnQARputdmoczj6SOYp9sL3dXl4`，192个非空段。下文以该正文为规范，区分需求已生效与实现尚未完成。
 
-[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)另存5个整段和4句已验收条款，依据e126539与成功CI36306888836；不表示本文件讨论的秘密传输/恢复完整功能已完成。当前未提交增量在Listing mode小修前本地432 core、8 conformance、build通过；小修后store定向5 passed、综合定向40 passed，旧CI不覆盖该增量。
+[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQkjYH6n_sfl…`、71段，已含A19/A20等后续归档；首次19段归档中的5个整段和4句依据e126539与成功CI36306888836，不能将后续全部归档归因于该次迁移；不表示本文件讨论的秘密传输/恢复完整功能已完成。上一批cfd9a30远端CI36308410947已success（433 core/8 conformance/build）；本地432是mode修订前。当前新增本机money/offer管理、MoneyConfig、恢复窗口备份配置、Bounty、funded退款与≤1MiB买家手动交付/结算，本地core502 passed in 437.51s、conformance 8 passed in 82.57s、uv build -q及diff检查通过；手动跨模块链通过不等于官方market_e2e或本批CI。
+
+此前189/71是历史基线。A01/A16/A18归档范围已修正，临时主体双钥、复杂GET短码/完整模板示例和首次DM介绍保留为未完成需求；这是完成状态纠偏，不撤销DCR三项已生效规范。
 
 ## DCR-01：秘密传输与纯路径边界——已采纳并扩充
 
@@ -14,7 +16,7 @@
 
 正式规范已把业务提交与秘密释放分离：响应前持久原子消费释放资格；同request_id只重放非秘密状态/receipt，明确token_delivery_unavailable或delivery_unavailable，不复制秘密到幂等存储。客户端发行前绑定并保存独立恢复材料，或已有可验证IdentityKey/RecoveryPolicy授权；默认15m恢复窗口，从业务提交起算，可配置但必须有确定上限，不因失败重试续期。恢复仅在原发行谱系原子换发并撤销前代，不能扩大权限/期限；恢复响应再次丢失仍需预绑定材料或绑定密文，过期走正式RecoveryPolicy。
 
-当前@2与客户端journal已有一次领取/显式恢复切片，旧@1重放秘密仍是合规缺口，不能继续以“建议未批准”为兼容理由。配置项`identity.credential_delivery_recovery_window`、统一全入口行为、恢复再次丢失及窗口不续期/授权不扩大完整矩阵仍需验收；源码里固定15分钟不等于已实现可配置且有界的产品契约。旧版本迁移安排是实施工作，不重开已明确的默认值决定。
+当前@2与客户端journal已有一次领取/显式恢复切片，旧@1重放秘密仍是合规缺口，不能继续以“建议未批准”为兼容理由。当前未提交切片已实现配置项`identity.credential_delivery_recovery_window`，默认15m、允许1–60m，恢复后代继承原deadline；相关定向26项通过，备份恢复保留该配置的切片已补，尚待本批整体回归。统一全入口行为、恢复再次丢失、当前授权不扩大与部署恢复完整矩阵仍需验收。旧版本迁移安排是实施工作，不重开已明确的默认值决定。
 
 ## DCR-03：历史密文与密钥退役——已采纳并扩展为两种恢复方式
 

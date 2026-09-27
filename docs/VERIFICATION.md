@@ -1,6 +1,38 @@
 # 本地与 CI 验收记录
 
-## 当前权威文档、迁移与验证归属
+## 当前工作树进度与验收边界
+
+本次实时读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)修订 `ANLCKQn-8pecglFO…`，192个非空段；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前修订`ANLCKQkjYH6n_sfl…`、71段，已含A19/A20等后续归档。此前189/71及更早196/19、首次5段+4句仅为历史迁移记录，不能将全部71段归为那次迁移；后续用户归档不取消回归要求。
+
+上一已提交批次 `cfd9a30` 的[CI36308410947](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36308410947)completed/success，远端 **433 core / 8 conformance / build通过**；此前本地432是mode小修之前。以上不覆盖当前未提交工作树。**当前未提交工作树本地core全套502 passed in 437.51s，`uv build -q`与`git diff --check`通过；conformance 8 passed in 82.57s。** 不称完整market_e2e、发布或生产部署。 既有定向76与Bounty5等互有重叠，不累加；最新手动跨模块交易链测试通过但不是官方market_e2e。
+
+归档审计已修正A01/A16/A18的完成范围：临时主体双钥、复杂GET短码及完整模板/示例、首次DM最小介绍明确回到待办；正式双钥注册、已支持的标量路径与其余已验证DM行为不因此作废。这三项不能因502项通过而自动标完成。
+
+| 本批切片 | 当前实现事实 | 明确未完成项 |
+| --- | --- | --- |
+| 本机money与配置 | mint/burn、BankRole授撤、root transfer、offer set/disable，确认/根审计；MoneyConfig默认值和doctor检查 | 无purchasable类型/兑现器，offer set仍fail-closed；bank fund便利入口、真实物理控制台和生产恢复验收未据此完成 |
+| ServerOffer | 安全空目录；无有效类型/兑现器则redeem拒绝且不扣款 | 真实报价启用/ResourceEntitlement/异步settle-refund未完成；报价管理代码不等于已有可售资源 |
+| 凭据恢复 | 默认15m、1–60m可配；恢复后代继承原deadline、不扩大期限；备份恢复保留配置 | 旧@1重复秘密、全部适配器秘密URL拒绝、恢复响应再次丢失完整矩阵、历史钥在线/备份退役仍缺 |
+| Bounty | 预算预托管、当前IdentityKey PoP/nonce/TTL、原子Claim与奖励、top_up、close剩余退款 | 完整账户分型/全部公开投影/CLI/default/doctor/selftest；不宣称全部并发/撤权/恢复矩阵齐备 |
+| Sale订单与退款 | 签名买家入系统escrow、funded状态；funded买家取消原子退款 | 完整客观故障退款、争议/仲裁/申诉及所有状态组合未实现 |
+| 手动站内交付 | managed_instant且合计≤1MiB，买家显式签名prepare、只读get、签名accept校验digest后结算给seller | 非自动交付；大型Transfer、sealed_manual/secret加密交付、Email/DeliveryTarget四方校验、全部商品类型/状态生命周期未完成 |
+| HTTP读取 | money/order/delivery只读路径已接已有授权契约 | 完整纯路径/所有表示/缓存/错误/字段裁剪与分页矩阵仍待验收；GET不能prepare、claim或settle |
+
+### 安全与语义边界
+
+资金按整数minor_units入不可变PG账本，当前写事务串行化保护余额/总量/并发，签名收据有policy_version/digest/sequence。不能以此宣称完整ClearingPolicy/恢复矩阵完成。本机重复手动执行使用新的request_id，不能套用同ID网络重试的防重复承诺。
+
+Order/Bounty escrow仍以无Resource/key/credential的local_only system Subject承载，普通money.transfer拒绝system账户；设计要求系统LedgerAccount、非用户。专用账户分型及注册/恢复/委托/银行管理不能激活托管身份的完整负例尚缺，不能只凭没有钥认定全部隔离完成。
+
+Bounty单项store.listing_get的当前state/pause_reason/budget已与bounty.get一致；历史Revision保留原值并附current_*。搜索与其他投影仍待全面验证。奖励支付复核当前bounty事实，未来缩小写锁需重测最后一份预算和主体限额。
+
+资金现在不再只有funded入口：funded可取消退款，支持范围内的买家显式prepare/get/accept可结算。但这些不是自动Delivery；无Email endpoint绑定、四方owner/撤销复核、邮箱pending验证/最小邮件/secret禁明文SMTP完整流程。只读交付不自动claimed，accept由买家明确签名，不能把HTTP成功或SMTP接受等同收货。
+
+`test_market_manual_flow.py` 已串起Test Root内部mint/银行登记/注资→10MSG预托管PoP奖励→5MSG固定bundle购买→买家显式prepare/get/accept→bank15/buyer5、total_supply20。它使用内部本机用例和手动交付，**不证明官方market_e2e要求的bank fund命令、自动Delivery、SMTP sink/未验证邮箱边界及全部失败矩阵**。DisputeResolver/仲裁和大型Transfer也仍缺。
+
+下一出口：core502与build已通过，明确提交/CI归属；再补系统LedgerAccount分型及跨模块备份/恢复、自动交付与状态故障恢复、大型Transfer；随后按买家身份绑定接Email并以本地sink验秘密/字段裁剪，最后跑官方market_e2e和仲裁独立矩阵。任何中间成功不自动授权生产交易或解除未兑现报价的拒绝。
+
+## 历史：文档迁移与此前验证归属
 
 已实时读取[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)迁移后修订 `ANLCKQmFOHtA75…`，196个非空段；以本节和当前正文为准，以下08:51等记录属于修订沿革，不再是最新基线。
 
@@ -18,7 +50,7 @@ DCR-01/02/03主要建议已写入权威正文并进一步扩充，详见[变更�
 
 bounty、完整清算/托管、Order/Delivery/仲裁和官方market_e2e仍缺；本地432项覆盖既有切片，不把sale基础或归档条款扩写为整章完成。
 
-## 08:51 新增 bounty 与官方闭环（未实现）
+## 08:51 需求新增记录（历史；当前进度见文首）
 
 权威基线更新为 `2026-09-27T08:51:45.979Z`（198段，01–15章）。当前未提交Listing/寄售包只对应sale基础，不能视为Listing mode=sale|bounty完整支持。货币相关38、store相关16、协作9项定向是局部证据，core全套已432 passed、conformance8 passed、build通过；e126539的CI36306888836已success（仅覆盖旧提交），不冒称本批完整通过。
 

@@ -144,6 +144,11 @@ async def _doctor(config_dir,clock):
         settings=load_settings(path)
         app=Application(settings,clock=clock)
         success('configuration')
+        success('money_config',enabled=settings.money.enabled,
+                currency_id=settings.money.currency_id,
+                display_name=settings.money.display_name,code=settings.money.code,
+                scale=settings.money.scale,transfer_fee=settings.money.transfer_fee,
+                allow_overdraft=settings.money.allow_overdraft)
     except (Failure,ValueError,KeyError,OSError) as exc:
         failed('configuration',getattr(exc,'code','invalid_configuration'))
         return {'ok':False,'root_id':ROOT_SUBJECT,'checks':checks}

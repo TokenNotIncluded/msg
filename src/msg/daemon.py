@@ -97,6 +97,27 @@ def parser():
     rotate=rs.add_parser('rotate');rotate.add_argument('--lost-key',action='store_true');rotate.add_argument('--resume',action='store_true')
     rb=rs.add_parser('backup');rb.add_argument('destination',type=Path)
     rr=rs.add_parser('recover');rr.add_argument('source',type=Path)
+    money=sub.add_parser('money',help='Physical-console central bank administration')
+    ms=money.add_subparsers(dest='money_command',required=True)
+    ms.add_parser('mint').add_argument('amount')
+    ms.add_parser('burn').add_argument('amount')
+    bank=ms.add_parser('bank');bs=bank.add_subparsers(dest='bank_command',required=True)
+    bs.add_parser('add').add_argument('subject_id')
+    bs.add_parser('remove').add_argument('subject_id')
+    transfer=ms.add_parser('transfer')
+    transfer.add_argument('--from',dest='from_subject',required=True,choices=['@root'])
+    transfer.add_argument('--to',dest='to_subject',required=True)
+    transfer.add_argument('amount')
+    offer=ms.add_parser('offer');ops=offer.add_subparsers(dest='offer_command',required=True)
+    offer_set=ops.add_parser('set');offer_set.add_argument('offer_id')
+    offer_set.add_argument('--resource-kind',required=True)
+    offer_set.add_argument('--entitlement-kind',required=True)
+    offer_set.add_argument('--unit',required=True)
+    offer_set.add_argument('--price',required=True)
+    offer_set.add_argument('--min-quantity',type=int,required=True)
+    offer_set.add_argument('--max-quantity',type=int,required=True)
+    offer_set.add_argument('--duration-seconds',type=int)
+    ops.add_parser('disable').add_argument('offer_id')
     backup=sub.add_parser('backup',help='Local service-data backup, excluding root private material')
     backup.add_argument('destination',type=Path)
     restore=sub.add_parser('restore',help='Restore service data into new directories only')
@@ -141,6 +162,29 @@ def main(argv=None):
             elif args.root_command=='backup':result=admin.backup(args.destination)
             else:result=admin.recover(args.source)
             emit(result);return 0
+        if args.command=='money':
+            from msg.admin.money import MoneyAdmin
+            if args.money_command=='offer':
+                fields=({'resource_kind':args.resource_kind,
+                         'entitlement_kind':args.entitlement_kind,
+                         'unit':args.unit,'price':args.price,
+                         'min_quantity':args.min_quantity,
+                         'max_quantity':args.max_quantity,
+                         'duration_seconds':args.duration_seconds}
+                        if args.offer_command=='set' else None)
+                emit(MoneyAdmin(args.config_dir).execute_offer(
+                    args.offer_command,offer_id=args.offer_id,fields=fields))
+                return 0
+            if args.money_command=='bank':
+                action='bank_'+args.bank_command
+                amount=None
+                subject_id=args.subject_id
+            elif args.money_command=='transfer':
+                action='transfer';amount=args.amount;subject_id=args.to_subject
+            else:
+                action=args.money_command;amount=args.amount;subject_id=None
+            emit(MoneyAdmin(args.config_dir).execute(action,amount=amount,subject_id=subject_id))
+            return 0
         if args.command=='restore':
             from msg.admin.backups import restore
             emit(restore(args.source,args.config_dir,args.data_dir));return 0

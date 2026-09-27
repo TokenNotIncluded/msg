@@ -1140,7 +1140,8 @@ def install(app):
         credential=Credential(id=new_id,subject_id=subject.resource_id,kind='token',
             verifier=hashlib.sha256(token).digest(),ceiling=old.ceiling,
             not_before=ctx.now,expires_at=old.expires_at,revoked_at=None)
-        app.record_token_delivery(tx,request,credential,ctx.now)
+        app.record_token_delivery(tx,request,credential,ctx.now,
+                                  recovery_deadline=parse_time(row[2]))
         await tx.save_credential(credential,subject.auth_version)
         await tx.save_credential(replace(old,revoked_at=ctx.now),subject.auth_version)
         consumed=tx.execute('''UPDATE token_deliveries SET consumed_at=? WHERE credential_id=?

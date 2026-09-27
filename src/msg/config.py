@@ -23,6 +23,17 @@ class RecoveryCustodian:
     policy_ref: str | None = None
 
 
+@dataclass(frozen=True,slots=True)
+class MoneyConfig:
+    enabled: bool = True
+    currency_id: str = 'primary'
+    display_name: str = 'MSG'
+    code: str = 'MSG'
+    scale: int = 6
+    transfer_fee: int = 0
+    allow_overdraft: bool = False
+
+
 def root_private_dir(config_dir: Path) -> Path:
     """Root material is outside the network service configuration tree."""
     directory = Path(config_dir)
@@ -47,6 +58,7 @@ class Settings:
     port: int=8042
     public_web_origin: str | None=None
     temporary_ttl: int=3600
+    credential_delivery_recovery_window: int=900
     transfer_ttl: int=86400
     base_certificate_ttl: int=2592000
     max_part_bytes: int=65536
@@ -56,6 +68,7 @@ class Settings:
     tool_methods: tuple[str,...]=('GET','HEAD')
     tool_ports: tuple[int,...]=(80,443)
     recovery_custodians: tuple[RecoveryCustodian,...]=()
+    money: MoneyConfig=MoneyConfig()
 
     @property
     def config_dir(self):
@@ -83,7 +96,32 @@ def load_settings(config_dir=Path('/etc/msgd')):
     path=server_config_file(config_dir)
     require(path.is_file(),'configuration_missing')
     data=tomllib.loads(path.read_text())
-    require(set(data)<={'server','storage','limits','plugins','tools','recovery'},'unknown_configuration_section')
+    require(set(data)<={'server','storage','limits','plugins','tools','recovery','identity','money'},'unknown_configuration_section')
+    identity=data.get('identity',{})
+    require(isinstance(identity,dict) and set(identity)<={'credential_delivery_recovery_window'},
+            'unknown_identity_configuration')
+    window=identity.get('credential_delivery_recovery_window','15m')
+    require(isinstance(window,str) and len(window)<=3 and
+            re.fullmatch(r'[1-9][0-9]*m',window) is not None,
+            'invalid_credential_delivery_recovery_window')
+    window_minutes=int(window[:-1])
+    require(1<=window_minutes<=60,'invalid_credential_delivery_recovery_window')
+    money=data.get('money',{})
+    require(isinstance(money,dict) and set(money)<=set(MoneyConfig.__dataclass_fields__),
+            'unknown_money_configuration')
+    fixed={'enabled':True,'currency_id':'primary','scale':6,
+           'transfer_fee':0,'allow_overdraft':False}
+    for name,expected in fixed.items():
+        value=money.get(name,expected)
+        require(type(value) is type(expected) and value==expected,
+                'invalid_money_configuration')
+    display_name=money.get('display_name','MSG')
+    code=money.get('code','MSG')
+    require(type(display_name) is str and 1<=len(display_name)<=80 and
+            display_name==display_name.strip() and all(ord(char)>=32 for char in display_name),
+            'invalid_money_display_name')
+    require(type(code) is str and re.fullmatch(r'[A-Z][A-Z0-9]{1,15}',code) is not None,
+            'invalid_money_code')
     server=data.get('server',{})
     require(set(server)<={'service_url','listen','port','public_web_origin','temporary_ttl','transfer_ttl'},
             'unknown_server_configuration')
@@ -175,7 +213,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
             description=item.get('description'),policy_ref=item.get('policy_ref')))
     require(len({item.id for item in custodians})==len(custodians),'duplicate_recovery_custodian')
     require(set(data.get('plugins',{}))<={'enabled'},'unknown_plugin_configuration')
-    plugins=tuple(data.get('plugins',{}).get('enabled',('identity','content','discussion','communication','discovery','achievements','recovery','sharing','money','store','transfer','extensions','system','batch')))
+    plugins=tuple(data.get('plugins',{}).get('enabled',('identity','content','discussion','communication','discovery','achievements','recovery','sharing','money','offers','store','bounty','orders','delivery','transfer','extensions','system','batch')))
     require(all(isinstance(name,str) for name in plugins) and len(set(plugins))==len(plugins),'invalid_plugin_list')
     require('identity' in plugins,'identity_plugin_required')
     tools=data.get('tools',{})
@@ -204,10 +242,12 @@ def load_settings(config_dir=Path('/etc/msgd')):
             encodings=frozenset({'j','gz'})),mail=mail),service_url=service,listen=server.get('listen','127.0.0.1'),
         port=server.get('port',8042),public_web_origin=public_web,
         temporary_ttl=server.get('temporary_ttl',3600),transfer_ttl=server.get('transfer_ttl',86400),
+        credential_delivery_recovery_window=window_minutes*60,
         max_part_bytes=limits.get('part_bytes',65536),tool_timeout_ms=tools.get('timeout_ms',10000),
         tool_max_response_bytes=tools.get('max_response_bytes',4194304),
         tool_methods=tuple(tools.get('methods',('GET','HEAD'))),tool_ports=tuple(tools.get('ports',(80,443))),
-        recovery_custodians=tuple(custodians))
+        recovery_custodians=tuple(custodians),
+        money=MoneyConfig(display_name=display_name,code=code))
 
 
 def write_example(config_dir,data_dir,service_url='https://msg.lmm.best',*,postgres_dsn='service=msgd',valkey_url=None):
@@ -220,6 +260,18 @@ def write_example(config_dir,data_dir,service_url='https://msg.lmm.best',*,postg
 service_url = {json.dumps(service_url)}
 listen = "127.0.0.1"
 port = 8042
+
+[identity]
+credential_delivery_recovery_window = "15m"
+
+[money]
+enabled = true
+currency_id = "primary"
+display_name = "MSG"
+code = "MSG"
+scale = 6
+transfer_fee = 0
+allow_overdraft = false
 
 [storage]
 postgres_dsn = {json.dumps(postgres_dsn)}
