@@ -2,7 +2,7 @@
 from __future__ import annotations
 from msg.constants import ROOT_SUBJECT,TOOLS_SPACE
 from msg.core.errors import Failure,require
-from msg.core.codec import parse_time
+from msg.core.codec import loads,parse_time,wire
 from msg.core.models import ResourceRef
 from msg.security.policy import allows,grant_covers,scope_contains,CERTGATE
 
@@ -63,7 +63,34 @@ class AuthorizationService:
         return any([g.capability in BASE_FAMILIES and operation in g.operations and
                     await scope_contains(g.scope,resource,session) for g in principal.ceiling])
 
-    def shared_read(self,principal,resource,chain,now,session):
+    async def share_source_active(self,resource,grant_id,subject,now,session, *, reshare=False,
+                                  seen=frozenset()):
+        """Resolve one named source through current membership and its live parent chain."""
+        if grant_id in seen or len(seen)>=16:
+            return False
+        row=session.one('''SELECT resource_id,grantor,grantee,grantee_kind,parent_id,
+            operations,constraints,allow_reshare,expires_at,revoked_at
+            FROM share_grants_v2 WHERE id=?''',(grant_id,))
+        if row is None or row[0]!=resource.id or row[9] is not None or parse_time(row[8])<=now:
+            return False
+        if reshare and not row[7]:
+            return False
+        if 'read' not in loads(row[5]) or loads(row[6])!={}:
+            return False
+        if row[3]=='user':
+            if row[2]!=subject:
+                return False
+        elif row[3]=='group':
+            if row[2] not in {member.organization_id for member in await session.memberships(subject)}:
+                return False
+        else:
+            return False
+        if row[4] is None:
+            return row[1]==resource.owner
+        return await self.share_source_active(resource,row[4],row[1],now,session,
+            reshare=True,seen=seen|{grant_id})
+
+    async def shared_read(self,principal,resource,chain,now,session):
         """A direct, live source for exactly one resource's read check."""
         if principal.subject is None or principal.actor != principal.subject:
             return False
@@ -77,8 +104,15 @@ class AuthorizationService:
         row=session.one('''SELECT grantor,expires_at FROM share_grants
             WHERE resource_id=? AND grantee=? AND revoked_at IS NULL''',
                         (resource.id,principal.subject))
-        return bool(row and row[0]==resource.owner and parse_time(row[1])>now
-                    and resource.state=='active')
+        if row and row[0]==resource.owner and parse_time(row[1])>now and resource.state=='active':
+            return True
+        if resource.state!='active':
+            return False
+        candidates=session.rows('''SELECT id FROM share_grants_v2
+            WHERE resource_id=? AND revoked_at IS NULL AND expires_at>?''',
+            (resource.id,wire(now)))
+        return any([await self.share_source_active(resource,row[0],principal.subject,now,session)
+                    for row in candidates])
 
     async def share_link_read_allowed(self,grantor,credential_id,resource,chain,now,session):
         """Recheck one bearer source without creating a principal or granting traversal.
@@ -153,7 +187,8 @@ class AuthorizationService:
             if check.check in _WRITE_CHECKS and any(
                     parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes','todos'}
                     for parent,child in zip(chain,chain[1:])):
-                sharing_notes=(operation in {'sharing.grant@1','sharing.revoke@1',
+                sharing_notes=(operation in {'sharing.grant@1','sharing.grant@2','sharing.revoke@1',
+                                             'sharing.revoke@2',
                                              'sharing.link_create@1','sharing.link_revoke@1'} and
                     all(child.name not in {'SOUL.md','AGENTS.md','todos'}
                         for parent,child in zip(chain,chain[1:]) if parent.type=='user'))
@@ -200,7 +235,7 @@ class AuthorizationService:
             tool_access=resource.type=='tool' and await self.has(principal,'tool.use',operation,resource.id,session)
             if resource.type=='tool':
                 require(tool_access,'tool_certificate_required')
-            shared_read=(check.check=='read' and self.shared_read(
+            shared_read=(check.check=='read' and await self.shared_read(
                 principal,resource,chain,context.now,session))
             for ancestor in chain[:-1]:
                 readable=allows(ancestor,principal.subject,memberships,'traverse')

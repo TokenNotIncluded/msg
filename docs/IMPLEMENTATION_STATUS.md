@@ -2,7 +2,7 @@
 
 权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T05:54:08.096Z`。
 
-**当前状态：第十二批在GIT_CONFIG_GLOBAL=/dev/null下本地全套408 passed、conformance 8 passed、uv build成功；未提交、无本批CI，未部署。** 短码200→215保旧义。前批2a80a95的[CI 36300451977](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36300451977)completed/success（392/8/build），仅对应旧提交。
+**当前PR工作树：patch/rebase/batch与ShareGrant@2已收口；GIT_CONFIG_GLOBAL=/dev/null下本地全套414 passed、conformance 8 passed、uv build成功，最终新提交/对应CI尚待，未部署。** 基础提交52dd4b4已推送，CI36301644644 completed/success（408/8/build），仅证明旧提交。text_patch@2显式rebase/text_patch_batch与ShareGrant@2 group/read-only空constraints/受限reshare不改旧@1；Git失败可留不可达孤儿、历史generation映射及完整分享/编辑契约仍有缺口。
 
 历史证据单独保留：`e01dacc` 本地 228/8/build 与[CI 36281301900](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)通过；`f085e7f` 本地 206/8/build 与 CI 通过。220 是双钥加入前的中间结果，不是当前基线，不与任何测试数量累加。详细命令见 [VERIFICATION](VERIFICATION.md)。
 

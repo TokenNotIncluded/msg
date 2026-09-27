@@ -201,6 +201,57 @@ def apply_text_patch(source,exact,replacement,before='',after=''):
     return result
 
 
+async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
+    """Validate an exact or explicitly rebased patch before publishing a Revision."""
+    resource=await tx.resource(await resolve(tx,args['id']))
+    if post_only:
+        require(resource.type=='post','not_editable')
+    require(resource.type in {'post','file'} and resource.state=='active','not_editable')
+    chain=(*await tx.ancestors(resource.id),resource)
+    require(not any(item.id=='t_last_will' for item in chain),'legacy_directive_only')
+    require(resource.id!='r_agents' and all(item.id!='r_rules' for item in chain),
+            'system_managed_resource')
+    await require_unmanaged_personal(tx,resource)
+    await check_access(app,ctx,request,tx,resource.id,'write')
+    await assert_generation(request,resource)
+    require((await topic_policy(tx,resource)).get('editable',True),'content_frozen')
+    current=await tx.revision(ResourceRef(id=resource.id,revision=resource.revision))
+    media=current.content.media_type
+    require(media in {'text/plain','text/markdown'},'text_patch_required')
+    pieces=(args['exact'],args['replacement'],args.get('before',''),args.get('after',''))
+    require(sum(len(piece.encode('utf-8')) for piece in pieces)<=PATCH_LIMIT,'patch_too_large')
+    require(current.content.size<=PATCH_LIMIT,'patch_too_large')
+    try:
+        source=(await app.contents.read_bytes(current.content,limit=PATCH_LIMIT)).decode('utf-8')
+    except UnicodeError as exc:
+        raise Failure('invalid_utf8') from exc
+    stale=current.id!=args['base_revision']
+    if stale:
+        require(args.get('rebase') is True,'revision_conflict',details={'revision':current.id})
+        require('base_generation' in args,'base_generation_required')
+        require(args['base_generation']<resource.generation,'base_generation_conflict')
+        base=await tx.revision(ResourceRef(id=resource.id,revision=args['base_revision']))
+        # Never rebase across an unrelated historical branch.
+        ancestor=current
+        seen=set()
+        while ancestor.id!=base.id:
+            require(ancestor.id not in seen and len(ancestor.parents)==1,'revision_conflict')
+            seen.add(ancestor.id)
+            ancestor=await tx.revision(ResourceRef(id=resource.id,revision=ancestor.parents[0]))
+        require(base.content.media_type==media and base.content.size<=PATCH_LIMIT,'text_patch_required')
+        try:
+            base_source=(await app.contents.read_bytes(base.content,limit=PATCH_LIMIT)).decode('utf-8')
+        except UnicodeError as exc:
+            raise Failure('invalid_utf8') from exc
+        # A unique anchor must have selected exactly one block in the base.
+        apply_text_patch(base_source,*pieces)
+    else:
+        require('base_generation' not in args or args['base_generation']==resource.generation,
+                'base_generation_conflict')
+    patched=apply_text_patch(source,*pieces)
+    return resource,current,patched,media
+
+
 def install(app):
     op,finish=registration(app,'content',('identity',))
     post_fields={'parent':IDENTIFIER,'name':STRING,'body':STRING,'template':{'anyOf':[STRING,obj({'id':IDENTIFIER,'version':INTEGER},('id',))]},
@@ -556,44 +607,42 @@ def install(app):
             signature=a.get('content_signature'),revision_id=a.get('revision_id'))
         return output_for(updated,rolled_back_from=historical.id)
 
-    post_patch_schema=obj({'id':IDENTIFIER,'base_revision':IDENTIFIER,
+    patch_fields={'id':IDENTIFIER,'base_revision':IDENTIFIER,
         'exact':{'type':'string','minLength':1,'maxLength':PATCH_LIMIT},
         'replacement':{'type':'string','maxLength':PATCH_LIMIT},
         'before':{'type':'string','maxLength':PATCH_CONTEXT_LIMIT},
-        'after':{'type':'string','maxLength':PATCH_CONTEXT_LIMIT}},
-        ('id','base_revision','exact','replacement'))
+        'after':{'type':'string','maxLength':PATCH_CONTEXT_LIMIT}}
+    post_patch_schema=obj(patch_fields,('id','base_revision','exact','replacement'))
+    rebase_patch_fields={**patch_fields,'base_generation':INTEGER,'rebase':BOOLEAN}
+    rebase_patch_schema=obj(rebase_patch_fields,('id','base_revision','base_generation','exact','replacement'))
     @op('content.post_patch',post_patch_schema,requirements=requirement('id','write'))
     @op('content.text_patch',post_patch_schema,requirements=requirement('id','write'))
+    @op('content.text_patch',rebase_patch_schema,requirements=requirement('id','write'),version=2)
     async def text_patch(ctx,request,tx):
-        a=request.arguments
-        resource=await tx.resource(await resolve(tx,a['id']))
-        if request.operation=='content.post_patch':
-            require(resource.type=='post','not_editable')
-        require(resource.type in {'post','file'} and resource.state=='active','not_editable')
-        chain=(*await tx.ancestors(resource.id),resource)
-        require(not any(item.id=='t_last_will' for item in chain),'legacy_directive_only')
-        require(resource.id!='r_agents' and all(item.id!='r_rules' for item in chain),
-                'system_managed_resource')
-        await require_unmanaged_personal(tx,resource)
-        await assert_generation(request,resource)
-        require(resource.revision==a['base_revision'],'revision_conflict',
-                details={'revision':resource.revision})
-        require((await topic_policy(tx,resource)).get('editable',True),'content_frozen')
-        old=await tx.revision(ResourceRef(id=resource.id,revision=resource.revision))
-        media=old.content.media_type
-        require(media in {'text/plain','text/markdown'},'text_patch_required')
-        require(old.content.size<=PATCH_LIMIT,'patch_too_large')
-        pieces=(a['exact'],a['replacement'],a.get('before',''),a.get('after',''))
-        require(sum(len(piece.encode('utf-8')) for piece in pieces)<=PATCH_LIMIT,
-                'patch_too_large')
-        try:
-            source=(await app.contents.read_bytes(old.content,limit=PATCH_LIMIT)).decode('utf-8')
-        except UnicodeError as exc:
-            raise Failure('invalid_utf8') from exc
-        patched=apply_text_patch(source,a['exact'],a['replacement'],a.get('before',''),a.get('after',''))
+        resource,old,patched,media=await prepare_text_patch(app,ctx,request,tx,request.arguments,
+            post_only=request.operation=='content.post_patch')
         updated=await revise_resource(app,ctx,request,tx,resource,patched,media,
             relations=old.relations,author=old.author)
         return output_for(updated)
+
+    @op('content.text_patch_batch',obj({'patches':{'type':'array','minItems':1,'maxItems':16,
+        'items':rebase_patch_schema}},
+        ('patches',)))
+    async def text_patch_batch(ctx,request,tx):
+        patches=request.arguments['patches']
+        resolved=[await resolve(tx,item['id']) for item in patches]
+        require(len(set(resolved))==len(resolved),'duplicate_patch_target')
+        # Every target is checked against its current authorization and packet
+        # generation before the first Revision or content ref is created.
+        prepared=[]
+        for item,rid in zip(patches,resolved):
+            prepared.append(await prepare_text_patch(app,ctx,request,tx,{**item,'id':rid}))
+        updated=[]
+        for resource,old,body,media in prepared:
+            updated.append(await revise_resource(app,ctx,request,tx,resource,body,media,
+                relations=old.relations,author=old.author))
+        return HandlerOutput(resources=tuple(ResourceRef(id=r.id,revision=r.revision) for r in updated),
+            data={'generations':{r.id:r.generation for r in updated}})
 
     async def lifecycle(ctx,request,tx):
         resource=await tx.resource(await resolve(tx,request.arguments['id']))

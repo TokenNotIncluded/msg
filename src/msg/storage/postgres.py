@@ -113,6 +113,15 @@ CREATE TABLE IF NOT EXISTS share_grants (
 CREATE UNIQUE INDEX IF NOT EXISTS share_grants_active ON share_grants(resource_id,grantee)
  WHERE revoked_at IS NULL;
 CREATE INDEX IF NOT EXISTS share_grants_grantee ON share_grants(grantee,resource_id);
+CREATE TABLE IF NOT EXISTS share_grants_v2 (
+ id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+ grantor TEXT NOT NULL, grantee TEXT NOT NULL, grantee_kind TEXT NOT NULL
+ CHECK(grantee_kind IN ('user','group')), parent_id TEXT REFERENCES share_grants_v2(id),
+ operations TEXT NOT NULL, constraints TEXT NOT NULL, allow_reshare INTEGER NOT NULL
+ CHECK(allow_reshare IN (0,1)), created_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+ revoked_at TEXT);
+CREATE INDEX IF NOT EXISTS share_grants_v2_resource ON share_grants_v2(resource_id,grantee,grantee_kind);
+CREATE INDEX IF NOT EXISTS share_grants_v2_parent ON share_grants_v2(parent_id);
 CREATE TABLE IF NOT EXISTS share_links (
  id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
  grantor TEXT NOT NULL, credential_id TEXT NOT NULL,
