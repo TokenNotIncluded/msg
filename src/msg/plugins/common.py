@@ -64,6 +64,9 @@ async def create_resource(app,ctx,request,tx, *, parent,type,name=None,body=None
     require(parent.state=='active','ancestor_inactive')
     require(app.registry.resource_type(parent.type,parent.type_version).container,'not_a_container')
     app.registry.resource_type(type,1)
+    if parent.id=='t_last_will':
+        require(request.operation=='identity.legacy_put' and type=='legacy_directive',
+                'legacy_directive_only')
     if type=='post':
         name=(name or new_id('p'))
         if not name.endswith('.md'):

@@ -35,15 +35,18 @@ async def sealed_read_query(app,ctx,request,tx,transfer):
     except Failure as exc:
         raise Failure('invalid_query_ref') from exc
     require(type(descriptor) is dict and set(descriptor)=={'version','kind','arguments'} and
-            descriptor['version']==1 and descriptor['kind']=='read' and
+            descriptor['version']==1 and descriptor['kind'] in {'read','search'} and
             type(descriptor['arguments']) is dict,'invalid_query_ref')
     args=descriptor['arguments']
-    require(args.get('parent') is not None and 'cursor' not in args,'invalid_query_ref')
+    kind=descriptor['kind']
+    require(args.get('parent' if kind=='read' else 'scope') is not None and
+            'cursor' not in args,'invalid_query_ref')
+    operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
     try:
-        app.registry.validate(app.registry.operation('discovery.read_query').input_schema,args)
+        app.registry.validate(app.registry.operation(operation).input_schema,args)
     except Failure as exc:
         raise Failure('invalid_query_ref') from exc
-    return ref,revision,args
+    return ref,revision,kind,args
 
 
 def query_ref_principal(principal):
@@ -152,7 +155,7 @@ def install(app):
     @op('transfer.query_seal',obj({'transfer_id':IDENTIFIER},('transfer_id',)))
     async def query_seal(ctx,request,tx):
         transfer=await tx.transfer(request.arguments['transfer_id'])
-        ref,revision,_=await sealed_read_query(app,ctx,request,tx,transfer)
+        ref,revision,kind,_=await sealed_read_query(app,ctx,request,tx,transfer)
         expiry=min(transfer.expires_at,ctx.now+timedelta(minutes=15))
         source=await tx.resource(ref.id)
         marker_key='query_ref_source:'+ref.id
@@ -165,7 +168,7 @@ def install(app):
             'retain_until':wire(retention)})
         token=app.cursors.encode('query-ref',
             {'service':app.settings.service_url,'transfer_id':transfer.id,
-             'output':wire(ref),'digest':revision.content.digest},
+             'output':wire(ref),'digest':revision.content.digest,'query_kind':kind},
             {'principal':query_ref_principal(ctx.principal),'expires_at':wire(expiry)})
         return HandlerOutput(data={'query_ref':token,'expires_at':wire(expiry),
                                    'next':'/_r/q/'+token})
@@ -181,13 +184,16 @@ def install(app):
                 'query_ref_principal_mismatch')
         require(ctx.now<parse_time(position['expires_at']),'query_ref_expired')
         transfer=await tx.transfer(query['transfer_id'])
-        ref,revision,args=await sealed_read_query(app,ctx,request,tx,transfer)
+        ref,revision,kind,args=await sealed_read_query(app,ctx,request,tx,transfer)
         require(query.get('output')==wire(ref) and query.get('digest')==revision.content.digest,
                 'query_ref_digest_mismatch')
+        require(query.get('query_kind')==kind,'query_ref_digest_mismatch')
+        operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
         principal=query_ref_principal(ctx.principal)
         normalized=dict(args)
-        if normalized.get('parent'):
-            normalized['parent']=await resolve(tx,normalized['parent'])
+        scope_field='parent' if kind=='read' else 'scope'
+        if normalized.get(scope_field):
+            normalized[scope_field]=await resolve(tx,normalized[scope_field])
         if normalized.get('tag'):
             normalized['tag']=normalize_tag(normalized['tag'])
         nested_args=args
@@ -205,9 +211,9 @@ def install(app):
                            'snapshot':page['snapshot']}
         # Reuse the installed read handler and its current per-object Authorizer.
         # Query bytes can select only this registered read operation.
-        nested=SimpleNamespace(operation='discovery.read_query',contract_version=1,
+        nested=SimpleNamespace(operation=operation,contract_version=1,
                                arguments=nested_args,internal_page_state=internal_page)
-        output=await app.registry.operation('discovery.read_query').handler(ctx,nested,tx)
+        output=await app.registry.operation(operation).handler(ctx,nested,tx)
         data=dict(output.data)
         if data.get('cursor'):
             # This oversized cursor was generated in this call by the trusted
@@ -216,7 +222,7 @@ def install(app):
             generated=loads(unb64(encoded,limit=131072))
             require(generated.get('kind')=='read-page','invalid_cursor')
             page_query,page=generated['query'],generated['position']
-            require(page_query=={'operation':'discovery.read_query','arguments':normalized},
+            require(page_query=={'operation':operation,'arguments':normalized},
                     'cursor_query_mismatch')
             expiry=min(parse_time(position['expires_at']),parse_time(page['expires_at']))
             short=app.cursors.encode('query-ref-page',{'query_ref_digest':digest(token)},

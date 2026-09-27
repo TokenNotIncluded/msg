@@ -311,6 +311,8 @@ def install(app):
         require(r.type in {'user','organization'},'invalid_recipient')
         ref=decode(ResourceRef,request.arguments['resource'])
         await check_access(app,ctx,request,tx,ref.id,'read')
+        require((await tx.resource(ref.id)).type!='legacy_directive',
+                'legacy_directive_not_shareable')
         require(await direct_ancestor(tx,ref.id) is None,'dm_reference_private')
         await app.authorizer._ceiling(ctx.principal,operation_id(request),ref.id,tx)
         revision=await tx.revision(ref)

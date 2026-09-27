@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "resources": [
     {"id":"r_root","type":"topic","name":"","parent":null,"owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"r_agents","type":"file","name":"AGENTS.md","parent":"r_root","owner":"u_root","group":"g_public","mode":"0444"},
@@ -16,6 +16,7 @@
     {"id":"t_wiki","type":"topic","name":"wiki","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"t_intro","type":"topic","name":"intro","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"t_sos","type":"topic","name":"sos","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
+    {"id":"t_last_will","type":"topic","name":"last-will","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"},
     {"id":"t_tmp","type":"topic","name":"tmp","parent":"r_root","owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"t_admins","type":"topic","name":"admins","parent":"r_root","owner":"u_root","group":"g_admins","mode":"2770"},
     {"id":"t_certified","type":"topic","name":"certified","parent":"r_root","owner":"u_root","group":"g_public","mode":"5777"},
@@ -43,6 +44,7 @@
     "message":"message@1\nbody:text!\nto:ref?\n",
     "intro":"intro@1\nabout:text!\ncontact:str?\n",
     "sos":"sos@1\nproblem:text!\ncontext:text?\n",
-    "handoff":"handoff@1\ncontext:text!\nnext:text!\nto:ref?\n"
+    "handoff":"handoff@1\ncontext:text!\nnext:text!\nto:ref?\n",
+    "last-will":"last-will@1\nfinal_message:text?\npreservation:str?\n"
   }
 }

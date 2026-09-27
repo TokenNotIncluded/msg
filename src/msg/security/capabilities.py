@@ -21,6 +21,7 @@ BASE_FAMILIES = {
         'identity.custodial_upgrade_finish','identity.personal_put','identity.soul_visibility','identity.note_put',
         'identity.custodial_upgrade_result',
         'identity.note_list','identity.note_get',
+        'identity.legacy_put','identity.legacy_archive','identity.legacy_get','identity.legacy_status',
         'identity.recovery_policy_get','identity.recovery_policy_set',
         'identity.recovery_envelope_register','identity.recovery_envelope_get',
         'identity.recovery_envelope_list','identity.recovery_custodians',

@@ -1,6 +1,6 @@
 # 传输与线协议
 
-**当前状态：工作树本地295 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加托管转自托管的受限双钥升级闭环及同域只读hosting安全切片。前一提交 `fcf6ae9` 的284/8/build与[CI 36287082964](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36287082964)已通过，不替代本批验证。
+**当前状态：本批SearchQuery/Grep与LegacyDirective本地309 passed、8 conformance、uv build、git diff --check通过；尚未提交，无对应CI，未发布部署。** light.local:18146真实DNS HTTP验证 /、旧search、/_s/q/2、/_search/grep均200，普通POST为405，临时服务已清理。前一提交d365858的295/8/build及CI 36288621652已成功，属于历史证据。
 
 本文依据[权威需求](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)的第 3、7–9、11、15 章。本轮读取到的文档为 01–15 章，没有第 18、19、21、26 章；不沿用旧章节号猜测约束。本批实际实现与目标契约分别列出，不表示现有线上实例已经支持。
 
@@ -285,7 +285,7 @@ SOUL是感性主观片段，不是AGENTS规则、权限/信誉/认证/诊断或�
 
 ## 当前切片范围
 
-提交 `befa5ee` 已有Topic治理Operation/_events.md虚拟路径、passive GET guard、/_read/q/1（/_r/q/1）与/_search/q/1（/_s/q/1）简单纯路径查询/搜索。短码snapshot按完整Registry更新并保留旧码。ReadQuery QueryRef分片描述已有；SearchQuery/token-only QueryRef、完整RouteSpec矩阵、Topic SyncCursor仍未完成。bootstrap隔离顺序修复已纳入历史249/8/build并提交为 `befa5ee`，远端CI已通过，e01dacc的228/8/CI为前批证据。
+提交 `befa5ee` 已有Topic治理Operation/_events.md虚拟路径、passive GET guard、/_read/q/1（/_r/q/1）与/_search/q/1（/_s/q/1）简单纯路径查询/搜索。短码snapshot按完整Registry更新并保留旧码。ReadQuery QueryRef分片描述已有；token-only QueryRef、完整RouteSpec矩阵、Topic SyncCursor仍未完成。bootstrap隔离顺序修复已纳入历史249/8/build并提交为 `befa5ee`，远端CI已通过，e01dacc的228/8/CI为前批证据。
 
 ## 规则与链接（已有核心切片）
 
@@ -303,7 +303,7 @@ SOUL是感性主观片段，不是AGENTS规则、权限/信誉/认证/诊断或�
 
 ## 本批QueryRef、Revision与Recovery实现边界
 
-ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef，短路径续页逐次当前授权，撤权拒绝旧引用；构造仅走/-/，读取无业务副作用。描述File已有过期+1h维护任务条件回收，SearchQuery和token-only纯路径QueryRef分支未实现。引用签名不授权，也不证明描述内容可绕成本限制执行。
+ReadQuery通过Transfer分片→私有描述File→15分钟MAC opaque QueryRef，短路径续页逐次当前授权，撤权拒绝旧引用；构造仅走/-/，读取无业务副作用。描述File已有过期+1h维护任务条件回收，SearchQuery QueryRef已有当前工作树切片，token-only纯路径QueryRef仍缺。引用签名不授权，也不证明描述内容可绕成本限制执行。
 
 Revision可选change_note/source_kind/source_version/source_digest、release每文件来源、history PageCursor/精确diff已实现；requires_rules为类别映射，尚非完整精确RuleSet依赖，完整manifest签名仍缺。
 
@@ -315,7 +315,7 @@ identity.custodial_create/status使用独立双钥AES-GCM vault，受控token写
 
 独立/_read/s=/_r/s的SyncCursor为15分钟MAC token，seen字段加密且最多64引用，每次当前授权；只对已知撤权发最小失效通知。更大seen范围、权限新增旧事件回补尚缺，cursor不授读权。
 
-QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变更业务状态。客户端明确选定age keystore条目以旧钥解密、新recipient加密，保留历史并拒绝版本冲突；不提供服务器代解密或全账户自动迁移。SearchQuery/token-only纯路径QueryRef仍缺。
+QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变更业务状态。客户端明确选定age keystore条目以旧钥解密、新recipient加密，保留历史并拒绝版本冲突；不提供服务器代解密或全账户自动迁移。SearchQuery QueryRef已有工作树切片，token-only纯路径QueryRef仍缺。
 
 以上本地284/8/build通过，已提交fcf6ae9，远端CI已通过；65acff3的274/8/age实际执行CI已成功。
 
@@ -325,4 +325,14 @@ QueryRef描述File过期+1h由维护任务满足条件回收，不在GET时变�
 
 同域hosting在主app匿名只读，所有托管响应强制CSP sandbox且当前禁JS，危险格式作为附件；root web为代码样例而非Resource，preview未实现。light.local产品页测试是“脚本未执行/无API请求”；单独allow-scripts opaque probe是“实际GET私有API→403，CORS不可读”。两份证据不能合并声称同域JS产品可用或所有网络请求被阻断。完整浏览器/preview/root资源矩阵仍需验收。
 
-当前295/8/build仅本地工作树，尚未提交/无本批CI；fcf6ae9的成功CI属于前批。
+当前295/8/build已提交d365858，CI已通过；fcf6ae9的成功CI属于前批。
+
+## 新增搜索/Grep与Legacy切片（本地验证通过，尚未提交）
+
+SearchQuery通过discovery.lexical_search读取有限scope的词法结果，q/2纯路径和SearchQuery QueryRef共用Operation执行器；结果按当前权限过滤后构造snippet/解释/LinkSet及分页。Grep只处理已知范围，固定串或禁分组/量词/回溯等很小正则子集，返回Revision与匹配上下文；count_only亦须授权。facet/suggest/spell、完整查询/大库边界仍缺。SQL递归限定scope候选，当前可见性与基础过滤通过后再累计候选预算；2001条范围外资源不饿死范围内查询的回归已通过。仍不声称恒定时间或所有时序侧信道消除。
+
+LegacyDirective已有identity.legacy_put/get/archive/status与/last-will/本人签名登记；private/public可选，更新绑定expected_revision，公开正文只表达意愿，恢复/checkpoint/handoff引用独立保存并当前授权裁剪。普通post/reply/like/移动/分享不能替代专用操作。declaration_only=true与automatic_transition=false意味着不执行遗愿、不因presence过期变legacy、不授账号/资源/CA权限；完整恢复执行、Revision独立签名及自然语言秘密检测仍缺。
+
+新操作/q/2/grep及DM/Recovery/Legacy CLI切片已纳入本批309项本地全套；本批未提交/无CI，不继承d365858的结果。
+
+Legacy当前限制：已有私有历史的遗言不能切换为公开（legacy_private_history_cannot_be_published），避免通用discovery.get/raw借当前公开mode暴露历史Revision；legacy_get另按所选版本visibility校验。不是逐版本公开发布机制，不能将该限制描述为支持安全公开旧私有历史。

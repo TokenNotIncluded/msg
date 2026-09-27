@@ -2,14 +2,14 @@
 
 权威来源为 ChatGPT 文件夹唯一[项目设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，已读取 01–15 章，修订 `2026-09-27T00:35:34.164Z`。
 
-**当前状态：工作树本地295 passed、8 conformance、uv build成功，未提交、无本批CI，未发布部署。** 本批增加托管转自托管的受限双钥升级闭环及同域只读hosting安全切片。前一提交 `fcf6ae9` 的284/8/build与[CI 36287082964](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36287082964)已通过，不替代本批验证。
+**当前状态：本批SearchQuery/Grep与LegacyDirective本地309 passed、8 conformance、uv build、git diff --check通过；尚未提交，无对应CI，未发布部署。** light.local:18146真实DNS HTTP验证 /、旧search、/_s/q/2、/_search/grep均200，普通POST为405，临时服务已清理。前一提交d365858的295/8/build及CI 36288621652已成功，属于历史证据。
 
 历史证据单独保留：`e01dacc` 本地 228/8/build 与[CI 36281301900](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36281301900)通过；`f085e7f` 本地 206/8/build 与 CI 通过。220 是双钥加入前的中间结果，不是当前基线，不与任何测试数量累加。详细命令见 [VERIFICATION](VERIFICATION.md)。
 
 | 范围 | 已有源码切片 | 主要缺口 |
 | --- | --- | --- |
 | Topic 治理/事件 | TopicMembership/TopicBan、有限治理操作、最后 admin 保护、结构化 Event、虚拟 `_events.md` HTTP 投影 | 完整 SyncCursor、全部治理/权限/事件矩阵、默认/doctor/selftest feature 映射 |
-| 路由/纯路径/字典 | `/-/` 写边界、passive GET 拦截、简单 `/_read/q/1` / `/_search/q/1` 及短别名、145 操作短码快照且保旧码 | 全量 RouteSpec effect、全读取成功/失败零业务变更矩阵、QueryRef保留引用/全生命周期验收、SearchQuery/token-only QueryRef、所有只读query-string等价能力 |
+| 路由/纯路径/字典 | `/-/` 写边界、passive GET 拦截、简单 `/_read/q/1` / `/_search/q/1` 及短别名、157 操作短码快照且保旧码 | 全量 RouteSpec effect、全读取成功/失败零业务变更矩阵、QueryRef保留引用/全生命周期验收、token-only QueryRef、所有只读query-string等价能力 |
 | 读取 | ReadQuery/PageCursor collection、固定 Revision ReadCursor/Markdown 块分段、主体短长别名 | 全协议统一查询、嵌套 expand/成本限制、around/上下文扩展、Sync>64/权限新增回补、Bookmark、完整 CLI |
 | 身份/CA | self-custody 双钥 register/upgrade v2、独立 age/X25519 recipient、加密子钥轮换/历史读取；三级 CA、独立测试树、续签来源剩余窗口及部分负例 | 完整custodial双钥升级/销毁、完整旧主体迁移/rewrap、严格 token 一次交付、逐层撤销/来源等 CA 全矩阵、真实 OS/控制台验收 |
 | DM | 双主体唯一 pair、request/accept/reject/send/list/archive/block、独立 post/Revision、Inbox 通知及隐私守卫 | 完整 CLI/分页/附件与分享移动矩阵、群聊历史隔离、离线 SyncCursor、逐 feature 验收 |
@@ -43,7 +43,7 @@ LinkSet self/t/a/r/p/c/f/q/b/h/v/d、单关系目标与精确历史diff逐项授
 
 ## 本批新增查询、版本与恢复切片
 
-ReadQuery经现有Transfer分片封存为私有描述File，再生成15分钟MAC opaque QueryRef；使用短续页，每次当前认证授权，撤权使旧引用失效。QueryRef不是授权凭据；open/put/seal在/-/，读取不隐式创建Transfer或业务事实。描述File已有过期+1h维护任务条件回收；SearchQuery和token-only QueryRef尚未实现。
+ReadQuery经现有Transfer分片封存为私有描述File，再生成15分钟MAC opaque QueryRef；使用短续页，每次当前认证授权，撤权使旧引用失效。QueryRef不是授权凭据；open/put/seal在/-/，读取不隐式创建Transfer或业务事实。描述File已有过期+1h维护任务条件回收；SearchQuery QueryRef已有，token-only QueryRef仍缺。
 
 Revision已有可选change_note/source_kind/source_version/source_digest，release按文件记录来源，history采用PageCursor并保留精确diff导航；requires_rules按类别映射。可选字段不代表每种业务Revision均有完整来源；精确source/RuleSet对应、完整客户端manifest签名仍缺。
 
@@ -55,7 +55,7 @@ identity.custodial_create/status已实现两类独立私钥AES-GCM vault、serve
 
 /_read/s与/_r/s独立SyncCursor已有：MAC保护、seen加密、最多64引用、15分钟、每次当前授权；已知撤权只返最小通知，不泄漏此前不可见对象。>64引用扩展与权限新增后的旧事件回补未做，不声称完整增量同步。
 
-QueryRef私有描述File由维护任务在过期+1h后满足条件才回收；读取不执行清理，不把token过期当任意用户File可删依据。SearchQuery/token-only纯路径分支仍缺。客户端可显式选择age keystore条目old→new rewrap，保留历史、基线冲突拒绝；这不是全账号自动迁移/恢复。当前284/8/build已提交fcf6ae9，远端CI已通过，65acff3成功CI属于前批。
+QueryRef私有描述File由维护任务在过期+1h后满足条件才回收；读取不执行清理，不把token过期当任意用户File可删依据。SearchQuery已有当前工作树切片，token-only纯路径分支仍缺。客户端可显式选择age keystore条目old→new rewrap，保留历史、基线冲突拒绝；这不是全账号自动迁移/恢复。当前284/8/build已提交fcf6ae9，远端CI已通过，65acff3成功CI属于前批。
 
 ## 本批升级与同域托管的验收边界
 
@@ -64,3 +64,15 @@ QueryRef私有描述File由维护任务在过期+1h后满足条件才回收；�
 hosting已有主app同域匿名只读入口；所有托管响应强制CSP sandbox，本批不允许JS，危险格式按附件下载。/@root/web/index.html仅代码样例，不是真正Resource/Revision；preview缺，不能报完整hosting feature。
 
 真实light.local浏览器证据分开记录：产品页因本批禁JS而脚本未执行、API请求未发；另一受控sandbox allow-scripts的opaque探针确实发GET到私有API，服务端403，浏览器CORS不可读。前者证明执行限制，后者证明该探针请求的授权拒绝/读取隔离；不能互相替代，也不能证明全部浏览器旁路或支持同域JS。仍需preview/history/raw/304/Range/危险格式、身份携带、导航/窗口/服务worker和完整发布回滚矩阵。
+
+## 当前SearchQuery/Grep与Legacy工作树增量
+
+已添加discovery.lexical_search：显式scope、all/any词项、exact/exclusion、字段及类型/owner/author/tag/时间/附件过滤、有限深度、排序、PageCursor、snippet/explain/LinkSet；HTTP q/2和搜索QueryRef已有，CLI专用搜索入口尚缺。当前是有限词法扫描，不是语义检索；facet/suggest/spell/保存搜索watch及完整查询矩阵未完成。
+
+Grep已有已知scope、固定串/很小正则子集、glob排除、大小写、前后各最多3行、max_files/max_matches、count_only/files_with_matches；返回固定Revision/line_hint/范围，不将行号当编辑基线。当前每文件64KiB、累计1MiB及有限候选预算；SQL递归限定scope，可见性和基础过滤后计数，2001条范围外资源负例已通过。正文/片段/计数按授权过滤，但不声称恒定时间或所有时序侧信道已消除。
+
+identity.legacy_put/get/archive/status与/last-will/登记已添加，本人签名请求、private/public、expected_revision、版本关联私有引用、声明action allow/forbid；declaration_only=true、automatic_transition=false。普通post/reply/like/移动/分享旁路受保护。公开表示不公开恢复引用，owner读取私有refs仍查当前权限。当前只登记意愿，不执行遗愿，不赋予custodian账号/CA权限；完整客户端Revision manifest签名、恢复执行审计、遗言恢复/生命周期及秘密检测完备性仍缺。
+
+当前增量309/8/build/diff检查通过，未提交/无本批CI；d365858的295/8/CI是前批历史证据。
+
+Legacy当前限制：已有私有历史的遗言不能切换为公开（legacy_private_history_cannot_be_published），避免通用discovery.get/raw借当前公开mode暴露历史Revision；legacy_get另按所选版本visibility校验。不是逐版本公开发布机制，不能将该限制描述为支持安全公开旧私有历史。

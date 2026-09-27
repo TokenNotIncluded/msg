@@ -40,6 +40,16 @@ SUBJECT_OPERATION_ALIASES={'ach':'achievement.list','achievements':'achievement.
                            'in':'communication.inbox','inbox':'communication.inbox',
                            'out':'communication.outbox','outbox':'communication.outbox',
                            'dm':'communication.dm_list'}
+SEARCH_V2_SEGMENTS={'scope':'s','terms':'t','mode':'m','field':'f','order':'o',
+                    'limit':'n','snippet':'x','explain':'e','exact':'h',
+                    'not_terms':'z','type':'y','owner':'w','tag':'g','state':'a',
+                    'cursor':'j','author':'au','created_after':'ca',
+                    'created_before':'cb','updated_after':'ua','updated_before':'ub',
+                    'has_attachment':'ha','depth':'d','recursive':'re','fields':'fi'}
+GREP_V1_SEGMENTS={'scope':'s','pattern':'t','regex':'r','glob':'g',
+                  'exclude_glob':'x','case_sensitive':'i','before':'b','after':'a',
+                  'max_matches':'m','max_files':'f','files_with_matches':'w',
+                  'count_only':'c'}
 TRANSFER_OPERATIONS=frozenset({'transfer.open','transfer.part_put','transfer.part_get',
                                'transfer.status','transfer.seal','transfer.cancel'})
 
@@ -102,9 +112,9 @@ def passive_client_response():
                                       'X-Robots-Tag':'noindex, nofollow'})
 
 
-def decode_query_path(raw_path,prefix,segments):
+def decode_query_path(raw_path,prefix,segments,version=b'1',kind=b'q'):
     parts=raw_path.split(b'/')
-    require(len(parts)>=4 and parts[:4]==[b'',prefix,b'q',b'1'],'invalid_path')
+    require(len(parts)>=4 and parts[:4]==[b'',prefix,kind,version],'invalid_path')
     fields=parts[4:]
     proof=None
     if len(fields)>=2 and fields[-2]==b'p':
@@ -181,6 +191,56 @@ def decode_read_query_path(raw_path):
 def decode_search_query_path(raw_path):
     prefix=raw_path.split(b'/',3)[1]
     return decode_query_path(raw_path,prefix,SEARCH_QUERY_V1_SEGMENTS)
+
+
+def compile_lexical_search(query):
+    require(set(query)<={'scope','terms','exact','not_terms','mode','field','type',
+            'owner','author','tag','state','created_after','created_before',
+            'updated_after','updated_before','has_attachment','order','limit',
+            'cursor','snippet','explain','fields','depth','recursive'},
+            'unknown_query_parameter')
+    if 'cursor' in query:
+        require(set(query)=={'cursor'},'cursor_query_mismatch')
+        return {'cursor':query['cursor']}
+    require(bool(query.get('scope')),'search_scope_required')
+    args=dict(query)
+    for name in ('limit','depth'):
+        if name in args:
+            require(args[name].isdecimal() and
+                    (0<=int(args[name])<=5 if name=='depth' else 1<=int(args[name])<=100),
+                    'query_cost_exceeded')
+            args[name]=int(args[name])
+    for name in ('snippet','has_attachment','recursive'):
+        if name in args:
+            require(args[name] in {'0','1'},'invalid_search_flag')
+            args[name]=args[name]=='1'
+    if 'fields' in args:
+        args['fields']=args['fields'].split(',')
+    return args
+
+
+def decode_search_v2_path(raw_path):
+    prefix=raw_path.split(b'/',3)[1]
+    values,proof=decode_query_path(raw_path,prefix,SEARCH_V2_SEGMENTS,b'2')
+    modes={'a':'all','n':'any'}
+    fields={'a':'all','b':'body','n':'name','m':'metadata'}
+    order={'r':'relevance','u':'updated','c':'created','n':'name'}
+    if 'mode' in values:
+        require(values['mode'] in modes,'invalid_search_mode')
+        values['mode']=modes[values['mode']]
+    if 'field' in values:
+        require(values['field'] in fields,'invalid_search_field')
+        values['field']=fields[values['field']]
+    if 'order' in values:
+        require(values['order'] in order,'invalid_search_order')
+        values['order']=order[values['order']]
+    if 'explain' in values:
+        require(values['explain']=='c','invalid_search_explain')
+        values['explain']='compact'
+    if 'snippet' in values:
+        require(values['snippet'] in {'0','1','c'},'invalid_search_flag')
+        values['snippet']='1' if values['snippet']=='c' else values['snippet']
+    return values,proof
 
 
 def search_path_from_args(args):
@@ -551,7 +611,8 @@ def create_app(service):
                         else:
                             query,_=service.cursors.inspect_page(cursor,service.clock())
                             operation=query.get('operation')
-                            require(operation in {'discovery.read_query','discovery.links'},
+                            require(operation in {'discovery.read_query','discovery.links',
+                                                  'discovery.lexical_search'},
                                     'cursor_kind_mismatch')
                     except Failure as exc:
                         if exc.code=='invalid_base64':
@@ -590,13 +651,63 @@ def create_app(service):
                     return Response(status_code=304,headers=headers)
                 return Response(b'' if request.method=='HEAD' else payload,media_type='application/json',
                                 headers=headers)
+            grep_path=raw_path.startswith((b'/_search/g/1/',b'/_s/g/1/'))
+            if path in {'/_search/grep','/_s/grep'} or grep_path:
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                if grep_path:
+                    require(not request.url.query,'unknown_query_parameter')
+                    prefix=raw_path.split(b'/',3)[1]
+                    query,path_proof=decode_query_path(raw_path,prefix,GREP_V1_SEGMENTS,b'1',b'g')
+                else:
+                    pairs=request.query_params.multi_items()
+                    require(len(pairs)==len({key for key,_ in pairs}),
+                            'duplicate_query_parameter')
+                    query=dict(pairs)
+                    path_proof=None
+                require(set(query)<={'scope','pattern','regex','glob','exclude_glob','case_sensitive',
+                    'before','after','max_matches','max_files','files_with_matches','count_only'},
+                    'unknown_query_parameter')
+                require(bool(query.get('scope')) and bool(query.get('pattern')),
+                        'grep_scope_and_pattern_required')
+                args=dict(query)
+                for name in ('regex','case_sensitive','files_with_matches','count_only'):
+                    if name in args:
+                        require(args[name] in {'0','1'},'invalid_grep_flag')
+                        args[name]=args[name]=='1'
+                for name in ('before','after','max_matches','max_files'):
+                    if name in args:
+                        require(args[name].isdecimal(),'invalid_grep_limit')
+                        args[name]=int(args[name])
+                operation='discovery.grep'
+                header=request.headers.get('x-msg-request')
+                require(not (header and path_proof),'ambiguous_proof')
+                if path_proof is not None:
+                    packet=path_read_proof(path_proof,operation,args,service,limits.max_request_bytes)
+                elif header:
+                    packet=path_packet(header,'j',limits.max_request_bytes)
+                    require(packet.operation==operation and canonical(packet.arguments)==canonical(args),
+                            'representation_mismatch')
+                else:
+                    packet=request_for(operation,args,service.settings.service_url,source='manual')
+                result=await service.executor.execute(packet,entry='network')
+                if result.error:
+                    return json_response(result_wire(result),error_status(result.error.code))
+                value=wire(result.data)
+                etag='"'+digest(value)[7:]+'"'
+                headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'no-store'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
+                return Response(b'' if request.method=='HEAD' else canonical(value),
+                                media_type='application/json',headers=headers)
             search_path=raw_path.startswith((b'/_search/q/1/',b'/_s/q/1/'))
-            if path in {'/_search','/_s'} or search_path or raw_path.startswith((
+            lexical_path=raw_path.startswith((b'/_search/q/2/',b'/_s/q/2/'))
+            if path in {'/_search','/_s'} or search_path or lexical_path or raw_path.startswith((
                     b'/_index/by-tag/',b'/_i/by-tag/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
-                if search_path:
+                if search_path or lexical_path:
                     require(not request.url.query,'unknown_query_parameter')
-                    query,path_proof=decode_search_query_path(raw_path)
+                    query,path_proof=(decode_search_v2_path(raw_path) if lexical_path else
+                                      decode_search_query_path(raw_path))
                 else:
                     pairs=request.query_params.multi_items()
                     require(len(pairs)==len({key for key,_ in pairs}),
@@ -604,11 +715,18 @@ def create_app(service):
                     query=dict(pairs)
                     path_proof=None
                 is_index=raw_path.startswith((b'/_index/by-tag/',b'/_i/by-tag/'))
-                require(set(query)<=({'limit','cursor'} if is_index else
-                                     {'tag','query','limit','cursor'}),'unknown_query_parameter')
-                limit=query.get('limit','50')
-                require(limit.isdecimal() and 1<=int(limit)<=200,'invalid_limit')
-                args={'limit':int(limit)}
+                lexical=lexical_path or (not is_index and
+                    bool(set(query)&{'terms','exact','not_terms','scope','mode','field','order',
+                                      'snippet','explain','has_attachment'}))
+                if lexical:
+                    args=compile_lexical_search(query)
+                    operation='discovery.lexical_search'
+                else:
+                    require(set(query)<=({'limit','cursor'} if is_index else
+                                         {'tag','query','limit','cursor'}),'unknown_query_parameter')
+                    limit=query.get('limit','50')
+                    require(limit.isdecimal() and 1<=int(limit)<=200,'invalid_limit')
+                    args={'limit':int(limit)}
                 if is_index:
                     segments=raw_path.split(b'/')
                     require(len(segments)==4 and segments[2]==b'by-tag','not_found')
@@ -621,18 +739,16 @@ def create_app(service):
                         raise Failure('invalid_tag') from exc
                     args['tag']=normalize_tag(tag)
                     operation='discovery.list'
-                else:
+                elif not lexical:
                     if 'tag' in query:
                         args['tag']=normalize_tag(query['tag'])
                     args['query']=query.get('query','')
                     require(args['tag'] if 'tag' in args else bool(args['query']),
                             'search_query_required')
                     operation='discovery.search'
-                if 'cursor' in query:
+                if 'cursor' in query and not lexical:
                     args['cursor']=query['cursor']
                 require(service.registry.operation(operation).effect=='read','effect_mismatch')
-                if request.method=='HEAD':
-                    return Response(status_code=200,headers=BASE_HEADERS)
                 header=request.headers.get('x-msg-request')
                 require(not (header and path_proof),'ambiguous_proof')
                 if path_proof is not None:
@@ -640,7 +756,7 @@ def create_app(service):
                 elif header:
                     packet=path_packet(header,'j',limits.max_request_bytes)
                     require(packet.operation==operation,'operation_mismatch')
-                    require(dict(packet.arguments)==args,'representation_mismatch')
+                    require(canonical(packet.arguments)==canonical(args),'representation_mismatch')
                 else:
                     packet=request_for(operation,args,service.settings.service_url,
                                        source='manual')
@@ -648,7 +764,7 @@ def create_app(service):
                 if result.error:
                     return json_response(result_wire(result),error_status(result.error.code))
                 value=wire(result.data)
-                if value.get('cursor'):
+                if value.get('cursor') and not lexical:
                     params={'limit':args['limit'],'cursor':value['cursor']}
                     if is_index:
                         value['next']='/_i/by-tag/'+quote(args['tag'],safe='')+'?'+urlencode(params)
@@ -658,12 +774,14 @@ def create_app(service):
                         value['next']=search_path_from_args(params)
                 require(len(canonical(value))<=limits.max_response_bytes,'response_too_large')
                 if is_index:
-                    return json_response(value)
+                    return Response(b'' if request.method=='HEAD' else canonical(value),
+                                    media_type='application/json',headers=BASE_HEADERS)
                 etag='"'+digest(value)[7:]+'"'
                 headers={'ETag':etag,'Cache-Control':'no-store'}
                 if request.headers.get('if-none-match')==etag:
                     return Response(status_code=304,headers={**BASE_HEADERS,**headers})
-                return json_response(value,headers=headers)
+                return Response(b'' if request.method=='HEAD' else canonical(value),
+                                media_type='application/json',headers={**BASE_HEADERS,**headers})
             if path=='/-/transfer':
                 require(not request.url.query,'unknown_query_parameter')
                 require(request.method in {'GET','HEAD','POST'},'method_not_allowed')
@@ -725,6 +843,24 @@ def create_app(service):
                     return Response(status_code=304,headers=headers)
                 payload=canonical(document)
                 require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                return Response(b'' if request.method=='HEAD' else payload,
+                                media_type='application/json',headers=headers)
+            if path=='/-/d/search.query':
+                require(request.method in {'GET','HEAD'},'method_not_allowed')
+                require(service.registry.operation('discovery.lexical_search').effect=='read',
+                        'effect_mismatch')
+                document={'version':2,'operation':'discovery.lexical_search',
+                    'segments':SEARCH_V2_SEGMENTS,
+                    'mode':{'all':'a','any':'n'},
+                    'field':{'all':'a','body':'b','name':'n','metadata':'m'},
+                    'order':{'relevance':'r','updated':'u','created':'c','name':'n'},
+                    'template':'/_search/q/2/s/{percent-encoded-scope}/t/{terms}/m/{mode}/f/{field}/n/{limit}',
+                    'proof_suffix':'/p/{short-lived-signed-OperationRequest}'}
+                etag='"'+digest(document)[7:]+'"'
+                headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'private, no-cache'}
+                if request.headers.get('if-none-match')==etag:
+                    return Response(status_code=304,headers=headers)
+                payload=canonical(document)
                 return Response(b'' if request.method=='HEAD' else payload,
                                 media_type='application/json',headers=headers)
             if path in {'/-/d','/-/schema'} or path.startswith('/-/d/'):

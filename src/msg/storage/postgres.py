@@ -160,6 +160,15 @@ CREATE TABLE IF NOT EXISTS custodial_upgrades (
  expires_at TEXT NOT NULL, challenge TEXT NOT NULL,
  ephemeral_nonce TEXT, ephemeral_ciphertext TEXT, body TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS custodial_upgrades_subject ON custodial_upgrades(subject,status,expires_at);
+CREATE TABLE IF NOT EXISTS legacy_directives (
+ subject TEXT PRIMARY KEY, resource_id TEXT NOT NULL UNIQUE REFERENCES resources(id),
+ created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS legacy_directive_versions (
+ revision_id TEXT PRIMARY KEY REFERENCES revisions(id), resource_id TEXT NOT NULL,
+ subject TEXT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS legacy_states (
+ subject TEXT PRIMARY KEY, state TEXT NOT NULL
+ CHECK(state IN ('active','unreachable','recovery_requested','legacy')));
 """
 
 

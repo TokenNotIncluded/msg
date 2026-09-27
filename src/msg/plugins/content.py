@@ -130,6 +130,7 @@ async def source_content(app,ctx,request,tx,value):
 
 async def removable(app,ctx,request,tx,resource):
     chain=(*await tx.ancestors(resource.id),resource)
+    require(not any(item.id=='t_last_will' for item in chain),'legacy_directive_only')
     require(not any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes'}
                     for parent,child in zip(chain,chain[1:])),
             'personal_managed_resource')

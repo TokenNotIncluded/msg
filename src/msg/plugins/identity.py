@@ -506,6 +506,195 @@ def install(app):
         return HandlerOutput(data={'id':row[0],'name':request.arguments['name'],
                                    'revision':revision.id,'content':body})
 
+    legacy_action={'enum':['publish_final_message','archive_public_profile',
+                           'handoff_information','preserve_account','impersonate',
+                           'publish_secret','modify_ca']}
+    legacy_refs={'type':'array','items':REF,'maxItems':16}
+    legacy_ids={'type':'array','items':IDENTIFIER,'maxItems':16,'uniqueItems':True}
+
+    @op('identity.legacy_put',obj({'visibility':{'enum':['private','public']},
+        'final_message':{'type':'string','maxLength':8192},
+        'preservation':{'enum':['keep','archive','unspecified']},
+        'allowed_actions':{'type':'array','items':legacy_action,'maxItems':8,'uniqueItems':True},
+        'forbidden_actions':{'type':'array','items':legacy_action,'maxItems':8,'uniqueItems':True},
+        'envelope_ids':legacy_ids,'custodian_refs':legacy_ids,
+        'checkpoint_refs':legacy_refs,'handoff_refs':legacy_refs,
+        'expected_revision':IDENTIFIER},('visibility',)),signature=True)
+    async def legacy_put(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        args=request.arguments
+        require(any(name in args for name in ('final_message','preservation','allowed_actions',
+            'forbidden_actions','envelope_ids','custodian_refs','checkpoint_refs','handoff_refs')),
+            'empty_legacy_directive')
+        message=args.get('final_message','')
+        validate_personal_body(message,limit=min(8192,app.settings.server.limits.max_request_bytes))
+        allowed=set(args.get('allowed_actions',()))
+        forbidden=set(args.get('forbidden_actions',()))
+        require(not allowed&forbidden,'legacy_action_conflict')
+        require(not allowed&{'impersonate','publish_secret','modify_ca'},
+                'legacy_action_forbidden')
+        envelope_ids=[]
+        for envelope_id in args.get('envelope_ids',()):
+            row=tx.one('SELECT owner,body FROM recovery_envelopes WHERE id=?',(envelope_id,))
+            require(row is not None and row[0]==subject.resource_id,'legacy_envelope_not_owned')
+            envelope=loads(row[1])
+            ciphertext=decode(ResourceRef,envelope['ciphertext_ref'])
+            await check_access(app,ctx,request,tx,ciphertext.id,'read')
+            await tx.revision(ciphertext)
+            envelope_ids.append(envelope_id)
+        custodian_refs=[]
+        platform={item.id for item in app.settings.recovery_custodians}
+        for custodian in args.get('custodian_refs',()):
+            if custodian not in platform:
+                require(custodian.startswith('u_'),'unknown_custodian_ref')
+                await tx.subject(custodian)
+            custodian_refs.append(custodian)
+        async def own_refs(key):
+            values=[]
+            for raw in args.get(key,()):
+                ref=decode(ResourceRef,raw)
+                resource=await tx.resource(ref.id)
+                require(resource.owner==subject.resource_id,'legacy_reference_not_owned')
+                await check_access(app,ctx,request,tx,ref.id,'read')
+                if ref.revision is not None:
+                    await tx.revision(ref)
+                values.append(wire(ref))
+            return values
+        checkpoint_refs=await own_refs('checkpoint_refs')
+        handoff_refs=await own_refs('handoff_refs')
+        public_body={'kind':'legacy_directive','owner_subject':subject.resource_id,
+                     'final_message':message,'preservation':args.get('preservation','unspecified'),
+                     'allowed_actions':sorted(allowed),'forbidden_actions':sorted(forbidden),
+                     'declaration_only':True}
+        previous=tx.one('SELECT resource_id FROM legacy_directives WHERE subject=?',
+                        (subject.resource_id,))
+        mode=0o444 if args['visibility']=='public' else 0o600
+        if previous is None:
+            require('expected_revision' not in args,'legacy_revision_not_found')
+            resource=await create_resource(app,ctx,request,tx,parent='t_last_will',
+                type='legacy_directive',name='will-'+subject.resource_id[-16:]+'.md',
+                body=canonical(public_body),media_type='application/json',mode=mode)
+            tx.execute('INSERT INTO legacy_directives VALUES (?,?,?)',
+                       (subject.resource_id,resource.id,wire(ctx.now)),write=True)
+            old_digest=None
+        else:
+            resource=await tx.resource(previous[0])
+            require(resource.owner==subject.resource_id and resource.state=='active',
+                    'legacy_directive_inactive')
+            require(not (resource.mode==0o600 and mode==0o444),
+                    'legacy_private_history_cannot_be_published')
+            require(args.get('expected_revision')==resource.revision,'revision_conflict')
+            await assert_generation(request,resource)
+            old_digest=digest(resource.revision)
+            resource=await revise_resource(app,ctx,request,tx,resource,canonical(public_body),
+                                           'application/json')
+            if resource.mode!=mode:
+                resource=replace(resource,mode=mode,generation=resource.generation+1,
+                    modified_at=ctx.now,modified_by=ctx.principal.actor)
+                await tx.replace(resource,resource.generation-1)
+        version={'subject_id':subject.resource_id,'resource_id':resource.id,
+                 'revision_id':resource.revision,'envelope_ids':envelope_ids,
+                 'custodian_refs':custodian_refs,'checkpoint_refs':checkpoint_refs,
+                 'handoff_refs':handoff_refs,'visibility':args['visibility'],
+                 'created_at':wire(ctx.now),'signature_source':'self-custody',
+                 'proof_purpose':'request','request_signature':wire(request.proof.signature),
+                 'signed_envelope':b64(signing_bytes(request))}
+        tx.execute('INSERT INTO legacy_directive_versions VALUES (?,?,?,?)',
+                   (resource.revision,resource.id,subject.resource_id,canonical(version).decode()),write=True)
+        event=Event(id=new_id('audit'),type='identity.legacy.record',time=ctx.now,
+            request_id=request.request_id,actor=ctx.principal.actor,subject=subject.resource_id,
+            resources=(ResourceRef(id=resource.id,revision=resource.revision),),
+            data={'declaration_only':True,'revision_id':resource.revision,
+                  'visibility':args['visibility'],'request_digest':request.payload_digest})
+        await tx.append_audit(AuditEvent(event=event,
+            authority=(ResourceRef(id=subject.resource_id),),before_digest=old_digest,
+            after_digest=digest(resource.revision),previous_digest=None,
+            entry_digest='',result='recorded'))
+        return output_for(resource,declaration_only=True,signature_source='self-custody',
+                          proof_purpose='request')
+
+    @op('identity.legacy_archive',obj(),signature=True)
+    async def legacy_archive(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        row=tx.one('SELECT resource_id FROM legacy_directives WHERE subject=?',
+                   (subject.resource_id,))
+        require(row is not None,'legacy_directive_not_found')
+        resource=await tx.resource(row[0])
+        require(resource.state=='active','legacy_directive_inactive')
+        await assert_generation(request,resource)
+        updated=replace(resource,state='archived',mode=0o600,
+            generation=resource.generation+1,
+            modified_at=ctx.now,modified_by=ctx.principal.actor)
+        await tx.replace(updated,resource.generation)
+        event=Event(id=new_id('audit'),type='identity.legacy.archive',time=ctx.now,
+            request_id=request.request_id,actor=ctx.principal.actor,subject=subject.resource_id,
+            resources=(ResourceRef(id=resource.id,revision=resource.revision),),
+            data={'declaration_only':True,'revision_id':resource.revision})
+        await tx.append_audit(AuditEvent(event=event,
+            authority=(ResourceRef(id=subject.resource_id),),before_digest=digest(resource),
+            after_digest=digest(updated),previous_digest=None,entry_digest='',result='archived'))
+        return output_for(updated,state='archived',declaration_only=True)
+
+    @op('identity.legacy_get',obj({'subject_id':IDENTIFIER,'revision':IDENTIFIER},
+                                  ('subject_id',)),effect='read')
+    async def legacy_get(ctx,request,tx):
+        subject_id=await resolve(tx,request.arguments['subject_id'])
+        await tx.subject(subject_id)
+        row=tx.one('SELECT resource_id FROM legacy_directives WHERE subject=?',(subject_id,))
+        require(row is not None,'legacy_directive_not_found')
+        resource=await tx.resource(row[0])
+        require(resource.state=='active' or ctx.principal.subject==subject_id,
+                'legacy_directive_archived')
+        await check_access(app,ctx,request,tx,resource.id,'read')
+        revision=await tx.revision(ResourceRef(id=resource.id,
+                                              revision=request.arguments.get('revision')))
+        body=loads(await app.contents.read_bytes(revision.content))
+        metadata=tx.one('SELECT body FROM legacy_directive_versions WHERE revision_id=?',
+                        (revision.id,))
+        require(metadata is not None,'legacy_version_not_found')
+        details=loads(metadata[0])
+        require(details['visibility']=='public' or ctx.principal.subject==subject_id,
+                'legacy_directive_private')
+        output=dict(body,id=resource.id,revision=revision.id,
+                    state=resource.state,visibility=details['visibility'],
+                    envelope_ids=[],custodian_refs=[],checkpoint_refs=[],handoff_refs=[])
+        if ctx.principal.subject==subject_id:
+            for envelope_id in details['envelope_ids']:
+                envelope=tx.one('SELECT body FROM recovery_envelopes WHERE id=?',(envelope_id,))
+                if envelope is None:
+                    continue
+                ref=decode(ResourceRef,loads(envelope[0])['ciphertext_ref'])
+                try:
+                    await check_access(app,ctx,request,tx,ref.id,'read')
+                    await tx.revision(ref)
+                except Failure:
+                    continue
+                output['envelope_ids'].append(envelope_id)
+            for key in ('checkpoint_refs','handoff_refs'):
+                for raw in details[key]:
+                    ref=decode(ResourceRef,raw)
+                    try:
+                        await check_access(app,ctx,request,tx,ref.id,'read')
+                        if ref.revision is not None:
+                            await tx.revision(ref)
+                    except Failure:
+                        continue
+                    output[key].append(raw)
+            output['custodian_refs']=list(details['custodian_refs'])
+            output['signature_source']=details['signature_source']
+            output['proof_purpose']=details['proof_purpose']
+            output['request_signature']=details['request_signature']
+            output['signed_envelope']=details['signed_envelope']
+        return HandlerOutput(data=output)
+
+    @op('identity.legacy_status',obj(),effect='read')
+    async def legacy_status(ctx,request,tx):
+        subject=await controlled_owner(app,ctx,request,tx)
+        row=tx.one('SELECT state FROM legacy_states WHERE subject=?',(subject.resource_id,))
+        return HandlerOutput(data={'subject_id':subject.resource_id,
+                                   'state':row[0] if row else 'active',
+                                   'automatic_transition':False})
+
     @op('identity.identity_key_list',obj({'subject_id':IDENTIFIER},('subject_id',)),effect='read')
     async def identity_key_list(ctx,request,tx):
         subject=await resolve(tx,request.arguments['subject_id'])
@@ -984,7 +1173,7 @@ def install(app):
         cert=await issue_online(app,tx,target,credential.id,ctx,request)
         return HandlerOutput(resources=(ResourceRef(id=target),),data={'key_id':credential.id,'certificate_id':cert.resource_id})
 
-    all_types=('topic','post','template','file','attachment','tool','user','organization','certificate','csr','delegation','repo','website','keystore','skill')
+    all_types=('topic','post','template','file','attachment','tool','user','organization','certificate','csr','delegation','repo','website','keystore','skill','legacy_directive')
     types=[ResourceTypeSpec(name=name,version=1,container=name in {'topic','user','organization','repo','website'},
         content_schema=None,operations=frozenset(),relations=frozenset({'reply_to','thread_root','quote','repost','attachment','template'}),
         taggable=name in {'post','topic','repo'}) for name in all_types]

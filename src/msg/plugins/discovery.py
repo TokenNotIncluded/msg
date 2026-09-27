@@ -1,6 +1,9 @@
 """ACL-filtered reads and rebuildable discovery projections."""
 from __future__ import annotations
 import difflib
+import fnmatch
+import re
+import time
 from dataclasses import replace
 from datetime import timedelta
 from msg.constants import *
@@ -500,6 +503,282 @@ def install(app):
     op('discovery.list',obj(listing),effect='read')(list_items)
     op('discovery.search',obj(listing,('query',)),effect='read')(list_items)
     op('discovery.read_query',obj(listing),effect='read')(list_items)
+
+    lexical_fields={'type':'array','items':STRING,'maxItems':12,'uniqueItems':True}
+    lexical_schema=obj({'scope':IDENTIFIER,'terms':STRING,'exact':STRING,'not_terms':STRING,
+        'mode':{'enum':['all','any']},'field':{'enum':['all','name','body','metadata']},
+        'type':STRING,'owner':IDENTIFIER,'author':IDENTIFIER,'tag':STRING,
+        'state':{'enum':['active','archived']},'created_after':STRING,'created_before':STRING,
+        'updated_after':STRING,'updated_before':STRING,'has_attachment':BOOLEAN,
+        'depth':{'type':'integer','minimum':0,'maximum':5},'recursive':BOOLEAN,
+        'order':{'enum':['relevance','updated','created','name']},
+        'limit':{'type':'integer','minimum':1,'maximum':100},'cursor':STRING,
+        'snippet':BOOLEAN,'explain':{'enum':['compact']},'fields':lexical_fields})
+
+    @op('discovery.lexical_search',lexical_schema,effect='read')
+    async def lexical_search(ctx,request,tx):
+        a=dict(request.arguments)
+        internal_page=getattr(request,'internal_page_state',None)
+        if internal_page is not None:
+            require(set(internal_page)=={'arguments','last','snapshot'},'invalid_cursor')
+            a=dict(internal_page['arguments'])
+        principal={'actor':ctx.principal.actor,'subject':ctx.principal.subject,
+                   'credential_id':ctx.principal.credential_id}
+        if a.get('cursor'):
+            saved,_=app.cursors.inspect_page(a['cursor'],ctx.now)
+            require(saved.get('operation')==request.operation and set(a)=={'cursor'},
+                    'cursor_query_mismatch')
+            a={**saved['arguments'],'cursor':a['cursor']}
+        require(a.get('scope') is not None,'search_scope_required')
+        scope=await resolve(tx,a['scope'])
+        await check_access(app,ctx,request,tx,scope,'list')
+        a['scope']=scope
+        if a.get('tag'):
+            a['tag']=normalize_tag(a['tag'])
+        for field in ('terms','exact','not_terms'):
+            require(len(a.get(field,''))<=512,'query_cost_exceeded')
+        terms=a.get('terms','').casefold().split()
+        excluded=a.get('not_terms','').casefold().split()
+        exact=a.get('exact','').casefold()
+        require((terms or exact) and len(terms)<=8 and len(excluded)<=8,
+                'search_query_required')
+        limit=a.get('limit',50)
+        selected=a.get('fields',('id','path','type','name','revision','author','created_at'))
+        require(set(selected)<=set(('id','path','type','name','revision','author',
+                                    'owner','created_at','modified_at','score','rank_reason','snippet','links')),
+                'unknown_projection_field')
+        require(limit*(len(selected)+2)<=1200,'query_cost_exceeded')
+        normalized={key:value for key,value in a.items() if key!='cursor'}
+        if internal_page is not None:
+            position,snapshot=internal_page['last'],parse_time(internal_page['snapshot'])
+        elif a.get('cursor'):
+            position,snapshot=app.cursors.decode_page(a['cursor'],request.operation,
+                                                       normalized,principal,ctx.now)
+        else:
+            position,snapshot=[],ctx.now
+        cutoff={key:parse_time(a[key]) for key in ('created_after','created_before',
+            'updated_after','updated_before') if key in a}
+        scope_resource=await tx.resource(scope)
+        owner=await resolve(tx,a['owner']) if a.get('owner') else None
+        author=await resolve(tx,a['author']) if a.get('author') else None
+        results=[]
+        scanned=0
+        # Restrict the SQL candidate set before applying the work budget. A
+        # global LIMIT lets unrelated (or unreadable) rows starve a small scope.
+        owner_scope=scope_resource.type in {'user','organization'}
+        candidates=tx.execute('''WITH RECURSIVE subtree(id,depth) AS (
+                SELECT id,0 FROM resources WHERE id=?
+                UNION ALL
+                SELECT r.id,s.depth+1 FROM resources r JOIN subtree s ON r.parent=s.id
+                WHERE s.depth<5
+            ) SELECT body FROM resources WHERE created_at<=? AND
+                (id IN (SELECT id FROM subtree) OR (? AND (owner=? OR grp=?)))
+            ORDER BY id''',(scope,wire(snapshot),owner_scope,scope,scope))
+        for (raw,) in candidates:
+            require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+            resource=decode(Resource,loads(raw))
+            if resource.state!=a.get('state','active'):
+                continue
+            chain=await tx.ancestors(resource.id)
+            ancestors=[item.id for item in chain]
+            scoped_owner=(scope_resource.type in {'user','organization'} and
+                          (resource.owner==scope or resource.group==scope))
+            if resource.id!=scope and scope not in ancestors and not scoped_owner:
+                continue
+            distance=len(ancestors)-ancestors.index(scope) if scope in ancestors else 0
+            if distance>a.get('depth',5) or (not a.get('recursive',True) and distance>1):
+                continue
+            if a.get('type') and resource.type!=a['type']:
+                continue
+            if owner and resource.owner!=owner:
+                continue
+            if a.get('tag') and a['tag'] not in resource.tags:
+                continue
+            if ('created_after' in cutoff and resource.created_at<cutoff['created_after'] or
+                    'created_before' in cutoff and resource.created_at>cutoff['created_before'] or
+                    'updated_after' in cutoff and resource.modified_at<cutoff['updated_after'] or
+                    'updated_before' in cutoff and resource.modified_at>cutoff['updated_before']):
+                continue
+            if not await visible(app,ctx,request,tx,resource.id):
+                continue
+            scanned+=1
+            require(scanned<=2000,'query_cost_exceeded')
+            revision=await tx.revision(ResourceRef(id=resource.id)) if resource.revision else None
+            if author and (revision is None or revision.author!=author):
+                continue
+            if a.get('has_attachment') is not None and bool(revision and any(
+                    relation.type=='attachment' for relation in revision.relations))!=a['has_attachment']:
+                continue
+            name=resource.name
+            body=''
+            if a.get('field','all') in {'all','body'} and revision and revision.content.media_type.startswith('text/'):
+                require(revision.content.size<=65536,'query_cost_exceeded')
+                body=(await app.contents.read_bytes(revision.content)).decode('utf-8')
+            meta=f'{resource.type} {resource.owner} {resource.group}'
+            selected_text={'name':name,'body':body,'metadata':meta}
+            field=a.get('field','all')
+            active=selected_text if field=='all' else {field:selected_text[field]}
+            lowered={key:value.casefold() for key,value in active.items()}
+            whole=' '.join(lowered.values())
+            if terms and not (all(term in whole for term in terms) if a.get('mode','all')=='all'
+                              else any(term in whole for term in terms)):
+                continue
+            if exact and exact not in whole:
+                continue
+            if any(term in whole for term in excluded):
+                continue
+            score=sum((5 if key=='name' else 1)*sum(value.count(term) for term in terms)
+                      for key,value in lowered.items())+(3 if exact else 0)
+            order=a.get('order','relevance')
+            if order=='relevance':
+                sort_key=[-score,-int(resource.modified_at.timestamp()*1000000),resource.id]
+            elif order=='updated':
+                sort_key=[-int(resource.modified_at.timestamp()*1000000),resource.id]
+            elif order=='created':
+                sort_key=[-int(resource.created_at.timestamp()*1000000),resource.id]
+            else:
+                sort_key=[resource.name.casefold(),resource.id]
+            path=short_subject_path(await tx.path(resource.id))
+            item={'ref':wire(ResourceRef(id=resource.id,revision=resource.revision)),
+                  'id':resource.id,'path':path,'type':resource.type,'name':name,
+                  'revision':resource.revision,'author':revision.author if revision else None,
+                  'owner':resource.owner,'created_at':wire(resource.created_at),
+                  'modified_at':wire(resource.modified_at),'score':score}
+            if a.get('snippet'):
+                for key,value in active.items():
+                    low=lowered[key]
+                    needle=exact if exact and exact in low else next((term for term in terms if term in low),'')
+                    if needle:
+                        start=low.index(needle)
+                        left=max(0,start-40)
+                        right=min(len(value),start+len(needle)+40)
+                        item['snippet']={'field':key,'text':value[left:right],
+                                         'range':[start-left,start-left+len(needle)]}
+                        break
+            if a.get('explain')=='compact':
+                item['rank_reason']={'matched_fields':[key for key,value in lowered.items()
+                                                        if any(term in value for term in terms) or
+                                                           bool(exact and exact in value)],
+                                     'terms':terms,'order':order}
+            if 'links' in selected:
+                from msg.plugins.discovery import basic_links
+                item['links']=await basic_links(app,ctx,request,tx,resource,revision)
+            if a.get('fields'):
+                item={key:item[key] for key in selected if key in item}
+            results.append((sort_key,item))
+        results.sort(key=lambda row:row[0])
+        following=[row for row in results if not position or row[0]>position]
+        page=following[:limit]
+        data={'items':[item for _,item in page]}
+        if len(following)>limit:
+            cursor=app.cursors.encode_page(request.operation,normalized,page[-1][0],snapshot,
+                principal,ctx.now+timedelta(minutes=15))
+            data.update(cursor=cursor,next='/_r/c/'+cursor,
+                        next_requires_auth=ctx.principal.subject is not None)
+        return HandlerOutput(data=data)
+
+    @op('discovery.grep',obj({'scope':IDENTIFIER,'pattern':STRING,'regex':BOOLEAN,
+        'glob':STRING,'exclude_glob':STRING,'case_sensitive':BOOLEAN,
+        'before':{'type':'integer','minimum':0,'maximum':3},
+        'after':{'type':'integer','minimum':0,'maximum':3},
+        'max_matches':{'type':'integer','minimum':1,'maximum':100},
+        'max_files':{'type':'integer','minimum':1,'maximum':100},
+        'files_with_matches':BOOLEAN,'count_only':BOOLEAN},('scope','pattern')),effect='read')
+    async def grep(ctx,request,tx):
+        a=request.arguments
+        scope=await resolve(tx,a['scope'])
+        await check_access(app,ctx,request,tx,scope,'list')
+        pattern=a['pattern']
+        require(0<len(pattern)<=128,'invalid_grep_pattern')
+        regular=a.get('regex',False)
+        if regular:
+            # Keep the public regex subset free of backtracking quantifiers,
+            # groups, alternation and backreferences.
+            require(not any(char in pattern for char in '(){}|\\*+?'),
+                    'invalid_grep_pattern')
+            try:
+                expression=re.compile(pattern,0 if a.get('case_sensitive',True) else re.IGNORECASE)
+            except re.error as exc:
+                raise Failure('invalid_grep_pattern') from exc
+        else:
+            expression=(re.compile(re.escape(pattern),re.IGNORECASE)
+                        if not a.get('case_sensitive',True) else None)
+        max_files=a.get('max_files',50)
+        max_matches=a.get('max_matches',50)
+        seen_files=0
+        bytes_read=0
+        matches=[]
+        files=[]
+        count=0
+        truncated=False
+        scanned=0
+        candidates=tx.execute('''WITH RECURSIVE subtree(id) AS (
+                SELECT id FROM resources WHERE id=?
+                UNION ALL SELECT r.id FROM resources r JOIN subtree s ON r.parent=s.id
+            ) SELECT body FROM resources WHERE state='active'
+                AND id IN (SELECT id FROM subtree) ORDER BY id''',(scope,))
+        for (raw,) in candidates:
+            require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+            resource=decode(Resource,loads(raw))
+            if resource.id!=scope and scope not in {item.id for item in await tx.ancestors(resource.id)}:
+                continue
+            if not await visible(app,ctx,request,tx,resource.id):
+                continue
+            if not resource.revision:
+                continue
+            path=short_subject_path(await tx.path(resource.id))
+            if a.get('glob') and not fnmatch.fnmatchcase(path,a['glob']):
+                continue
+            if a.get('exclude_glob') and fnmatch.fnmatchcase(path,a['exclude_glob']):
+                continue
+            scanned+=1
+            require(scanned<=2000,'query_cost_exceeded')
+            revision=await tx.revision(ResourceRef(id=resource.id))
+            if not revision.content.media_type.startswith('text/'):
+                continue
+            require(revision.content.size<=65536,'query_cost_exceeded')
+            if seen_files>=max_files:
+                truncated=True
+                break
+            seen_files+=1
+            bytes_read+=revision.content.size
+            require(bytes_read<=1048576,'query_cost_exceeded')
+            lines=(await app.contents.read_bytes(revision.content)).decode('utf-8').splitlines()
+            found_file=False
+            for line_no,line in enumerate(lines,1):
+                if expression is not None:
+                    positions=((found.start(),found.end()) for found in expression.finditer(line))
+                else:
+                    def positions_in_line():
+                        offset=0
+                        while (start:=line.find(pattern,offset))>=0:
+                            yield start,start+len(pattern)
+                            offset=start+len(pattern)
+                    positions=positions_in_line()
+                for start,end in positions:
+                    count+=1
+                    if not found_file:
+                        files.append({'ref':wire(ResourceRef(id=resource.id,revision=revision.id)),
+                                      'path':path})
+                        found_file=True
+                    if not (a.get('count_only') or a.get('files_with_matches')):
+                        left=max(0,line_no-1-a.get('before',0))
+                        right=min(len(lines),line_no+a.get('after',0))
+                        matches.append({'ref':wire(ResourceRef(id=resource.id,revision=revision.id)),
+                            'path':path,'line_hint':line_no,'range':[start,end],
+                            'context':'\n'.join(lines[left:right])[:512]})
+                    if count>=max_matches:
+                        truncated=True
+                        break
+                if truncated:
+                    break
+            if truncated:
+                break
+        if a.get('count_only'):
+            return HandlerOutput(data={'count':count,'truncated':truncated})
+        if a.get('files_with_matches'):
+            return HandlerOutput(data={'files':files,'truncated':truncated})
+        return HandlerOutput(data={'matches':matches,'truncated':truncated})
 
     @op('discovery.operations',obj({'known_digest':STRING}),effect='read')
     async def operations(ctx,request,tx):

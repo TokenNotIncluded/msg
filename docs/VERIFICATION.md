@@ -1,10 +1,16 @@
 # 本地与 CI 验收记录
 
+## 2026-09-27 SearchQuery、Grep、Legacy 登记与 CLI 批次
+
+权威需求仍为 Google Drive `ChatGPT` 文件夹《msg.lmm.best｜项目设计》，修订时间 `2026-09-27T00:35:34.164Z`。本批提交前本地 Python 3.15/PostgreSQL 下 `UV_CACHE_DIR=/tmp/msg-uv-cache uv run python -m pytest -q` 为 **309 passed**，conformance 为 **8 passed**，`uv build` 与 `git diff --check` 通过。新增受限词法 SearchQuery、限定已知范围的 Grep、搜索 QueryRef 分页、纯路径读取等价；旧 `discovery.search@1` 契约及已发布短码保持不变。针对 2001 条范围外资源，新增先红后绿回归：scope 在 SQL 候选阶段限定，预算只计当前可见且通过基础筛选的结果。Grep 仍是受限正则、无分页；facets、suggest、语义搜索、关系/来源筛选等未完成。LegacyDirective 只登记本人签名声明，不执行遗言或授权；私有历史不能变为公开，选定历史版本也检查其当时的可见性。CLI 增加 DM、Recovery、Legacy 入口。
+
+隔离测试实例以本机 DNS `light.local` 解析的 `10.174.197.165` 监听 `18146`，真实 HTTP 请求 `/`、旧搜索、`/_s/q/2/...` 新词法搜索和 `/_search/grep` 均为 200；普通 `/main` POST 为 405。首次探针把旧搜索参数写成 `q`，收到预期的 `unknown_query_parameter`；改为契约参数 `query` 后，又发现测试实例原先的认证目标仍为 `testserver`，调整探针实例目标地址后最终通过。临时探针文件、数据库和服务已清理，端口无监听。此结果证明本地路由与 Host 端到端可用，不代表生产部署或浏览器中更广泛的安全矩阵。本批远端 CI 结果待提交后记录。
+
 ## 2026-09-27 托管升级与同域托管批次
 
-权威 Google Drive `ChatGPT` 文件夹设计仍为 `2026-09-27T00:35:34.164Z` 修订。当前未提交工作树本地 Python 3.15/PostgreSQL 下 `uv run python -m pytest -q` 为 **295 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 与 `git diff --check` 通过。托管升级已测试新 Ed25519/age-X25519 双钥持有证明、本地待提交 journal、已知 age 密文存在时的 `pending_rewrap`、空已知库存时同事务新钥绑定/旧 token 撤销/vault 销毁/审计，以及最终响应丢失后用新签名钥查询结果；外部密文迁移仅记录本人声明，逐对象 rewrap 尚无通用流程。托管静态文件改由主域匿名只读服务，HTML/HEAD/304/206/错误响应强制 CSP sandbox，本批完全禁用脚本；危险格式强制下载。
+权威 Google Drive `ChatGPT` 文件夹设计仍为 `2026-09-27T00:35:34.164Z` 修订。提交 `d365858` 前本地 Python 3.15/PostgreSQL 下 `uv run python -m pytest -q` 为 **295 passed**，`uv run python -m pytest -q conformance` 为 **8 passed**，`uv build` 与 `git diff --check` 通过。托管升级已测试新 Ed25519/age-X25519 双钥持有证明、本地待提交 journal、已知 age 密文存在时的 `pending_rewrap`、空已知库存时同事务新钥绑定/旧 token 撤销/vault 销毁/审计，以及最终响应丢失后用新签名钥查询结果；外部密文迁移仅记录本人声明，逐对象 rewrap 尚无通用流程。托管静态文件改由主域匿名只读服务，HTML/HEAD/304/206/错误响应强制 CSP sandbox，本批完全禁用脚本；危险格式强制下载。
 
-真实浏览器使用本机 DNS 直接访问 `http://light.local:18144/@browser-probe/web/index.html`，不是 `--resolve`：页面快照仍为 “script not run”，浏览器控制台明确提示 sandbox 未允许脚本，网络记录仅 HTML GET，产品托管页**没有发出**私有 API 请求。另起受控探针页 `http://light.local:18145/` 并设 `sandbox allow-scripts`，其不属于产品托管响应；它从 opaque `Origin:null` 对 `http://light.local:18144/_read/t_private/json` **实际发出** GET，服务端访问日志为 403，浏览器报 CORS 无允许来源，脚本不能读取响应。此前 data: 源探针因浏览器 Private Network Access 在发出前拦截，不用作服务端拒绝证据。测试服务按预定时间退出，浏览器会话、临时数据库/目录和端口已清理。当前结果不证明 JS 托管、候选部署 preview、所有重定向/Service Worker/凭据组合或完整同域安全隔离。本批尚无远端 CI/线上部署结果。
+真实浏览器使用本机 DNS 直接访问 `http://light.local:18144/@browser-probe/web/index.html`，不是 `--resolve`：页面快照仍为 “script not run”，浏览器控制台明确提示 sandbox 未允许脚本，网络记录仅 HTML GET，产品托管页**没有发出**私有 API 请求。另起受控探针页 `http://light.local:18145/` 并设 `sandbox allow-scripts`，其不属于产品托管响应；它从 opaque `Origin:null` 对 `http://light.local:18144/_read/t_private/json` **实际发出** GET，服务端访问日志为 403，浏览器报 CORS 无允许来源，脚本不能读取响应。此前 data: 源探针因浏览器 Private Network Access 在发出前拦截，不用作服务端拒绝证据。测试服务按预定时间退出，浏览器会话、临时数据库/目录和端口已清理。当前结果不证明 JS 托管、候选部署 preview、所有重定向/Service Worker/凭据组合或完整同域安全隔离。提交 `d365858` 已推送，其[远端 CI](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36288621652)已通过；尚无线上部署结果。
 
 ## 2026-09-27 托管身份、SyncCursor 与显式 rewrap 批次
 

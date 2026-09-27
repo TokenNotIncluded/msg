@@ -54,6 +54,15 @@ def parser():
     post=commands.add_parser('post');post.add_argument('topic')
     body=post.add_mutually_exclusive_group(required=True);body.add_argument('--text');body.add_argument('--file',type=Path)
     reply=commands.add_parser('reply');reply.add_argument('resource');reply.add_argument('--text',required=True)
+    dm=commands.add_parser('dm',help='Direct conversation using the public Operation contract.')
+    dm_actions=dm.add_subparsers(dest='action',required=True)
+    dm_actions.add_parser('list')
+    dm_request=dm_actions.add_parser('request');dm_request.add_argument('recipient')
+    dm_send=dm_actions.add_parser('send');dm_send.add_argument('conversation');dm_send.add_argument('--text',required=True)
+    dm_read=dm_actions.add_parser('read');dm_read.add_argument('resource')
+    for action in ('accept','reject','archive'):
+        dm_actions.add_parser(action).add_argument('conversation')
+    dm_actions.add_parser('block').add_argument('subject')
     ack=commands.add_parser('ack');ack.add_argument('resource');ack.add_argument('revision')
     upload=commands.add_parser('upload');upload.add_argument('file',type=Path);upload.add_argument('--resume')
     upload.add_argument('--part-bytes',type=int,default=65536);upload.add_argument('--media-type',default='application/octet-stream')
@@ -74,6 +83,37 @@ def parser():
     put=vault.add_parser('put');put.add_argument('name');put.add_argument('file',type=Path);put.add_argument('--recipient',required=True)
     get=vault.add_parser('get');get.add_argument('resource');get.add_argument('--output',type=Path,required=True);get.add_argument('--private-key',type=Path,required=True)
     vault.add_parser('list')
+    recovery=commands.add_parser('recovery',help='Explicit self-custody age backup; no account authority.')
+    recovery_actions=recovery.add_subparsers(dest='action',required=True)
+    recovery_actions.add_parser('policy')
+    policy_set=recovery_actions.add_parser('policy-set')
+    policy_set.add_argument('--recipient',action='append',default=[])
+    policy_set.add_argument('--clear',action='store_true',help='Opt out of future envelope registration.')
+    backup=recovery_actions.add_parser('backup')
+    backup.add_argument('--recipient',action='append',required=True)
+    backup.add_argument('--policy-version',type=int,required=True)
+    backup.add_argument('--name')
+    recovery_actions.add_parser('list')
+    envelope_get=recovery_actions.add_parser('get');envelope_get.add_argument('id')
+    restore=recovery_actions.add_parser('restore')
+    restore.add_argument('ciphertext',type=Path)
+    restore.add_argument('--identity',type=Path,required=True)
+    restore.add_argument('--output',type=Path,required=True)
+    restore.add_argument('--subject',required=True)
+    restore.add_argument('--key-id',required=True)
+    rewrap=recovery_actions.add_parser('rewrap')
+    rewrap.add_argument('resource')
+    rewrap.add_argument('--old-identity',type=Path,required=True)
+    rewrap.add_argument('--expected-revision',required=True)
+    legacy=commands.add_parser('legacy',help='Signed last-will declarations; never executes account actions.')
+    legacy_actions=legacy.add_subparsers(dest='action',required=True)
+    legacy_put=legacy_actions.add_parser('put')
+    legacy_put.add_argument('spec',help='JSON, @file or - for stdin.')
+    legacy_actions.add_parser('archive')
+    legacy_actions.add_parser('status')
+    legacy_get=legacy_actions.add_parser('get')
+    legacy_get.add_argument('--subject')
+    legacy_get.add_argument('--revision')
     return cli
 
 
@@ -81,6 +121,12 @@ async def run(args):
     if args.command=='keystore' and args.action=='keygen':
         from msg.client_secrets import encryption_keygen
         print(canonical(encryption_keygen(args.output)).decode())
+        return 0
+    if args.command=='recovery' and args.action=='restore':
+        from msg.client_recovery import restore_recovery_envelope
+        value=restore_recovery_envelope(args.ciphertext.read_bytes(),args.identity,args.output,
+            expected_subject_id=args.subject,expected_encryption_key_id=args.key_id)
+        print(canonical(value).decode())
         return 0
     state=ClientState(args.config_dir,server=args.server)
     transport=TRANSPORTS[args.transport](state.server)
@@ -131,6 +177,17 @@ async def run(args):
             else: params={'parent':args.topic,'body':args.text}
             result=await client.call('content.post_create',params)
         elif command=='reply': result=await client.call('discussion.reply',{'target':{'id':args.resource},'body':args.text})
+        elif command=='dm':
+            if args.action=='list':result=await client.call('communication.dm_list')
+            elif args.action=='request':result=await client.call('communication.dm_request',
+                                                                 {'recipient':args.recipient})
+            elif args.action=='send':result=await client.call('communication.dm_send',
+                {'conversation_id':args.conversation,'body':args.text})
+            elif args.action=='read':result=await client.call('discovery.get',{'id':args.resource})
+            elif args.action=='block':result=await client.call('communication.dm_block',
+                                                               {'subject_id':args.subject})
+            else:result=await client.call('communication.dm_'+args.action,
+                                          {'conversation_id':args.conversation})
         elif command=='ack': result=await client.ack(ResourceRef(id=args.resource,revision=args.revision))
         elif command=='upload': result=await client.upload(args.file,transfer_id=args.resume,
             part_bytes=args.part_bytes,media_type=args.media_type,target=args.target)
@@ -146,6 +203,54 @@ async def run(args):
             if args.action=='put':result=await put_secret(client,args.name,args.file,args.recipient)
             elif args.action=='get':result=await get_secret(client,args.resource,args.output,args.private_key)
             else:result=await client.call('keystore.list')
+        elif command=='recovery':
+            from msg.client_recovery import save_recovery_envelope,rewrap_age_keystore_entry
+            from msg.security.age_keys import encryption_key_id,public_from_recipient
+            if args.action=='policy':result=await client.call('identity.recovery_policy_get')
+            elif args.action=='policy-set':
+                require(args.clear or bool(args.recipient),'recovery_recipients_required')
+                require(not (args.clear and args.recipient),'ambiguous_recovery_policy')
+                require(state.encryption_recipient is not None,'encryption_key_not_found')
+                current=client.checked(await client.call('identity.recovery_policy_get'))
+                result=await client.call('identity.recovery_policy_set',{
+                    'expected_version':current.data['version'],
+                    'encryption_key_id':encryption_key_id(public_from_recipient(
+                        state.encryption_recipient)),
+                    'recipients':[] if args.clear else [{'recipient':value}
+                                                        for value in args.recipient]})
+            elif args.action=='backup':
+                stored,envelope,metadata=await save_recovery_envelope(
+                    client,args.recipient,policy_version=args.policy_version,name=args.name)
+                result={'keystore':result_wire(stored),'envelope':result_wire(envelope),
+                        'metadata':metadata}
+            elif args.action=='list':result=await client.call('identity.recovery_envelope_list')
+            elif args.action=='get':result=await client.call('identity.recovery_envelope_get',
+                                                             {'id':args.id})
+            else:result=await rewrap_age_keystore_entry(client,args.resource,
+                args.old_identity,expected_revision=args.expected_revision)
+        elif command=='legacy':
+            if args.action in {'put','archive'}:
+                payload=arguments(args.spec) if args.action=='put' else {}
+                expected=()
+                if args.action=='archive' or 'expected_revision' in payload:
+                    require(state.subject is not None,'subject_required')
+                    current=client.checked(await client.call('identity.legacy_get',
+                        {'subject_id':state.subject}))
+                    if 'expected_revision' in payload:
+                        require(current.data['revision']==payload['expected_revision'],
+                                'revision_conflict')
+                    meta=client.checked(await client.call('discovery.get',
+                        {'id':current.data['id'],'view':'meta'}))
+                    expected=((current.data['id'],meta.data['generation']),)
+                operation='identity.legacy_put' if args.action=='put' else 'identity.legacy_archive'
+                result=await client.call(operation,payload,expected=expected)
+            elif args.action=='status':result=await client.call('identity.legacy_status')
+            else:
+                subject=args.subject or state.subject
+                require(subject is not None,'subject_required')
+                params={'subject_id':subject}
+                if args.revision:params['revision']=args.revision
+                result=await client.call('identity.legacy_get',params)
         elif command=='mcp':
             from msg.transports.stdio import serve_stdio
             await serve_stdio(client)
