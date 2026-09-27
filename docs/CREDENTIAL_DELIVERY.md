@@ -61,8 +61,8 @@ an ID, old bootstrap nonce or old token is not a substitute.
 
 ## Local durability
 
-Built-in token operations share a nonblocking OS lock with ordinary identity
-upgrades. They reload accepted local state under the lock, so a stale client
+Built-in token operations share a nonblocking OS lock with ordinary and custodial
+identity upgrades. They reload accepted local state under the lock, so a stale client
 cannot overwrite another process's successful upgrade or create a second
 account. Journals are owner-only regular files with one hardlink, no symlink and
 an 8 KiB bound. New intentions bind server and temporary key pair. Missing keys
@@ -93,8 +93,11 @@ crashes, missing or substituted keys, unsafe journals and concurrent clients.
 pre-release commit, one-winner concurrent release, repeated recovery, unchanged
 ceiling/expiry/deadline, both batch modes, both PathGET encodings, retained receipt
 verification and absence of plaintext secrets in persisted results/events and
-captured application logs. Existing recovery-window, token-release, URL-ingress
-and negative-authorization tests remain required.
+captured application logs. `tests/test_credential_upgrade_interleave.py` also
+checks stale upgrade clients after token rotation and concurrent custodial
+upgrades; neither can overwrite newly accepted local state. Existing
+recovery-window, token-release, URL-ingress and negative-authorization tests
+remain required.
 
 Bootstrap feature `credential_delivery` maps to a real read-only schema/policy
 check and the isolated `credential_delivery_recovery` selftest. No new operation,
