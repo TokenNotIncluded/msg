@@ -9,6 +9,7 @@ import re
 import shutil
 import sys
 import unicodedata
+from collections.abc import Mapping
 from urllib.parse import urlsplit
 
 import httpx
@@ -131,7 +132,16 @@ class TerminalUI:
             self.page = None
             self._read_error(getattr(getattr(result, 'error', None), 'code', None))
             return None
+        if not isinstance(result.data, Mapping):
+            return self._invalid_response()
         return result.data
+
+    def _invalid_response(self):
+        # A server/proxy that breaks the read contract must not crash the loop
+        # or leave the previous page selectable.
+        self.page = None
+        self._read_error('invalid_read_response')
+        return None
 
     def _read_error(self, code):
         # Exception text/URL/details may contain credentials. Only contract codes
@@ -141,10 +151,18 @@ class TerminalUI:
         self._write('读取失败：' + code)
         self._write('retry 重新读取；不自动提交 ACK 或其他写入。')
 
+    @staticmethod
+    def _item_id(item):
+        ref = item.get('ref') or item.get('resource')
+        for rid in (item.get('id'), ref.get('id') if isinstance(ref, Mapping) else None,
+                    item.get('conversation_id')):
+            if isinstance(rid, str) and rid:
+                return rid
+        return None
+
     def _show_items(self, items):
         for index, item in enumerate(items, 1):
-            ref = item.get('ref') or item.get('resource') or {}
-            rid = item.get('id') or ref.get('id') or item.get('conversation_id') or ''
+            rid = self._item_id(item) or ''
             name = item.get('title') or item.get('name') or item.get('path') or item.get('source') or rid
             self._write(f'{index}. {name}  {rid}')
             snippet = item.get('snippet')
@@ -159,8 +177,12 @@ class TerminalUI:
         if data is None:
             return
         items = data.get('items', [])
-        self.page = {'operation': operation, 'arguments': arguments,
-                     'cursor': data.get('next_after_name') if operation == 'identity.todo_list' else data.get('cursor'),
+        cursor = data.get('next_after_name') if operation == 'identity.todo_list' else data.get('cursor')
+        if (not isinstance(items, (list, tuple)) or not all(isinstance(item, Mapping) for item in items)
+                or not (cursor is None or isinstance(cursor, str))):
+            self._invalid_response()
+            return
+        self.page = {'operation': operation, 'arguments': arguments, 'cursor': cursor,
                      'title': title, 'items': items}
         self._write(title)
         if items:
@@ -202,7 +224,10 @@ class TerminalUI:
             return
         self._remember_read(self.files)
         profile = await self._read('discovery.get', {'id': subject, 'fields': ['path']})
-        if profile is not None:
+        if profile is not None and not (isinstance(profile.get('path'), str)
+                                        and profile['path'].startswith('/')):
+            self._invalid_response()
+        elif profile is not None:
             await self._show_page('discovery.read_query',
                                  {'parent': profile['path'] + '/files', 'limit': 20}, 'Files')
 
@@ -310,13 +335,17 @@ class TerminalUI:
             index = int(command) - 1 if len(command) <= 6 else -1
             if 0 <= index < len(self.page['items']):
                 item = self.page['items'][index]
-                ref = item.get('ref') or item.get('resource') or {}
-                rid = item.get('id') or ref.get('id') or item.get('conversation_id')
                 if self.page['operation'] in {'identity.note_list', 'identity.todo_list'}:
-                    operation = self.page['operation'].replace('_list', '_get')
-                    await self._document(operation, {'name': item['name']}, item['name'])
-                else:
+                    name = item.get('name')
+                    if isinstance(name, str) and name:
+                        operation = self.page['operation'].replace('_list', '_get')
+                        await self._document(operation, {'name': name}, name)
+                    else:
+                        self._write('该条目没有可读取的标识。')
+                elif rid := self._item_id(item):
                     await self.read(rid)
+                else:
+                    self._write('该条目没有可读取的标识。')
             else:
                 self._write('序号不在本页。')
         else:
