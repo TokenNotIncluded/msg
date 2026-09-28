@@ -1,12 +1,11 @@
 """One persistent transfer state machine, independently of the adapter."""
-from dataclasses import replace
 from datetime import timedelta
-import hashlib
 import pytest
 
-from msg.core.codec import b64,unb64,digest,wire
-from msg.core.models import ResourceRef
-from test_service import installed,call,register,NOW
+from msg.core.codec import b64,unb64,decode,digest,wire
+from msg.core.models import BlobRef
+from msg.workers.maintenance import run_maintenance
+from test_service import call,register,NOW
 
 
 @pytest.mark.asyncio
@@ -80,3 +79,25 @@ async def test_transfer_owner_bounds_missing_ranges_and_cancel(installed):
     assert retry.error.code=='transfer_closed',wire(retry)
     tiny=await invoke('transfer.open',{'direction':'upload','max_path_bytes':100})
     assert tiny.error.code=='transport_limit_too_small',wire(tiny)
+
+
+@pytest.mark.asyncio
+async def test_expired_upload_releases_chunk_pins(installed):
+    app,_=installed
+    key,uid,cert=await register(app,'expired-transfer')
+    opened=await call(app,'transfer.open',{'direction':'upload'},key=key,subject=uid,certs=(cert,))
+    tid=opened.data['transfer_id']
+    data=b'abandoned upload'
+    uploaded=await call(app,'transfer.part_put',
+        {'transfer_id':tid,'offset':0,'data':b64(data),'digest':digest(data)},
+        key=key,subject=uid,certs=(cert,))
+    blob=decode(BlobRef,uploaded.data['chunk']['content'])
+    assert await app.contents.pinned(blob,tid+':0')
+
+    app.clock=lambda: NOW+timedelta(days=2)
+    result=await run_maintenance(app,'cleanup_expired',scheduled=True)
+
+    assert result['expired_transfers']==1
+    assert not await app.contents.pinned(blob,tid+':0')
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM chunks WHERE transfer_id=?',(tid,))[0]==0

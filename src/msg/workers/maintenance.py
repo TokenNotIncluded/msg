@@ -11,7 +11,7 @@ from pathlib import Path
 from msg.constants import ROOT_SPACE, ONLINE_CA
 from msg.core.codec import canonical, decode, digest, loads, wire, parse_time
 from msg.core.errors import Failure, require
-from msg.core.models import AuditEvent, Event, ResourceRef, Revision, Resource, TransferSession
+from msg.core.models import AuditEvent, BlobRef, Event, ResourceRef, Revision, Resource, TransferSession
 from msg.plugins.common import new_id
 
 
@@ -71,6 +71,10 @@ async def _cleanup(app,tx, *, scheduled):
         transfer=decode(TransferSession,loads(raw))
         if transfer.expires_at<=now and transfer.state!='expired':
             await tx.save_transfer(replace(transfer,state='expired',generation=transfer.generation+1),transfer.generation)
+            for offset,chunk_raw in tx.execute(
+                    'SELECT offset,body FROM chunks WHERE transfer_id=?',(transfer.id,)):
+                chunk=loads(chunk_raw)
+                await app.contents.unpin(decode(BlobRef,chunk['content']),transfer.id+':'+str(offset))
             tx.execute('DELETE FROM chunks WHERE transfer_id=?',(transfer.id,),write=True)
             counts['expired_transfers']+=1
     for key,raw in tx.rows("SELECT key,value FROM settings WHERE key LIKE 'query_ref_source:%'"):
