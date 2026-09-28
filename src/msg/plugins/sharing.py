@@ -56,6 +56,26 @@ async def _owned_resource(app, ctx, request, tx, value, *, mutation, owner=True)
     return resource
 
 
+async def _revocable_resource(app, ctx, request, tx, value, *, owner=True):
+    """Return (resource, live); a dormant target must not block narrowing access.
+
+    Archived/moved targets make a grant dormant, not revoked: restoring the
+    target would revive it, so revocation stays available under the ceiling.
+    """
+    rid = await resolve(tx, value)
+    resource = await tx.resource(rid)
+    chain = (*await tx.ancestors(rid), resource)
+    if share_target_error(app.registry, resource, chain, tx) is None:
+        return await _owned_resource(app, ctx, request, tx, rid, mutation=True,
+                                     owner=owner), True
+    require(ctx.principal.subject is not None and ctx.principal.actor == ctx.principal.subject,
+            'share_subject_required')
+    require(not owner or resource.owner == ctx.principal.subject, 'permission_denied')
+    await app.authorizer.require_base(ctx.principal,
+        f'{request.operation}@{request.contract_version}', rid, tx)
+    return resource, False
+
+
 def _public(row):
     return dict(zip(('id', 'resource_id', 'grantor', 'grantee', 'created_at', 'expires_at',
                      'revoked_at'), row))
@@ -111,7 +131,7 @@ def install(app):
         row = tx.one('''SELECT id,resource_id,grantor,grantee,created_at,expires_at,revoked_at
             FROM share_grants WHERE id=?''', (gid,))
         require(row is not None, 'share_not_found')
-        resource = await _owned_resource(app, ctx, request, tx, row[1], mutation=True)
+        resource, _ = await _revocable_resource(app, ctx, request, tx, row[1])
         require(row[2] == resource.owner, 'permission_denied')
         if row[6] is None:
             tx.execute('UPDATE share_grants SET revoked_at=? WHERE id=?',
@@ -182,10 +202,9 @@ def install(app):
         gid=request.arguments['grant_id']
         row=tx.one(f'SELECT {_V2_COLUMNS} FROM share_grants_v2 WHERE id=?',(gid,))
         require(row is not None,'share_not_found')
-        resource=await _owned_resource(app,ctx,request,tx,row[1],mutation=True,
-                                       owner=False)
+        resource,live=await _revocable_resource(app,ctx,request,tx,row[1],owner=False)
         require(ctx.principal.subject in {resource.owner,row[2]},'permission_denied')
-        if ctx.principal.subject==resource.owner:
+        if live and ctx.principal.subject==resource.owner:
             await check_access(app,ctx,request,tx,resource.id,'manage')
         if row[11] is None:
             tx.execute('UPDATE share_grants_v2 SET revoked_at=? WHERE id=?',
