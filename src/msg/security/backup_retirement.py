@@ -83,7 +83,8 @@ async def root_verifier(tx, *, now):
                 (credential.expires_at is None or now < credential.expires_at) and
                 key_id(credential.verifier) == credential.id == certificate.key_id,
                 'backup_retirement_root_unavailable')
-        verify(credential.verifier, canonical(certificate_body(certificate)),\n               certificate.signature, purpose='certificate')
+        verify(credential.verifier, canonical(certificate_body(certificate)),
+               certificate.signature, purpose='certificate')
     except (Failure, KeyError, TypeError, ValueError) as exc:
         raise Failure('backup_retirement_root_unavailable') from exc
     return credential.verifier
