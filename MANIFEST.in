@@ -1,4 +1,5 @@
 recursive-include docs/system *.md
 
-include tests/read_only_evidence.py
+include conftest.py
+recursive-include tests *.py *.json
 include docs/TASK_C_EVIDENCE.md
