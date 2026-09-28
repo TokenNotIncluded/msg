@@ -210,8 +210,22 @@ def inspect_clearing(app, tx):
         if state=='settled':
             delivery=tx.one('SELECT d.state,o.escrow_policy FROM store_deliveries d '
                             'JOIN store_orders o ON o.id=d.order_id WHERE o.id=?',(oid,))
-            require(delivery is not None and (delivery[0]=='claimed' or
-                    delivery==('prepared','escrow-instant-v1')), 'settled_delivery_missing')
+            current=tx.one('SELECT 1 FROM order_contracts WHERE order_id=?',(oid,))
+            if current is not None:
+                # V3 managed-instant settlement is a fulfillment/payment fact,
+                # not buyer acknowledgement: its delivery intentionally stays
+                # prepared until the separate signed accept. Reuse the current
+                # immutable contract validator instead of weakening this check
+                # for arbitrary prepared legacy orders.
+                from msg.market.policy import contract
+                locked=contract(tx,oid)
+                prepared=(delivery is not None and delivery[0]=='prepared' and
+                    locked['listing']['delivery_mode']=='managed_instant')
+                require(delivery is not None and (delivery[0]=='claimed' or prepared),
+                        'settled_delivery_missing')
+            else:
+                require(delivery is not None and (delivery[0]=='claimed' or
+                        delivery==('prepared','escrow-instant-v1')), 'settled_delivery_missing')
     for escrow,total,state,eid in tx.rows('SELECT escrow_account,total_minor,state,entitlement_id FROM money_purchases'):
         require(balances.get(escrow,0)==(total if state=='pending' else 0),'purchase_escrow_mismatch')
         require((state=='settled') == (eid is not None), 'purchase_entitlement_mismatch')
