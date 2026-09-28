@@ -85,11 +85,3 @@ msgd --config-dir /new/etc/msgd restore /secure-backup/service.zip --data-dir /n
 执行 tests 与 conformance，确认 Python 3.15、GraphQL、MCP、CLI分片一致性；用真实 sshd 完成登录、拒绝 shell、拒绝转发、Git push撤销测试；用真实 bubblewrap 验证 worker 看不到 `/var/lib/msgd-root/`、服务数据与凭据；验证公网目标、私网拒绝和重定向检查；用隔离 SMTP 测试 TLS、禁用状态、连接重试和 uncertain。
 
 只有所有适用项在真实部署通过，才能判断是否允许生产流量。本地 Python 3.15 测试不能代替部署环境的运行入口检查。
-
-## 本轮改造状态
-
-权威需求修订为2026-09-27T05:54:08.096Z。当前v4批次本地392/8/build通过，未提交/无本批CI；新安装与隔离恢复不证明存量生产迁移已完成。
-
-最新权威修订05:54:08.096Z仍要求一致数据库快照、引用内容核验、根秘密单独本机/离线备份；v4仅接v4及recovery-drill硬闸是当前实现策略。恢复先保留runtime accept_writes=false和recovery-drill.json；运行daemon/worker前须人工核对目标DB、信任/服务密钥、内容引用、邮件/Webhook目的地并显式提升，禁止仅为启动方便绕过硬闸。恢复成功不等于生产在线备份已演练。
-
-本批Domain Event Webhook已加独立webhook.domain capability，Basic OnlineIssuer普通issue_grants白名单不含该能力；订阅及每次投递复核owner/ACL与当前证书，无cap拒绝、证书撤销后停止投递。当前仅post_create/reply/post_edit，公网端到端仍未验。备份v4仅接v4、恢复drill写/worker硬闸及text_patch exact/context局部边界不变；392/8/build为未提交本地证据，无本批CI。

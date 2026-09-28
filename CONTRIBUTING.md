@@ -16,6 +16,6 @@ python3.15 -m pytest conformance
 python3.15 -m build
 ```
 
-`tests/` 包含无外部服务依赖的测试，仍使用真实 Git、SQLite、Ed25519 和套接字。`conformance/` 包含强制运行时、完整传输与 tokenizer 门槛；缺少依赖时应该失败，而不是静默跳过。宿主 OpenSSH、bubblewrap、SMTP/TLS 与物理控制台还须按部署验收清单单独验证。
+`tests/` 包含需要 PostgreSQL 的集成测试，以及真实 Git、SQLite、Ed25519 和套接字测试。未设置 `MSG_TEST_POSTGRES_URL_TEMPLATE` 时，根目录的 `conftest.py` 会尝试通过本机 `initdb` 和 `pg_ctl` 启动临时数据库。`conformance/` 包含强制运行时、完整传输与 tokenizer 门槛；缺少依赖时应该失败，而不是静默跳过。宿主 OpenSSH、bubblewrap、SMTP/TLS 与物理控制台还须按部署验收清单单独验证。
 
 新增默认响应字段应说明必要性并更新 token / 字节预算。不要把全部内部 dataclass 直接序列化成每次响应。
