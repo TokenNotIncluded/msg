@@ -1,12 +1,35 @@
 """A signed will is an inert statement, never authority or an automatic workflow."""
+import uuid
 import pytest
 from datetime import timedelta
 
-from msg.core.codec import b64,decode,loads,unb64,wire
-from msg.core.models import Signature
+from msg.core.codec import b64,canonical,decode,loads,unb64,wire
+from msg.core.models import Revision,Signature
 from msg.security.crypto import verify
 from msg.security.age_keys import generate_age_key,public_from_recipient,encryption_key_id
 from test_service import NOW,call,register
+
+
+async def signed_will(app,key,subject,*,final_message,visibility='public',preservation='keep',
+                      allowed=(),forbidden=(),resource_id=None,parent_revision=None):
+    rid=resource_id or 'r_'+uuid.uuid4().hex
+    vid='v_'+uuid.uuid4().hex
+    body=canonical({'kind':'legacy_directive','owner_subject':subject,
+        'final_message':final_message,'preservation':preservation,
+        'allowed_actions':sorted(allowed),'forbidden_actions':sorted(forbidden),
+        'declaration_only':True})
+    blob=await app.contents.put_bytes(body,'application/json')
+    revision=Revision(format_version=1,id=vid,resource_id=rid,
+        parents=(parent_revision,) if parent_revision else (),content=blob,relations=(),
+        actor=subject,subject=subject,author=subject,created_at=NOW,manifest_digest='')
+    manifest={k:v for k,v in wire(revision).items() if k not in {'manifest_digest','signature'}}
+    args={'visibility':visibility,'final_message':final_message,'preservation':preservation,
+          'allowed_actions':list(allowed),'forbidden_actions':list(forbidden),
+          'resource_id':rid,'revision_id':vid,'content_created_at':wire(NOW),
+          'content_signature':wire(key.sign(canonical(manifest),purpose='revision'))}
+    if parent_revision:
+        args['expected_revision']=parent_revision
+    return args,manifest
 
 
 @pytest.mark.asyncio
@@ -150,3 +173,78 @@ async def test_private_historical_will_cannot_be_published_by_later_revision(ins
     assert anonymous.status=='error'
     assert (await call(app,'identity.legacy_get',{'subject_id':owner,
         'revision':ref.revision},key=key,subject=owner)).status=='ok'
+
+
+@pytest.mark.asyncio
+async def test_legacy_v2_keeps_independently_signed_revisions(installed):
+    app,_=installed
+    key,owner,_=await register(app,'will-signed-owner')
+    first,manifest=await signed_will(app,key,owner,final_message='Keep my public work.',
+        allowed=('publish_final_message',),forbidden=('impersonate',))
+    created=await call(app,'identity.legacy_put',first,key=key,subject=owner,contract_version=2)
+    assert created.status=='ok',wire(created)
+    assert created.data['proof_purpose']=='revision'
+    ref=created.resources[0]
+    assert ref.id==first['resource_id'] and ref.revision==first['revision_id']
+    async with app.metadata.transaction(write=False) as tx:
+        old=await tx.revision(ref)
+        verify(key.public_key,canonical(manifest),old.signature,purpose='revision')
+        version=loads(tx.one('SELECT body FROM legacy_directive_versions WHERE revision_id=?',
+                             (ref.revision,))[0])
+        assert version['proof_purpose']=='revision'
+        verify(key.public_key,unb64(version['signed_envelope']),
+               decode(Signature,version['request_signature']),purpose='request')
+    second,new_manifest=await signed_will(app,key,owner,final_message='Archive my public work.',
+        preservation='archive',allowed=('archive_public_profile',),forbidden=('impersonate',),
+        resource_id=ref.id,parent_revision=ref.revision)
+    revised=await call(app,'identity.legacy_put',second,key=key,subject=owner,
+        expected=((ref.id,created.data['generation']),),contract_version=2)
+    assert revised.status=='ok',wire(revised)
+    async with app.metadata.transaction(write=False) as tx:
+        assert await tx.revision(ref)==old
+        current=await tx.revision(revised.resources[0])
+        verify(key.public_key,canonical(new_manifest),current.signature,purpose='revision')
+    own=await call(app,'identity.legacy_get',{'subject_id':owner},key=key,subject=owner)
+    assert own.data['final_message']=='Archive my public work.'
+    assert own.data['proof_purpose']=='revision'
+    history=await call(app,'discovery.get',{'id':ref.id,'view':'history'})
+    assert history.status=='ok' and len(history.data['revisions'])==2
+    tampered,_=await signed_will(app,key,owner,final_message='Signed text.',
+        resource_id=ref.id,parent_revision=revised.resources[0].revision)
+    tampered['final_message']='Changed after the content signature was made.'
+    rejected=await call(app,'identity.legacy_put',tampered,key=key,subject=owner,
+        expected=((ref.id,revised.data['generation']),),contract_version=2)
+    assert rejected.status=='error'
+    mismatched,_=await signed_will(app,key,owner,final_message='Wrong resource.',
+        parent_revision=revised.resources[0].revision)
+    wrong=await call(app,'identity.legacy_put',mismatched,key=key,subject=owner,
+        expected=((ref.id,revised.data['generation']),),contract_version=2)
+    assert wrong.status=='error' and wrong.error.code=='legacy_resource_mismatch',wire(wrong)
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM revisions WHERE resource_id=?',(ref.id,))[0]==2
+
+
+@pytest.mark.asyncio
+async def test_bad_legacy_v2_signature_rolls_back_creation_and_v1_stays_request_proof(installed):
+    app,_=installed
+    key,owner,_=await register(app,'will-signed-rejection')
+    args,_=await signed_will(app,key,owner,final_message='Signed declaration.')
+    args['final_message']='Tampered declaration.'
+    result=await call(app,'identity.legacy_put',args,key=key,subject=owner,contract_version=2)
+    assert result.status=='error'
+    unsigned={k:v for k,v in args.items() if k!='content_signature'}
+    missing=await call(app,'identity.legacy_put',unsigned,key=key,subject=owner,contract_version=2)
+    assert missing.status=='error'
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT 1 FROM resources WHERE id=?',(args['resource_id'],)) is None
+        assert tx.one('SELECT 1 FROM revisions WHERE id=?',(args['revision_id'],)) is None
+        assert tx.one('SELECT 1 FROM legacy_directives WHERE subject=?',(owner,)) is None
+    plain=await call(app,'identity.legacy_put',{'visibility':'private',
+        'final_message':'Still version one.'},key=key,subject=owner)
+    assert plain.status=='ok',wire(plain)
+    assert plain.data['proof_purpose']=='request'
+    async with app.metadata.transaction(write=False) as tx:
+        version=loads(tx.one('SELECT body FROM legacy_directive_versions WHERE revision_id=?',
+                             (plain.resources[0].revision,))[0])
+        assert version['proof_purpose']=='request'
+        assert (await tx.revision(plain.resources[0])).signature is None

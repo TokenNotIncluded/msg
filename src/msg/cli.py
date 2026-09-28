@@ -193,6 +193,8 @@ def parser():
     legacy_actions=legacy.add_subparsers(dest='action',required=True)
     legacy_put=legacy_actions.add_parser('put')
     legacy_put.add_argument('spec',help='JSON, @file or - for stdin.')
+    legacy_put.add_argument('--contract-version',type=int,choices=(1,2),default=1,
+                            help='2 requires resource_id, revision_id, content_created_at and content_signature.')
     legacy_actions.add_parser('archive')
     legacy_actions.add_parser('status')
     legacy_get=legacy_actions.add_parser('get')
@@ -460,7 +462,8 @@ async def run(args):
                         {'id':current.data['id'],'view':'meta'}))
                     expected=((current.data['id'],meta.data['generation']),)
                 operation='identity.legacy_put' if args.action=='put' else 'identity.legacy_archive'
-                result=await client.call(operation,payload,expected=expected)
+                result=await client.call(operation,payload,expected=expected,
+                    contract_version=args.contract_version if args.action=='put' else 1)
             elif args.action=='status':result=await client.call('identity.legacy_status')
             else:
                 subject=args.subject or state.subject

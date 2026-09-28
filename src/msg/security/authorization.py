@@ -193,7 +193,8 @@ class AuthorizationService:
                     item.id in {'r_agents','r_rules'} for item in chain):
                 require(False,'system_managed_resource')
             if check.check in _WRITE_CHECKS and any(item.id=='t_last_will' for item in chain):
-                require(operation in {'identity.legacy_put@1','identity.legacy_archive@1'} and
+                require(operation in {'identity.legacy_put@1','identity.legacy_put@2',
+                                      'identity.legacy_archive@1'} and
                         principal.subject==resource.owner,'legacy_directive_only')
             if check.check in _WRITE_CHECKS and any(
                     parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes','todos'}

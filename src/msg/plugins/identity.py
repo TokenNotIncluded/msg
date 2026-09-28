@@ -673,14 +673,18 @@ def install(app):
     legacy_refs={'type':'array','items':REF,'maxItems':16}
     legacy_ids={'type':'array','items':IDENTIFIER,'maxItems':16,'uniqueItems':True}
 
-    @op('identity.legacy_put',obj({'visibility':{'enum':['private','public']},
+    legacy_put_fields={'visibility':{'enum':['private','public']},
         'final_message':{'type':'string','maxLength':8192},
         'preservation':{'enum':['keep','archive','unspecified']},
         'allowed_actions':{'type':'array','items':legacy_action,'maxItems':8,'uniqueItems':True},
         'forbidden_actions':{'type':'array','items':legacy_action,'maxItems':8,'uniqueItems':True},
         'envelope_ids':legacy_ids,'custodian_refs':legacy_ids,
         'checkpoint_refs':legacy_refs,'handoff_refs':legacy_refs,
-        'expected_revision':IDENTIFIER},('visibility',)),signature=True)
+        'expected_revision':IDENTIFIER}
+
+    @op('identity.legacy_put',obj(legacy_put_fields,('visibility',)),signature=True)
+    @op('identity.legacy_put',obj({**legacy_put_fields,**personal_signature_fields},
+        ('visibility',*personal_signature_fields)),signature=True,version=2)
     async def legacy_put(ctx,request,tx):
         subject=await controlled_owner(app,ctx,request,tx)
         args=request.arguments
@@ -727,6 +731,11 @@ def install(app):
                      'final_message':message,'preservation':args.get('preservation','unspecified'),
                      'allowed_actions':sorted(allowed),'forbidden_actions':sorted(forbidden),
                      'declaration_only':True}
+        proof={}
+        if request.contract_version==2:
+            proof={'content_signature':args['content_signature'],'revision_id':args['revision_id'],
+                   'resource_id':args['resource_id']}
+        proof_purpose='revision' if proof else 'request'
         previous=tx.one('SELECT resource_id FROM legacy_directives WHERE subject=?',
                         (subject.resource_id,))
         mode=0o444 if args['visibility']=='public' else 0o600
@@ -734,7 +743,9 @@ def install(app):
             require('expected_revision' not in args,'legacy_revision_not_found')
             resource=await create_resource(app,ctx,request,tx,parent='t_last_will',
                 type='legacy_directive',name='will-'+subject.resource_id[-16:]+'.md',
-                body=canonical(public_body),media_type='application/json',mode=mode)
+                body=canonical(public_body),media_type='application/json',mode=mode,
+                resource_id=proof.get('resource_id'),content_signature=proof.get('content_signature'),
+                revision_id=proof.get('revision_id'))
             tx.execute('INSERT INTO legacy_directives VALUES (?,?,?)',
                        (subject.resource_id,resource.id,wire(ctx.now)),write=True)
             old_digest=None
@@ -744,11 +755,14 @@ def install(app):
                     'legacy_directive_inactive')
             require(not (resource.mode==0o600 and mode==0o444),
                     'legacy_private_history_cannot_be_published')
+            if proof:
+                require(proof['resource_id']==resource.id,'legacy_resource_mismatch')
             require(args.get('expected_revision')==resource.revision,'revision_conflict')
             await assert_generation(request,resource)
             old_digest=digest(resource.revision)
             resource=await revise_resource(app,ctx,request,tx,resource,canonical(public_body),
-                                           'application/json')
+                'application/json',signature=proof.get('content_signature'),
+                revision_id=proof.get('revision_id'))
             if resource.mode!=mode:
                 resource=replace(resource,mode=mode,generation=resource.generation+1,
                     modified_at=ctx.now,modified_by=ctx.principal.actor)
@@ -758,7 +772,7 @@ def install(app):
                  'custodian_refs':custodian_refs,'checkpoint_refs':checkpoint_refs,
                  'handoff_refs':handoff_refs,'visibility':args['visibility'],
                  'created_at':wire(ctx.now),'signature_source':'self-custody',
-                 'proof_purpose':'request','request_signature':wire(request.proof.signature),
+                 'proof_purpose':proof_purpose,'request_signature':wire(request.proof.signature),
                  'signed_envelope':b64(signing_bytes(request))}
         tx.execute('INSERT INTO legacy_directive_versions VALUES (?,?,?,?)',
                    (resource.revision,resource.id,subject.resource_id,canonical(version).decode()),write=True)
@@ -772,7 +786,7 @@ def install(app):
             after_digest=digest(resource.revision),previous_digest=None,
             entry_digest='',result='recorded'))
         return output_for(resource,declaration_only=True,signature_source='self-custody',
-                          proof_purpose='request')
+                          proof_purpose=proof_purpose)
 
     @op('identity.legacy_archive',obj(),signature=True)
     async def legacy_archive(ctx,request,tx):
