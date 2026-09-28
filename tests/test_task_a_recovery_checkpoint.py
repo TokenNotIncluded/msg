@@ -4,15 +4,19 @@ from copy import deepcopy
 from dataclasses import replace
 
 import pytest
+from test_service import NOW
 
-from msg.admin.recovery_replay import TrustedCheckpointPin, replay, verify_checkpoint
-from msg.core.codec import canonical, digest, loads, wire
+from msg.admin.recovery_replay import TrustedCheckpointPin, _replay, verify_checkpoint
+from msg.core.codec import canonical, digest, wire
 from msg.core.errors import Failure
 from msg.core.models import Credential
 from msg.security.crypto import Ed25519Signer
 from msg.security.quarantine import SETTING, active
 from msg.storage.postgres import PostgresMetadataStore
-from test_service import NOW
+
+
+async def replay(store, packet, *, pin):
+    return await _replay(store, packet, pin=pin, operator="isolated-test-usecase")
 
 
 @pytest.fixture
@@ -135,3 +139,195 @@ async def test_wrong_backup_and_live_database_are_not_replay_targets(restored, c
         tx.execute('DELETE FROM settings WHERE key=?', (SETTING,), write=True)
     with pytest.raises(Failure, match='^recovery_quarantine_required$'):
         await replay(restored, signed(body), pin=pin)
+
+
+@pytest.mark.asyncio
+async def test_cached_receipt_cannot_authorize_regression_or_skip_restored_authority(restored, checkpoint):
+    body, pin, signed = checkpoint
+    await replay(restored, signed(body), pin=pin)
+    # A coherent current DB receipt is only a guard, never an external freshness source.
+    old = dict(body, sequence=0, entries=[])
+    with pytest.raises(Failure, match='^recovery_checkpoint_regression$'):
+        await replay(restored, signed(old), pin=replace(pin, sequence=0, digest=digest(old)))
+    corrupt = deepcopy(body)
+    corrupt['entries'][0]['target'] = 'different-target'
+    with pytest.raises(Failure, match='^recovery_checkpoint_regression$'):
+        await replay(restored, signed(corrupt), pin=replace(pin, digest=digest(corrupt)))
+    async with restored.transaction(write=True) as tx:
+        token = await tx.credential('token_one')
+        tx.execute('UPDATE credentials SET body=? WHERE id=?',
+                   (canonical(replace(token, revoked_at=None)).decode(), token.id), write=True)
+    # Re-applying the pinned full log re-revokes the row, even with an identical cached receipt.
+    assert (await replay(restored, signed(body), pin=pin))['changed'] == 1
+    async with restored.transaction(write=False) as tx:
+        assert (await tx.credential('token_one')).revoked_at == NOW
+        assert active(tx)
+
+
+@pytest.mark.asyncio
+async def test_actual_backend_termination_rolls_back_and_replay_can_resume(restored, checkpoint):
+    import psycopg
+    body, pin, signed = checkpoint
+    # Kill the actual PostgreSQL session after its revoke but before its COMMIT.
+    # No patched driver or mock transaction supplies the rollback evidence.
+    with pytest.raises(psycopg.OperationalError):
+        async with restored.transaction(write=True) as tx:
+            assert (await replay(restored, signed(body), pin=pin))['changed'] == 1
+            pid = tx.one('SELECT pg_backend_pid()')[0]
+            with psycopg.connect(restored.dsn) as killer:
+                assert killer.execute('SELECT pg_terminate_backend(%s)', (pid,)).fetchone() == (True,)
+            tx.one('SELECT 1')
+    async with restored.transaction(write=False) as tx:
+        assert (await tx.credential('token_one')).revoked_at is None
+        assert tx.setting('recovery_replay') is None
+        assert active(tx) and tx.one('SELECT count(*) FROM audit')[0] == 0
+    assert (await replay(restored, signed(body), pin=pin))['changed'] == 1
+
+
+@pytest.mark.asyncio
+async def test_public_replay_entry_rejects_nonconsole_before_database_access(restored, checkpoint, tmp_path):
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    from msg.core.codec import loads
+    script = '''
+import asyncio
+from pathlib import Path
+from msg.admin.recovery_replay import replay
+from msg.core.codec import canonical
+from msg.core.errors import Failure
+try:
+    asyncio.run(replay(None, {}, pin=None, config_dir=Path('.')))
+except Failure as exc:
+    print(canonical({'code': exc.code}).decode())
+'''
+    result = await asyncio.to_thread(subprocess.run, [sys.executable, '-c', script], capture_output=True, text=True, check=True,
+        env=dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'src')))
+    assert loads(result.stdout)['code'] == 'local_console_required'
+    async with restored.transaction(write=False) as tx:
+        assert tx.setting('recovery_replay') is None
+        assert tx.one('SELECT count(*) FROM audit')[0] == 0
+
+
+def test_offline_selftest_is_not_field_or_database_acceptance():
+    from msg.admin.recovery_replay import selftest
+    assert selftest() == {'format': 'msg-revocation-checkpoint-v1',
+                         'scope': 'isolated_signature_contract_only', 'checks': 3,
+                         'status': 'passed', 'database_used': False,
+                         'production_evidence': False, 'promotion': 'blocked'}
+
+
+@pytest.mark.asyncio
+async def test_all_supported_owned_revocations_preserve_signed_bytes_and_never_import_keys(restored, checkpoint):
+    from datetime import timedelta
+
+    from msg.admin.recovery_replay import SUPPORTED_FACTS
+    from msg.core.codec import b64, decode, loads
+    from msg.core.models import Certificate, Membership, Resource, Signature
+    from msg.security.age_keys import encryption_key_id, generate_age_key, public_from_recipient
+    from msg.security.certificates import sign_certificate
+    from msg.security.crypto import key_id
+    body, pin, signed = checkpoint
+    owner = 'u_owner'
+    signer = Ed25519Signer.generate()
+    recipient = generate_age_key()[1]
+    age_id = encryption_key_id(public_from_recipient(recipient))
+    credential = Credential(id=signer.key_id, subject_id=owner, kind='signing_key',
+        verifier=signer.public_key, ceiling=(), not_before=NOW, expires_at=None, revoked_at=None)
+    certificate = sign_certificate(Certificate(resource_id='cert_one', serial='serial-one',
+        subject_id=owner, key_id=key_id(signer.public_key), issuer_id=owner,
+        parent_certificate_id=None, authority_sources=(), kind='capability', grants=(),
+        not_before=NOW, expires_at=NOW+timedelta(days=1), target_service=pin.service,
+        delegation_depth=0, issuance=None,
+        signature=Signature(key_id=signer.key_id, algorithm='ed25519', value=b'')), signer)
+    original = canonical(certificate).decode()
+    member = Membership(organization_id='g_test', subject_id=owner, role='member', version=1)
+    resource = Resource(id='t_test', type='topic', type_version=1, name='test', parent=None,
+        owner=owner, group='g_public', mode=0o700, generation=1, revision=None, state='active',
+        created_at=NOW, created_by=owner, modified_at=NOW, modified_by=owner)
+    async with restored.transaction(write=True) as tx:
+        await tx.insert(resource)
+        tx.execute('INSERT INTO credentials VALUES (?,?,?)',
+                   (credential.id, owner, canonical(credential).decode()), write=True)
+        tx.execute('INSERT INTO certificates VALUES (?,?,NULL,0,?)',
+                   (certificate.resource_id, owner, original), write=True)
+        tx.execute('INSERT INTO memberships VALUES (?,?,?,?)',
+                   (member.organization_id, owner, member.version, canonical(member).decode()), write=True)
+        tx.execute('INSERT INTO topic_memberships VALUES (?,?,?,?,?,NULL)',
+                   (resource.id, owner, 'member', 'active', wire(NOW)), write=True)
+        tx.execute('INSERT INTO identity_keys VALUES (?,?,?,?,NULL,1)',
+                   (signer.key_id, owner, b64(signer.public_key), wire(NOW)), write=True)
+        tx.execute('INSERT INTO encryption_subkeys VALUES (?,?,?,?,?,NULL,1)',
+                   (age_id, owner, recipient, b64(public_from_recipient(recipient)), wire(NOW)), write=True)
+        tx.execute('INSERT INTO custodial_vault VALUES (?,?,?,?,?,?,?,?,?,NULL)',
+                   (owner, signer.key_id, age_id, 'signing-nonce', 'sealed-signing',
+                    'age-nonce', 'sealed-age', 'active', wire(NOW)), write=True)
+        tx.execute('INSERT INTO token_deliveries VALUES (?,?,?,?,?,?,NULL,NULL)',
+                   ('token_one', owner, 'original-create', 'digest', 'verifier',
+                    wire(NOW+timedelta(hours=1))), write=True)
+        tx.execute('INSERT INTO share_grants VALUES (?,?,?,?,?,?,NULL)',
+                   ('sg_one', resource.id, owner, 'u_reader', wire(NOW),
+                    wire(NOW+timedelta(days=1))), write=True)
+        tx.execute('INSERT INTO share_grants_v2 VALUES (?,?,?,?,?,NULL,?,?,0,?,?,NULL)',
+                   ('sg_two', resource.id, owner, 'u_reader', 'user', '["read"]', '{}',
+                    wire(NOW), wire(NOW+timedelta(days=1))), write=True)
+        tx.execute('INSERT INTO share_links VALUES (?,?,?,?,?,?,?,NULL)',
+                   ('link_one', resource.id, owner, signer.key_id, 'link-verifier',
+                    wire(NOW), wire(NOW+timedelta(days=1))), write=True)
+    targets = [('credential.revoke', 'token_one'), ('certificate.revoke', 'cert_one'),
+               ('share_grant.revoke', 'sg_one'), ('share_grant_v2.revoke', 'sg_two'),
+               ('share_link.revoke', 'link_one'), ('membership.remove', 'g_test'),
+               ('topic_membership.remove', 't_test'), ('identity_key.retire', signer.key_id),
+               ('encryption_key.retire', age_id), ('vault.destroy', age_id)]
+    assert {kind for kind, _ in targets} == SUPPORTED_FACTS
+    facts = [{'sequence': i, 'kind': kind, 'subject': owner, 'target': target, 'at': wire(NOW)}
+             for i, (kind, target) in enumerate(targets, 1)]
+    body = dict(body, entries=facts, sequence=len(facts))
+    pin = replace(pin, sequence=len(facts), digest=digest(body))
+    result = await replay(restored, signed(body), pin=pin)
+    assert result['changed'] == len(facts) and result['backup_retired'] is False
+    async with restored.transaction(write=False) as tx:
+        assert tx.one('SELECT body,revoked FROM certificates WHERE id=?', ('cert_one',)) == (original, 1)
+        assert (await tx.credential(signer.key_id)).revoked_at == NOW
+        assert tx.one('SELECT consumed_at FROM token_deliveries WHERE credential_id=?', ('token_one',)) == (wire(NOW),)
+        for table in ('identity_keys', 'encryption_subkeys'):
+            assert tx.one(f'SELECT retired_at,is_primary FROM {table} WHERE subject=?', (owner,)) == (wire(NOW), 0)
+        for table, target in (('share_grants', 'sg_one'), ('share_grants_v2', 'sg_two'), ('share_links', 'link_one')):
+            assert tx.one(f'SELECT revoked_at FROM {table} WHERE id=?', (target,)) == (wire(NOW),)
+        current = decode(Membership, loads(tx.one('SELECT body FROM memberships WHERE org=? AND subject=?',
+                                                ('g_test', owner))[0]))
+        assert current.version == 2 and current.status == 'rejected'
+        assert tx.one('SELECT status FROM topic_memberships WHERE topic=? AND subject=?',
+                      ('t_test', owner)) == ('removed',)
+        assert tx.one('SELECT status,signing_nonce,signing_ciphertext,age_nonce,age_ciphertext '
+                      'FROM custodial_vault WHERE subject=?', (owner,)) == ('destroyed', None, None, None, None)
+        assert tx.one('SELECT count(*) FROM jobs')[0] == 0 and active(tx)
+        assert canonical(await tx.resource(resource.id)).decode() == canonical(resource).decode()
+    assert (await replay(restored, signed(body), pin=pin))['changed'] == 0
+
+
+def test_packaged_schema_and_example_match_the_replay_contract():
+    from importlib.resources import files
+
+    from jsonschema import Draft202012Validator
+
+    from msg.admin.recovery_replay import SUPPORTED_FACTS
+    from msg.core.codec import loads, unb64
+    root = files('msg').joinpath('data')
+    schema = loads(root.joinpath('recovery-checkpoint.schema.json').read_bytes())
+    example = loads(root.joinpath('recovery-checkpoint.example.json').read_bytes())
+    Draft202012Validator.check_schema(schema)
+    validator = Draft202012Validator(schema)
+    validator.validate(example['packet'])
+    props = schema['properties']['checkpoint']['properties']
+    assert props['entries']['default'] == [] and props['sequence']['default'] == 0
+    assert set(props['entries']['items']['properties']['kind']['enum']) == SUPPORTED_FACTS
+    pinned = dict(example['pin'], public_key=unb64(example['pin']['public_key']))
+    pin = TrustedCheckpointPin(**pinned)
+    assert verify_checkpoint(example['packet'], pin=pin) == example['packet']['checkpoint']
+    assert example['example_only'] and 'private_key' not in canonical(example).decode()
+    with pytest.raises(Failure, match='^recovery_checkpoint_pin_required$'):
+        verify_checkpoint(example['packet'], pin=None)
+    assert list(validator.iter_errors({}))
