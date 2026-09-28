@@ -12,7 +12,7 @@ import sys
 
 import pytest
 
-from msg.core.codec import b64, canonical, unb64, wire
+from msg.core.codec import b64, canonical, loads, unb64, wire
 from msg.core.errors import Failure
 from msg.core.requests import request_for, receipt_bytes
 from msg.security.crypto import verify
@@ -121,7 +121,13 @@ async def test_standalone_delivery_claim_commits_once_without_persisting_secrets
                      (committed.data['credential_id'],))
         assert row[0] is not None and row[1] == module.recovery_verifier(args['recovery_secret'])
         assert released.data['token'] not in str(row) and args['recovery_secret'] not in str(row)
-        assert tx.one('SELECT COUNT(*) FROM events WHERE request_id=?', (rid,))[0] == 1
+        # Event fields are stored in canonical JSON, not separate SQL columns.
+        events = [loads(row[0]) for row in tx.rows('SELECT body FROM events')]
+        matching = [event for event in events if event.get('request_id') == rid]
+        assert len(matching) == 1
+        assert matching[0]['subject'] == committed.subject
+        assert released.data['token'] not in canonical(matching[0]).decode()
+        assert args['recovery_secret'] not in canonical(matching[0]).decode()
 
 
 async def test_delivery_failure_returns_no_new_secret_or_claim(installed):

@@ -1,21 +1,23 @@
 # Credential delivery boundary progress
 
-Issue #162, supplemental to #167; base2d1cc443c828dd2f735995cc6a5d20021fee6ac7 / tree6171f6041ffd0addaf72eadd35acf562f478281f. Branchfix/token-delivery-boundary-20260929. Coordination #83 comment5879008128. No other source branch is overwritten.
+Issue #162; PR #172, stacked on #167 base2d1cc443c828dd2f735995cc6a5d20021fee6ac7 / tree6171f6041ffd0addaf72eadd35acf562f478281f. Branchfix/token-delivery-boundary-20260929. Coordination #83 comment5879008128. No other source branch is overwritten.
 
-## Source ownership
+## Single source and transaction timing
 
-Before: Application owns composition plus issued_token/recovery_verifier/record_token_delivery/_secrets_for_caller. Authentication contains a second recovery-verifier formula.
+security.token_delivery owns TokenDelivery and the one recovery_verifier function. Application constructs it, retains compatibility forwarding only, and binds HTTP/SSH executors directly to the same release method. Authentication consumes that verifier, not a second formula. Dependencies: metadata, the existing token derivation key, clock and current-window providers. No Root signer, vault, Registry, plugin or HTTP object.
 
-After: security.token_delivery owns TokenDelivery and the one recovery_verifier function. Application constructs it, retains compatibility forwarding only, and binds all executors directly to the same release method. Authentication consumes the same pure verifier. Domain dependencies are explicitly metadata, the existing token derivation key, clock and a current-window provider; there is no Root signer, vault, Registry, plugin or HTTP object.
+The original issued_token/release/verifier bodies are unchanged; record_token_delivery changes only current-window access. Live clock/settings changes are preserved. The handler still records recovery binding inside issuance. After commit, release independently commits the one-time claim before exposing the response token. Lost responses still require recovery. IDs, operation versions, purpose strings, deadlines, persistent results/events/receipts retain their existing meaning. No project code/test executed locally.
 
-Current providers deliberately preserve later settings/clock changes. Static text/AST review found the issued_token and release bodies identical to the original, recovery_verifier body identical, and record_token_delivery identical except access to the narrow current-window provider. No project code/test was executed locally.
+## Independently verified cloud evidence
 
-## Timing and compatibility
+RED b68526267a4aaea2df8418ad4d400f64a845fa63 / tree0f653206afd064f3e752cbb3442c202fbd72a4bb, run36486490339, artifact10999622677: **7 failed /115 passed /0 errors /0 skipped**. All seven new ownership checks failed; all existing suites passed. ZIP SHA2560fed854c2890019a5892fbabdde7a6fe3093b05d6805b64d701504f9f44de958; source.json confirms head/tree/attempt1/Python3.15.0rc2.
 
-The existing handler records recovery binding inside its issuance transaction. After it commits, release opens its own write transaction and commits the one-time claim before adding the token to response data. A failed/dropped response still requires the existing independent recovery operation. Results, events, original receipts, IDs, purpose strings, deadlines and operation versions retain their meaning. No new generic response hook, protocol version, identity or recovery mechanism.
+First implementation f015c60f05469f0058255bd645afef084e87840d / tree46af80b065a8e4eaea319b87a70bb5ddb281f966, push run36486854337, artifact10998634353: **1 failed /121 passed /0 errors /0 skipped**. ZIP SHA2560186be18b2ed3393af3fe5eaa5ee11eb1caa315f941cd0a1ddd469fb39fdc189 and source.json independently verified.
 
-## Regression and cloud evidence
+The sole failure is a new test's SQL query for events.request_id, which does not exist: events stores seq/id/body and canonical Event JSON includes request_id. All earlier assertions in that case (concurrent one-time release, receipt verification, secret-free persistent result, recovery binding) passed. The corrected test reads real body JSON, still requires exactly one matching event, and additionally checks its subject and absence of both token and recovery secret. No production schema/code or old assertion is changed to accommodate a fabricated column.
 
-Tests-first headb68526267a4aaea2df8418ad4d400f64a845fa63 / tree0f653206afd064f3e752cbb3442c202fbd72a4bb contains seven new ownership/construction/wire/concurrent-claim/expired-refusal cases. Focused cloud workflow retains all existing token, credential, recovery-window, client recovery, batch secret and security regressions. The red focused run is not cancelled by the later implementation head; both are bound to exact source identity. Results remain pending until actual artifacts are read.
+The corrected head must rerun the full credential selection and full four-shard/node-ID/conformance/build/recovery gates. Neither RED nor first implementation is a passing merge candidate. Latest final status belongs to #172 comments/actual Actions, not historical evidence.
 
-Final focused/full four-shard/node-ID/conformance/build/recovery outcomes are pending. No deployment, actual credentials, Root/PIN, backup destruction, external delivery or recovery promotion. #67 stays completed and its original functional regressions remain binding; this change is ownership-only, not a new token protocol. #167 must finish its own combined main gate separately.
+## Boundaries
+
+#67 remains completed with every original token/credential/recovery-window/client/batch/security regression retained. This is ownership repair, not a new token protocol. No deployment, actual credentials, Root/PIN, funds, external delivery, backup destruction or promotion. #167 finishes its own stable combined-main gate separately.
