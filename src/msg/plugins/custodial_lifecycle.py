@@ -154,11 +154,14 @@ async def switch_identity(app, ctx, request, tx, subject, challenge, details, *,
     switched = subject.kind == 'registered'
     if not switched:
         require(subject.kind == 'custodial', 'custodial_token_required')
+        phase = tx.one('SELECT status FROM custodial_upgrades WHERE id=? AND subject=?',
+                       (challenge['challenge_id'], uid))
+        require(phase is not None, 'custodial_upgrade_not_pending')
         signer = open_signer(app, tx, uid)
         endorsement = signer.sign(canonical({'subject_id': uid, 'challenge_id': challenge['challenge_id'],
             'old_identity_key_id': details['old_identity_key_id'], 'new_identity_key_id': new_key,
             'new_encryption_key_id': details['new_encryption_key_id'],
-            'inventory_digest': (await snapshot(tx, uid, 'pending_rewrap', challenge, details)).inventory_digest}),
+            'inventory_digest': (await snapshot(tx, uid, phase[0], challenge, details)).inventory_digest}),
             purpose='custodial-upgrade')
         revoked = []
         for (raw,) in tx.rows('SELECT body FROM credentials WHERE subject=?', (uid,)):
