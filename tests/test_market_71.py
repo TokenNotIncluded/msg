@@ -1,16 +1,20 @@
 """Regression contracts for local funding and the shared deterministic ledger."""
 import asyncio
 import shutil
+from datetime import timedelta
 
 import pytest
 
 from msg.admin.money import MoneyAdmin, apply_money
 from msg.admin.root import root_envelope
 from msg.constants import ROOT_SUBJECT
+from msg.core.codec import canonical, loads, wire
 from msg.core.errors import Failure
 from msg.daemon import parser
+from msg.market.escrow import resolve_due
+from msg.market.policy import contract, delivery_snapshot
 from msg.plugins.money import _balance, _supply
-from test_service import call, register
+from test_service import NOW, call, register
 
 
 def test_bank_fund_is_a_formal_command_without_unattended_flags():
@@ -71,3 +75,40 @@ async def test_bank_fund_two_console_approvals_before_pin_or_writes(installed, i
                                     subject_id='@bank-test', amount='20')
     assert result['root_balance_minor'] == 0 and result['total_supply_minor'] == 20_000_000
     assert (await call(app, 'money.balance', {}, key=root, subject=ROOT_SUBJECT)).status == 'error'
+
+
+@pytest.mark.asyncio
+async def test_settlement_fact_receipts_must_be_its_own_escrow_legs(installed):
+    from test_market_lifecycle import buy, market
+    app, root = installed
+    _sk, _seller, bk, buyer, listing, _ = await market(app, root, mode='service',
+                                                       kind='service', quantity=1)
+    bought = await buy(app, bk, buyer, listing)
+    assert bought.status == 'ok' and bought.data['order']['state'] == 'funded', wire(bought)
+    oid = bought.data['order']['id']
+    facts = ('payment_transaction_id', 'payment_intent_digest', 'funded_at', 'delivered_at')
+    # A forged refund fact that cites the authentic funding receipt must not
+    # make a still-held escrow look refunded, even with a matching projection.
+    with pytest.raises(Failure, match='order_settlement_mismatch'):
+        async with app.metadata.transaction(write=True) as tx:
+            row = tx.one('SELECT total_price_minor,dispute_policy,' + ','.join(facts) +
+                         ' FROM store_orders WHERE id=?', (oid,))
+            payment = row[2]
+            receipt = loads(tx.one('SELECT receipt FROM money_ledger WHERE id=?', (payment,))[0])
+            at = wire(NOW)
+            fact = {'order_id': oid, 'refund_minor': row[0], 'release_minor': 0,
+                    'reason': 'buyer_cancelled', 'decision_id': None, 'policy': row[1],
+                    'receipts': [receipt], 'at': at, 'order_facts': dict(zip(facts, row[2:])),
+                    'delivery_snapshot': delivery_snapshot(tx, oid)}
+            tx.execute('INSERT INTO order_settlements(order_id,decision_id,body) VALUES (?,?,?)',
+                       (oid, None, canonical(fact).decode()), write=True)
+            tx.execute("UPDATE store_orders SET state='refunded',settled_at=?,receipt_refs=? WHERE id=?",
+                       (at, canonical([payment, payment]).decode(), oid), write=True)
+            contract(tx, oid)
+    app.clock = lambda: NOW + timedelta(days=2)
+    assert await resolve_due(app) == [oid]
+    async with app.metadata.transaction(write=False) as tx:
+        locked = contract(tx, oid)
+        assert tx.one('SELECT state FROM store_orders WHERE id=?', (oid,))[0] == 'refunded'
+        assert _balance(tx, locked['escrow_subject']) == 0
+        assert _balance(tx, buyer) == 20_000_000
