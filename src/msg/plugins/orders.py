@@ -243,8 +243,11 @@ def install(app):
     async def payment(ctx, request, tx):
         viewer = _viewer(ctx)
         row = _row(tx, request.arguments['order_id'], viewer)
+        if tx.one('SELECT 1 FROM order_contracts WHERE order_id=?', (row['id'],)):
+            from msg.market.policy import contract
+            contract(tx, row['id'])
         result = {'order_id': row['id'],
-                  'status': 'refunded' if row['state'] == 'refunded' else 'funded',
+                  'status': _view(row, viewer)['payment_status'],
                   'amount_minor': row['total_price_minor'],
                   'currency_id': row['currency_id']}
         if viewer == row['buyer']:
@@ -254,7 +257,7 @@ def install(app):
                                 (transaction_id,))
                 require(ledger is not None, 'order_not_found')
                 receipts.append(loads(ledger[0]))
-            result['receipt'] = receipts[0]
+            result['receipt'] = receipts[0] if receipts else None
             result['receipts'] = receipts
             result['escrow_balance_minor'] = _balance(tx, row['escrow_subject'])
         return HandlerOutput(data={'payment': result})

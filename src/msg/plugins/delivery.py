@@ -159,6 +159,9 @@ def install(app):
         require(buyer is not None and ctx.principal.actor == buyer,
                 'order_not_found')
         order = _buyer_order(tx, request.arguments['order_id'], buyer)
+        if tx.one('SELECT 1 FROM order_contracts WHERE order_id=?', (order['id'],)):
+            from msg.market.delivery import read
+            return await read(app, tx, ctx, request)
         delivery = _delivery(tx, order['id'])
         require(delivery is not None, 'delivery_not_found')
         await _verified_delivery(app, tx, order, delivery)
