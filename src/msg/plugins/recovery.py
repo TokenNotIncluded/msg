@@ -40,7 +40,8 @@ def install(app):
         challenge, details = loads(row[2]), loads(row[3])
         authorize_migration(ctx, subject, row[0], row[1], details)
         require(not pending or row[1] != 'pending', 'custodial_upgrade_not_pending_rewrap')
-        state = await migration_snapshot(tx, subject.resource_id, row[1], challenge, details)
+        state = await migration_snapshot(tx, subject.resource_id, row[1], challenge, details,
+                                         now=ctx.now)
         return subject, row[1], challenge, details, state
 
     @op('identity.custodial_upgrade_inventory',obj({'challenge_id':IDENTIFIER},

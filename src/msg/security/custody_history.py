@@ -9,6 +9,7 @@ from msg.core.codec import canonical, decode, unb64
 from msg.core.errors import Failure
 from msg.core.models import Signature
 from msg.security.age_keys import encryption_key_id, public_from_recipient
+from msg.security.backup_retirement import verified as verified_backup
 from msg.security.crypto import key_id, verify
 
 
@@ -101,8 +102,12 @@ def history_evidence(subject_id, challenge_id, challenge, details, current):
     return result
 
 
-async def retirement_evidence(tx, subject_id, details, *, history_recoverable):
-    """Separate observable online retirement from unproven backup destruction."""
+async def retirement_evidence(tx, subject_id, details, *, history_recoverable, now=None):
+    """Separate observable online retirement from locally attested backup retirement.
+
+    backup_retired needs one exact root-signed record imported at the physical
+    console; server_key_retired additionally needs observable online retirement.
+    """
     new_signing = tx.one('SELECT key_id FROM identity_keys WHERE subject=? AND is_primary=1',
                          (subject_id,))
     new_encryption = tx.one('SELECT key_id FROM encryption_subkeys WHERE subject=? AND is_primary=1',
@@ -129,8 +134,13 @@ async def retirement_evidence(tx, subject_id, details, *, history_recoverable):
     online = (switched and destroyed and signing_revoked and
               all(row is not None and row[0] is not None and not row[1]
                   for row in (old_signing, old_encryption)))
+    status, attestation = await verified_backup(tx, subject_id, details, now=now)
+    backup = attestation is not None and attestation.binds(subject_id, details)
+    server = online and backup
     return {'identity_switched': switched, 'history_recoverable': history_recoverable,
-            'online_retired': online, 'backup_retired': False, 'server_key_retired': False,
-            'backup_retirement_evidence': 'unavailable',
-            'completion_status': ('pending_backup_retirement' if online and history_recoverable
+            'online_retired': online, 'backup_retired': backup, 'server_key_retired': server,
+            'backup_retirement_evidence': status if not backup else 'local_attestation_verified',
+            'backup_retirement_record': attestation.view() if backup else None,
+            'completion_status': ('server_key_retired' if server and history_recoverable
+                                  else 'pending_backup_retirement' if online and history_recoverable
                                   else 'pending_history' if switched else 'pending_identity_switch')}

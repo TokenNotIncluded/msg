@@ -262,6 +262,43 @@ class RootAdmin:
         return asyncio.run(_revoke(app,certificate_id,Ed25519Signer.from_bytes(private),reason=reason,operator=operator))
 
 
+    def sign_backup_retirement(self,source,destination):
+        """Root-sign an operator's statement that listed backup sets lost one old key."""
+        require_local_console(self.config_dir)
+        from msg.admin.backup_retirement import unsigned_statement
+        from msg.security.backup_retirement import sign_record
+        target=Path(destination)
+        require(not target.exists() and not target.is_symlink(),'backup_retirement_destination_exists')
+        body=unsigned_statement(loads(Path(source).read_bytes()))
+        print(canonical({'statement':body,'digest':digest(body),
+                         'claim':'listed_backup_sets_only'}).decode())
+        require(input('Type ATTEST BACKUP RETIREMENT '+digest(body)+': ')==
+                'ATTEST BACKUP RETIREMENT '+digest(body),'approval_cancelled')
+        private=open_private_key(loads(root_envelope(self.config_dir).read_bytes()),getpass.getpass('Root PIN/passphrase: '))
+        record=sign_record(body,Ed25519Signer.from_bytes(private))
+        durable_write(target,canonical(record),mode=0o600)
+        return {'status':'backup_retirement_signed','path':str(target),'digest':digest(record)}
+
+    def import_backup_retirement(self,source):
+        """Only this console path persists a record; reads re-verify it every time."""
+        operator=require_local_console(self.config_dir)
+        from msg.admin.backup_retirement import import_record
+        app=self._app()
+        record=loads(Path(source).read_bytes())
+        print(canonical({'record':record,'digest':digest(record)}).decode())
+        require(input('Type IMPORT BACKUP RETIREMENT '+digest(record)+': ')==
+                'IMPORT BACKUP RETIREMENT '+digest(record),'approval_cancelled')
+        async def run():
+            await app.load()
+            try:
+                async with app.metadata.transaction(write=True) as tx:
+                    return await import_record(tx,record,now=app.clock(),operator=operator)
+            finally:
+                await app.close()
+        attestation=asyncio.run(run())
+        return {'status':'backup_retirement_imported','scope':'listed_backup_sets_only',
+                **attestation.view()}
+
     def backup(self,destination):
         require_local_console(self.config_dir)
         target=Path(destination)
