@@ -165,15 +165,17 @@ async def _apply(tx, fact):
     if kind == 'topic_ban.apply':
         require(tx.one('SELECT id FROM resources WHERE id=?', (target,)) is not None,
                 'recovery_fact_missing')
-        row = tx.one('SELECT status FROM topic_bans WHERE topic=? AND subject=?', (target, subject))
+        row = tx.one('SELECT status,expires_at FROM topic_bans WHERE topic=? AND subject=?', (target, subject))
         if row is None:
             tx.execute('''INSERT INTO topic_bans
                 (topic,subject,actor,created_at,expires_at,reason,status)
                 VALUES (?,?,?,?,NULL,?,?)''',
                 (target, subject, ROOT_SUBJECT, at, 'recovery-replay', 'active'), write=True)
             return True
-        if row[0] != 'active':
-            tx.execute("UPDATE topic_bans SET status='active' WHERE topic=? AND subject=?",
+        # This checkpoint fact has no expiry. Do not inherit one from an older
+        # snapshot and silently lift the restored deny, now or in the future.
+        if row[0] != 'active' or row[1] is not None:
+            tx.execute("UPDATE topic_bans SET status='active',expires_at=NULL WHERE topic=? AND subject=?",
                        (target, subject), write=True)
             return True
         return False

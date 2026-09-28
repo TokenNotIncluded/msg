@@ -36,7 +36,7 @@ async def import_record(tx, record, *, now, operator):
             isinstance(body.get('old_identity_key_id'), str), 'backup_retirement_invalid')
     subject = body['subject_id']
     details = completed_migration(tx, subject, body['old_identity_key_id'])
-    attestation = check(record, await root_verifier(tx), subject, details, now=now)
+    attestation = check(record, await root_verifier(tx, now=now), subject, details, now=now)
     key = setting_key(subject, attestation.old_identity_key_id)
     previous = tx.setting(key)
     tx.set_setting(key, record)

@@ -1,14 +1,27 @@
 # 当前 issue 推进笔记
 
-源请求：2026-09-28T19:16Z。此文件只记录本轮代码与验收证据；权威设计和已完成归档仍有效，入口见 issue #83。
+源请求：2026-09-28T19:16Z。此文件记录本轮代码与验收证据；权威设计和已完成归档仍有效，入口见 issue #83。只更新当前笔记，不重复堆叠状态文件。
 
 ## 基线及集成
 
 - 开始 main：`01e39345c755d6ec8f584534de20d9cd265ca922`，tree `f51cadf931d32c53c64501af8db33dbde43eacbb`。
-- 主线 CI `36465610565`、Recovery safety `36465610588` 已读为 success。
-- 保留 #145 `f2ebc093fb8333c2a0f196b6ebd86cfdf717affa` 与 #154 `3490750dd8fd59c8070e9816a104292db0937cea` 的提交历史，不修改原分支。
-- 本轮先加入失败回归：旧禁言过期时间、当前 Root 证书/凭据有效期与结构/签名、日期上溢。新工作流在云端真实 PostgreSQL 运行；原完整四分片、逐 node-ID gate、conformance、构建与恢复专项保持不变。
-- 当前为复现阶段，未声称测试通过或合并完成。运行的 source.json 绑定实际 checkout SHA/tree、原 PR head、run/attempt；PR 合并候选与原分支 head 分开记录。
+- 主线 Rewrite CI `36465610565`、Recovery safety `36465610588` 已读为 success。
+- 集成分支：`integrate/issue-recovery-cloud-20260928`。以 main 为第一父提交，完整保留 #145 `f2ebc093fb8333c2a0f196b6ebd86cfdf717affa` 与 #154 `3490750dd8fd59c8070e9816a104292db0937cea` 的历史，不修改原分支。
+- 完整读过权威设计及完成归档、两份 PR 的改动及 review/CI；旧 #103/#112 不再作为开放 PR 队列。
+
+## 已复现与本次修复
+
+失败基线：head `4bfeece690a26970b66f86b06cd3817dbb0b38cd`，tree `9f2b8db3861e8e299c6522d21a18d03d3d4b5dcd`。
+
+云端专项 `36471956362` / job `109096152390` 使用真实 PostgreSQL 和 Python 3.15.0rc2，55 个用例中 **15 failed / 40 passed / 0 skipped / 0 errors**；原有两文件 36 个用例全部通过。已下载 artifact `10992276490`，实际核对 ZIP SHA256 `01d114f54d75777640e49df670f7a0dbb0c7f9404c726768065daeee201fe9d4`，source.json 与以上 head/tree 一致。
+
+本次仅修实现，不修改失败断言：
+
+1. `topic_ban.apply` 不再继承旧快照中的 expires_at；无到期字段的检查点恢复为 active/NULL，保留原 actor/reason，重复与并发重放仍只改变一次。
+2. 退役证明读取和导入共同重验当前 Root 自签证书结构、签名、有效期及 signing credential 有效期；到期边界不再误报 verified，失败读取不写业务状态，失败导入不写审计。
+3. 有效期用时间差而非向不可信日期加 400 天，避免 year 9999 上溢；未来证明仍受当前时间检查拒绝。
+
+本次修复后的 CI 尚待回读，不将预期通过写成通过。专项 source.json 绑定实际 checkout SHA/tree、PR head、run/attempt；完整四分片、逐 node-ID gate、conformance、构建及恢复专项不变。下一步检查本机命令接入及安全文件边界，再回读最终组合 head 的完整 CI。
 
 ## 全部开放项（尚无整项关闭证据）
 
