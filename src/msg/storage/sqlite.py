@@ -200,6 +200,25 @@ class SqliteSession:
         self._connection, self.write = connection, write
         self.owner_task = asyncio.current_task()
         self.closed = False
+        self.rollback_effects = []
+
+    def on_rollback(self, effect):
+        """Register an async compensating effect for work outside the database."""
+        self.check(write=True)
+        self.rollback_effects.append(effect)
+
+    async def run_rollback_effects(self, start=0):
+        effects = self.rollback_effects[start:]
+        self.rollback_effects = self.rollback_effects[:start]
+        first_error = None
+        for effect in reversed(effects):
+            try:
+                await effect()
+            except BaseException as exc:  # noqa: BLE001 - cancellation must not skip cleanup
+                if first_error is None:
+                    first_error = exc
+        if first_error is not None:
+            raise first_error
 
     def check(self, write=False):
         require(not self.closed, "transaction_closed")
@@ -567,12 +586,14 @@ class SqliteMetadataStore:
             existing.check(write)
             name='nested_'+uuid.uuid4().hex
             existing.execute('SAVEPOINT '+name)
+            rollback_at=len(existing.rollback_effects)
             try:
                 yield existing
                 existing.execute('RELEASE SAVEPOINT '+name)
             except BaseException:
                 existing.execute('ROLLBACK TO SAVEPOINT '+name)
                 existing.execute('RELEASE SAVEPOINT '+name)
+                await existing.run_rollback_effects(rollback_at)
                 raise
             return
         conn=self._connect()
@@ -600,6 +621,7 @@ class SqliteMetadataStore:
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
+            await tx.run_rollback_effects()
             raise
         finally:
             tx.closed=True

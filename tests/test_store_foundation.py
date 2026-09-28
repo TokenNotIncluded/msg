@@ -116,6 +116,28 @@ async def test_deposit_is_immutable_and_only_seller_can_read_payload(installed):
 
 
 @pytest.mark.asyncio
+async def test_failed_deposit_projection_removes_external_pins(installed):
+    app,_=installed
+    key,seller,_=await register(app,'deposit-rollback')
+    listing=await call(app,'store.listing_create',listing_args(),key=key,subject=seller)
+    file=await call(app,'content.file_put',{'parent':'/@deposit-rollback/files',
+        'name':'private.bin','data':b64(b'x')},key=key,subject=seller)
+    payload={'id':file.resources[0].id,'revision':file.resources[0].revision}
+    pin_dir=app.contents.path/'pins'
+    before={path for path in pin_dir.glob('*/*') if path.is_file()}
+    for _ in range(2):
+        failed=await call(app,'store.package_deposit',{
+            'listing_id':listing.resources[0].id,
+            'listing_revision':listing.resources[0].revision,
+            'manifest':{},'payload_refs':[payload]},key=key,subject=seller,
+            rid='failed-deposit',return_fields=('field_that_does_not_exist',))
+        assert failed.error.code=='unknown_projection_field'
+        assert {path for path in pin_dir.glob('*/*') if path.is_file()}==before
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM store_packages')[0]==0
+
+
+@pytest.mark.asyncio
 async def test_listing_cas_payload_ownership_and_no_secret_leak(installed):
     app,_=installed
     seller_key,seller,_=await register(app,'catalog-owner')

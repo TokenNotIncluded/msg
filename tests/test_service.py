@@ -20,11 +20,11 @@ from conftest import installed
 
 
 async def call(app, op, args, *, key=None, subject=None, certs=(), expected=(), rid=None, token=None,
-               contract_version=1):
+               contract_version=1, return_fields=()):
     packet = request_for(op, args, app.settings.service_url,
         signer=key, subject=subject, certificates=certs, expected=expected,
         request_id=rid, token=token, expires_at=NOW+timedelta(seconds=120),
-        contract_version=contract_version)
+        contract_version=contract_version, return_fields=return_fields)
     return await app.executor.execute(packet)
 
 

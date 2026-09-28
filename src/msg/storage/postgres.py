@@ -385,6 +385,7 @@ class PostgresMetadataStore:
             name = 'nested_' + uuid.uuid4().hex
             existing.execute('SAVEPOINT ' + name)
             pending_at_entry = len(existing.pending_effect_ids)
+            rollback_at = len(existing.rollback_effects)
             try:
                 yield existing
                 existing.execute('RELEASE SAVEPOINT ' + name)
@@ -392,6 +393,7 @@ class PostgresMetadataStore:
                 existing.execute('ROLLBACK TO SAVEPOINT ' + name)
                 existing.execute('RELEASE SAVEPOINT ' + name)
                 del existing.pending_effect_ids[pending_at_entry:]
+                await existing.run_rollback_effects(rollback_at)
                 raise
             return
 
@@ -428,6 +430,7 @@ class PostgresMetadataStore:
             committed = True
         except BaseException:
             conn.rollback()
+            await tx.run_rollback_effects()
             raise
         finally:
             tx.closed = True
