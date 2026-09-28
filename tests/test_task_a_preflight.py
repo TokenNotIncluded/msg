@@ -1,5 +1,4 @@
 """Read-only means no schema initialization, counter advance or report-side writes."""
-from pathlib import Path
 
 import psycopg
 import pytest
@@ -46,6 +45,5 @@ def test_existing_schema_is_checked_without_touching_sequences_or_files(pg_dsn, 
 
 
 def test_inspection_refuses_a_writable_transaction(pg_dsn):
-    with psycopg.connect(pg_dsn) as conn:
-        with pytest.raises(Failure, match='^preflight_read_only_required$'):
-            inspect_database(conn)
+    with psycopg.connect(pg_dsn) as conn, pytest.raises(Failure, match='^preflight_read_only_required$'):
+        inspect_database(conn)
