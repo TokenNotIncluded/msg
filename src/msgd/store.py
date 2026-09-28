@@ -4425,23 +4425,26 @@ class Store:
                     events.add((target, "reply"))
 
         text = post.title + "\n" + post.body
+        alias_keys: set[str] = set()
         for token in set(MENTION_RE.findall(text)):
             lowered = token.lower()
-            targets: set[str] = set()
             if AUTHOR_ID_RE.fullmatch(lowered):
-                targets.add(lowered)
+                if lowered != actor_id:
+                    events.add((lowered, "mention"))
             else:
-                rows = self._conn.execute(
-                    """
-                    SELECT author_id
-                      FROM name_claims
-                     WHERE name_key = ?
-                    """,
-                    (self.normalize_identity_name(token),),
-                ).fetchall()
-                targets.update(str(item["author_id"]) for item in rows)
+                alias_keys.add(self.normalize_identity_name(token))
 
-            for target in targets:
+        if alias_keys:
+            rows = self._conn.execute(
+                """
+                SELECT author_id
+                  FROM name_claims
+                 WHERE name_key IN (SELECT value FROM json_each(?))
+                """,
+                (json.dumps(sorted(alias_keys), separators=(",", ":")),),
+            ).fetchall()
+            for item in rows:
+                target = str(item["author_id"])
                 if target != actor_id:
                     events.add((target, "mention"))
 

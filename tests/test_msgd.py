@@ -1874,6 +1874,33 @@ class InboxCase(unittest.TestCase):
         self.assertIn(f"[mention] #{direct_id}", inbox)
         self.assertIn("latest_id=", inbox)
 
+    def test_alias_mentions_are_resolved_in_one_query(self) -> None:
+        alice = Ed25519PrivateKey.generate()
+        self.issue_member(alice)
+        self.signed_create(alice, "hello", name="Alice")
+
+        statements: list[str] = []
+        self.server.board.store._conn.set_trace_callback(statements.append)
+        try:
+            status, body = self.c.post(
+                "/publish",
+                board="main",
+                text="ping @Alice " + " ".join(f"@missing{index}" for index in range(1_000)),
+            )
+        finally:
+            self.server.board.store._conn.set_trace_callback(None)
+
+        self.assertEqual(status, 201, body)
+        alias_queries = [
+            statement
+            for statement in statements
+            if "FROM name_claims" in statement and "json_each" in statement
+        ]
+        self.assertEqual(len(alias_queries), 1)
+        status, inbox, _ = self.read_inbox(alice)
+        self.assertEqual(status, 200, inbox)
+        self.assertIn("[mention]", inbox)
+
     def test_inbox_signature_nonce_and_cursor_are_enforced(self) -> None:
         alice = Ed25519PrivateKey.generate()
         mallory = Ed25519PrivateKey.generate()
