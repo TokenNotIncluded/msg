@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import fcntl
+import os
 import sqlite3
 import tempfile
 import uuid
@@ -232,13 +234,26 @@ class SqliteSession:
     async def run_rollback_effects(self, cause, start=0):
         effects = self.rollback_effects[start:]
         del self.rollback_effects[start:]
-        for effect in reversed(effects):
+        if not effects:
+            return
+
+        async def compensate():
+            for effect in reversed(effects):
+                try:
+                    await effect()
+                except BaseException as exc:
+                    # Keep the primary error and try every independent cleanup.
+                    cause.add_note('rollback compensation failed: ' + type(exc).__name__)
+
+        # A second cancellation must not abandon a pin operation (including its
+        # worker thread) and release the writer fence before it finishes.
+        pending = asyncio.create_task(compensate())
+        while not pending.done():
             try:
-                await effect()
-            except BaseException as exc:
-                # Cleanup must neither mask the original failure/cancellation nor
-                # prevent the remaining independent compensations from running.
-                cause.add_note('rollback compensation failed: ' + type(exc).__name__)
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                pass
+        pending.result()
 
     def check(self, write=False):
         require(not self.closed, "transaction_closed")
@@ -613,6 +628,25 @@ class SqliteMetadataStore:
         conn.execute("PRAGMA synchronous=FULL")
         return conn
 
+    async def _acquire_write_fence(self):
+        # SQLite can release its own lock on an implicit transaction abort.
+        # Keep independent processes out until external compensation completes.
+        fd=os.open(self.path.with_name(self.path.name+'.writer.lock'),
+                   os.O_CREAT|os.O_RDWR|os.O_CLOEXEC|os.O_NOFOLLOW,0o600)
+        loop=asyncio.get_running_loop()
+        deadline=loop.time()+self.busy_timeout
+        try:
+            while True:
+                try:
+                    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    return fd
+                except BlockingIOError:
+                    require(loop.time()<deadline,'server_busy',retryable=True)
+                    await asyncio.sleep(min(0.01,max(0,deadline-loop.time())))
+        except BaseException:
+            os.close(fd)
+            raise
+
     @asynccontextmanager
     async def transaction(self, *, write):
         existing=self._current.get()
@@ -633,7 +667,10 @@ class SqliteMetadataStore:
         conn=self._connect()
         tx=SqliteSession(conn,write=write)
         token=None
+        writer_fence=None
         try:
+            if write:
+                writer_fence=await self._acquire_write_fence()
             if not write:
                 conn.execute("PRAGMA query_only=ON")
             try:
@@ -661,7 +698,11 @@ class SqliteMetadataStore:
             tx.closed=True
             if token is not None:
                 self._current.reset(token)
-            conn.close()
+            try:
+                conn.close()
+            finally:
+                if writer_fence is not None:
+                    os.close(writer_fence)
 
     async def close(self):
         # Connections are scoped to transactions, not retained per account.

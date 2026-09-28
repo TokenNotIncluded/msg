@@ -1,8 +1,9 @@
 """PostgreSQL metadata store with the same transactional session contract as SQLite.
 
-All writes take one transaction-scoped advisory lock. The existing executor relies on
-SQLite's BEGIN IMMEDIATE serialization for request replay, audit chaining and job
+All writes hold one connection-scoped advisory lock through rollback compensation.
+The executor relies on serialized writers for replay, audit chaining and job
 deduplication; this lock preserves that ordering across processes and hosts.
+Connections must be direct or session-pooled, not transaction-pooled.
 """
 from __future__ import annotations
 
@@ -593,12 +594,14 @@ class PostgresMetadataStore:
         committed = False
         try:
             if write:
-                # A fixed application-wide key serializes writers, including separate workers.
-                # Waiting happens off the event loop so the holder can finish its request.
+                # The same application-wide key still conflicts with schema/recovery
+                # transaction locks. A session lock survives SQL abort/ROLLBACK until
+                # compensation finishes and this dedicated connection is closed.
+                # Waiting stays off the event loop so the holder can finish.
                 async def acquire():
                     def blocking():
                         conn.execute("SET lock_timeout = '10s'")
-                        conn.execute('SELECT pg_advisory_xact_lock(725274758, 1886265951)')
+                        conn.execute('SELECT pg_advisory_lock(725274758, 1886265951)')
                     task = asyncio.create_task(asyncio.to_thread(blocking))
                     try:
                         await asyncio.shield(task)
