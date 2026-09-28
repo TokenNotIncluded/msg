@@ -126,15 +126,42 @@ async def test_new_persistent_operations_obey_write_pause(installed, operation):
 
 
 @pytest.mark.asyncio
-async def test_hosting_preview_rejects_129_entries_before_storage(installed):
+async def test_hosting_preview_rejects_129_entries_before_storage(installed, monkeypatch):
     app, _ = installed
-    from msg.core.errors import Failure
+    key, subject, _ = await register(app, 'security-preview-limit')
+    website = await call(app, 'hosting.create',
+        {'parent': '/@security-preview-limit', 'name': 'site'}, key=key, subject=subject)
+    source = await call(app, 'content.file_put', {'parent': '/@security-preview-limit/files',
+        'name': 'page.html', 'media_type': 'text/html', 'data': b64(b'hello')},
+        key=key, subject=subject)
+    assert website.status == source.status == 'ok'
+    arguments = {'id': website.resources[0].id, 'entries': [
+        {'path': f'{i}.html', 'source': wire(source.resources[0])} for i in range(129)]}
+    expected = ((website.resources[0].id, website.data['generation']),)
+    # A published wire schema is immutable. The runtime work bound is checked
+    # after current authorization but before any source read or creation.
     spec = app.registry.operation('hosting.preview', 1)
-    entries = [{'path': f'{i}.html', 'source': {'id': 'source', 'revision': 'version'}} for i in range(129)]
-    # Boundary positive control ensures the test isn't merely invalid refs/schema.
-    app.registry.validate(spec.input_schema, {'id': 'website', 'entries': entries[:128]})
-    with pytest.raises(Failure, match='schema_validation'):
-        app.registry.validate(spec.input_schema, {'id': 'website', 'entries': entries})
+    assert 'maxItems' not in app.registry.schema(spec.input_schema)['properties']['entries']
+    app.registry.validate(spec.input_schema, arguments)
+    async with app.metadata.transaction(write=False) as tx:
+        before = tuple(tx.one(f'SELECT COUNT(*) FROM {table}')[0]
+                       for table in ('resources', 'revisions'))
+    async def no_materialization(*args, **kwargs):
+        pytest.fail('oversized preview touched the content store')
+    with monkeypatch.context() as patch:
+        patch.setattr(app.contents, 'read_bytes', no_materialization)
+        patch.setattr(app.contents, 'put_bytes', no_materialization)
+        denied = await fresh_call(app, 'hosting.preview', arguments,
+            key=key, subject=subject, expected=expected)
+    assert denied.status == 'error' and denied.error.code == 'too_many_preview_entries', wire(denied)
+    async with app.metadata.transaction(write=False) as tx:
+        assert tuple(tx.one(f'SELECT COUNT(*) FROM {table}')[0]
+                     for table in ('resources', 'revisions')) == before
+    # An actual authorized 128-entry preview remains valid, not just its schema.
+    allowed = await fresh_call(app, 'hosting.preview',
+        {**arguments, 'entries': arguments['entries'][:128]},
+        key=key, subject=subject, expected=expected)
+    assert allowed.status == 'ok' and allowed.data['files'] == 128, wire(allowed)
 
 
 async def custody(app, handle):

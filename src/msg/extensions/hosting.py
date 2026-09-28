@@ -66,13 +66,16 @@ def register(app,op):
         resource=await revise_resource(app,ctx,request,tx,resource,body,'application/json')
         return output_for(resource,files=len(entries),url=app.settings.service_url.rstrip('/')+await tx.path(resource.id)+'/')
 
-    @op('hosting.preview',obj({'id':IDENTIFIER,'entries':{'type':'array','minItems':1,'maxItems':128,
+    @op('hosting.preview',obj({'id':IDENTIFIER,'entries':{'type':'array','minItems':1,
         'items':obj({'path':STRING,'source':REF},('path','source'))}},('id','entries')),signature=True)
     async def preview(ctx,request,tx):
         website=await tx.resource(await resolve(tx,request.arguments['id']))
         require(website.type=='website' and website.state=='active','not_a_website')
         await check_access(app,ctx,request,tx,website.id,'write')
         await assert_generation(request,website)
+        # Keep the published v1 wire schema immutable; bound work before any
+        # source traversal or materialization, just like runtime capacity checks.
+        require(len(request.arguments['entries'])<=128,'too_many_preview_entries')
         sources=[];names=set()
         for item in request.arguments['entries']:
             path=path_name(item['path'])
