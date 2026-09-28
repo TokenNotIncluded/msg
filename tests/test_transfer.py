@@ -1,12 +1,14 @@
 """One persistent transfer state machine, independently of the adapter."""
-from dataclasses import replace
+import os
+import time
 from datetime import timedelta
-import hashlib
-import pytest
 
-from msg.core.codec import b64,unb64,digest,wire
-from msg.core.models import ResourceRef
-from test_service import installed,call,register,NOW
+import pytest
+from test_service import NOW, call, register
+
+from msg.core.codec import b64, decode, digest, loads, unb64, wire
+from msg.core.models import TransferChunk
+from msg.workers.maintenance import _collect, run_maintenance
 
 
 @pytest.mark.asyncio
@@ -80,3 +82,32 @@ async def test_transfer_owner_bounds_missing_ranges_and_cancel(installed):
     assert retry.error.code=='transfer_closed',wire(retry)
     tiny=await invoke('transfer.open',{'direction':'upload','max_path_bytes':100})
     assert tiny.error.code=='transport_limit_too_small',wire(tiny)
+
+
+@pytest.mark.asyncio
+async def test_expired_transfer_releases_chunk_pins_for_collection(installed):
+    app,_=installed
+    key,uid,cert=await register(app,'expiring-transfer')
+    opened=await call(app,'transfer.open',{'direction':'upload','size':4},
+                      key=key,subject=uid,certs=(cert,))
+    tid=opened.data['transfer_id']
+    data=b'abcd'
+    await call(app,'transfer.part_put',{'transfer_id':tid,'offset':0,
+        'data':b64(data),'digest':digest(data)},key=key,subject=uid,certs=(cert,))
+    async with app.metadata.transaction(write=False) as tx:
+        chunk=decode(TransferChunk,loads(tx.one(
+            'SELECT body FROM chunks WHERE transfer_id=? AND offset=0',(tid,))[0]))
+    assert await app.contents.pinned(chunk.content,tid+':0')
+
+    app.clock=lambda: NOW+timedelta(seconds=app.settings.transfer_ttl+1)
+    result=await run_maintenance(app,'cleanup_expired',scheduled=True)
+    assert result['expired_transfers']==1
+    assert not await app.contents.pinned(chunk.content,tid+':0')
+    index=app.contents.index/chunk.content.digest[7:]
+    old=time.time()-7200
+    os.utime(index,(old,old))
+    async with app.metadata.transaction(write=True) as tx:
+        collected=await _collect(app,tx,grace_seconds=0)
+        assert tx.one('SELECT COUNT(*) FROM chunks WHERE transfer_id=?',(tid,))[0]==0
+    assert collected['unreferenced_contents_removed']==1
+    assert not index.exists()

@@ -1,17 +1,25 @@
 """Retention and rebuilding apply deployment-wide, never personal storage quotas."""
 from __future__ import annotations
+
 import asyncio
+import hashlib
+import time
 from dataclasses import replace
 from datetime import timedelta
-import hashlib
-import os
-import time
 from pathlib import Path
 
-from msg.constants import ROOT_SPACE, ONLINE_CA
-from msg.core.codec import canonical, decode, digest, loads, wire, parse_time
+from msg.constants import ONLINE_CA, ROOT_SPACE
+from msg.core.codec import canonical, decode, digest, loads, parse_time, wire
 from msg.core.errors import Failure, require
-from msg.core.models import AuditEvent, Event, ResourceRef, Revision, Resource, TransferSession
+from msg.core.models import (
+    AuditEvent,
+    Event,
+    Resource,
+    ResourceRef,
+    Revision,
+    TransferChunk,
+    TransferSession,
+)
 from msg.plugins.common import new_id
 
 
@@ -22,6 +30,8 @@ async def purge_revisions(app, tx, resource, *, actor, request_id, reason):
     changed = replace(resource, state='purged', revision=None, generation=resource.generation+1,
                       modified_at=app.clock(), modified_by=actor)
     await tx.replace(changed,resource.generation)
+    for revision in revisions:
+        await app.contents.unpin(revision.content,revision.id)
     tx.execute('DELETE FROM revisions WHERE resource_id=?',(resource.id,),write=True)
     tx.execute('DELETE FROM projections WHERE resource_id=?',(resource.id,),write=True)
     # A surviving reply keeps its own revision. Relations into this tombstone
@@ -71,6 +81,13 @@ async def _cleanup(app,tx, *, scheduled):
         transfer=decode(TransferSession,loads(raw))
         if transfer.expires_at<=now and transfer.state!='expired':
             await tx.save_transfer(replace(transfer,state='expired',generation=transfer.generation+1),transfer.generation)
+            for offset,chunk_raw in tx.execute(
+                    'SELECT offset,body FROM chunks WHERE transfer_id=?',(transfer.id,)):
+                chunk=decode(TransferChunk,loads(chunk_raw))
+                await app.contents.unpin(chunk.content,transfer.id+':'+str(offset))
+            if transfer.state=='sealed' and transfer.output is not None:
+                revision=await tx.revision(transfer.output)
+                await app.contents.unpin(revision.content,transfer.id+':sealed')
             tx.execute('DELETE FROM chunks WHERE transfer_id=?',(transfer.id,),write=True)
             counts['expired_transfers']+=1
     for key,raw in tx.rows("SELECT key,value FROM settings WHERE key LIKE 'query_ref_source:%'"):
