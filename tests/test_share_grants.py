@@ -117,6 +117,49 @@ async def test_share_rejects_containers_and_managed_or_dm_resources(installed):
 
 
 @pytest.mark.asyncio
+async def test_owner_revocation_while_archived_survives_restore(installed):
+    app, _ = installed
+    alice_key, alice, _ = await register(app, 'share-dormant-a')
+    bob_key, bob, _ = await register(app, 'share-dormant-b')
+    carol_key, carol, _ = await register(app, 'share-dormant-c')
+    post = await call(app, 'content.post_create', {'parent': '/main', 'body': 'dormant'},
+                      key=alice_key, subject=alice)
+    rid = post.resources[0].id
+    private = await call(app, 'content.chmod', {'id': rid, 'mode': '0600'},
+                         key=alice_key, subject=alice,
+                         expected=((rid, post.data['generation']),))
+    assert private.status == 'ok', wire(private)
+    expiry = wire(NOW + timedelta(days=1))
+    v1 = await call(app, 'sharing.grant', {'resource': rid, 'grantee': bob,
+        'expires_at': expiry}, key=alice_key, subject=alice)
+    v2 = await call(app, 'sharing.grant', {'resource': rid, 'grantee': carol,
+        'grantee_kind': 'user', 'operations': ['read'], 'expires_at': expiry},
+        key=alice_key, subject=alice, contract_version=2)
+    assert v1.status == v2.status == 'ok', (wire(v1), wire(v2))
+    for key, subject in ((bob_key, bob), (carol_key, carol)):
+        read = await call(app, 'discovery.get', {'id': rid}, key=key, subject=subject)
+        assert read.status == 'ok', wire(read)
+    archived = await call(app, 'content.archive', {'id': rid}, key=alice_key, subject=alice,
+                          expected=((rid, private.data['generation']),))
+    assert archived.status == 'ok', wire(archived)
+    for grant_id, version in ((v1.data['grant']['id'], 1), (v2.data['grant']['id'], 2)):
+        for key, subject in ((bob_key, bob), (carol_key, carol)):
+            denied = await call(app, 'sharing.revoke', {'grant_id': grant_id},
+                                key=key, subject=subject, contract_version=version)
+            assert denied.status == 'error', wire(denied)
+        revoked = await call(app, 'sharing.revoke', {'grant_id': grant_id},
+                             key=alice_key, subject=alice, contract_version=version)
+        assert revoked.status == 'ok', wire(revoked)
+        assert revoked.data['grant']['revoked_at'] is not None
+    restored = await call(app, 'content.restore', {'id': rid}, key=alice_key, subject=alice,
+                          expected=((rid, archived.data['generation']),))
+    assert restored.status == 'ok', wire(restored)
+    for key, subject in ((bob_key, bob), (carol_key, carol)):
+        after = await call(app, 'discovery.get', {'id': rid}, key=key, subject=subject)
+        assert after.status == 'error' and after.error.code == 'permission_denied', wire(after)
+
+
+@pytest.mark.asyncio
 async def test_expired_grant_does_not_authorize_and_can_be_replaced(installed):
     app, _ = installed
     alice_key, alice, _ = await register(app, 'share-expire-a')
