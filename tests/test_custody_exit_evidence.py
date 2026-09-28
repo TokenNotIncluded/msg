@@ -28,11 +28,13 @@ async def test_empty_upgrade_still_reports_backup_retirement_pending(installed):
     result = await call(app, 'identity.custodial_upgrade_inventory',
         {'challenge_id':challenge.data['challenge_id']}, key=signer, subject=subject)
     assert result.status == 'ok', wire(result)
-    assert result.data['identity_switched'] and result.data['online_retired']
-    assert result.data['history_recoverable'] and result.data['external_coverage'] == 'unknown'
-    assert result.data['completion_status'] == 'pending_backup_retirement'
-    assert result.data['backup_retired'] is False and result.data['server_key_retired'] is False
-    assert result.data['finalize_ready'] is False
+    retirement = result.data['retirement']
+    assert retirement['identity_switched']
+    assert retirement['online_signing_key_deleted'] and retirement['online_encryption_key_deleted']
+    assert result.data['phase'] == 'online_key_retired'
+    assert result.data['history_recoverable']
+    assert result.data['verification_scope'] == 'enumerated_and_client_verified_revisions_only'
+    assert retirement['backup_retired'] is False and retirement['server_key_retired'] is False
 
 
 @pytest.mark.asyncio
@@ -58,8 +60,8 @@ async def test_changed_persisted_ack_is_not_still_successful_evidence(installed,
         subject=subject, token=token)
     assert mapped.status == 'ok', wire(mapped)
     mapping = mapped.data['mapping']
-    assert mapping['old_encryption_key_id'] == created.data['encryption_key_id']
-    assert mapping['new_encryption_key_id'] != mapping['old_encryption_key_id']
+    assert mapping['old_key_id'] == created.data['encryption_key_id']
+    assert mapping['new_key_id'] != mapping['old_key_id']
     fetched = await call(app, 'identity.custodial_migration_get',
         {'challenge_id':cid, 'old_revision':revision}, subject=subject, token=token)
     assert fetched.status == 'ok', wire(fetched)
@@ -70,18 +72,27 @@ async def test_changed_persisted_ack_is_not_still_successful_evidence(installed,
     identity.write_text(age_key+'\n'); identity.chmod(0o600)
     ciphertext = await app.contents.read_bytes(new.content)
     assert _age('--decrypt', '--identity', str(identity), input_data=ciphertext) == plaintext
+    inventory = await call(app, 'identity.custodial_upgrade_inventory', {'challenge_id':cid},
+                           subject=subject, token=token)
+    assert inventory.status == 'ok', wire(inventory)
     request_id = 'verified-ack'
-    signed = {'subject_id':subject, 'challenge_id':cid, 'old':mapping['old'], 'new':mapping['new'],
-              'plaintext_digest':digest(plaintext), 'request_id':request_id}
+    from msg.security.custodial_migration import ack_statement, keyed_source, keyed_target
+    async with app.metadata.transaction(write=False) as tx:
+        details = loads(tx.one('SELECT body FROM custodial_upgrades WHERE id=?', (cid,))[0])
+    signed = ack_statement(subject, cid, inventory.data['inventory_digest'],
+        keyed_source(mapping['old'], details), keyed_target(mapping, details),
+        digest(plaintext), request_id, method='rewrap')
     ack = await call(app, 'identity.custodial_rewrap_ack', {
         'challenge_id':cid, 'old_revision':revision, 'new_revision':mapping['new']['revision'],
         'ciphertext_digest':mapping['new']['ciphertext_digest'], 'plaintext_digest':digest(plaintext),
-        'decryption_ack':wire(signer.sign(canonical(signed), purpose='custodial-rewrap-ack'))},
-        subject=subject, token=token, rid=request_id)
+        'inventory_digest':inventory.data['inventory_digest'], 'method':'rewrap',
+        'decryption_ack':wire(signer.sign(canonical(signed), purpose='custodial-history-ack-v1'))},
+        subject=subject, token=token, rid=request_id, contract_version=2)
     assert ack.status == 'ok', wire(ack)
     inventory = await call(app, 'identity.custodial_upgrade_inventory', {'challenge_id':cid},
                            subject=subject, token=token)
-    assert inventory.data['known_ciphertexts_migrated'] and inventory.data['verified_acked_count'] == 1
+    assert inventory.data['history_recoverable']
+    assert revision in inventory.data['verified_revisions']
     async with app.metadata.transaction(write=True) as tx:
         details = loads(tx.one('SELECT body FROM custodial_upgrades WHERE id=?', (cid,))[0])
         details['rewrap_acks'][revision]['plaintext_digest'] = digest(b'changed after signature')
@@ -89,6 +100,5 @@ async def test_changed_persisted_ack_is_not_still_successful_evidence(installed,
                    (canonical(details).decode(), cid), write=True)
     damaged = await call(app, 'identity.custodial_upgrade_inventory', {'challenge_id':cid},
                          subject=subject, token=token)
-    assert damaged.status == 'ok' and damaged.data['acked_count'] == 1
-    assert damaged.data['verified_acked_count'] == 0
-    assert not damaged.data['known_ciphertexts_migrated'] and not damaged.data['finalize_ready']
+    assert damaged.status == 'error'
+    assert damaged.error is not None
