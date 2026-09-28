@@ -23,7 +23,7 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from msg.core.errors import Failure
-from msg.storage.sqlite import SqliteSession
+from msg.storage.session import MetadataSessionBase
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
@@ -509,9 +509,10 @@ def _postgres_sql(sql: str, *, has_parameters: bool = False) -> str:
     return ''.join(output)
 
 
-class PostgresSession(SqliteSession):
+class PostgresSession(MetadataSessionBase):
     def __init__(self, connection, *, write: bool):
-        super().__init__(connection, write=write)
+        super().__init__(write=write)
+        self._connection = connection
         self.pending_effect_ids: list[str] = []
 
     def execute(self, sql, parameters=(), *, write=False):

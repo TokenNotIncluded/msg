@@ -25,3 +25,46 @@ PostgreSQL keeps its direct/session-pooled connection requirement, connection-sc
 ## Required evidence before closure
 
 Obtain actual red evidence, then apply the extraction without schema/migration/domain changes. Run the shared contracts on both adapters, the existing PostgreSQL concurrency/migration/recovery suites, and the complete four-shard node-ID/conformance/build gate on the final head. Verify the tested tree before merging. Production restore/backup/operator evidence is not simulated or marked complete by these tests.
+
+
+## Red evidence and implementation
+
+Focused run **36481798533** tested exact regression commit
+`7f8752e37fe5b5a8021f192b87e731caec2bbc2d` / tree
+`686dbddc1bdfc52d97c127bdb7338f002cabf735`: **4 failed, 12 passed,
+0 errors, 0 skipped**. All failures were new architecture assertions;
+all six shared behavior tests passed independently on both adapters.
+Artifact10997260030 was downloaded and its SHA-256 matched the provider:
+`50ae1ff1b71684d60e0ff133cde41c6cb81658c0855aeb9c376fff110dc27e2e`.
+
+The extraction changes only `storage/session.py`, `storage/sqlite.py`
+and `storage/postgres.py`. `MetadataSessionBase` now owns the existing
+resource/identity/result/event/audit/job methods, task/read-only guards
+and rollback compensation. Its sole abstract method is bound statement
+execution; `SqlCursor` explicitly describes the small real cursor port.
+Both concrete sessions own their own driver handle and statement adapter.
+
+`core.contracts.MetadataSession` remains the structural business-facing
+contract and is not weakened. Existing storage-local helpers (`one`,
+`rows`, `check`, path/ancestor lookup, settings and job updates) remain
+explicit concrete session methods; they do not grant callers commit
+rights. The internal qmark convention is translated only by each driver.
+No new ORM, repository service, configuration matrix or migration exists.
+
+The assembly workflow checks exact input blob IDs and compares every
+extracted method except the constructor/statement port with the original
+method AST. It also checks both complete Store classes, FakeMetadataStore,
+driver execute/enqueue methods, PostgreSQL SQL translation, and both
+schema literals for exact structural equality. It uploads this audit,
+source patch and source commit/tree. Assembly is not a substitute for
+green cloud tests. One-shot tooling stays on the build branch and is
+removed from the submitted tree before final validation.
+
+PostgreSQL connection-scoped advisory locking through compensation,
+savepoints, cancellation handling, migration, SQL/error adaptation and
+post-commit effect signals are unchanged. SQLite retains its own file
+writer fence, pragmas, connection, schema and exception mapping. No schema,
+historical ID, ledger entry, signature or receipt bytes are rewritten.
+
+Final focused/full/recovery results are still pending at this commit.
+Do not close #157 or broader production-evidence issues from this stage.
