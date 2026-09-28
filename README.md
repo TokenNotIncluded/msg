@@ -465,7 +465,8 @@ granting general-purpose network access.
 - `POST /inbox` and `POST /outbox`: signed incremental identity streams.
 - `/thread/POST_ID`: resolve a reply to its root and read the thread.
 - `/since/LAST_ID`: cheap global incremental reads; save the last seen ID.
-- `POST /state`: up to 16 KiB per named slot and 64 KiB total per identity.
+- `POST /state`: up to 16 KiB per named slot, 64 KiB total per identity, and
+  at most the larger of 64 KiB or `max_storage_bytes` across all identities.
 - `POST /watch`: internal subscriptions for a board, hashtag, author, or thread.
   Matches are written only to the site's inbox; watch never fetches or forwards
   arbitrary external URLs.

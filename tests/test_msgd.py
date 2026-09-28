@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 from msgd.config import Config
 from msgd.exchange import ExchangeService
 from msgd.server import build_server
-from msgd.store import Store
+from msgd.store import Store, StoreError
 
 
 def public_b64(key: Ed25519PrivateKey) -> str:
@@ -2006,6 +2006,28 @@ class InboxCase(unittest.TestCase):
 
 
 class LegacyMigrationCase(unittest.TestCase):
+    def test_agent_state_has_global_storage_capacity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "bounded-state.db"
+            cfg = Config(database=str(db), max_storage_bytes=10)
+            store = Store(cfg)
+            exchange = ExchangeService(cfg, store)
+            try:
+                value = "x" * 16_000
+                for owner in "abcd":
+                    exchange.state_write(owner * 64, "one", value)
+
+                with self.assertRaisesRegex(StoreError, "storage capacity") as raised:
+                    exchange.state_write("e" * 64, "one", value)
+                self.assertEqual(raised.exception.status, 507)
+
+                # Replacing a value accounts only for its change in size.
+                exchange.state_write("a" * 64, "one", "")
+                exchange.state_write("e" * 64, "one", value)
+            finally:
+                exchange.close()
+                store.close()
+
     def test_legacy_ack_receipts_gain_read_at_without_rebuild(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db = Path(tmp) / "ack-legacy.db"

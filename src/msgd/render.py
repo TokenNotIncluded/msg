@@ -1819,6 +1819,7 @@ def render_schema(cfg: Config) -> str:
             "webhook_max_per_identity": cfg.webhook_max_per_identity,
             "agent_state_slot_bytes": 16384,
             "agent_state_total_bytes": 65536,
+            "agent_state_capacity_bytes": max(cfg.max_storage_bytes, 65536),
             "agent_watches_per_identity": 128,
             "keystore_entry_bytes": KEYSTORE_MAX_ENTRY_BYTES,
             "keystore_total_bytes_per_identity": KEYSTORE_MAX_TOTAL_BYTES,

@@ -194,35 +194,79 @@ class ExchangeService:
                 413,
             )
         now = time.time()
-        with self._lock, self._conn:
-            rows = self._conn.execute(
-                "SELECT name, value FROM agent_state WHERE owner_id = ?",
-                (owner_id,),
-            ).fetchall()
-            current_total = sum(len(str(row["value"]).encode("utf-8")) for row in rows)
-            old = next(
-                (
-                    len(str(row["value"]).encode("utf-8"))
-                    for row in rows
-                    if str(row["name"]) == normalized
-                ),
-                0,
-            )
-            if current_total - old + payload_bytes > MAX_STATE_TOTAL_BYTES:
-                raise StoreError(
-                    f"state exceeds {MAX_STATE_TOTAL_BYTES} total UTF-8 bytes",
-                    413,
+        with self._lock:
+            # Take the SQLite write lock before measuring usage so concurrent
+            # writers cannot all observe the same remaining capacity.
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                rows = self._conn.execute(
+                    "SELECT name, value FROM agent_state WHERE owner_id = ?",
+                    (owner_id,),
+                ).fetchall()
+                current_total = sum(
+                    len(str(row["value"]).encode("utf-8")) for row in rows
                 )
-            self._conn.execute(
-                """
-                INSERT INTO agent_state(owner_id, name, value, updated)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(owner_id, name) DO UPDATE SET
-                    value = excluded.value,
-                    updated = excluded.updated
-                """,
-                (owner_id, normalized, value, now),
-            )
+                old_value = next(
+                    (
+                        str(row["value"])
+                        for row in rows
+                        if str(row["name"]) == normalized
+                    ),
+                    None,
+                )
+                old = len(old_value.encode("utf-8")) if old_value is not None else 0
+                if current_total - old + payload_bytes > MAX_STATE_TOTAL_BYTES:
+                    raise StoreError(
+                        f"state exceeds {MAX_STATE_TOTAL_BYTES} total UTF-8 bytes",
+                        413,
+                    )
+                global_total = int(
+                    self._conn.execute(
+                        """
+                        SELECT COALESCE(SUM(
+                                   LENGTH(CAST(owner_id AS BLOB))
+                                 + LENGTH(CAST(name AS BLOB))
+                                 + LENGTH(CAST(value AS BLOB))
+                                 + 1
+                               ), 0) AS n
+                          FROM agent_state
+                        """
+                    ).fetchone()["n"]
+                )
+                record_bytes = (
+                    len(owner_id.encode("utf-8"))
+                    + len(normalized.encode("utf-8"))
+                    + payload_bytes
+                    + 1
+                )
+                old_record_bytes = (
+                    len(owner_id.encode("utf-8"))
+                    + len(normalized.encode("utf-8"))
+                    + old
+                    + 1
+                    if old_value is not None
+                    else 0
+                )
+                if (
+                    global_total - old_record_bytes + record_bytes
+                    > max(self.cfg.max_storage_bytes, MAX_STATE_TOTAL_BYTES)
+                ):
+                    raise StoreError("agent state storage capacity exceeded", 507)
+                self._conn.execute(
+                    """
+                    INSERT INTO agent_state(owner_id, name, value, updated)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(owner_id, name) DO UPDATE SET
+                        value = excluded.value,
+                        updated = excluded.updated
+                    """,
+                    (owner_id, normalized, value, now),
+                )
+            except Exception:
+                self._conn.rollback()
+                raise
+            else:
+                self._conn.commit()
         return self.state_read(owner_id, normalized)
 
     def state_delete(self, owner_id: str, name: str | None) -> dict[str, Any]:
