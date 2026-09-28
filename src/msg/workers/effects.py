@@ -7,7 +7,7 @@ runner is a test/installation boundary, not an alternative authentication path.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 import tempfile
@@ -21,17 +21,11 @@ from msg.core.models import (
     CapabilityGrant, EffectJob, EmailSettings, ExecutionContext, Principal, ResourceRef,
 )
 from msg.core.requests import request_for
+from msg.core.tool_execution import ToolResult, ToolRunner
 from msg.plugins.common import check_access, create_resource
 from msg.security.policy import scope_subset
 from msg.security.network import intersect_policy
 from msg.workers.leases import current_attempt
-
-
-@dataclass(frozen=True, slots=True)
-class ToolResult:
-    path: Path
-    media_type: str
-    metadata: dict
 
 
 async def current_principal(app, original: Principal, tx) -> Principal:
@@ -98,7 +92,7 @@ def effect_request(app, job, principal):
 
 
 class EffectWorker:
-    def __init__(self, app, *, tool_runner=None, mail_sender=None, webhook_sender=None,
+    def __init__(self, app, *, tool_runner: ToolRunner | None = None, mail_sender=None, webhook_sender=None,
                  lease_seconds=120):
         self.app = app
         if tool_runner is None:
@@ -275,12 +269,12 @@ class EffectWorker:
         from msg.market.email import render_verification
         require(mail_enabled(self.app), 'mail_disabled')
         async with self.app.metadata.transaction(write=False) as tx:
-            await current_principal(self.app, job.principal, tx)
-            outgoing = await (render_verification(self.app,tx,job) if job.kind=='market_email_verify'
-                              else render_notification(self.app,tx,job))
-        state = await self.mail_sender.send(outgoing)
-        require(state in {'sent', 'uncertain'}, 'invalid_delivery_result')
-        await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
+            await current_principal(self.app,job.principal,tx)
+            outgoing=await (render_verification(self.app,tx,job) if job.kind=='market_email_verify'
+                            else render_notification(self.app,tx,job))
+        state=await self.mail_sender.send(outgoing)
+        require(state in {'sent','uncertain'},'invalid_delivery_result')
+        await self._finish(job,'done' if state=='sent' else 'uncertain',state)
 
     async def _webhook(self, job):
         from msg.core.codec import canonical,decode,loads

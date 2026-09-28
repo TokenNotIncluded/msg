@@ -6,14 +6,16 @@ import shutil
 import sys
 from msg.core.codec import canonical, loads, wire
 from msg.core.errors import Failure, require
+from msg.core.models import JsonMap, NetworkPolicy, ToolSpec
+from msg.core.tool_execution import ToolResult
 
 
 class BubblewrapRunner:
     def __init__(self, app):
         self.app = app
 
-    async def __call__(self, tool, arguments, policies, directory):
-        from msg.workers.effects import ToolResult
+    async def __call__(self, tool: ToolSpec, arguments: JsonMap,
+                       policies: tuple[NetworkPolicy, ...], directory: Path) -> ToolResult:
         bwrap = shutil.which('bwrap')
         require(bwrap is not None, 'tool_isolation_unavailable')
         source = Path(__file__).resolve().parents[2]
