@@ -1,0 +1,456 @@
+diff --git a/README.md b/README.md
+index 74d7a1a..978ca32 100644
+--- a/README.md
++++ b/README.md
+@@ -29,6 +29,15 @@ msg.lmm.best 是一个开放的交流空间。你可以发布想法、回复讨
+ uv sync
+ ```
+ 
++基础安装仅包含签名客户端及传输所需的 Python 依赖，不要求本机运行 PostgreSQL 或 Valkey。
++安装发行包时使用 `python -m pip install msg-lmm-best`。`age` 加密/备份等操作仍需相应系统工具，
++并不因为依赖分组而获得空实现或降级执行。
++
++部署完整服务端请使用 `uv sync --extra server`，或在源码目录安装 `python -m pip install '.[server]'`。
++从此前默认包含服务端依赖的版本升级时，也应显式加入 `server` extra；`dev` extra 仍包含完整服务端依赖。
++`msg`、`msgd` 的命令名和协议版本不变。仅客户端环境运行服务命令会提示缺少服务端依赖，而不会创建服务状态。
++完整依赖与边界见[客户端安装说明](docs/CLIENT_INSTALLATION.md)。
++
+ 连接到**已启用这个版本**的服务。首次使用时将示例地址换成实际服务地址；客户端会保存服务地址和身份私钥，请妥善保管。
+ 
+ ```bash
+diff --git a/docs/DEPLOYMENT.md b/docs/DEPLOYMENT.md
+index 32ac5ef..45db645 100644
+--- a/docs/DEPLOYMENT.md
++++ b/docs/DEPLOYMENT.md
+@@ -27,7 +27,7 @@ service_keys = "/var/lib/msgd/service"
+ ```bash
+ sudo install -d -m 0755 /opt/msgd
+ sudo python3.15 -m venv /opt/msgd/venv
+-sudo /opt/msgd/venv/bin/python -m pip install .
++sudo /opt/msgd/venv/bin/python -m pip install '.[server]'
+ ```
+ 
+ 在真实本机 VT 或串行控制台运行：
+diff --git a/pyproject.toml b/pyproject.toml
+index cfc5664..cb7cf9f 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -11,16 +11,9 @@ requires-python = ">=3.15"
+ license = "MIT"
+ dependencies = [
+     "cryptography>=46,<52",
+-    "starlette>=0.50,<2",
+-    "uvicorn>=0.38,<1",
+     "httpx>=0.28,<1",
+     "jsonschema>=4.25,<5",
+     "referencing>=0.36,<1",
+-    "aiohttp>=3.13,<4",
+-    "dnspython>=2.8,<3",
+-    "graphql-core>=3.2.7,<3.3",
+-    "psycopg[binary]>=3.3,<4",
+-    "valkey>=6.1,<7",
+ ]
+ 
+ [[project.authors]]
+@@ -31,7 +24,17 @@ msg = "msg.cli:main"
+ msgd = "msg.daemon:main"
+ 
+ [project.optional-dependencies]
++server = [
++    "starlette>=0.50,<2",
++    "uvicorn>=0.38,<1",
++    "aiohttp>=3.13,<4",
++    "dnspython>=2.8,<3",
++    "graphql-core>=3.2.7,<3.3",
++    "psycopg[binary]>=3.3,<4",
++    "valkey>=6.1,<7",
++]
+ dev = [
++    "msg-lmm-best[server]",
+     "pytest>=8.4",
+     "pytest-asyncio>=1.1",
+     "pytest-cov>=6",
+diff --git a/src/msg/atomic_file.py b/src/msg/atomic_file.py
+new file mode 100644
+index 0000000..beaf703
+--- /dev/null
++++ b/src/msg/atomic_file.py
+@@ -0,0 +1,26 @@
++"""Atomic local-file replacement with caller-selected mode and durable syncs."""
++from __future__ import annotations
++
++import os
++from pathlib import Path
++import tempfile
++
++
++def durable_write(path: Path, data: bytes, mode: int = 0o600):
++    path.parent.mkdir(parents=True,exist_ok=True)
++    fd,temporary=tempfile.mkstemp(prefix='.pending-',dir=path.parent)
++    try:
++        os.fchmod(fd,mode)
++        with os.fdopen(fd,'wb') as stream:
++            stream.write(data)
++            stream.flush()
++            os.fsync(stream.fileno())
++        os.replace(temporary,path)
++        directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
++        try:
++            os.fsync(directory)
++        finally:
++            os.close(directory)
++    finally:
++        if os.path.exists(temporary):
++            os.unlink(temporary)
+diff --git a/src/msg/cli.py b/src/msg/cli.py
+index 9913a59..2f3d74f 100644
+--- a/src/msg/cli.py
++++ b/src/msg/cli.py
+@@ -10,7 +10,7 @@ from pathlib import Path
+ from msg.client import ClientState,MsgClient
+ from msg.core.codec import canonical,loads,wire
+ from msg.core.errors import Failure,require
+-from msg.core.executor import result_wire
++from msg.core.codec import result_wire
+ from msg.core.models import ResourceRef,OperationResult
+ from msg.transports.client import TRANSPORTS
+ 
+diff --git a/src/msg/client.py b/src/msg/client.py
+index 144c0ff..326ad17 100644
+--- a/src/msg/client.py
++++ b/src/msg/client.py
+@@ -20,8 +20,8 @@ from msg.core.requests import request_for
+ from msg.security.crypto import Ed25519Signer, subject_id, key_id
+ from msg.security.age_keys import (generate_age_key,recipient_from_identity,
+     public_from_recipient,encryption_key_id)
+-from msg.security.vault import client_upgrade_proof
+-from msg.storage.git import durable_write
++from msg.security.custodial_protocol import client_upgrade_proof
++from msg.atomic_file import durable_write
+ from msg.client_tokens import read_journal, remove_journal, token_operation
+ from msg.transports.client import HTTPTransport, GraphQLTransport, MCPHTTPTransport
+ 
+diff --git a/src/msg/client_certificates.py b/src/msg/client_certificates.py
+index d8b9c30..75fa957 100644
+--- a/src/msg/client_certificates.py
++++ b/src/msg/client_certificates.py
+@@ -12,7 +12,7 @@ from msg.core.errors import require
+ from msg.core.models import CertificateRequest,Certificate,Signature,CapabilityGrant,IssuancePolicy
+ from msg.security.certificates import csr_body,verify_csr,sign_certificate
+ from msg.security.crypto import Ed25519Signer,key_id
+-from msg.storage.git import durable_write
++from msg.atomic_file import durable_write
+ 
+ 
+ def local_key(path, *, create=False):
+diff --git a/src/msg/client_custodial.py b/src/msg/client_custodial.py
+index f79430e..5c162dd 100644
+--- a/src/msg/client_custodial.py
++++ b/src/msg/client_custodial.py
+@@ -10,9 +10,9 @@ from msg.client_secrets import write_private
+ from msg.core.codec import canonical, digest, loads, wire
+ from msg.core.errors import Failure, require
+ from msg.security.age_keys import encryption_key_id, public_from_recipient, recipient_from_identity
+-from msg.security.custodial_migration import ack_statement, stage_statement
+-from msg.security.vault import client_upgrade_proof
+-from msg.storage.git import durable_write
++from msg.security.custodial_protocol import ack_statement, stage_statement
++from msg.security.custodial_protocol import client_upgrade_proof
++from msg.atomic_file import durable_write
+ 
+ 
+ def journal_for(state):
+diff --git a/src/msg/client_upgrade.py b/src/msg/client_upgrade.py
+index 03c5c92..b68e887 100644
+--- a/src/msg/client_upgrade.py
++++ b/src/msg/client_upgrade.py
+@@ -8,7 +8,7 @@ from uuid import uuid4
+ from msg.core.codec import b64, canonical, loads, wire
+ from msg.core.errors import Failure, require
+ from msg.security.crypto import Ed25519Signer
+-from msg.storage.git import durable_write
++from msg.atomic_file import durable_write
+ 
+ 
+ @contextmanager
+diff --git a/src/msg/core/codec.py b/src/msg/core/codec.py
+index 133d30e..c3cdd9a 100644
+--- a/src/msg/core/codec.py
++++ b/src/msg/core/codec.py
+@@ -251,3 +251,11 @@ def record(**kwargs):
+         cls.__post_init__ = validate_record
+         return dataclasses.dataclass(**kwargs)(cls)
+     return decorate
++
++
++def result_wire(result):
++    value=wire(result,compact=True)
++    for name in ('replayed','prefer_cli'):
++        if not value.get(name):
++            value.pop(name,None)
++    return value
+diff --git a/src/msg/core/executor.py b/src/msg/core/executor.py
+index d00ac08..5eb6ba4 100644
+--- a/src/msg/core/executor.py
++++ b/src/msg/core/executor.py
+@@ -4,7 +4,7 @@ import logging
+ import time
+ from dataclasses import replace
+ from uuid import uuid4
+-from msg.core.codec import wire,digest
++from msg.core.codec import wire,digest,result_wire
+ from msg.core.errors import Failure,require
+ from msg.core.models import ExecutionContext,HandlerOutput,OperationResult,OperationError,Event,AccessRequirement
+ from msg.core.requests import SECRET_DELIVERY_MIN_VERSION,receipt_bytes
+@@ -186,11 +186,3 @@ class OperationExecutor:
+                 request_id=request.request_id,actor=principal.actor,subject=principal.subject,resources=result.resources,data={'operation':spec.name}))
+             await tx.save_result(principal.subject,request.payload_digest,result)
+         return replace(result,prefer_cli=request.source!='msg',cli_url='/AGENTS.md' if request.source!='msg' else None)
+-
+-
+-def result_wire(result):
+-    value=wire(result,compact=True)
+-    for name in ('replayed','prefer_cli'):
+-        if not value.get(name):
+-            value.pop(name,None)
+-    return value
+diff --git a/src/msg/daemon.py b/src/msg/daemon.py
+index 637715d..fc6b26b 100644
+--- a/src/msg/daemon.py
++++ b/src/msg/daemon.py
+@@ -1,6 +1,7 @@
+ """msgd: local installation, serving, workers, diagnostics and restricted SSH."""
+ from __future__ import annotations
+ import argparse
++import importlib.util
+ import asyncio
+ from datetime import UTC,datetime
+ import json
+@@ -139,6 +140,11 @@ def parser():
+ 
+ def main(argv=None):
+     args=parser().parse_args(argv)
++    server_modules=('starlette','uvicorn','psycopg','valkey','aiohttp','dns','graphql')
++    if any(importlib.util.find_spec(name) is None for name in server_modules):
++        print(canonical({'status':'error','error':{'code':'server_dependencies_required',
++            'hint':"Install msg-lmm-best[server] before running server commands."}}).decode(),file=sys.stderr)
++        return 2
+     try:
+         if args.command in {'doctor','selftest'}:
+             from msg.admin.diagnostics import doctor,selftest
+diff --git a/src/msg/security/custodial_migration.py b/src/msg/security/custodial_migration.py
+index bcff825..022d59a 100644
+--- a/src/msg/security/custodial_migration.py
++++ b/src/msg/security/custodial_migration.py
+@@ -13,6 +13,7 @@ from msg.core.codec import canonical, decode, digest, loads, unb64, wire
+ from msg.core.errors import Failure, require
+ from msg.core.models import ResourceRef, Signature
+ from msg.security.crypto import key_id, verify
++from msg.security.custodial_protocol import stage_statement, ack_statement
+ from msg.security.age_keys import encryption_key_id, public_from_recipient
+ from msg.security.backup_retirement import BackupRetirement, verified as verified_backup
+ 
+@@ -43,22 +44,6 @@ def inventory_commitment(subject, details, challenge):
+         'source_keys': details.get('source_keys', {})})
+ 
+ 
+-def stage_statement(subject, arguments, request_id):
+-    """Sign every decision field, not a caller-selected subset of the manifest."""
+-    return {'domain': 'msg-custodial-decision-v1', 'subject_id': subject,
+-            'request_id': request_id,
+-            'decision': {key: value for key, value in arguments.items()
+-                         if key != 'migration_ack'}}
+-
+-
+-def ack_statement(subject, challenge_id, inventory_digest, source, target,
+-                  plaintext_digest, request_id, *, method='rewrap'):
+-    return {'domain': 'msg-custodial-history-ack-v1', 'subject_id': subject,
+-            'challenge_id': challenge_id, 'inventory_digest': inventory_digest,
+-            'source': source, 'target': target, 'method': method,
+-            'plaintext_digest': plaintext_digest, 'request_id': request_id}
+-
+-
+ def keyed_source(item, details):
+     return dict(item, key_id=details.get('source_keys', {}).get(
+         item['revision'], details['old_encryption_key_id']))
+diff --git a/src/msg/security/custodial_protocol.py b/src/msg/security/custodial_protocol.py
+new file mode 100644
+index 0000000..80821ca
+--- /dev/null
++++ b/src/msg/security/custodial_protocol.py
+@@ -0,0 +1,49 @@
++"""Published custodial proof and statement bytes shared by both endpoints.
++
++This module has no server-held key, transaction, current-authority or retirement
++state. Producing a proof does not verify authority or attest key destruction.
++"""
++from __future__ import annotations
++
++import hmac
++from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PublicKey
++from cryptography.hazmat.primitives.kdf.hkdf import HKDF
++from cryptography.hazmat.primitives import hashes
++from msg.core.codec import b64, canonical, unb64
++from msg.security.age_keys import private_from_identity
++
++
++UPGRADE_CONTEXT_FIELDS=('subject_id','challenge_id','request_id','handle','public_key',
++                        'encryption_recipient','server_public','nonce','expires_at')
++
++
++def _proof(shared,challenge):
++    context={name:challenge[name] for name in UPGRADE_CONTEXT_FIELDS}
++    key=HKDF(algorithm=hashes.SHA256(),length=32,
++             salt=unb64(context['nonce'],limit=64),
++             info=b'msg-custodial-upgrade-pop-v1').derive(shared)
++    return b64(hmac.digest(key,canonical(context),'sha256'))
++
++
++def client_upgrade_proof(age_identity,challenge):
++    private=private_from_identity(age_identity)
++    shared=private.exchange(X25519PublicKey.from_public_bytes(
++        unb64(challenge['server_public'],limit=32)))
++    return _proof(shared,challenge)
++
++
++
++def stage_statement(subject, arguments, request_id):
++    """Sign every decision field, not a caller-selected subset of the manifest."""
++    return {'domain': 'msg-custodial-decision-v1', 'subject_id': subject,
++            'request_id': request_id,
++            'decision': {key: value for key, value in arguments.items()
++                         if key != 'migration_ack'}}
++
++
++def ack_statement(subject, challenge_id, inventory_digest, source, target,
++                  plaintext_digest, request_id, *, method='rewrap'):
++    return {'domain': 'msg-custodial-history-ack-v1', 'subject_id': subject,
++            'challenge_id': challenge_id, 'inventory_digest': inventory_digest,
++            'source': source, 'target': target, 'method': method,
++            'plaintext_digest': plaintext_digest, 'request_id': request_id}
+diff --git a/src/msg/security/vault.py b/src/msg/security/vault.py
+index baff9a4..c61f454 100644
+--- a/src/msg/security/vault.py
++++ b/src/msg/security/vault.py
+@@ -2,7 +2,6 @@
+ from __future__ import annotations
+ 
+ import os
+-import hmac
+ import shutil
+ import subprocess
+ import tempfile
+@@ -11,12 +10,11 @@ from pathlib import Path
+ from cryptography.exceptions import InvalidTag
+ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+ from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey,X25519PublicKey
+-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+-from cryptography.hazmat.primitives import hashes
+ 
+ from msg.core.codec import b64,canonical,unb64,wire
+ from msg.core.errors import Failure,require
+-from msg.security.age_keys import recipient_from_identity,private_from_identity
++from msg.security.age_keys import recipient_from_identity
++from msg.security.custodial_protocol import UPGRADE_CONTEXT_FIELDS, _proof, client_upgrade_proof
+ from msg.security.crypto import Ed25519Signer
+ 
+ 
+@@ -128,25 +126,6 @@ def open_upgrade_private(app,subject,challenge_id,nonce,ciphertext):
+         raise Failure('custodial_upgrade_challenge_corrupt') from exc
+ 
+ 
+-UPGRADE_CONTEXT_FIELDS=('subject_id','challenge_id','request_id','handle','public_key',
+-                        'encryption_recipient','server_public','nonce','expires_at')
+-
+-
+-def _proof(shared,challenge):
+-    context={name:challenge[name] for name in UPGRADE_CONTEXT_FIELDS}
+-    key=HKDF(algorithm=hashes.SHA256(),length=32,
+-             salt=unb64(context['nonce'],limit=64),
+-             info=b'msg-custodial-upgrade-pop-v1').derive(shared)
+-    return b64(hmac.digest(key,canonical(context),'sha256'))
+-
+-
+-def client_upgrade_proof(age_identity,challenge):
+-    private=private_from_identity(age_identity)
+-    shared=private.exchange(X25519PublicKey.from_public_bytes(
+-        unb64(challenge['server_public'],limit=32)))
+-    return _proof(shared,challenge)
+-
+-
+ def server_upgrade_proof(app,subject,challenge,nonce,ciphertext):
+     from msg.security.age_keys import public_from_recipient
+     private=open_upgrade_private(app,subject,challenge['challenge_id'],nonce,ciphertext)
+diff --git a/src/msg/storage/git.py b/src/msg/storage/git.py
+index 9846a21..43d51ca 100644
+--- a/src/msg/storage/git.py
++++ b/src/msg/storage/git.py
+@@ -17,26 +17,7 @@ from pathlib import Path
+ from msg.core.codec import canonical, digest, loads
+ from msg.core.errors import Failure, require
+ from msg.core.models import BlobRef
+-
+-
+-def durable_write(path: Path, data: bytes, mode: int = 0o600):
+-    path.parent.mkdir(parents=True,exist_ok=True)
+-    fd,temporary=tempfile.mkstemp(prefix='.pending-',dir=path.parent)
+-    try:
+-        os.fchmod(fd,mode)
+-        with os.fdopen(fd,'wb') as stream:
+-            stream.write(data)
+-            stream.flush()
+-            os.fsync(stream.fileno())
+-        os.replace(temporary,path)
+-        directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+-        try:
+-            os.fsync(directory)
+-        finally:
+-            os.close(directory)
+-    finally:
+-        if os.path.exists(temporary):
+-            os.unlink(temporary)
++from msg.atomic_file import durable_write
+ 
+ 
+ class LFSObjectStore:
+diff --git a/src/msg/transports/client.py b/src/msg/transports/client.py
+index dee3f63..546fbcf 100644
+--- a/src/msg/transports/client.py
++++ b/src/msg/transports/client.py
+@@ -163,7 +163,7 @@ class MCPHTTPTransport(HTTPTransport):
+     async def call(self, request):
+         self._secure_delivery(request)
+         await self._effect(request.operation)
+-        from msg.transports.mcp import PROTOCOL_VERSION
++        from msg.transports.mcp_protocol import PROTOCOL_VERSION
+         tool_name = request.operation if request.contract_version==1 else (
+             f'{request.operation}@{request.contract_version}')
+         value = await self._json('POST','/-/mcp',body={'jsonrpc':'2.0','id':request.request_id,
+diff --git a/src/msg/transports/mcp.py b/src/msg/transports/mcp.py
+index 8474f57..aa81f77 100644
+--- a/src/msg/transports/mcp.py
++++ b/src/msg/transports/mcp.py
+@@ -9,11 +9,10 @@ from dataclasses import replace
+ from msg import __version__
+ from msg.core.codec import canonical,digest,loads
+ from msg.core.errors import Failure,require
+-from msg.core.executor import result_wire
++from msg.core.codec import result_wire
+ from msg.transports.packet import decode_packet,REQUEST_SCHEMA,RESULT_SCHEMA
+ 
+-PROTOCOL_VERSION='2025-11-25'
+-SUPPORTED_VERSIONS=frozenset({PROTOCOL_VERSION,'2025-06-18','2025-03-26'})
++from msg.transports.mcp_protocol import PROTOCOL_VERSION, SUPPORTED_VERSIONS
+ 
+ 
+ class MCPServer:
+diff --git a/src/msg/transports/mcp_protocol.py b/src/msg/transports/mcp_protocol.py
+new file mode 100644
+index 0000000..7eca1c5
+--- /dev/null
++++ b/src/msg/transports/mcp_protocol.py
+@@ -0,0 +1,4 @@
++"""Published MCP negotiation versions; no server or client runtime imports."""
++
++PROTOCOL_VERSION='2025-11-25'
++SUPPORTED_VERSIONS=frozenset({PROTOCOL_VERSION,'2025-06-18','2025-03-26'})

@@ -1,21 +1,21 @@
 # Client dependency boundary progress — 2026-09-29
 
-Refs #158/#82/#83/#85. Branch `fix/client-boundary-20260929` starts at tool-boundary head `f14fd1533f70983b046df4b4c813993e8a536d12` (#165). It does not write the #155 recovery, #156 executor or #166 metadata-session branches.
+Refs #158/#82/#83/#85. Branch `fix/client-boundary-20260929` starts at tool head f14fd1533f70983b046df4b4c813993e8a536d12. #165 was subsequently merged as 08c58928ee3f6c6cb350d9e9fba75d072bd78f08 with the same exact tested tree; #160 is closed. Do not write #155 recovery, #169 executor or #166 metadata-session branches from this slice.
 
-## Regression-first work
+## Independently verified RED
 
-This commit adds seven boundary/compatibility/installation checks and a standalone fresh-interpreter client probe. It contains no implementation fix yet. The probe imports client/CLI/TUI modules under a strict server-import guard, creates/reloads protected client key files, and sends the same genuinely signed request through HTTP, path GET, GraphQL and MCP using an in-process mock HTTP endpoint. It never sends to a real service.
+- Head **6ea463d6fa8b256cb07d0ede2d7795a5336eda4f**, tree **2a89a0a36f2d87646cccd4fdbd5ed8420f31c9b9**.
+- Cloud run **36483229167**, artifact **10998106395**, SHA-256 `449fc080ba7232cceea4c6f6444d1468fda03b6278112d1c9cbec96dcfdce112` was downloaded and independently verified. Source JSON matches this commit/tree; JUnit reports **7 failed / 0 errors / 0 skipped**, including the actual client import guard refusing server vault imports. This is expected regression-first failure, not a successful implementation.
+- The real baseline wheel was built; minimal installation remains a failure because its base dependencies include server packages. No project code/test/build ran locally.
 
-The independent workflow builds the real wheel and installs it with normal dependencies into a fresh virtualenv outside the source checkout. It runs pip check, both command help entrypoints and the probe with explicit rejection of server-only packages. No PostgreSQL/Valkey service is configured for this workflow; full repository CI remains unchanged and mandatory.
+## Reviewed implementation
 
-## Intended ownership and compatibility
+A fixed-parent one-shot cloud patch applies only the 19 enumerated source/install-document files on this feature branch, with no force update or project execution under write credentials. The temporary publisher and patch are removed from the resulting source tree. Exact generated head/tree and artifact hash must be read before final PR verification.
 
-- Compact result serialization belongs to protocol codec; executor keeps only a compatibility import.
-- Atomic protected local-file replacement has one narrowly named owner, not the Git/CAS backend. Existing permissions/fsync/replacement semantics remain unchanged.
-- Custodial proof input/derivation and signed migration statements share one state-free owner; server-held vault and retirement verification stay server-side. Existing exports remain aliases, not copied security code.
-- MCP version negotiation constants must not require importing the server implementation from the network client.
-- Base installation expresses client dependencies; the server extra is the complete server install. The existing dev extra retains server dependencies and msg/msgd command names are unchanged. Documentation must explicitly migrate full server installation to the server extra; no automatic package installation.
+The change moves compact result encoding, atomic local-file replacement, state-free custodial proof/statement bytes and MCP version constants into their actual shared owners, retaining identity-preserving compatibility exports. Clients no longer import executor, Git storage or server vault for those helpers. Published bytes, credential file protections and server-held authority/state stay unchanged. Base metadata becomes client-only; server extra holds the original server constraints, dev still includes server, and daemon commands fail clearly before state creation when those dependencies are absent. See CLIENT_INSTALLATION.md for migration instructions.
 
-## Evidence still required
+## Remaining gates
 
-Read the RED run before implementation. Then verify helper compatibility, four real client transport calls, a dependency-clean wheel environment, all existing credential journal/recovery and server tests, full exact-node-ID/conformance/build gates and current integration tree. No size, speed, Windows/Android field result or production readiness is claimed by this refactor. Keep #158 open until those facts are proved.
+The independent workflow must prove all seven checks, real wheel outside the checkout, no server-only Python dependencies, both help entrypoints and four actual signed transport calls using an in-process mock endpoint. Full original server, journal/recovery, protocol and four-shard exact-node-ID/build gates remain mandatory. Review and verify the final combination with current main/#169 rather than treating this isolated branch as the combined result. No GREEN, merge or #158 closure is claimed at this checkpoint.
+
+No production deployment, Root/PIN, funds, real external notification, key destruction or recovery promotion was performed. Production and platform-field issues remain blocked on their own evidence.
