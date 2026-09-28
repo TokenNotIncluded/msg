@@ -23,7 +23,9 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from msg.core.errors import Failure
-from msg.storage.sqlite import SqliteSession
+from msg.core.query import QueryResult, SqlParameters
+from msg.storage.query import SessionQueryResult
+from msg.storage.session import RelationalSession
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY);
@@ -509,18 +511,21 @@ def _postgres_sql(sql: str, *, has_parameters: bool = False) -> str:
     return ''.join(output)
 
 
-class PostgresSession(SqliteSession):
+class PostgresSession(RelationalSession):
     def __init__(self, connection, *, write: bool):
-        super().__init__(connection, write=write)
+        super().__init__(write=write)
+        self._connection = connection
         self.pending_effect_ids: list[str] = []
 
-    def execute(self, sql, parameters=(), *, write=False):
+    def execute(self, sql: str, parameters: SqlParameters = (), *,
+                write: bool = False) -> QueryResult:
         self.check(write)
         try:
             # With an empty parameter tuple psycopg still parses literal '%' as a
             # placeholder; SQL such as LIKE 'policy:%' must be sent unchanged.
-            return self._connection.execute(
+            cursor = self._connection.execute(
                 _postgres_sql(sql, has_parameters=bool(parameters)), parameters or None)
+            return SessionQueryResult(cursor, self.check)
         except psycopg.errors.IntegrityError as exc:
             raise Failure("constraint_conflict") from exc
         except (psycopg.errors.DeadlockDetected, psycopg.errors.LockNotAvailable,

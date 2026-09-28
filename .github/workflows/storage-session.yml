@@ -1,0 +1,81 @@
+name: Storage session boundaries
+on:
+  push:
+    branches: [fix/storage-session-20260929-2050]
+  pull_request:
+    paths:
+      - 'src/msg/**'
+      - 'tests/test_session_boundary.py'
+      - '.github/workflows/storage-session.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: storage-session-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      valkey:
+        image: valkey/valkey:9.0.6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+      MSG_TEST_VALKEY_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+          cache: pip
+      - name: Install isolated test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          python -m pip install -e '.[dev]'
+      - name: Record source identity
+        env:
+          EVENT_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, platform, subprocess
+          from pathlib import Path
+          def git(ref):
+              return subprocess.check_output(['git', 'rev-parse', ref], text=True).strip()
+          Path('artifacts/source.json').write_text(json.dumps({
+              'head': os.environ['EVENT_HEAD'], 'checkout': git('HEAD'), 'tree': git('HEAD^{tree}'),
+              'run': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'python': platform.python_version(), 'scope': 'isolated-regression-not-production'
+          }, indent=2) + '\n')
+          PY
+      - name: Exercise boundaries and unchanged security contracts
+        run: >-
+          python -m pytest tests/test_session_boundary.py tests/test_foundation.py
+          tests/test_postgres.py tests/test_security_rollback_fences.py
+          tests/test_security_storage_rollback.py tests/test_ledger_accounts.py
+          --junitxml=artifacts/storage-session.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: storage-session-evidence
+          path: artifacts/
+          if-no-files-found: error
