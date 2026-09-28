@@ -103,7 +103,7 @@ Doctor checks conservation, signed receipts, escrow/source consistency,
 entitlements and bounty linkage without writes. Fresh isolated `market_e2e`
 uses Test Root mint/bank-fund20, prefunded PoP reward10 and the fixed 5 MSG bundle:
 `msg.lmm.best store selftest`, `hello.txt` containing `delivery-ok\n`. Existing
-v3 settlement ends at buyer5/bank15/escrows0/supply20, prepared-not-claimed.
+managed-v2 automatic settlement ends at buyer5/bank15/escrows0/supply20, prepared-not-claimed.
 It sends no external mail and does not substitute for the pending new acceptance
 version, real SMTP or physical-console evidence.
 
