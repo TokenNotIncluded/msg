@@ -15,8 +15,8 @@ import time
 
 from msg.constants import ROOT_SUBJECT
 from msg.core.codec import decode, wire
-from msg.core.errors import Failure
-from msg.core.errors import require
+from msg.core.errors import Failure, require
+from msg.security.quarantine import active as quarantine_active
 from msg.core.models import (
     CapabilityGrant, EffectJob, EmailSettings, ExecutionContext, Principal, ResourceRef,
 )
@@ -116,6 +116,8 @@ class EffectWorker:
 
     async def _claim(self):
         async with self.app.metadata.transaction(write=True) as tx:
+            if quarantine_active(tx):
+                return None, False
             # Orphaned external work cannot be assumed not to have executed.
             for (raw_id,) in tx.execute("SELECT id FROM jobs WHERE state='running' ORDER BY next_at,id"):
                 job = await tx.job(raw_id)

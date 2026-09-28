@@ -5,6 +5,7 @@ from msg.core.errors import Failure,require
 from msg.core.codec import loads,parse_time,wire
 from msg.core.models import ResourceRef
 from msg.security.sharing_policy import share_target_error
+from msg.security.quarantine import active as quarantine_active, require_live_authority
 from msg.security.policy import allows,grant_covers,scope_contains,CERTGATE
 
 _WRITE_CHECKS={'write','create','remove','chmod','chgrp','chown','manage','certgate','purge','tool_use'}
@@ -18,6 +19,7 @@ class AuthorizationService:
         self.registry,self.certificates=registry,certificates
 
     async def grants(self,principal,session):
+        require_live_authority(session)
         grants=[]
         for cid in principal.certificates:
             certificate=await self.certificates.validate(cid,session)
@@ -35,6 +37,7 @@ class AuthorizationService:
                     for g in await self.grants(principal,session)])
 
     async def _ceiling(self,principal,operation,resource,session):
+        require_live_authority(session)
         if principal.method=='anonymous':
             return
         allowed=any([operation in g.operations and await scope_contains(g.scope,resource,session)
@@ -142,6 +145,8 @@ class AuthorizationService:
         The original signed owner's credential is a revocation boundary. A link
         cannot borrow that principal for other reads or outlive its current scope.
         """
+        if quarantine_active(session):
+            return False
         if resource.owner!=grantor or share_target_error(self.registry,resource,chain,session):
             return False
         memberships={m.organization_id for m in await session.memberships(grantor)}
@@ -168,6 +173,7 @@ class AuthorizationService:
 
     async def require(self,context,request,checks,session):
         principal=context.principal
+        require_live_authority(session)
         if principal.subject==ROOT_SUBJECT or principal.actor==ROOT_SUBJECT:
             require(context.entry=='local_admin' and principal.method=='local','local_only')
         memberships={m.organization_id for m in await session.memberships(principal.subject)} if principal.subject else set()
