@@ -249,6 +249,9 @@ async def _collect(app,tx, *, grace_seconds=3600):
 async def run_maintenance(app,action, *, scheduled=False,principal=None):
     require(action in {'cleanup_expired','deliver_due_todos','rebuild_search','collect_garbage'},'unknown_maintenance_action')
     async with app.metadata.transaction(write=True) as tx:
+        from msg.security.quarantine import active as quarantine_active
+        if quarantine_active(tx):
+            return {'skipped':'recovery_quarantine'}
         if not scheduled:
             require(principal is not None,'maintenance_authority_required')
             from msg.workers.effects import current_principal

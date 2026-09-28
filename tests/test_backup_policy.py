@@ -7,6 +7,7 @@ from msg.admin.backups import backup, restore
 from msg.application import Application
 from msg.config import load_settings
 from msg.core.codec import wire
+from msg.plugins.money import _balance, _supply
 from test_service import NOW, call, register
 
 
@@ -42,11 +43,12 @@ async def test_real_backup_restore_preserves_money_and_credential_policy(install
     await restored.load()
     try:
         current = await call(restored, 'money.state', {})
-        assert current.status == 'ok', wire(current)
-        assert current.data == original.data
+        assert current.status == 'error' and current.error.code == 'recovery_quarantined', wire(current)
         balance = await call(restored, 'money.balance', {}, key=key, subject=subject)
-        assert balance.status == 'ok' and balance.data == original_balance.data, wire(balance)
+        assert balance.status == 'error' and balance.error.code == 'recovery_quarantined', wire(balance)
         async with restored.metadata.transaction(write=False) as tx:
+            assert _supply(tx) == original.data['total_supply_minor']
+            assert _balance(tx, subject) == original_balance.data['balance_minor']
             runtime = tx.setting('runtime_config')
             assert runtime['accept_writes'] is False and runtime['cleanup_enabled'] is False
     finally:

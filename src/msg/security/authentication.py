@@ -10,6 +10,7 @@ from msg.core.errors import Failure,require
 from msg.core.models import Principal,SignatureProof,TokenProof
 from msg.core.requests import payload_fields,signing_bytes
 from msg.security.crypto import key_id,subject_id,verify
+from msg.security.quarantine import active as quarantine_active
 
 
 CUSTODIAL_SIGNED_WRITES=frozenset({
@@ -30,6 +31,9 @@ class AuthenticationService:
         require(session.setting('active_root_certificate',self.certificates.root_certificate.resource_id)==
                 self.certificates.root_certificate.resource_id,'service_restart_required')
         spec=self.registry.operation(request.operation,request.contract_version)
+        if quarantine_active(session):
+            require(spec.effect=='read','writes_paused')
+            raise Failure('recovery_quarantined')
         require(request.protocol_version==1 and request.target_service==self.service,'wrong_service')
         require(request.payload_digest==digest(payload_fields(request)),'payload_digest_mismatch')
         now=self.clock()

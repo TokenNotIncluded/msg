@@ -3,6 +3,8 @@ import hashlib
 import asyncio
 import threading
 import zipfile
+import httpx
+import subprocess
 
 import psycopg
 import pytest
@@ -15,6 +17,8 @@ from msg.core.errors import Failure
 from msg.core.models import EffectJob,Principal
 from msg.storage.git import LFSObjectStore
 from msg.workers.effects import EffectWorker
+from msg.workers.maintenance import run_maintenance
+from msg.transports.http import create_app
 from test_service import NOW,call, register
 
 
@@ -51,7 +55,7 @@ async def test_pg_dump_and_file_copy_hold_writer_lock(installed,tmp_path,pg_dsn,
 
 
 @pytest.mark.asyncio
-async def test_restore_preserves_shared_lfs_hardlinks_and_disables_outbound(installed, tmp_path, pg_dsn):
+async def test_restore_preserves_shared_lfs_hardlinks_and_disables_outbound(installed, tmp_path, pg_dsn, monkeypatch):
     app,_=installed
     key,subject,_=await register(app,'backup-lfs')
     created=await call(app,'git.create',{'parent':'/@backup-lfs','name':'source.git'},
@@ -80,6 +84,7 @@ async def test_restore_preserves_shared_lfs_hardlinks_and_disables_outbound(inst
     restored_data=tmp_path/'drill-data'
     result=restore(archive,restored_config,restored_data,postgres_dsn=pg_dsn)
     assert result['outbound']=='disabled_recovery_drill'
+    assert result['revocation_replay']=='required' and result['promotion']=='blocked'
     settings=load_settings(restored_config)
     restored_repo=settings.server.repositories_dir/(rid+'.git')
     linked=restored_repo/'lfs'/'objects'/oid[:2]/oid[2:4]/oid
@@ -93,8 +98,27 @@ async def test_restore_preserves_shared_lfs_hardlinks_and_disables_outbound(inst
     assert settings.server.valkey_url is None
     assert settings.server.mail is None
     assert not (restored_config/'root').exists()
-    restored=Application(settings,clock=lambda:NOW)
-    await restored.load()
+    # A copied/deleted config marker must not resurrect snapshot authority.
+    (restored_config/'recovery-drill.json').unlink()
+    async def forbidden_sync(*args,**kwargs):
+        raise AssertionError('loading a quarantine rewrote release resources')
+    with monkeypatch.context() as patched:
+        patched.setattr('msg.bootstrap.sync_system_sources',forbidden_sync)
+        restored=Application(settings,clock=lambda:NOW)
+        await restored.load()
+    anonymous=await call(restored,'discovery.get',{'id':rid})
+    assert anonymous.status=='error' and anonymous.error.code=='recovery_quarantined'
+    authenticated=await call(restored,'discovery.get',{'id':rid},key=key,subject=subject)
+    assert authenticated.status=='error' and authenticated.error.code=='recovery_quarantined'
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(restored)),
+                                 base_url='http://testserver') as http:
+        health=await http.get('/healthz')
+        assert health.status_code==503 and health.json()['status']=='recovery_quarantined'
+        assert health.json()['ready'] is False and health.json()['outbound_enabled'] is False
+        assert (await http.get('/main')).status_code==503
+        assert (await http.head('/healthz')).content==b''
+    assert await run_maintenance(restored,'deliver_due_todos',scheduled=True)=={
+        'skipped':'recovery_quarantine'}
     rejected=await call(restored,'content.post_create',
                         {'parent':'/main','body':'should not publish'},
                         key=key,subject=subject)
@@ -111,8 +135,12 @@ async def test_restore_preserves_shared_lfs_hardlinks_and_disables_outbound(inst
     worker=EffectWorker(restored,mail_sender=sender,webhook_sender=sender,
                         tool_runner=sender)
     assert await worker.run_once() is False
+    assert await worker._claim()==(None,False)  # Database gate, independent of process cache.
     assert sender.calls==0
     async with restored.metadata.transaction(write=False) as tx:
+        quarantine=tx.setting('recovery_quarantine')
+        assert quarantine['authority']=='health_only'
+        assert quarantine['revocation_replay']=='required'
         runtime=tx.setting('runtime_config')
         assert runtime['accept_writes'] is False
         assert runtime['cleanup_enabled'] is False
@@ -150,3 +178,26 @@ async def test_restore_rejects_lfs_digest_conflict_before_touching_pg(installed,
         restore(altered,tmp_path/'bad-etc',tmp_path/'bad-data',postgres_dsn=pg_dsn)
     assert not (tmp_path/'bad-etc').exists()
     assert not (tmp_path/'bad-data').exists()
+
+
+@pytest.mark.asyncio
+async def test_interrupted_restore_rolls_back_dump_and_gate_together(installed,tmp_path,pg_dsn,monkeypatch):
+    from msg.admin import restore_database
+    app,_=installed
+    archive=tmp_path/'atomic.zip'
+    await backup(app,archive)
+    original=restore_database.subprocess.run
+    def fail_inside_import(argv,**kwargs):
+        if argv[0]=='psql':
+            from pathlib import Path
+            script=Path(argv[argv.index('--file')+1])
+            with script.open('a') as stream:
+                stream.write('\nSELECT 1/0;\n')
+        return original(argv,**kwargs)
+    monkeypatch.setattr(restore_database.subprocess,'run',fail_inside_import)
+    with pytest.raises(subprocess.CalledProcessError):
+        restore(archive,tmp_path/'failed-etc',tmp_path/'failed-data',postgres_dsn=pg_dsn)
+    with psycopg.connect(pg_dsn) as connection:
+        assert connection.execute("SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema=current_schema() LIMIT 1").fetchone() is None
+    assert not (tmp_path/'failed-etc').exists() and not (tmp_path/'failed-data').exists()
