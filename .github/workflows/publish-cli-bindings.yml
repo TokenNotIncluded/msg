@@ -1,0 +1,53 @@
+name: Isolated CLI-binding patch staging
+on:
+  push:
+    branches: [chore/serial-cli-publish-20260928]
+permissions:
+  contents: write
+jobs:
+  stage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: transport
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          path: source
+          ref: 4299aca42adc8ab5940282d8be719dac28417757
+          fetch-depth: 0
+      - name: Verify the exact patch and resulting source tree before staging
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, gzip, hashlib, pathlib
+          encoded = pathlib.Path('../transport/cli-bindings.patch.gz.b64').read_text().strip()
+          # Correct two known carrier transcriptions; original source digest remains mandatory.
+          encoded = encoded.replace('qQyf0zKwfLTr1Sq7', 'qQyf0zKwlTr1Sq7')
+          encoded = encoded.replace('CPVerkiYgKTVPOyuDuDEY', 'CPVerkiYgKTVPOyuDEY')
+          raw = gzip.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(raw).hexdigest() == '2332468bf05ca4947979ff9b50655a67b182ab9bce6074d163eac627871b3d65'
+          pathlib.Path('../reviewed.patch').write_bytes(raw)
+          PY
+          test "$(git rev-parse HEAD)" = 4299aca42adc8ab5940282d8be719dac28417757
+          git apply --index --check ../reviewed.patch
+          git apply --index ../reviewed.patch
+          test "$(git write-tree)" = b04a9725e5ce405578c13d43d1705628dbbc902f
+          git diff --cached --check
+          git config user.name LIghtJUNction
+          git config user.email 106986785+LIghtJUNction@users.noreply.github.com
+          git commit -m 'fix: bind market CLI shortcuts and metadata to the current Registry' -m 'Stage verified source only; exact target CI required before merge. No production or collaborator branch changes.'
+          branch=chore/market-cli-source-stage-20260928
+          test -z "$(git ls-remote --heads origin "refs/heads/$branch")"
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD HEAD^{tree} > ../published-source.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: market-cli-published-source
+          path: published-source.txt
+          retention-days: 3
+          if-no-files-found: error
