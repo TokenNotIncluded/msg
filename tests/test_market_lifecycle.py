@@ -1,4 +1,4 @@
-"""The v2 market contract: real signatures, immutable snapshots and conserved money."""
+"""The v3 market contract: real signatures, immutable snapshots and conserved money."""
 import asyncio
 from datetime import timedelta
 
@@ -38,7 +38,7 @@ async def market(app, root, *, mode='managed_instant', kind='bundle', quantity=2
 
 async def buy(app, key, buyer, listing, **extra):
     return await call(app, 'orders.buy', {**_intent(listing), **extra},
-                      key=key, subject=buyer, contract_version=2)
+                      key=key, subject=buyer, contract_version=3)
 
 
 @pytest.mark.asyncio
@@ -47,13 +47,13 @@ async def test_instant_delivery_settlement_and_claim_are_distinct(installed):
     _sk, seller, bk, buyer, listing, package = await market(app, root)
     args = _intent(listing)
     result = await call(app, 'orders.buy', args, key=bk, subject=buyer,
-                        contract_version=2, rid='instant-once')
+                        contract_version=3, rid='instant-once')
     assert result.status == 'ok', wire(result)
     order = result.data['order']
     assert order['state'] == 'settled'
     assert order['package_digest'] == package['digest']
     replay = await call(app, 'orders.buy', args, key=bk, subject=buyer,
-                        contract_version=2, rid='instant-once')
+                        contract_version=3, rid='instant-once')
     assert replay.replayed and replay.data == result.data
     delivery = await call(app, 'delivery.get', {'order_id': order['id']},
                           key=bk, subject=buyer, contract_version=2)

@@ -13,7 +13,7 @@ from datetime import timedelta
 from msg.core.codec import b64, canonical, digest, parse_time, wire
 from msg.core.errors import require
 from msg.core.models import EffectJob, HandlerOutput
-from msg.market.targets import enqueue_notification, save_target, validate_target
+from msg.market.targets import enqueue_notification, mail_enabled, save_target, validate_target
 from msg.plugins.common import new_id
 from msg.plugins.orders import _row, _subject
 from msg.plugins.schemas import IDENTIFIER, obj
@@ -21,7 +21,7 @@ from msg.plugins.schemas import IDENTIFIER, obj
 
 async def verification_message(app, tx, ctx, request, order):
     chosen = order['delivery_target'].get('email', {})
-    if (app.settings.server.mail is None or chosen.get('endpoint_id') or
+    if (not mail_enabled(app) or chosen.get('endpoint_id') or
             not chosen.get('address_snapshot')):
         return
     token, challenge_id = b64(secrets.token_bytes(32)), new_id('evc')

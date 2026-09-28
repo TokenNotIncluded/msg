@@ -240,6 +240,8 @@ _JSON_IDENTITY_REFS = {
                           'principal.certificates.*', 'principal.ceiling.*.scope.resource_id'),
     'arbitration_decisions': ('voters.*',),
     'arbitration_evidence': ('source.id',),
+    # Signed settlement parties are identities; order/account digests are not.
+    'order_escrow_decisions': ('actor', 'recipient'),
 }
 
 

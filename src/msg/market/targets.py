@@ -11,6 +11,11 @@ from msg.market.policy import contract
 from msg.plugins.common import new_id
 
 
+def mail_enabled(app):
+    config = app.settings.server.mail
+    return config is not None and config.enabled
+
+
 def _email(tx, subject):
     row = tx.one('SELECT generation,body FROM emails WHERE subject=?', (subject,))
     if not row:
@@ -32,7 +37,7 @@ async def target_for(app, tx, buyer, email_address=None):
     email, endpoint = _email(tx, buyer)
     verified = (email is not None and email.subject_id == buyer and
                 email.address == email_address and email.verified_at is not None)
-    target['email'] = {'state': 'pending' if app.settings.server.mail else 'disabled',
+    target['email'] = {'state': 'pending' if mail_enabled(app) else 'disabled',
         'subject_id': buyer, 'address_snapshot': email_address,
         'endpoint_id': endpoint if verified else None}
     # Verification is a separate, order-information-free external effect.
@@ -78,7 +83,7 @@ def validate_target(tx, order, *, email=False, encryption=False):
 
 async def enqueue_notification(app, tx, ctx, request, order):
     chosen = order['delivery_target'].get('email', {})
-    if (not app.settings.server.mail or not chosen.get('endpoint_id') or
+    if (not mail_enabled(app) or not chosen.get('endpoint_id') or
             chosen.get('notification_disabled')):
         return
     try:

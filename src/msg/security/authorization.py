@@ -4,6 +4,7 @@ from msg.constants import ROOT_SUBJECT,TOOLS_SPACE
 from msg.core.errors import Failure,require
 from msg.core.codec import loads,parse_time,wire
 from msg.core.models import ResourceRef
+from msg.security.sharing_policy import share_target_error
 from msg.security.policy import allows,grant_covers,scope_contains,CERTGATE
 
 _WRITE_CHECKS={'write','create','remove','chmod','chgrp','chown','manage','certgate','purge','tool_use'}
@@ -65,41 +66,62 @@ class AuthorizationService:
 
     async def share_source_active(self,resource,grant_id,subject,now,session, *, reshare=False,
                                   seen=frozenset()):
-        """Resolve one named source through current membership and its live parent chain."""
-        if grant_id in seen or len(seen)>=16:
+        """Resolve a bounded source chain; stored facts are not current authority.
+
+        Unsupported operations/constraints and malformed restored facts deny this
+        source only. Independent owner/group/certificate/grant sources survive.
+        """
+        chain=(*await session.ancestors(resource.id),resource)
+        if share_target_error(self.registry,resource,chain,session):
             return False
-        row=session.one('''SELECT resource_id,grantor,grantee,grantee_kind,parent_id,
-            operations,constraints,allow_reshare,expires_at,revoked_at
-            FROM share_grants_v2 WHERE id=?''',(grant_id,))
-        if row is None or row[0]!=resource.id or row[9] is not None or parse_time(row[8])<=now:
-            return False
-        if reshare and not row[7]:
-            return False
-        if 'read' not in loads(row[5]) or loads(row[6])!={}:
-            return False
-        if row[3]=='user':
-            if row[2]!=subject:
+        seen=set(seen)
+        child_expiry=None
+        while grant_id is not None:
+            if grant_id in seen or len(seen)>=16:
                 return False
-        elif row[3]=='group':
-            if row[2] not in {member.organization_id for member in await session.memberships(subject)}:
+            seen.add(grant_id)
+            row=session.one('''SELECT resource_id,grantor,grantee,grantee_kind,parent_id,
+                operations,constraints,allow_reshare,expires_at,revoked_at,created_at
+                FROM share_grants_v2 WHERE id=?''',(grant_id,))
+            if row is None or row[0]!=resource.id or row[9] is not None:
                 return False
-        else:
-            return False
-        if row[4] is None:
-            return row[1]==resource.owner
-        return await self.share_source_active(resource,row[4],row[1],now,session,
-            reshare=True,seen=seen|{grant_id})
+            try:
+                expires=parse_time(row[8])
+                created=parse_time(row[10])
+                supported=loads(row[5])==['read'] and loads(row[6])=={}
+            except (Failure,ValueError,TypeError,OverflowError):
+                return False
+            if (not supported or created>now or expires<=now or expires<=created or
+                    (child_expiry is not None and child_expiry>expires)):
+                return False
+            if reshare and row[7]!=1:
+                return False
+            if row[3]=='user':
+                if row[2]!=subject:
+                    return False
+            elif row[3]=='group':
+                try:
+                    group=await session.resource(row[2])
+                    await session.organization(row[2])
+                except Failure as exc:
+                    if exc.code in {'not_found','group_not_found'}:
+                        return False
+                    raise
+                if group.state!='active' or row[2] not in {
+                        member.organization_id for member in await session.memberships(subject)}:
+                    return False
+            else:
+                return False
+            if row[4] is None:
+                return row[1]==resource.owner
+            subject,grant_id,child_expiry,reshare=row[1],row[4],expires,True
+        return False
 
     async def shared_read(self,principal,resource,chain,now,session):
         """A direct, live source for exactly one resource's read check."""
         if principal.subject is None or principal.actor != principal.subject:
             return False
-        if any(item.id in {'r_agents','r_rules','t_last_will'} or
-               item.type in {'tool','csr','certificate','credential','legacy_directive'}
-               for item in chain):
-            return False
-        if any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','todos'}
-               for parent,child in zip(chain,chain[1:])):
+        if share_target_error(self.registry,resource,chain,session):
             return False
         row=session.one('''SELECT grantor,expires_at FROM share_grants
             WHERE resource_id=? AND grantee=? AND revoked_at IS NULL''',
@@ -120,24 +142,7 @@ class AuthorizationService:
         The original signed owner's credential is a revocation boundary. A link
         cannot borrow that principal for other reads or outlive its current scope.
         """
-        if resource.owner!=grantor or resource.state!='active' or any(
-                item.state!='active' for item in chain):
-            return False
-        if self.registry.resource_type(resource.type,resource.type_version).container:
-            return False
-        if any(item.id in {'r_agents','r_rules','t_last_will'} or
-               item.type in {'tool','csr','certificate','credential','legacy_directive',
-                             'dm_conversation'} for item in chain):
-            return False
-        if any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','todos'}
-               for parent,child in zip(chain,chain[1:])):
-            return False
-        if any(session.setting('hosting_preview:'+item.id) or
-               session.setting('hosting_preview_file:'+item.id) for item in chain):
-            return False
-        if session.one('''SELECT 1 FROM dm_conversations WHERE resource_id IN ('''+
-                       ','.join('?' for _ in chain)+') LIMIT 1',
-                       tuple(item.id for item in chain)) is not None:
+        if resource.owner!=grantor or share_target_error(self.registry,resource,chain,session):
             return False
         memberships={m.organization_id for m in await session.memberships(grantor)}
         if not allows(resource,grantor,memberships,'read') or any(
@@ -193,6 +198,7 @@ class AuthorizationService:
                     all(child.name not in {'SOUL.md','AGENTS.md','todos'}
                         for parent,child in zip(chain,chain[1:]) if parent.type=='user'))
                 require((sharing_notes or operation in {'identity.personal_put@1','identity.note_put@1',
+                                      'identity.personal_put@2','identity.note_put@2',
                                       'identity.soul_visibility@1','identity.note_archive@1',
                                       'identity.note_restore@1','identity.todo_put@1',
                                       'identity.todo_archive@1','identity.todo_restore@1'}) and

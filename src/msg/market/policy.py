@@ -73,4 +73,60 @@ def contract(tx, order_id):
     body = loads(row[0])
     require(digest(body) == row[1] and body['order_id'] == order_id,
             'order_contract_corrupt')
+    validate_projection(tx, body)
     return body
+
+
+def delivery_snapshot(tx, order_id):
+    """Commit delivery identity and prepared bytes, excluding subsequent buyer ACK."""
+    from msg.plugins.delivery import _delivery
+    delivery = _delivery(tx, order_id)
+    return digest(None if delivery is None else {
+        key: value for key, value in delivery.items()
+        if key not in {'state', 'claimed_at', 'receipt'}})
+
+
+def validate_projection(tx, locked):
+    """A restored mutable projection cannot replace the immutable checkout facts."""
+    require(locked.get('version') == 3, 'order_contract_version')
+    listing = locked['listing']
+    expected = {name: locked[name] for name in (
+        'buyer', 'seller', 'listing_id', 'listing_revision', 'package_id',
+        'package_revision', 'package_digest', 'quantity', 'total_price_minor',
+        'escrow_subject', 'terms_digest', 'created_at')}
+    expected.update(unit_price_minor=listing['price_minor'],
+        currency_id=listing['currency_id'], escrow_policy=listing['escrow_policy'],
+        dispute_policy=listing['dispute_policy'])
+    mutable = ('state', 'receipt_refs', 'settled_at', 'payment_transaction_id',
+               'payment_intent_digest', 'funded_at', 'delivered_at')
+    columns = (*expected, *mutable)
+    row = tx.one('SELECT ' + ','.join(columns) + ' FROM store_orders WHERE id=?',
+                 (locked['order_id'],))
+    require(row is not None, 'order_contract_mismatch')
+    order = dict(zip(columns, row))
+    require(all(order[name] == value for name, value in expected.items()),
+            'order_contract_mismatch')
+    if order['payment_transaction_id'] is not None:
+        payment = tx.one('''SELECT debit_account,credit_account,amount_minor,currency_id,
+            reference,committed_at FROM money_ledger WHERE id=?''',
+            (order['payment_transaction_id'],))
+        require(payment == (locked['buyer'], locked['escrow_subject'],
+            locked['total_price_minor'], listing['currency_id'],
+            'order_fund:' + locked['order_id'], order['funded_at']), 'order_payment_mismatch')
+    fact = tx.one('SELECT body FROM order_settlements WHERE order_id=?', (locked['order_id'],))
+    if fact is None:
+        require(order['state'] not in {'settled', 'refunded'}, 'order_settlement_missing')
+        return
+    fact = loads(fact[0])
+    receipts = fact['receipts']
+    references = [order['payment_transaction_id']] + [r['body']['transaction_id'] for r in receipts]
+    require(fact['refund_minor'] + fact['release_minor'] == locked['total_price_minor'] and
+            order['state'] == ('refunded' if fact['release_minor'] == 0 else 'settled') and
+            order['settled_at'] == fact['at'] and loads(order['receipt_refs']) == references and
+            all(order[name] == value for name, value in fact['order_facts'].items()) and
+            delivery_snapshot(tx, locked['order_id']) == fact['delivery_snapshot'],
+            'order_settlement_mismatch')
+    for receipt in receipts:
+        row = tx.one('SELECT receipt FROM money_ledger WHERE id=?',
+                      (receipt['body']['transaction_id'],))
+        require(row is not None and loads(row[0]) == receipt, 'order_settlement_mismatch')

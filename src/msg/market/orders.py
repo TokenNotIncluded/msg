@@ -1,4 +1,4 @@
-"""New checkout contracts without changing legacy signed orders.buy@1 semantics."""
+"""New checkout contracts without changing published orders.buy@1/@2 semantics."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -31,7 +31,7 @@ def view(tx, order, viewer):
     row = tx.one('SELECT digest FROM order_contracts WHERE order_id=?', (order['id'],))
     if row:
         result['order_digest'] = row[0]
-        result['contract_version'] = 2
+        result['contract_version'] = 3
         locked = contract(tx, order['id'])
         result['delivery_mode'] = locked['listing']['delivery_mode']
         result['policy_digest'] = locked['policy']['policy_digest']
@@ -91,8 +91,9 @@ async def create(app, tx, ctx, request):
          package_digest,args['quantity'],body['price_minor'],total,CURRENCY_ID,escrow,
          body['escrow_policy'],body['dispute_policy'],digest(body['terms']),canonical(target).decode(),
          request.payload_digest,now), write=True)
-    locked = {'order_id': order_id, 'version': 2, 'buyer': buyer, 'seller': listing.owner,
-        'listing': body, 'listing_revision': listing.revision,
+    locked = {'order_id': order_id, 'version': 3, 'buyer': buyer, 'seller': listing.owner,
+        'listing': body, 'listing_id': listing.id, 'escrow_subject': escrow,
+        'listing_revision': listing.revision,
         'listing_digest': revision.content.digest, 'package_id': package_id,
         'package_revision': package_revision, 'package_digest': package_digest,
         'quantity': args['quantity'], 'total_price_minor': total,
@@ -144,7 +145,7 @@ def install(app, op):
         order = await create(app, tx, ctx, request)
         return HandlerOutput(data={'order': view(tx, order, order['buyer'])})
 
-    @op('orders.buy', obj(INTENT, INTENT_REQUIRED), signature=True, version=2)
+    @op('orders.buy', obj(INTENT, INTENT_REQUIRED), signature=True, version=3)
     async def buy(ctx, request, tx):
         order = await create(app, tx, ctx, request)
         receipt = await fund(app, tx, ctx, request, order)

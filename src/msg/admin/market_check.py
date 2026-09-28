@@ -105,7 +105,7 @@ async def check_market(app,root,call,register,now):
         sale = active.data['listing']
         bought = await invoke('orders.buy',{'listing_id':sale['listing_id'],
             'listing_revision':sale['listing_revision'],'quantity':1,'total_price_minor':5_000_000,
-            'currency_id':'primary','email':'buyer@selftest.invalid'},contract_version=2)
+            'currency_id':'primary','email':'buyer@selftest.invalid'},contract_version=3)
         oid = bought.data['order']['id']
         worker=EffectWorker(app,mail_sender=sender)
         while await worker.run_once(): pass
@@ -135,7 +135,7 @@ async def check_market(app,root,call,register,now):
         expected=((service.resources[0].id,service.data['generation']),))
     sale=service.data['listing']
     bought=await invoke('orders.buy',{'listing_id':sale['listing_id'],'listing_revision':sale['listing_revision'],
-        'quantity':1,'total_price_minor':1_000_000,'currency_id':'primary'},contract_version=2)
+        'quantity':1,'total_price_minor':1_000_000,'currency_id':'primary'},contract_version=3)
     opened=await invoke('orders.dispute_open',{'order_id':bought.data['order']['id'],'reason':'quality'})
     case=await invoke('orders.dispute_get',{'case_id':opened.data['case_id']})
     author=opened.data['panel'][0]

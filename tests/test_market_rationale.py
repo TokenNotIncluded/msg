@@ -115,7 +115,7 @@ async def test_rationale_from_another_case_does_not_authorize_a_vote(installed):
     purchased=await call(app,'orders.buy',{'listing_id':order['listing_id'],
         'listing_revision':order['listing_revision'],'quantity':1,
         'currency_id':'primary','total_price_minor':locked['total_price_minor']},
-        key=bk,subject=buyer,contract_version=2)
+        key=bk,subject=buyer,contract_version=3)
     assert purchased.status=='ok',wire(purchased)
     other=await call(app,'orders.dispute_open',{'order_id':purchased.data['order']['id'],
         'reason':'quality'},key=bk,subject=buyer)

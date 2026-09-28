@@ -10,11 +10,11 @@ from msg.core.errors import Failure
 from test_service import call, register
 
 
-async def _sale(app, seller_key, seller, *, price=5_000_000, quantity=2):
+async def _sale(app, seller_key, seller, *, price=5_000_000, quantity=2, escrow_policy='escrow-v1'):
     listing = await call(app, 'store.listing_create', {
         'name': 'bundle', 'item_kind': 'bundle', 'price_minor': price,
         'currency_id': 'primary', 'quantity': quantity,
-        'delivery_mode': 'managed_instant', 'escrow_policy': 'escrow-v1',
+        'delivery_mode': 'managed_instant', 'escrow_policy': escrow_policy,
         'dispute_policy': 'dispute-v1', 'terms': 'Two immutable items.'},
         key=seller_key, subject=seller)
     assert listing.status == 'ok', wire(listing)
@@ -301,8 +301,8 @@ async def test_cancel_refuses_delivery_and_rolls_back_after_refund_post(installe
                         key=buyer_key, subject=buyer)
     assert first.status == second.status == 'ok'
     first_id, second_id = first.data['order']['id'], second.data['order']['id']
-    from msg.market import escrow as orders
-    original = orders._post_transfer
+    from msg.market import escrow
+    original = escrow._post_transfer
 
     def abort_after_refund(*args, **kwargs):
         receipt = original(*args, **kwargs)
@@ -310,7 +310,7 @@ async def test_cancel_refuses_delivery_and_rolls_back_after_refund_post(installe
             raise Failure('forced_refund_rollback')
         return receipt
 
-    monkeypatch.setattr(orders, '_post_transfer', abort_after_refund)
+    monkeypatch.setattr(escrow, '_post_transfer', abort_after_refund)
     failed = await call(app, 'orders.cancel', {'order_id': first_id},
                         key=buyer_key, subject=buyer)
     assert failed.error.code == 'forced_refund_rollback'
@@ -318,7 +318,7 @@ async def test_cancel_refuses_delivery_and_rolls_back_after_refund_post(installe
         assert tx.one('SELECT state FROM store_orders WHERE id=?', (first_id,))[0] == 'funded'
         assert tx.one("SELECT COUNT(*) FROM money_ledger WHERE reference=?",
                       ('order_refund:' + first_id,))[0] == 0
-    monkeypatch.setattr(orders, '_post_transfer', original)
+    monkeypatch.setattr(escrow, '_post_transfer', original)
     async with app.metadata.transaction(write=True) as tx:
         tx.execute('''INSERT INTO store_deliveries
             (id,order_id,recipient_subject,kind,payload_refs,manifest,

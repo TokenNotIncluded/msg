@@ -202,7 +202,7 @@ CREATE TABLE IF NOT EXISTS store_deliveries (
 CREATE TABLE IF NOT EXISTS order_deadlines (
  order_id TEXT PRIMARY KEY REFERENCES store_orders(id), expires_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS order_deadlines_due ON order_deadlines(expires_at,order_id);
--- Market v2 keeps v1 signed contracts intact. Creation reserves stock without money.
+-- Market v3 keeps published v1/v2 signed contracts intact. Creation reserves stock without money.
 ALTER TABLE store_orders ALTER COLUMN payment_transaction_id DROP NOT NULL;
 ALTER TABLE store_orders ALTER COLUMN funded_at DROP NOT NULL;
 ALTER TABLE store_orders DROP CONSTRAINT IF EXISTS store_orders_state_check;
@@ -254,6 +254,21 @@ DO $$ DECLARE tbl TEXT; BEGIN
   END IF;
  END LOOP;
 END $$;
+CREATE TABLE IF NOT EXISTS order_escrow_decisions (
+ order_id TEXT PRIMARY KEY REFERENCES store_orders(id),
+ id TEXT NOT NULL UNIQUE, body TEXT NOT NULL, signature TEXT NOT NULL,
+ source_proof TEXT NOT NULL,
+ transaction_id TEXT NOT NULL UNIQUE REFERENCES money_ledger(id));
+CREATE OR REPLACE FUNCTION msg_escrow_decision_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN RAISE EXCEPTION 'append_only_escrow_decision' USING ERRCODE = '23514'; END;
+$$;
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname = 'escrow_decision_no_update'
+                AND tgrelid = 'order_escrow_decisions'::regclass) THEN
+  CREATE TRIGGER escrow_decision_no_update BEFORE UPDATE OR DELETE ON order_escrow_decisions
+   FOR EACH ROW EXECUTE FUNCTION msg_escrow_decision_append_only();
+ END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS server_offers (
  offer_id TEXT PRIMARY KEY,
  resource_kind TEXT NOT NULL, unit TEXT NOT NULL,
@@ -302,6 +317,11 @@ CREATE TABLE IF NOT EXISTS achievement_grants (
  spec_version INTEGER NOT NULL, body TEXT NOT NULL,
  UNIQUE(subject,achievement_id,spec_version));
 CREATE INDEX IF NOT EXISTS achievement_grants_lookup ON achievement_grants(achievement_id,subject);
+CREATE TABLE IF NOT EXISTS achievement_pins (
+ subject TEXT NOT NULL REFERENCES identities(id),
+ grant_id TEXT NOT NULL REFERENCES achievement_grants(id),
+ position INTEGER NOT NULL CHECK(position>=0),
+ PRIMARY KEY(subject,grant_id), UNIQUE(subject,position));
 CREATE TABLE IF NOT EXISTS share_grants (
  id TEXT PRIMARY KEY, resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
  grantor TEXT NOT NULL, grantee TEXT NOT NULL, created_at TEXT NOT NULL,

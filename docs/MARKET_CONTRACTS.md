@@ -9,8 +9,12 @@ Amounts are integer MSG minor units; one MSG is 1,000,000 minor units.
 `orders.buy@1` retains its original signed meaning: fund an order, then explicitly
 prepare and accept a supported managed package. Previously signed requests are
 not silently reinterpreted as permission for automatic settlement.
+The published `orders.buy@2` keeps its digest-bound managed checkout and
+optional `auto_accept` under `escrow-instant-v1`; `delivery.claim@1` remains
+its separate signed acknowledgement. Its schema, receipts and decision journal
+are preserved rather than reinterpreted by the new arbitration flow.
 
-New clients select `orders.buy@2`, or use `orders.create@1` followed by
+New clients select `orders.buy@3`, or use `orders.create@1` followed by
 `orders.fund@1`. The latter signs the returned `order_digest`, exact total and
 currency. Read `orders.contract` or `orders.get` as the buyer or seller. The
 existing CLI's schema-driven invocation supports these operations; obtain each
@@ -192,3 +196,24 @@ case retains its exact reason and visibility without executing it again. The
 market doctor checks bindings without writing or retroactively applying current
 role grants to an already-executed historical decision. This completes the new
 arbitration contract in this unreleased PR; legacy `orders.buy@1` is unchanged.
+
+## Integration with published managed checkout
+
+The full lifecycle uses `orders.buy@3`; `orders.buy@2` keeps the already-published
+package-digest/optional-auto-accept contract and `escrow-instant-v1` policy. Their
+immutable decision journals are retained. Both execution paths share the same
+internal OrderEscrow account check; neither path can settle the other's order.
+Existing `delivery.claim@1` remains an acknowledgement, not another payment.
+
+Version-3 contract reads and execution recheck every immutable checkout column
+against its pinned contract. Funding references must identify the corresponding
+buyer-to-escrow ledger entry. Settlement facts bind funding, receipt references,
+settlement time and prepared-delivery identity/content, while allowing subsequent
+buyer ACKs and independent email status updates. A mixed restored projection
+fails closed without another ledger entry, receipt, Event or outbound job.
+
+Mail configuration must be present **and enabled** at checkout and immediately
+before invoking the sender. Turning SMTP off after enqueueing prevents the send
+and marks the selected notification disabled without undoing delivery/payment.
+The existing completion fences are retained for tools, Git, webhooks and mail;
+expired market-mail leases also converge the selected order's notification state.
