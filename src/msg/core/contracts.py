@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .models import *
+from .tool_execution import ToolRunner
 
 class MetadataSession(Protocol):
     def on_rollback(self, effect: Callable[[], Awaitable[None]]) -> None: ...
@@ -111,11 +112,10 @@ class ClientTransport(Protocol):
     async def call(self, request: OperationRequest) -> OperationResult: ...
 
 
-class ToolExecutor(Protocol):
-    async def invoke(
-        self, context: ExecutionContext, tool: ToolSpec,
-        arguments: JsonMap, policy: NetworkPolicy
-    ) -> ResourceRef: ...
+# Compatibility import only. The unused invoke -> ResourceRef declaration never
+# described the injected runner. ToolRunner is now the one actual execution port;
+# publication and current-authority/attempt checks remain owned by EffectWorker.
+ToolExecutor = ToolRunner
 
 
 class NotificationSender(Protocol):
