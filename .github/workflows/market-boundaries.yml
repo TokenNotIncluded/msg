@@ -1,0 +1,66 @@
+name: Market boundary contracts
+on:
+  push:
+    branches: [fix/market-boundaries-20260929]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: market-boundaries-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+          cache: pip
+      - name: Install isolated test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          python -m pip install -e '.[dev]'
+      - name: Record exact source
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p artifacts
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          python - <<'PY'
+          import json,os,subprocess
+          from pathlib import Path
+          git=lambda *args:subprocess.check_output(['git',*args],text=True).strip()
+          Path('artifacts/source.json').write_text(json.dumps({'commit':git('rev-parse','HEAD'),
+              'tree':git('rev-parse','HEAD^{tree}'),'event_sha':os.environ['SOURCE_SHA'],
+              'dirty':bool(git('status','--porcelain'))},indent=2)+'\n')
+          PY
+      - name: Run ownership and actual ledger contracts
+        run: python -m pytest tests/test_market_boundaries.py --junitxml=artifacts/market-boundaries.xml
+      - name: Preserve all published checkout and recovery semantics
+        run: |
+          python -m pytest tests/test_orders.py tests/test_managed_checkout.py tests/test_checkout_decision_integrity.py tests/test_market_contracts.py tests/test_market_integration.py tests/test_market_recovery.py tests/test_market_account_scope.py tests/test_market_71.py tests/test_market_72.py tests/test_money_core.py tests/test_market_redemption.py tests/test_bounty.py tests/test_store_foundation.py --junitxml=artifacts/market-regressions.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: market-boundaries-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
