@@ -1,0 +1,23 @@
+name: Auxiliary security review byte transport
+on:
+  push:
+    branches: [chore/security-review-transport-69befd0]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Export public source blob for exact byte verification
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/TokenNotIncluded/msg.lmm.best/git/blobs/dbbea6c2695844b7d2ae190c505647b1e911855a --jq .content | base64 --decode > source-payload.gz
+          sha256sum source-payload.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-review-byte-verification
+          path: source-payload.gz
+          retention-days: 1
