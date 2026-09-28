@@ -1,6 +1,6 @@
 """Retain PR #169's useful assembly/rollback cases on the one executor port.
 
-Source cases: f7f8a890d91e4eda5d3da5f3c2ac4d8988e70848. No alternative
+Source cases: 3db973ab1784926eb4e545cabdf832e7faa0a4bc. No alternative
 BatchPolicy/decoder/factory is installed solely to satisfy a competing API.
 """
 from contextlib import asynccontextmanager
@@ -59,7 +59,7 @@ async def test_core_executor_runs_with_explicit_services_and_no_application():
     result = await executor.execute(request_for('testing.read', {}, 'https://unit.invalid',
         return_fields=('id',)))
     assert result.status == 'ok', result
-    assert result.data == {'original': True, 'projection': [{'id': 'r_test'}]}
+    assert wire(result.data) == {'original': True, 'projection': [{'id': 'r_test'}]}
     assert active == []
 
 
