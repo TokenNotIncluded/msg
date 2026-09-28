@@ -111,6 +111,14 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
                           signature=None,revision_id=None,change_note=None,source_kind=None,
                           source_version=None,source_digest=None,content_created_at=None):
     from msg.core.models import BlobRef
+    # Internal operation labels (e.g. transfer.seal publishing) carry no client arguments.
+    timestamp=(content_created_at if content_created_at is not None else
+               getattr(request,'arguments',{}).get('content_created_at'))
+    # A client-chosen Revision ID or content time is only defined as part of the
+    # signed manifest; without the signature it would be an unproven claim.
+    require(signature is not None or (revision_id is None and timestamp is None),
+            'content_signature_required')
+    require(signature is None or revision_id is not None,'revision_id_required')
     if isinstance(body,BlobRef):
         blob=body
     else:
@@ -125,7 +133,6 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
     require(bool(re.fullmatch(r'[A-Za-z0-9_-]{1,128}',rid)),'invalid_revision_id')
     content_time=ctx.now
     if signature is not None:
-        timestamp=content_created_at if content_created_at is not None else request.arguments.get('content_created_at')
         require(timestamp is not None,'content_timestamp_required')
         content_time=parse_time(timestamp)
         require(abs((content_time-ctx.now).total_seconds())<=300,'content_timestamp_out_of_range')
