@@ -20,7 +20,7 @@ COMMANDS = {
     'store': {
         'get':('store.listing_get','id'), 'create':('store.listing_create','json'),
         'update':('store.listing_update','json'),
-        'deposit':('store.package_deposit','json'), 'package':('store.package_get','package_id'),
+        'deposit':('store.package_deposit','json'), 'package':('store.package_get','id'),
     },
     'bounty': {
         'get':('bounty.get','listing_id'), 'create':('bounty.create','json'),
@@ -31,11 +31,11 @@ COMMANDS = {
     },
     'orders': {
         'create':('orders.create','json'), 'buy':('orders.buy','json'),
-        'pay':('orders.pay','json'), 'get':('orders.get','order_id'),
+        'pay':('orders.fund','json'), 'get':('orders.get','order_id'),
         'list':('orders.list','json'), 'payment':('orders.payment','order_id'),
-        'cancel':('orders.cancel','order_id'), 'refund':('orders.refund','order_id'),
-        'resolve':('orders.resolve','order_id'), 'dispute':('orders.dispute','order_id'),
-        'history':('orders.history','order_id'), 'recipient-key':('orders.recipient_key','order_id'),
+        'cancel':('orders.cancel','order_id'), 'contract':('orders.contract','order_id'),
+        'resolve':('orders.dispute_execute','json'), 'dispute':('orders.dispute_open','json'),
+        'case':('orders.dispute_get','case_id'),
     },
     'delivery': {
         'get':('delivery.get','order_id'), 'prepare':('delivery.prepare','order_id'),
@@ -49,7 +49,7 @@ def add_commands(commands):
     for group, actions in COMMANDS.items():
         sub = commands.add_parser(group, help='Signed market operations; amounts are exact minor units.').add_subparsers(
             dest='action', required=True)
-        for action, (_, field) in actions.items():
+        for action, (operation, field) in actions.items():
             help_text = ('Sign a current-key PoP challenge and claim; not a human/Sybil check.'
                          if group=='bounty' and action=='prove' else None)
             cmd = sub.add_parser(action, help=help_text)
@@ -58,6 +58,9 @@ def add_commands(commands):
             elif field:
                 cmd.add_argument('value')
             cmd.add_argument('--request-id', help='Reuse exactly this ID and input after an uncertain response.')
+            if operation is not None:
+                cmd.add_argument('--contract-version', type=int,
+                    help='Explicit published operation version; never changes the signed input silently.')
             if group=='store' and action=='update':
                 cmd.add_argument('--generation', type=int, required=True)
 
@@ -89,7 +92,11 @@ async def run_command(client, args, parse_arguments):
         return await prove_bounty(client,args.value,args.request_id)
     params = parse_arguments(args.payload) if field=='json' else {field:args.value} if field else {}
     kwargs = {'request_id':args.request_id}
-    if operation=='money.redeem':
+    version = getattr(args, 'contract_version', None)
+    if version is not None:
+        require(type(version) is int and 1 <= version <= 2**31 - 1, 'invalid_contract_version')
+        kwargs['contract_version'] = version
+    elif operation=='money.redeem':
         kwargs['contract_version']=2
     if args.command=='store' and args.action=='update':
         require(isinstance(params.get('id'),str),'listing_id_required')
