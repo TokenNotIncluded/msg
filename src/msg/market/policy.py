@@ -120,6 +120,20 @@ def validate_projection(tx, locked):
     fact = loads(fact[0])
     receipts = fact['receipts']
     references = [order['payment_transaction_id']] + [r['body']['transaction_id'] for r in receipts]
+    require(fact['order_id'] == locked['order_id'] and
+            all(type(fact[name]) is int and fact[name] >= 0
+                for name in ('refund_minor', 'release_minor')), 'order_settlement_mismatch')
+    # Authentic ledger receipts alone are not enough: each one must be the
+    # exact escrow leg this fact claims, not e.g. the funding payment reused.
+    legs = [leg for leg in (
+        ('refund', locked['buyer'], fact['refund_minor'], 'order_refund:' + locked['order_id']),
+        ('transfer', locked['seller'], fact['release_minor'], 'order_release:' + locked['order_id']),
+    ) if leg[2]]
+    require([(r['body']['kind'], r['body']['from_subject'], r['body']['to_subject'],
+              r['body']['amount_minor'], r['body']['currency_id'], r['body']['reference'])
+             for r in receipts] ==
+            [(kind, locked['escrow_subject'], recipient, amount, listing['currency_id'], reference)
+             for kind, recipient, amount, reference in legs], 'order_settlement_mismatch')
     require(fact['refund_minor'] + fact['release_minor'] == locked['total_price_minor'] and
             order['state'] == ('refunded' if fact['release_minor'] == 0 else 'settled') and
             order['settled_at'] == fact['at'] and loads(order['receipt_refs']) == references and
