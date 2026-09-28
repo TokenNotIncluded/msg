@@ -2,8 +2,11 @@
 import httpx
 import pytest
 from datetime import timedelta
+from types import SimpleNamespace
 
+from msg.application import Application
 from msg.core.codec import b64, canonical, loads, wire
+from msg.core.errors import Failure
 from msg.core.models import ResourceRef
 from msg.core.requests import request_for
 from msg.transports.http import create_app
@@ -17,6 +20,18 @@ def isolated(response):
     assert 'report-only' not in response.headers
     assert 'set-cookie' not in response.headers
     assert response.headers['x-content-type-options']=='nosniff'
+
+
+def test_preview_entry_count_is_bounded():
+    settings=SimpleNamespace(server=SimpleNamespace(
+        plugins=('identity','content','discussion','communication','discovery','achievements',
+                 'recovery','sharing','transfer','extensions','system','batch')))
+    registry=Application(settings).registry
+    entries=[{'path':f'{index}.html','source':{'id':'unused','revision':'unused'}}
+             for index in range(129)]
+    spec=registry.operation('hosting.preview',1)
+    with pytest.raises(Failure,match='schema_validation'):
+        registry.validate(spec.input_schema,{'id':'unused','entries':entries})
 
 
 @pytest.mark.asyncio

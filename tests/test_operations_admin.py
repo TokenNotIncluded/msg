@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 import pytest
 
-from msg.core.codec import wire
+from msg.core.codec import b64,wire
 from msg.core.errors import Failure
 from msg.admin.diagnostics import doctor, selftest
 from msg.workers.maintenance import run_maintenance
@@ -16,6 +16,9 @@ from test_authorization import approve, scoped
 async def test_network_system_configuration_cannot_change_root_trust(installed):
     app,root=installed
     key,uid,base=await register(app,'operator')
+    site=await call(app,'hosting.create',{'parent':'/@operator','name':'paused-preview'},key=key,subject=uid)
+    source=await call(app,'content.file_put',{'parent':'/@operator/files','name':'preview.html',
+        'data':b64(b'preview'),'media_type':'text/html'},key=key,subject=uid)
     denied=await call(app,'system.config',{'values':{'accept_writes':False}},key=key,subject=uid)
     assert denied.error.code=='capability_required',wire(denied)
     cert=await approve(app,root,uid,key,(scoped(app,'system.config','r_root',('system.config@1',)),))
@@ -27,6 +30,9 @@ async def test_network_system_configuration_cannot_change_root_trust(installed):
     assert bad.status=='error'
     blocked=await call(app,'content.post_create',{'parent':'/main','body':'capacity is paused'},key=key,subject=uid)
     assert blocked.error.code=='writes_paused'
+    preview=await call(app,'hosting.preview',{'id':site.resources[0].id,
+        'entries':[{'path':'index.html','source':wire(source.resources[0])}]},key=key,subject=uid)
+    assert preview.error.code=='writes_paused'
     reading=await call(app,'discovery.get',{'id':'/main'})
     assert reading.status=='ok'
 
