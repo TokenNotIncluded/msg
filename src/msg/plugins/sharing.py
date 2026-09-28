@@ -10,6 +10,7 @@ from msg.core.codec import b64, canonical, loads, parse_time, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import HandlerOutput, ResourceRef
 from msg.plugins.common import check_access, new_id, registration, resolve
+from msg.security.sharing_policy import share_target_error
 from msg.plugins.schemas import IDENTIFIER, STRING, obj
 
 
@@ -50,8 +51,8 @@ async def _owned_resource(app, ctx, request, tx, value, *, mutation, owner=True)
         await app.authorizer.require_base(ctx.principal,
             f'{request.operation}@{request.contract_version}',rid,tx)
     chain = (*await tx.ancestors(rid), resource)
-    require(app.authorizer.share_resource_allowed(resource, chain, tx),
-            'share_forbidden_resource')
+    error = share_target_error(app.registry, resource, chain, tx)
+    require(error is None, error or 'share_forbidden_resource')
     return resource
 
 

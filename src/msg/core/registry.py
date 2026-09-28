@@ -1,8 +1,11 @@
 """Finite, explicit plugin contracts. No code loading from resources."""
 from __future__ import annotations
 
-from jsonschema import Draft202012Validator
-from msg.core.codec import canonical,digest,wire
+from copy import deepcopy
+
+from referencing.exceptions import Unresolvable
+from msg.core.schema_policy import local_validator
+from msg.core.codec import digest,wire
 from msg.core.errors import Failure,require
 
 
@@ -49,11 +52,12 @@ class Registry:
 
     def add_schema(self,ref,schema):
         require(not self._frozen and ref.id not in self._schemas,'schema_conflict')
-        Draft202012Validator.check_schema(schema)
-        require(b'http' not in canonical(schema).lower() or '$ref' not in canonical(schema).decode(),
-                'remote_schema_reference_forbidden')
+        # Keep one owned snapshot for both validation and publication. Caller
+        # dictionaries and lookup results must not mutate a frozen contract.
+        schema=deepcopy(schema)
+        validator=local_validator(schema)
         self._schemas[ref.id]=schema
-        self._validators[ref.id]=Draft202012Validator(schema)
+        self._validators[ref.id]=validator
 
     def add(self,manifest):
         require(not self._frozen,'registry_frozen')
@@ -120,10 +124,14 @@ class Registry:
     def schema(self,ref):
         key=ref.id if hasattr(ref,'id') else ref
         require(key in self._schemas,'schema_not_found')
-        return self._schemas[key]
+        return deepcopy(self._schemas[key])
 
     def validate(self,ref,value):
-        errors=sorted(self._validators[ref.id if hasattr(ref,"id") else ref].iter_errors(wire(value)),key=lambda e:str(e.path))
+        try:
+            errors=sorted(self._validators[ref.id if hasattr(ref,"id") else ref].iter_errors(wire(value)),key=lambda e:str(e.path))
+        except Unresolvable as exc:
+            # Reference exception messages can include filesystem paths/URIs.
+            raise Failure('schema_reference_unresolvable') from exc
         if errors:
             raise Failure('schema_validation','.'.join(str(i) for i in errors[0].path) or 'arguments')
 

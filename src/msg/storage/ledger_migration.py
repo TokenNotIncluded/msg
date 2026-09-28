@@ -224,6 +224,8 @@ _JSON_IDENTITY_REFS = {
     'custodial_upgrades': ('subject', 'subject_id'),
     'legacy_directive_versions': ('subject',),
     'sync_checkpoints': ('subject',),
+    # Signed settlement parties are identities; order/account digests are not.
+    'order_escrow_decisions': ('actor', 'recipient'),
 }
 
 

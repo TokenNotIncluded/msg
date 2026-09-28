@@ -48,7 +48,8 @@ def store_keys(app,tx,subject,signer,age_identity,age_key_id,now):
 def _open(app,tx,subject,kind):
     row=tx.one('''SELECT signing_key_id,encryption_key_id,signing_nonce,signing_ciphertext,
         age_nonce,age_ciphertext,status FROM custodial_vault WHERE subject=?''',(subject,))
-    require(row is not None and row[6]=='active','custodial_vault_unavailable')
+    require(row is not None and (row[6]=='active' or
+            (kind=='encryption' and row[6]=='decrypt_only')),'custodial_vault_unavailable')
     key_id,nonce,ciphertext=(row[0],row[2],row[3]) if kind=='identity' else (row[1],row[4],row[5])
     require(nonce is not None and ciphertext is not None,'custodial_vault_unavailable')
     try:
@@ -152,3 +153,34 @@ def server_upgrade_proof(app,subject,challenge,nonce,ciphertext):
     shared=private.exchange(X25519PublicKey.from_public_bytes(
         public_from_recipient(challenge['encryption_recipient'])))
     return _proof(shared,challenge)
+
+
+def seal_retired_encryption_key(app, tx, subject, old_key_id, new_recipient, challenge_id):
+    """Export only this subject's retired age subkey, encrypted to its proved new key."""
+    from msg.security.age_keys import encryption_key_id, public_from_recipient
+    row = tx.one('SELECT subject,recipient,retired_at,is_primary FROM encryption_subkeys WHERE key_id=?',
+                 (old_key_id,))
+    require(row is not None and row[0] == subject and row[2] is not None and row[3] == 0,
+            'custodial_recovery_requires_retired_owned_key')
+    vault = tx.one('SELECT encryption_key_id FROM custodial_vault WHERE subject=?', (subject,))
+    require(vault == (old_key_id,), 'custodial_recovery_key_mismatch')
+    primary = tx.one('SELECT key_id,recipient FROM encryption_subkeys WHERE subject=? AND is_primary=1',
+                     (subject,))
+    new_key_id = encryption_key_id(public_from_recipient(new_recipient))
+    require(primary == (new_key_id, new_recipient) and new_key_id != old_key_id,
+            'custodial_recovery_recipient_mismatch')
+    identity = open_age_identity(app, tx, subject)
+    payload = {'format': 'msg-custodial-retired-key-v1',
+               'purpose': 'retired-encryption-subkey-recovery', 'subject_id': subject,
+               'challenge_id': challenge_id, 'encryption_key_id': old_key_id,
+               'encryption_recipient': row[1], 'age_identity': identity}
+    executable = shutil.which('age')
+    require(executable is not None, 'age_dependency_unavailable')
+    try:
+        result = subprocess.run([executable, '--encrypt', '--recipient', new_recipient],
+            input=canonical(payload), capture_output=True, timeout=15, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Failure('custodial_recovery_encryption_failed') from None
+    require(result.returncode == 0 and result.stdout.startswith(b'age-encryption.org/v1\n'),
+            'custodial_recovery_encryption_failed')
+    return result.stdout
