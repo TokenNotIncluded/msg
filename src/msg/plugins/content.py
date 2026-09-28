@@ -49,6 +49,8 @@ async def topic_governance_event(tx,ctx,request,topic,action,target, *, reason=N
                 data={'topic_id':topic,'action':action,'target_subject':target,
                       **({'reason':reason} if reason else {})})
     await tx.append_event(event)
+    tx.execute('INSERT INTO topic_event_projection (seq,topic) '
+               'SELECT seq,? FROM events WHERE id=?',(topic,event.id),write=True)
     if target is not None:
         notice={'id':new_id('message'),'sender':ctx.principal.subject,'actor':ctx.principal.actor,
                 'recipient':target,'resource':{'id':target,'revision':None},'time':wire(ctx.now),
@@ -433,13 +435,13 @@ def install(app):
         position=app.cursors.decode(request.arguments['cursor'],'topic_events',binding) if request.arguments.get('cursor') else 9223372036854775807
         limit=request.arguments.get('limit',10)
         found=[]
-        for seq,raw in tx.execute('SELECT seq,body FROM events WHERE seq<? ORDER BY seq DESC',(position,)):
-            event=loads(raw)
-            if event['type'] not in TOPIC_EVENT_CODES or event['data'].get('topic_id')!=topic:
-                continue
-            found.append((seq,event))
-            if len(found)>limit:
-                break
+        # Limit the indexed projection BEFORE joining immutable event bodies.
+        rows=tx.execute('SELECT p.seq,e.body FROM '
+            '(SELECT seq FROM topic_event_projection WHERE topic=? AND seq<? '
+            'ORDER BY seq DESC LIMIT ?) p JOIN events e ON e.seq=p.seq ORDER BY p.seq DESC',
+            (topic,position,limit+1))
+        for seq,raw in rows:
+            found.append((seq,loads(raw)))
         items=[]
         for seq,event in found[:limit]:
             data=dict(event['data'])

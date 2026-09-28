@@ -64,7 +64,7 @@ def register(app,op):
         resource=await revise_resource(app,ctx,request,tx,resource,body,'application/json')
         return output_for(resource,files=len(entries),url=app.settings.service_url.rstrip('/')+await tx.path(resource.id)+'/')
 
-    @op('hosting.preview',obj({'id':IDENTIFIER,'entries':{'type':'array','minItems':1,
+    @op('hosting.preview',obj({'id':IDENTIFIER,'entries':{'type':'array','minItems':1,'maxItems':128,
         'items':obj({'path':STRING,'source':REF},('path','source'))}},('id','entries')),signature=True)
     async def preview(ctx,request,tx):
         website=await tx.resource(await resolve(tx,request.arguments['id']))

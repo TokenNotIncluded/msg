@@ -206,6 +206,16 @@ def install(app):
     async def start(ctx, request, tx):
         subject = _owner(ctx)
         await tx.subject(subject)
+        require(tx.one('SELECT 1 FROM achievement_grants WHERE subject=? '
+                       'AND achievement_id=? AND spec_version=?',
+                       (subject, I_AM_NOT_HUMAN.id, I_AM_NOT_HUMAN.version)) is None,
+                'achievement_already_granted')
+        # Both metadata backends serialize writers before this check. Failed or
+        # expired attempts may be replaced; a live challenge is not superseded.
+        for (raw,) in tx.execute("SELECT body FROM achievement_ceremonies WHERE subject=? AND state='active'",
+                                 (subject,)):
+            require(ctx.now >= parse_time(loads(raw)['expires_at']), 'achievement_ceremony_active')
+        tx.execute('DELETE FROM achievement_ceremonies WHERE subject=?', (subject,), write=True)
         state = {'id': new_id('achc'), 'subject_id': subject, 'achievement_id': I_AM_NOT_HUMAN.id,
                  'spec_version': I_AM_NOT_HUMAN.version, 'status': 'active', 'round': 1,
                  'started_at': wire(ctx.now), 'expires_at': wire(ctx.now + timedelta(seconds=CEREMONY_TTL_SECONDS)),
