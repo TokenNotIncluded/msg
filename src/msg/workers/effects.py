@@ -15,7 +15,8 @@ import time
 
 from msg.constants import ROOT_SUBJECT
 from msg.core.codec import decode, wire
-from msg.core.errors import Failure, require
+from msg.core.errors import Failure
+from msg.core.errors import require
 from msg.core.models import (
     CapabilityGrant, EffectJob, EmailSettings, ExecutionContext, Principal, ResourceRef,
 )
@@ -23,6 +24,7 @@ from msg.core.requests import request_for
 from msg.plugins.common import check_access, create_resource
 from msg.security.policy import scope_subset
 from msg.security.network import intersect_policy
+from msg.workers.leases import current_attempt
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +122,8 @@ class EffectWorker:
                 if job.lease_until is None or job.lease_until <= self.app.clock():
                     await tx.save_job(replace(job, state='uncertain', lease_until=None))
                     tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
+                    from msg.market.targets import notification_status
+                    notification_status(tx, job, 'uncertain', 'expired_execution_lease')
                     return job, False
             row = tx.one("SELECT id FROM jobs WHERE state='pending' AND next_at<=? ORDER BY next_at,id LIMIT 1",
                          (wire(self.app.clock()),))
@@ -131,28 +135,20 @@ class EffectWorker:
             await tx.save_job(job)
             return job, True
 
-    async def _live_attempt(self, tx, job):
-        """Fence completions even when no other worker has swept expired leases."""
-        current = await tx.job(job.id)
-        if current.state != 'running' or current.attempts != job.attempts:
-            return None
-        if current.lease_until is None or current.lease_until <= self.app.clock():
-            await tx.save_job(replace(current, state='uncertain', lease_until=None))
-            tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
-            return None
-        return current
-
-    async def _finish(self, job, state, code):
+    async def _finish(self, job, state, code, *, status=None):
         async with self.app.metadata.transaction(write=True) as tx:
-            current = await self._live_attempt(tx, job)
+            current = await current_attempt(self.app, tx, job)
             if current is None:
                 return
             await tx.save_job(replace(current, state=state, lease_until=None))
-            tx.set_setting('job_status:' + job.id, {'code': code})
+            tx.set_setting('job_status:' + job.id,
+                           {'code': code} if status is None else status)
+            from msg.market.targets import notification_status
+            notification_status(tx, job, state, code)
 
     async def _retry(self, job, retry_code, exhausted_code):
         async with self.app.metadata.transaction(write=True) as tx:
-            current = await self._live_attempt(tx, job)
+            current = await current_attempt(self.app, tx, job)
             if current is None:
                 return
             exhausted = current.attempts >= 8
@@ -162,6 +158,9 @@ class EffectWorker:
                                      lease_until=None, next_attempt_at=next_at))
             tx.set_setting('job_status:' + job.id,
                            {'code': exhausted_code if exhausted else retry_code})
+            from msg.market.targets import notification_status
+            notification_status(tx, job, 'failed' if exhausted else 'pending',
+                                exhausted_code if exhausted else retry_code)
 
     async def _retry_mail(self, job, code):
         await self._retry(job, code, code)
@@ -223,8 +222,9 @@ class EffectWorker:
             blob = await self.app.contents.put(pieces(), result.media_type)
             await self.app.contents.pin(blob, 'job:'+job.id)
             async with self.app.metadata.transaction(write=True) as tx:
-                current = await tx.job(job.id)
-                require(current.state == 'running' and current.attempts == job.attempts, 'job_lease_lost')
+                current = await current_attempt(self.app, tx, job)
+                if current is None:
+                    return
                 principal = await current_principal(self.app, job.principal, tx)
                 context, request = worker_context(self.app, job, principal), effect_request(self.app, job, principal)
                 await check_access(self.app, context, request, tx, ref.id, 'tool_use')
@@ -247,20 +247,43 @@ class EffectWorker:
     async def _mail(self, job):
         from msg.core.codec import loads, parse_time
         # Disabled means not even connecting, regardless of historical jobs.
-        require(self.app.settings.server.mail is not None, 'mail_disabled')
+        require(self.app.settings.server.mail is not None and
+                self.app.settings.server.mail.enabled, 'mail_disabled')
+        if job.arguments.get('order_notification'):
+            from msg.market.delivery_notifications import project_notification
+            async with self.app.metadata.transaction(write=False) as tx:
+                principal = await current_principal(self.app, job.principal, tx)
+                projected = await project_notification(self.app, tx, job, principal)
+            state = await self.mail_sender.send(projected)
+            require(state in {'sent', 'uncertain'}, 'invalid_delivery_result')
+            await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
+            return
         async with self.app.metadata.transaction(write=False) as tx:
             await current_principal(self.app, job.principal, tx)
             subject = job.arguments['recipient_subject']
             row = tx.one('SELECT body FROM emails WHERE subject=?', (subject,))
             require(row is not None, 'email_not_set')
             email = decode(EmailSettings, loads(row[0]))
-            require(email.address == job.arguments['recipient'], 'email_changed')
+            require(email.subject_id == subject and email.address == job.arguments['recipient'],
+                    'email_changed')
             if job.arguments.get('verification'):
                 challenge = tx.one('SELECT expires FROM email_challenges WHERE subject=?', (subject,))
                 require(challenge is not None and parse_time(challenge[0]) > self.app.clock(), 'email_challenge_expired')
             else:
                 require(email.verified_at is not None and job.operation in email.enabled_events, 'notification_disabled')
         state = await self.mail_sender.send(job)
+        require(state in {'sent', 'uncertain'}, 'invalid_delivery_result')
+        await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
+
+    async def _market_mail(self, job):
+        from msg.market.targets import mail_enabled, render_notification
+        from msg.market.email import render_verification
+        require(mail_enabled(self.app), 'mail_disabled')
+        async with self.app.metadata.transaction(write=False) as tx:
+            await current_principal(self.app, job.principal, tx)
+            outgoing = await (render_verification(self.app,tx,job) if job.kind=='market_email_verify'
+                              else render_notification(self.app,tx,job))
+        state = await self.mail_sender.send(outgoing)
         require(state in {'sent', 'uncertain'}, 'invalid_delivery_result')
         await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
 
@@ -337,6 +360,13 @@ class EffectWorker:
     async def run_once(self):
         if self.app.executor.recovery_drill_active():
             return False
+        if 'orders' in self.app.settings.server.plugins:
+            from msg.market.escrow import resolve_due
+            if await resolve_due(self.app):
+                return True
+            from msg.market.arbitration import resolve_cases
+            if await resolve_cases(self.app):
+                return True
         job, execute = await self._claim()
         if job is None:
             return False
@@ -347,6 +377,8 @@ class EffectWorker:
                 self.app.settings.server.staging_dir.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix='effect-', dir=self.app.settings.server.staging_dir) as temp:
                     await self._tool(job, Path(temp))
+            elif job.kind in {'market_mail','market_email_verify'}:
+                await self._market_mail(job)
             elif job.kind == 'mail':
                 await self._mail(job)
             elif job.kind == 'webhook':
@@ -357,9 +389,7 @@ class EffectWorker:
             elif job.kind == 'maintenance':
                 from msg.workers.maintenance import run_maintenance
                 result=await run_maintenance(self.app,job.arguments['action'],principal=job.principal)
-                await self._finish(job,'done','ok')
-                async with self.app.metadata.transaction(write=True) as tx:
-                    tx.set_setting('job_status:'+job.id,result)
+                await self._finish(job,'done','ok',status=result)
             elif job.kind == 'gc.resource':
                 # Purge permission was consumed by the committed tombstone. This
                 # idempotent cleanup cannot change another resource's retention.
@@ -374,7 +404,7 @@ class EffectWorker:
         except Failure as exc:
             # Known pre-execution rejection is a definite failure. External calls
             # surface uncertain explicitly rather than inventing an exactly-once promise.
-            if job.kind=='mail' and exc.retryable and exc.code=='mail_connection_failed':
+            if job.kind in {'mail','market_mail','market_email_verify'} and exc.retryable and exc.code=='mail_connection_failed':
                 await self._retry_mail(job,exc.code)
                 return True
             await self._finish(job, 'uncertain' if exc.code in {'external_uncertain','job_lease_lost'} else 'failed', exc.code)

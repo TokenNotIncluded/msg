@@ -12,7 +12,7 @@ from msg.transports.http import create_app
 from msg.transports.client import HTTPTransport,PathGETTransport,MCPHTTPTransport
 from msg.transports.dictionary import build_dictionary,read_query_path_document
 from msg.transports.read_tree_path import decode_read_tree_path
-from test_read_query_tree import tree,query
+from .test_read_query_tree import tree,query
 
 
 PATH='/_r/q/3/r/r_tree/n/1/f/i/x/children/n/1/f/i/x/children/n/1/f/i/up/1/up/1'

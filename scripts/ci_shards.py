@@ -1,16 +1,16 @@
-"""Run disjoint pytest partitions and verify their complete evidence at the CI gate.
+"""Run complete, disjoint pytest partitions and verify each executed node ID.
 
-Every runner collects the entire suite. Partitioning is by stable node ID, not a
-hand-maintained filename list, so new/parameterized/nested tests cannot disappear.
+Adapted from PR #104. Every runner collects the complete suite; the gate rejects
+skips, duplicate IDs, count-only substitutions and missing or failed evidence.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
-from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 
 def partition(nodeids, index, count):
@@ -24,11 +24,28 @@ def partition(nodeids, index, count):
 
 def evidence(nodeids, index, count):
     all_nodes = sorted(nodeids)
-    return {'version': 1, 'index': index, 'count': count, 'all': all_nodes,
+    return {'version': 2, 'index': index, 'count': count, 'all': all_nodes,
             'selected': partition(all_nodes, index, count)}
 
 
+def report_nodes(path):
+    root = ET.parse(path).getroot()
+    if any(root.findall('.//' + tag) for tag in ('error', 'failure', 'skipped')):
+        raise ValueError('JUnit result contains failed or skipped tests')
+    nodes = []
+    for case in root.findall('.//testcase'):
+        ids = [p.get('value') for p in case.findall('./properties/property')
+               if p.get('name') == 'msg.nodeid']
+        if len(ids) != 1 or not ids[0]:
+            raise ValueError('JUnit result is missing an unambiguous test node ID')
+        nodes.append(ids[0])
+    if len(nodes) != len(set(nodes)):
+        raise ValueError('JUnit result contains duplicate test node IDs')
+    return set(nodes)
+
+
 def verify(directory, count):
+    partition([], 0, count)
     directory = Path(directory)
     expected = None
     seen = set()
@@ -44,10 +61,8 @@ def verify(directory, count):
         if seen & selected:
             raise ValueError('test executed in multiple shards')
         seen.update(selected)
-        root = ET.parse(directory / f'tests-{index}.xml').getroot()
-        cases = root.findall('.//testcase')
-        if len(cases) != len(selected) or root.findall('.//error') or root.findall('.//failure'):
-            raise ValueError('JUnit result is incomplete or failed')
+        if report_nodes(directory / f'tests-{index}.xml') != selected:
+            raise ValueError('JUnit result does not match selected test node IDs')
     if not expected or seen != expected:
         raise ValueError('test coverage is incomplete')
     return len(seen)
@@ -56,7 +71,7 @@ def verify(directory, count):
 def run(index, count, directory):
     import pytest
 
-    partition([], index, count)  # Validate before starting tests or writing files.
+    partition([], index, count)
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
 
@@ -66,6 +81,8 @@ def run(index, count, directory):
             chosen = set(manifest['selected'])
             rejected = [item for item in items if item.nodeid not in chosen]
             items[:] = [item for item in items if item.nodeid in chosen]
+            for item in items:
+                item.user_properties.append(('msg.nodeid', item.nodeid))
             config.hook.pytest_deselected(items=rejected)
             (directory / f'shard-{index}.json').write_text(
                 json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')

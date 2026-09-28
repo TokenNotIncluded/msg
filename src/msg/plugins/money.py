@@ -99,7 +99,7 @@ def clearing_decision(*, kind, sender, recipient, amount, sender_balance,
 
 def _post_entry(tx, *, sender, recipient, amount, actor, request_id, now,
                 receipt_signer, reference=None, kind='transfer', entry_key='primary',
-                _local_issuer=False):
+                _local_issuer=False, escrow_authority=None):
     """Append one named leg in the caller's serialized transaction, never commit.
 
     Named legs permit atomic fund+release without manufacturing request IDs.
@@ -107,6 +107,10 @@ def _post_entry(tx, *, sender, recipient, amount, actor, request_id, now,
     Only the separate local RootAdmin use case supplies _local_issuer.
     """
     require(not _local_issuer or actor == ROOT_SUBJECT, 'root_local_only')
+    account = tx.one('SELECT kind FROM ledger_accounts WHERE id=?', (sender,)) if sender else None
+    if account and account[0] == 'order_escrow':
+        from msg.market.escrow import _ESCROW_WRITE
+        require(escrow_authority is _ESCROW_WRITE, 'escrow_release_forbidden')
     clearing_decision(kind=kind, sender=sender, recipient=recipient, amount=amount,
         sender_balance=_balance(tx, sender) if sender else 0,
         recipient_balance=_balance(tx, recipient) if recipient else 0,
@@ -136,11 +140,13 @@ def _post_entry(tx, *, sender, recipient, amount, actor, request_id, now,
 
 
 def _post_transfer(tx, *, sender, recipient, amount, actor, request_id, now,
-                   receipt_signer, reference=None, kind='transfer', entry_key='primary'):
+                   receipt_signer, reference=None, kind='transfer', entry_key='primary',
+                   escrow_authority=None):
     require(kind in {'transfer', 'redeem', 'refund'}, 'invalid_money_kind')
     return _post_entry(tx, sender=sender, recipient=recipient, amount=amount,
         actor=actor, request_id=request_id, now=now, receipt_signer=receipt_signer,
-        reference=reference, kind=kind, entry_key=entry_key)
+        reference=reference, kind=kind, entry_key=entry_key,
+        escrow_authority=escrow_authority)
 
 
 def install(app):

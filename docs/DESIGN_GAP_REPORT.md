@@ -1,20 +1,29 @@
 # 项目设计差距报告
 
-## 市场修复：#71–#73
+## #71–72：确定性清算与 Bounty（2026-09-28）
 
-本节对应本次代码，验收边界与命令见 [MARKET_CLEARING.md](MARKET_CLEARING.md)。下面较早提交的测试数、缺口和 CI 记录只归各自历史提交，不覆盖本次增量；本次结果以 PR 的精确提交与 CI 为准，未部署生产。
+本分支保留 #71/#72 的确定性清算、银行边界、报价兑现与预托管 Bounty 实现，详细契约见 [MARKET_CLEARING.md](MARKET_CLEARING.md)。
 
-| 范围 | 本次实现与回归入口 |
-| --- | --- |
-| #71 清算与兑换 | 共用精确整数清算、具名账项与不可变回执；本机 `bank fund` 两次确认后原子授角色和注资；Registry website 的真实容量兑现器，锁价、pending/settle/refund、凭据范围及恢复测试 |
-| #72 预托管奖励 | PoP 当前钥/nonce/TTL/版本验证；Claim、奖励、Inbox、Event 同事务；暂停/限额投影、关闭并发、撤销与备份恢复；CLI `bounty prove`；隔离 `market_e2e` 正式命令链 |
-| #73 订单 | 锁定报价与条款/包摘要；created/pay 与并发库存；版本化即时、密文和服务交付；状态历史、客观退款、争议冻结；恢复和重试；自动结算不冒充买家 claimed |
-| 默认与检查 | 仍为零发行、无银行/报价/商品；BootstrapManifest、只读 market_clearing doctor、隔离 market_e2e；最终 buyer=5、bank=15、escrow=0、supply=20 MSG |
+| Issue | 实现与测试入口 | 边界 |
+| --- | --- | --- |
+| #71 | 精确整数清算、具名账项/幂等 entry key、本机 bank fund 双确认、Registry-backed hosting entitlement、pending/settle/refund 与恢复测试 | 默认零发行、空报价；购买资源不扩大授权 |
+| #72 | 当前钥/nonce/TTL PoP、预托管预算、Claim+奖励+Event+Inbox 同事务、暂停/限额/关闭恢复，以及官方隔离 market_e2e | PoP 只证明当前签名钥控制，不代表真人或抗女巫 |
 
-明确保留的边界：#74 的订单邮箱目标/SMTP 与大型 Transfer；#75 的 Case/panel/quorum/签署裁决和 split/appeal；#84 的真实存量迁移及生产部署验收。本轮不声称这些已完成，也不修改生产发行量、报价或权限。已签旧 CA/凭据不因新增操作自动扩权。
+#73 的旧订单/交付实现不再覆盖新版代码；本分支已经吸收 #102 的 #73–75 实现，避免把当前订单、交付和仲裁语义回退到旧版本。
 
-## 较早实现快照（市场状态已由上节更新）
+## #73–75：版本化市场实现（2026-09-28）
 
+订单快照、自动交付、独立 checkout 邮箱验证和确定性仲裁已实现；接口、最终性、默认无仲裁员、旧 `@1` 兼容及运维边界集中见 [MARKET_CONTRACTS.md](MARKET_CONTRACTS.md)。下方 `135a190` 及更早测试数字属于历史提交，不能用于本批验收。
+
+| Issue | 实现与测试入口 | 保留的部署边界 |
+| --- | --- | --- |
+| #73 | `market/orders.py`、`escrow.py`；不可变签名快照、显式状态表、单一资金释放、原子分账；`test_market_lifecycle.py` | 不改已签名 `orders.buy@1` 的含义；生产库迁移单独审查 |
+| #74 | `market/delivery.py`、`targets.py`、`email.py`；managed 自动结算但不 claimed，sealed/service 显式验收，真实 Transfer 和买家 endpoint 复核；`test_market_delivery.py` | SMTP 只发最小通知；本地 fake sender 不代表真实 SMTP 验收 |
+| #75 | `market/policy.py`、`arbitration.py`；固定候选/epoch/panel/quorum、一次申诉、私有证据、有效签名 Decision 由 escrow 原子消费；`test_market_arbitration.py` | 默认候选为空；撤权/缺 quorum 持款，不临时挑人或让 AI 自由裁量 |
+
+`market_lifecycle` 隔离 selftest 覆盖 20 MSG 注资、10 MSG PoP 奖励、5 MSG 固定 bundle 自动交易及签名仲裁退款；只读 doctor 检查市场不变量。`test_market_recovery.py` 验证真实备份恢复、CAS 证据及恢复演练副作用隔离。验证结果以本批 PR 的具体 head 和 CI 为准，不能把这些模块扩写为整个项目或生产交易已验收。
+
+## 历史：135a190 时点的工作树进度与验收边界
 
 本次重新读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，当前191个非空段；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前71个非空段，含A19/A20等归档条款。历史段数和旧CI仅作沿革；归档不取消未迁出需求及回归要求。
 

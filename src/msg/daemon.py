@@ -120,6 +120,11 @@ def parser():
     offer_set.add_argument('--max-quantity',type=int,required=True)
     offer_set.add_argument('--duration-seconds',type=int)
     ops.add_parser('disable').add_argument('offer_id')
+    market=sub.add_parser('market',help='Physical-console arbitration configuration')
+    market_sub=market.add_subparsers(dest='market_command',required=True)
+    market_sub.add_parser('grant').add_argument('subject_id')
+    market_sub.add_parser('revoke').add_argument('subject_id')
+    market_sub.add_parser('publish').add_argument('policy_file',type=Path)
     backup=sub.add_parser('backup',help='Local service-data backup, excluding root private material')
     backup.add_argument('destination',type=Path)
     restore=sub.add_parser('restore',help='Restore service data into new directories only')
@@ -164,6 +169,11 @@ def main(argv=None):
             elif args.root_command=='backup':result=admin.backup(args.destination)
             else:result=admin.recover(args.source)
             emit(result);return 0
+        if args.command=='market':
+            from msg.admin.market import MarketAdmin
+            emit(MarketAdmin(args.config_dir).execute(args.market_command,
+                subject=getattr(args,'subject_id',None),policy_file=getattr(args,'policy_file',None)))
+            return 0
         if args.command=='money':
             from msg.admin.money import MoneyAdmin
             if args.money_command=='offer':

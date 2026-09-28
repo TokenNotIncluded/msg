@@ -7,8 +7,8 @@ from msg.core.codec import canonical,b64,wire,digest
 from msg.core.models import ResourceRef
 from msg.transports.http import create_app
 from msg.transports.client import HTTPTransport
-from test_read_query_tree import tree,query
-from test_read_tree_transports import business_state
+from .test_read_query_tree import tree,query
+from .test_read_tree_transports import business_state
 
 
 async def seal_query(h,args):

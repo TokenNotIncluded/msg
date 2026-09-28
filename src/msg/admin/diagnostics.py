@@ -170,6 +170,18 @@ async def _doctor(config_dir,clock):
             require(tx.one('SELECT version FROM schema_version')[0]==1,'schema_version_unknown')
             success('storage')
             try:
+                from msg.admin.custodial_check import inspect_custodial_history
+                success('custodial_history', **await inspect_custodial_history(tx))
+            except Failure as exc:failed('custodial_history',exc.code)
+            if 'orders' in settings.server.plugins:
+                try:
+                    from msg.admin.market_check import inspect_market
+                    success('market',**(await inspect_market(tx)))
+                except (Failure,KeyError,ValueError,psycopg.Error) as exc:
+                    failed('market',getattr(exc,'code','market_inspection_failed'))
+            else:
+                checks['market']={'ok':True,'status':'disabled'}
+            try:
                 from msg.admin.market_check import inspect_clearing
                 success('market_clearing',**inspect_clearing(app,tx))
             except (Failure,OSError,ValueError,KeyError) as exc:
@@ -605,6 +617,10 @@ async def selftest():
             checks['identity_upgrade_recovery']=await check_upgrade_recovery(app,now)
             from msg.admin.token_delivery_check import check_token_delivery
             checks['credential_delivery_recovery']=await check_token_delivery(app,now)
+            from msg.admin.custodial_check import check_custodial_history
+            checks['custodial_history_recovery']=await check_custodial_history(app,now)
+            from msg.admin.market_check import check_market
+            checks['market_lifecycle']=await check_market(app,root,call,register,now)
             from msg.admin.market_check import check_market_e2e
             checks['market_e2e']=await check_market_e2e(app,root,call,register)
         except Failure as exc:

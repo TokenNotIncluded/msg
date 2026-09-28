@@ -47,6 +47,21 @@ def parser():
     identity.add_parser('rotate-token')
     identity.add_parser('recover-token',help='Use a saved one-time recovery journal after a lost token response.')
     identity.add_parser('upgrade',help='Upgrade or resume a saved upgrade intention.').add_argument('handle',nargs='?')
+    identity.add_parser('custodial').add_argument('handle')
+    custodial=identity.add_parser('upgrade-custodial')
+    custodial.add_argument('handle')
+    custodial.add_argument('--external-history',choices=('migrated','unknown'),required=True)
+    migration=identity.add_parser('migration').add_subparsers(dest='migration_action',required=True)
+    for name in ('status','refresh','envelope'):
+        migration.add_parser(name)
+    migrate=migration.add_parser('migrate',help='Decrypt and ACK an explicit bounded batch; never finalize automatically.')
+    migrate.add_argument('--method',choices=('rewrap','compatibility_recovery'),default='rewrap')
+    migrate.add_argument('--limit',type=int,default=100)
+    finalize=migration.add_parser('finalize')
+    finalize.add_argument('--resolution',choices=('verified','accept_loss','retain_decrypt'),required=True)
+    finalize.add_argument('--external-history',choices=('migrated','unknown'),required=True)
+    finalize.add_argument('--loss-revision',action='append',default=[])
+    finalize.add_argument('--reason')
     identity.add_parser('show')
     call=commands.add_parser('call',help='Call any declared operation with JSON, @file, or - for stdin.')
     call.add_argument('operation');call.add_argument('arguments',nargs='?',default='{}')
@@ -236,6 +251,21 @@ async def run(args):
             elif args.action=='rotate-token': result=await client.rotate_token()
             elif args.action=='recover-token': result=await client.recover_token()
             elif args.action=='upgrade': result=await client.upgrade(args.handle)
+            elif args.action=='custodial': result=await client.custodial(args.handle)
+            elif args.action=='upgrade-custodial':
+                result=await client.upgrade_custodial(args.handle,
+                    external_ciphertexts_migrated=args.external_history=='migrated')
+            elif args.action=='migration':
+                from msg.client_custodial import inventory,transition,migrate
+                if args.migration_action=='status':result=await inventory(client)
+                elif args.migration_action=='migrate':
+                    result=await migrate(client,method=args.method,limit=args.limit)
+                elif args.migration_action=='finalize':
+                    result=await transition(client,'finalize',resolution=args.resolution,
+                        loss_revisions=args.loss_revision,reason=args.reason,
+                        external_ciphertexts_migrated=args.external_history=='migrated')
+                else:
+                    result=await transition(client,'recovery_envelope' if args.migration_action=='envelope' else 'refresh')
             else:
                 from msg.client_upgrade import pending_upgrade
                 result={'subject_id':state.subject,'key_id':state.signer.key_id if state.signer else None,
