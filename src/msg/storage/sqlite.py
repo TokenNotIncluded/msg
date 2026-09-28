@@ -74,6 +74,18 @@ CREATE TABLE IF NOT EXISTS batches (subject TEXT, request_id TEXT, digest TEXT N
 CREATE TABLE IF NOT EXISTS transfers (id TEXT PRIMARY KEY, subject TEXT NOT NULL, generation INTEGER NOT NULL, body TEXT NOT NULL, limits TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS chunks (transfer_id TEXT NOT NULL, offset INTEGER NOT NULL, length INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(transfer_id,offset));
 CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS topic_event_projection (
+ seq INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE,
+ topic TEXT NOT NULL, body TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS topic_event_projection_topic ON topic_event_projection(topic,seq DESC);
+INSERT OR IGNORE INTO topic_event_projection (seq,topic,body)
+ SELECT seq,json_extract(body,'$.data.topic_id'),body FROM events
+ WHERE json_extract(body,'$.type') IN (
+  'topic.create','topic.member.join','topic.member.request','topic.member.leave',
+  'topic.member.invite','topic.member.approve','topic.member.remove','topic.member.promote',
+  'topic.member.demote','topic.member.ban','topic.member.unban','topic.policy.change',
+  'topic.archive','topic.restore','topic.move','topic.chmod','topic.chgrp','topic.chown',
+  'topic.configure');
 CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, digest TEXT UNIQUE NOT NULL, previous TEXT, body TEXT NOT NULL);
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT,'append_only_audit'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT,'append_only_audit'); END;
