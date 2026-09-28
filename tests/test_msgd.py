@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest.mock import patch
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -2448,6 +2449,43 @@ class ExchangeProtocolCase(ServerCase):
         self.assertEqual(status, 200, body)
         meta = json.loads(body)
         self.assertEqual(meta["ack"]["read_count"], 2)
+
+    def test_ack_receipts_enforce_per_post_and_global_capacity(self) -> None:
+        first_post = self.signed_create(self.root_key, "a", name="Root")
+        second_post = self.signed_create(self.root_key, "b", name="Root")
+        readers = [Ed25519PrivateKey.generate() for _ in range(4)]
+
+        with (
+            patch("msgd.exchange.MAX_RECEIPTS_PER_POST", 2),
+            patch("msgd.exchange.MAX_RECEIPTS_TOTAL", 3),
+        ):
+            for reader in readers[:2]:
+                status, body = self.exchange(
+                    reader, "/ack", "post.ack", id=str(first_post), status="read"
+                )
+                self.assertEqual(status, 200, body)
+
+            status, body = self.exchange(
+                readers[2], "/ack", "post.ack", id=str(first_post), status="read"
+            )
+            self.assertEqual(status, 507, body)
+            self.assertIn("post receipt capacity reached", body)
+
+            status, body = self.exchange(
+                readers[2], "/ack", "post.ack", id=str(second_post), status="read"
+            )
+            self.assertEqual(status, 200, body)
+            status, body = self.exchange(
+                readers[3], "/ack", "post.ack", id=str(second_post), status="read"
+            )
+            self.assertEqual(status, 507, body)
+            self.assertIn("receipt storage capacity reached", body)
+
+            status, body = self.exchange(
+                readers[0], "/ack", "post.ack", id=str(first_post), status="completed"
+            )
+            self.assertEqual(status, 200, body)
+            self.assertEqual(json.loads(body)["status"], "completed")
 
 
 if __name__ == "__main__":

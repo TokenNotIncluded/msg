@@ -19,6 +19,8 @@ TASK_STATUSES = frozenset({"open", "claimed", "completed"})
 MAX_STATE_SLOT_BYTES = 16 * 1024
 MAX_STATE_TOTAL_BYTES = 64 * 1024
 MAX_WATCHES_PER_IDENTITY = 128
+MAX_RECEIPTS_PER_POST = 10_000
+MAX_RECEIPTS_TOTAL = 100_000
 
 SCHEMA = """
 PRAGMA journal_mode = WAL;
@@ -459,6 +461,17 @@ class ExchangeService:
                 (subject_id, post_id),
             ).fetchone()
             if existing is None:
+                post_receipts = self._conn.execute(
+                    "SELECT COUNT(*) FROM inbox_receipts WHERE post_id = ?",
+                    (post_id,),
+                ).fetchone()[0]
+                if post_receipts >= MAX_RECEIPTS_PER_POST:
+                    raise StoreError("post receipt capacity reached", 507)
+                total_receipts = self._conn.execute(
+                    "SELECT COUNT(*) FROM inbox_receipts"
+                ).fetchone()[0]
+                if total_receipts >= MAX_RECEIPTS_TOTAL:
+                    raise StoreError("receipt storage capacity reached", 507)
                 current_status = normalized
                 read_at = now
                 updated = now
