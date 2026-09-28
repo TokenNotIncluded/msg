@@ -111,7 +111,7 @@ def _validate_identity_references(conn, escrow):
                        'from_subject', 'to_subject', 'publisher', 'buyer', 'seller',
                        'parent', 'source_id', 'target_id', 'participant_a',
                        'participant_b', 'initiator', 'blocker', 'blocked',
-                       'invited_by', 'granted_by'}
+                       'invited_by', 'granted_by', 'arbitrator', 'party', 'author'}
     columns = [(table, column) for table, column in conn.execute('''
         SELECT table_name,column_name FROM information_schema.columns
         WHERE table_schema=current_schema()''')
@@ -224,6 +224,22 @@ _JSON_IDENTITY_REFS = {
     'custodial_upgrades': ('subject', 'subject_id'),
     'legacy_directive_versions': ('subject',),
     'sync_checkpoints': ('subject',),
+    # Active market owners/panel authority are not financial account references.
+    # Settlement receipts retain historical debit/credit IDs intentionally.
+    'order_contracts': ('buyer', 'seller', 'buyer_principal.actor',
+                        'buyer_principal.subject', 'buyer_principal.certificates.*',
+                        'buyer_principal.ceiling.*.scope.resource_id',
+                        'policy.policy.candidates.*'),
+    'order_settlements': (),
+    'order_transitions': ('actor',),
+    'delivery_envelopes': ('recipient_subject',),
+    'arbitration_policies': ('candidates.*',),
+    'arbitration_cases': ('buyer', 'seller', 'opened_by', 'policy.policy.candidates.*',
+                          'panels.0.*', 'panels.1.*'),
+    'arbitration_votes': ('arbitrator', 'principal.actor', 'principal.subject',
+                          'principal.certificates.*', 'principal.ceiling.*.scope.resource_id'),
+    'arbitration_decisions': ('voters.*',),
+    'arbitration_evidence': ('source.id',),
     # Signed settlement parties are identities; order/account digests are not.
     'order_escrow_decisions': ('actor', 'recipient'),
 }

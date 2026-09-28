@@ -199,6 +199,61 @@ CREATE TABLE IF NOT EXISTS store_deliveries (
  channel TEXT NOT NULL CHECK(channel='site'),
  state TEXT NOT NULL CHECK(state IN ('prepared','claimed')),
  prepared_at TEXT NOT NULL, claimed_at TEXT, receipt TEXT);
+CREATE TABLE IF NOT EXISTS order_deadlines (
+ order_id TEXT PRIMARY KEY REFERENCES store_orders(id), expires_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS order_deadlines_due ON order_deadlines(expires_at,order_id);
+-- Market v3 keeps published v1/v2 signed contracts intact. Creation reserves stock without money.
+ALTER TABLE store_orders ALTER COLUMN payment_transaction_id DROP NOT NULL;
+ALTER TABLE store_orders ALTER COLUMN funded_at DROP NOT NULL;
+ALTER TABLE store_orders DROP CONSTRAINT IF EXISTS store_orders_state_check;
+ALTER TABLE store_orders ADD CONSTRAINT store_orders_state_check CHECK(state IN
+ ('created','funded','delivered','accepted','settled','cancelled','refunded','disputed'));
+CREATE TABLE IF NOT EXISTS delivery_email_endpoints (
+ id TEXT PRIMARY KEY, subject TEXT NOT NULL REFERENCES identities(id),
+ address TEXT NOT NULL, verified_at TEXT NOT NULL, active BOOLEAN NOT NULL DEFAULT TRUE);
+CREATE TABLE IF NOT EXISTS delivery_email_challenges (
+ id TEXT PRIMARY KEY, order_id TEXT NOT NULL REFERENCES store_orders(id),
+ subject TEXT NOT NULL REFERENCES identities(id), address TEXT NOT NULL,
+ verifier TEXT NOT NULL, expires_at TEXT NOT NULL, consumed BOOLEAN NOT NULL DEFAULT FALSE);
+CREATE TABLE IF NOT EXISTS order_contracts (
+ order_id TEXT PRIMARY KEY REFERENCES store_orders(id), body TEXT NOT NULL, digest TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS order_settlements (
+ order_id TEXT PRIMARY KEY REFERENCES store_orders(id), decision_id TEXT UNIQUE, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS order_transitions (
+ id TEXT PRIMARY KEY, order_id TEXT NOT NULL REFERENCES store_orders(id), body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS delivery_envelopes (
+ order_id TEXT PRIMARY KEY REFERENCES store_orders(id), body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS arbitration_policies (
+ id TEXT PRIMARY KEY, body TEXT NOT NULL, digest TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS arbitrator_roles (
+ subject TEXT PRIMARY KEY REFERENCES identities(id), epoch TEXT NOT NULL, active BOOLEAN NOT NULL);
+CREATE TABLE IF NOT EXISTS arbitrator_conflicts (
+ arbitrator TEXT NOT NULL REFERENCES identities(id), party TEXT NOT NULL REFERENCES identities(id),
+ PRIMARY KEY(arbitrator,party));
+CREATE TABLE IF NOT EXISTS arbitration_cases (
+ id TEXT PRIMARY KEY, order_id TEXT NOT NULL UNIQUE REFERENCES store_orders(id),
+ round INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL, deadline TEXT NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS arbitration_votes (
+ case_id TEXT NOT NULL REFERENCES arbitration_cases(id), round INTEGER NOT NULL,
+ arbitrator TEXT NOT NULL REFERENCES identities(id), body TEXT NOT NULL,
+ PRIMARY KEY(case_id,round,arbitrator));
+CREATE TABLE IF NOT EXISTS arbitration_decisions (
+ id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES arbitration_cases(id),
+ round INTEGER NOT NULL, body TEXT NOT NULL, revoked BOOLEAN NOT NULL DEFAULT FALSE,
+ UNIQUE(case_id,round));
+CREATE TABLE IF NOT EXISTS arbitration_evidence (
+ id TEXT PRIMARY KEY, case_id TEXT NOT NULL REFERENCES arbitration_cases(id),
+ author TEXT NOT NULL REFERENCES identities(id), visibility TEXT NOT NULL, body TEXT NOT NULL);
+DO $$ DECLARE tbl TEXT; BEGIN
+ FOREACH tbl IN ARRAY ARRAY['order_contracts','order_settlements','order_transitions',
+                           'arbitration_policies','arbitration_votes'] LOOP
+  IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname=tbl||'_append_only'
+                 AND tgrelid=tbl::regclass) THEN
+   EXECUTE format('CREATE TRIGGER %I BEFORE UPDATE OR DELETE ON %I FOR EACH ROW
+      EXECUTE FUNCTION msg_money_ledger_append_only()', tbl||'_append_only',tbl);
+  END IF;
+ END LOOP;
+END $$;
 CREATE TABLE IF NOT EXISTS order_escrow_decisions (
  order_id TEXT PRIMARY KEY REFERENCES store_orders(id),
  id TEXT NOT NULL UNIQUE, body TEXT NOT NULL, signature TEXT NOT NULL,

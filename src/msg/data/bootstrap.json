@@ -43,6 +43,7 @@
   },
   "features": [
     {"feature_id":"bootstrap","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"bootstrap","selftest_case":"isolated_namespace"},
+    {"feature_id":"market","enabled_by_default":true,"default_config":{"checkout_version":2,"production_fixtures":false,"arbitrators":[]},"sample_resource":null,"doctor_check":"market","selftest_case":"market_lifecycle"},
     {"feature_id":"postgres","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"storage","selftest_case":"stable_id_read"},
     {"feature_id":"root_trust","enabled_by_default":true,"default_config":{},"sample_resource":"u_root","doctor_check":"root_trust","selftest_case":"root_network_rejected"},
     {"feature_id":"credential_delivery","enabled_by_default":true,"default_config":{"credential_delivery_recovery_window":"15m","release":"once","secret_url":false},"sample_resource":null,"doctor_check":"credential_delivery","selftest_case":"credential_delivery_recovery"},

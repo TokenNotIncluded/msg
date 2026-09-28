@@ -1,17 +1,16 @@
-"""The CI gate must reject missing, duplicate, changed or failing evidence."""
+"""The CI gate must reject missing, duplicate, changed, skipped or failing evidence."""
 import importlib.util
 import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import pytest
 
-
-spec = importlib.util.spec_from_file_location('ci_shards',
-    Path(__file__).resolve().parents[1] / 'scripts' / 'ci_shards.py')
+SCRIPT = Path(__file__).resolve().parents[1] / 'scripts' / 'ci_shards.py'
+spec = importlib.util.spec_from_file_location('ci_shards', SCRIPT)
 ci = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ci)
 NODES = [f'tests/sub/test_contract.py::test_case[{i}]' for i in range(100)]
@@ -24,8 +23,8 @@ def write_evidence(directory, count=4):
         suite = ET.Element('testsuite')
         for node in record['selected']:
             case = ET.SubElement(suite, 'testcase', name=node)
-            properties = ET.SubElement(case, 'properties')
-            ET.SubElement(properties, 'property', name='msg.nodeid', value=node)
+            props = ET.SubElement(case, 'properties')
+            ET.SubElement(props, 'property', name='msg.nodeid', value=node)
         ET.ElementTree(suite).write(directory / f'tests-{index}.xml')
 
 
@@ -55,7 +54,8 @@ def test_valid_complete_evidence_is_accepted(tmp_path):
 
 
 @pytest.mark.parametrize('damage', ['missing_manifest', 'missing_report', 'duplicate_shard',
-                                   'missing_test', 'failure', 'error', 'different_suite'])
+    'missing_test', 'failure', 'error', 'skipped', 'different_suite', 'wrong_id', 'duplicate_id',
+    'missing_id', 'ambiguous_id'])
 def test_gate_rejects_incomplete_or_inconsistent_evidence(tmp_path, damage):
     write_evidence(tmp_path)
     manifest = tmp_path / 'shard-1.json'
@@ -70,14 +70,38 @@ def test_gate_rejects_incomplete_or_inconsistent_evidence(tmp_path, damage):
         manifest.write_text(json.dumps(ci.evidence(NODES + ['new_test'], 1, 4)))
     else:
         tree = ET.parse(report)
-        case = tree.getroot().find('testcase')
+        cases = tree.getroot().findall('testcase')
+        case = cases[0]
+        prop = case.find('./properties/property')
         if damage == 'missing_test':
             tree.getroot().remove(case)
+        elif damage == 'wrong_id':
+            prop.set('value', 'tests/test_other.py::not_executed')
+        elif damage == 'duplicate_id':
+            prop.set('value', cases[1].find('./properties/property').get('value'))
+        elif damage == 'missing_id':
+            case.remove(case.find('properties'))
+        elif damage == 'ambiguous_id':
+            ET.SubElement(case.find('properties'), 'property', name='msg.nodeid', value='other')
         else:
             ET.SubElement(case, damage)
         tree.write(report)
     with pytest.raises((ValueError, FileNotFoundError)):
         ci.verify(tmp_path, 4)
+
+
+def test_actual_pytest_shards_emit_verifiable_node_ids(tmp_path):
+    tests = tmp_path / 'tests'
+    tests.mkdir()
+    (tmp_path / 'pytest.ini').write_text('[pytest]\n')
+    (tests / 'test_probe.py').write_text(
+        'import pytest\n@pytest.mark.parametrize("value", [1, 2, 3, 4])\n'
+        'def test_parameter(value):\n    assert value > 0\n')
+    for index in range(2):
+        result = subprocess.run([sys.executable, str(SCRIPT), 'run', str(index), '2'],
+            cwd=tmp_path, capture_output=True, text=True, timeout=30, check=False)
+        assert result.returncode == 0, result.stdout + result.stderr
+    assert ci.verify(tmp_path / 'artifacts', 2) == 4
 
 
 @pytest.mark.parametrize('damage', ['renamed_node', 'duplicate_node', 'missing_identity', 'duplicate_identity'])

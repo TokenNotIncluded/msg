@@ -190,7 +190,7 @@ def install(app):
         require(resource.revision == request.arguments['listing_revision'],
                 'listing_revision_conflict')
         require(body['delivery_mode'] == 'managed_instant' and
-                body['item_kind'] in {'file','bundle'} and body['state'] != 'closed',
+                body['item_kind'] in {'file','bundle','text'} and body['state'] != 'closed',
                 'package_mode_unsupported')
         manifest = request.arguments['manifest']
         require(len(canonical(manifest)) <= MAX_MANIFEST_BYTES, 'manifest_too_large')
@@ -206,6 +206,8 @@ def install(app):
             require(await direct_ancestor(tx, rid) is None, 'payload_private_conversation')
             await check_access(app, ctx, request, tx, rid, 'read')
             revision=await tx.revision(ResourceRef(id=rid,revision=ref['revision']))
+            if body['item_kind'] == 'text':
+                require(revision.content.media_type.startswith('text/'), 'text_payload_required')
             blobs.append(revision.content)
             total+=revision.content.size
             require(total <= 1024**4, 'package_too_large')
