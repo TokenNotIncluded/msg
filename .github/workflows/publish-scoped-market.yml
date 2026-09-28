@@ -1,0 +1,53 @@
+name: Isolated scoped-market patch publication
+on:
+  push:
+    branches: [chore/serial-scope-publish-20260928]
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: transport
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          path: source
+          ref: 0c6ca7cf8262e1b70f96fb3fb18d64a88a8e299b
+          fetch-depth: 0
+      - name: Apply only the exact reviewed patch and verify its entire tree
+        working-directory: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, gzip, hashlib, pathlib
+          encoded = pathlib.Path('../transport/market-scope.patch.gz.b64').read_text().strip()
+          # Repair the known two-byte transcription in this transport, never in source.
+          encoded = encoded.replace('c7rbX6bz/3tx/x/', 'c7rbX6/3tx/x/')
+          raw = gzip.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(raw).hexdigest() == '02d69979c099d51c8b7b0037e715d4dd7336b2a5d5b5e2bdd192e6ed5b7b98f6'
+          pathlib.Path('../reviewed.patch').write_bytes(raw)
+          PY
+          test "$(git rev-parse HEAD)" = 0c6ca7cf8262e1b70f96fb3fb18d64a88a8e299b
+          git apply --index --check ../reviewed.patch
+          git apply --index ../reviewed.patch
+          test "$(git write-tree)" = 14e27437b1aa7df51096b30db6e11cc4cb84c6fd
+          git diff --cached --check
+          git config user.name LIghtJUNction
+          git config user.email 106986785+LIghtJUNction@users.noreply.github.com
+          git commit -m 'fix: require current account scope for private orders and delivery' -m 'Reuse account_requirements before cached results. Preserve public dispute summaries, published contracts and current buyer/seller/panel checks. Local Python3.13.5/PostgreSQL15.19: 14 denied-operation regressions fail before the fix; 141 focused tests pass after. Exact target CI still required. Refs #71, #76, #81, #85.'
+          branch=fix/market-account-scope-20260928
+          existing=$(git ls-remote --heads origin "refs/heads/$branch" | cut -f1)
+          test -z "$existing" || test "$existing" = 0c6ca7cf8262e1b70f96fb3fb18d64a88a8e299b
+          git push origin "HEAD:refs/heads/$branch"
+          git rev-parse HEAD HEAD^{tree} > ../published-source.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: market-scope-published-source
+          path: published-source.txt
+          retention-days: 3
+          if-no-files-found: error
