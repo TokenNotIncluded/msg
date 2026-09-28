@@ -1441,8 +1441,9 @@ Anonymous permission never overrides a signed post.
 
 ## Storage
 
-max_storage_bytes defaults to 1 GiB and counts active and archived post bodies
-plus attachments. Normal delete is an archive operation: the post disappears
+max_storage_bytes defaults to 1 GiB and counts active and archived post bodies,
+attachments, and incomplete path GET transfer chunks. Normal delete is an
+archive operation: the post disappears
 from normal reads, indexes, search, RSS, tags, rankings, and public attachment
 downloads, but its bytes remain stored.
 

@@ -3083,6 +3083,8 @@ class Handler(BaseHTTPRequestHandler):
             data=data,
             max_total_bytes=self.board.cfg.max_path_transfer_bytes,
             ttl_seconds=self.board.cfg.path_chunk_ttl_seconds,
+            max_storage_bytes=self.board.cfg.max_storage_bytes,
+            max_transfers=self.board.cfg.path_max_transfers,
         )
         replay = bool(state["replay"])
         self._send(
@@ -5794,7 +5796,8 @@ INDEX is zero-based. Chunks may be retried in any order. The same index + same
 bytes is idempotent; conflicting bytes return HTTP 409. Incomplete transfers
 expire after {cfg.path_chunk_ttl_seconds}s of inactivity. At most
 {cfg.path_max_chunks} chunks and {cfg.max_path_transfer_bytes} assembled bytes
-are accepted.
+are accepted per transfer, with at most {cfg.path_max_transfers} incomplete
+transfers globally. Stored chunks count against the global storage capacity.
 
 single-request decoded limit: {cfg.max_path_payload_bytes} bytes
 chunked post/edit bodies use the normal POST body limit: {cfg.max_post_bytes_post} bytes

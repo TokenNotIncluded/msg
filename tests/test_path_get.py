@@ -11,6 +11,7 @@ import unittest
 import urllib.error
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -18,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from msgd.config import Config
 from msgd.ratelimit import Limiter
 from msgd.server import build_server
+from msgd.store import StoreError
 
 
 def public_b64(key: Ed25519PrivateKey) -> str:
@@ -290,6 +292,59 @@ class PathGetCase(unittest.TestCase):
         post = self.server.board.store.get_post(post_id)
         self.assertEqual(post.board, "main")
         self.assertEqual(post.body, "generic path operation")
+
+    def test_chunk_storage_is_globally_bounded_and_accounted(self) -> None:
+        store = self.server.board.store
+        kwargs = {
+            "chunk_index": 0,
+            "chunk_count": 2,
+            "max_total_bytes": 100,
+            "ttl_seconds": 3600,
+            "max_storage_bytes": 3,
+            "max_transfers": 1,
+        }
+        store.put_path_get_chunk(request_id="boundedchunk000000000001", data=b"abc", **kwargs)
+        stats = store.stats()
+        self.assertEqual(stats["path_chunk_bytes"], 3)
+        self.assertEqual(stats["path_chunk_transfers"], 1)
+        self.assertEqual(stats["bytes"], 3)
+
+        with self.assertRaisesRegex(StoreError, "transfer limit"):
+            store.put_path_get_chunk(request_id="boundedchunk000000000002", data=b"", **kwargs)
+        with self.assertRaisesRegex(StoreError, "max_storage_bytes"):
+            store.put_path_get_chunk(
+                request_id="boundedchunk000000000001",
+                chunk_index=1,
+                chunk_count=2,
+                data=b"d",
+                max_total_bytes=100,
+                ttl_seconds=3600,
+                max_storage_bytes=3,
+                max_transfers=1,
+            )
+
+    def test_exact_chunk_replay_does_not_refresh_transfer_ttl(self) -> None:
+        store = self.server.board.store
+        kwargs = {
+            "request_id": "replaychunk0000000000001",
+            "chunk_index": 0,
+            "chunk_count": 2,
+            "data": b"abc",
+            "max_total_bytes": 100,
+            "ttl_seconds": 3600,
+            "max_storage_bytes": 100,
+            "max_transfers": 10,
+        }
+        with mock.patch("msgd.store.time.time", return_value=100.0):
+            store.put_path_get_chunk(**kwargs)
+        with mock.patch("msgd.store.time.time", return_value=200.0):
+            state = store.put_path_get_chunk(**kwargs)
+        self.assertTrue(state["replay"])
+        row = store._conn.execute(
+            "SELECT created FROM path_get_chunks WHERE request_id = ?",
+            (kwargs["request_id"],),
+        ).fetchone()
+        self.assertEqual(row["created"], 100.0)
 
     def test_generic_post_operations_keep_single_request_compatibility(self) -> None:
         self.server.board.store.set_policy(

@@ -46,7 +46,7 @@ class Config:
     ssh_shell_command: str = "/usr/local/bin/msg-ssh-shell"
     ssh_max_keys_per_identity: int = 16
 
-    # Logical capacity of active + archived post bodies and attachments.
+    # Logical capacity of posts, attachments, and incomplete path GET transfers.
     # Normal delete archives; new writes reclaim oldest archives first when full.
     max_storage_bytes: int = 1_073_741_824  # 1 GiB
     max_post_bytes: int = 16_384
@@ -56,6 +56,7 @@ class Config:
     max_path_transfer_bytes: int = 1_114_112  # 1 MiB body plus JSON/signature overhead
     path_chunk_ttl_seconds: int = 3_600
     path_max_chunks: int = 1_024
+    path_max_transfers: int = 1_024
     max_file_bytes: int = 16_777_216
     max_files_per_post: int = 8
     max_filename_bytes: int = 255
@@ -157,6 +158,7 @@ class Config:
                 "limits", "path_chunk_ttl_seconds", base.path_chunk_ttl_seconds
             ),
             path_max_chunks=get("limits", "path_max_chunks", base.path_max_chunks),
+            path_max_transfers=get("limits", "path_max_transfers", base.path_max_transfers),
             max_file_bytes=get("limits", "max_file_bytes", base.max_file_bytes),
             max_files_per_post=get("limits", "max_files_per_post", base.max_files_per_post),
             max_filename_bytes=get("limits", "max_filename_bytes", base.max_filename_bytes),
@@ -189,6 +191,7 @@ class Config:
             "max_path_transfer_bytes",
             "path_chunk_ttl_seconds",
             "path_max_chunks",
+            "path_max_transfers",
             "max_file_bytes",
             "max_files_per_post",
             "max_filename_bytes",

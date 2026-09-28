@@ -1422,7 +1422,8 @@ class Store:
                 COALESCE((SELECT SUM(nbytes) FROM posts WHERE system = 0), 0)
               + COALESCE((SELECT SUM(nbytes) FROM attachments), 0)
               + COALESCE((SELECT SUM(nbytes) FROM archived_posts WHERE system = 0), 0)
-              + COALESCE((SELECT SUM(nbytes) FROM archived_attachments), 0) AS n
+              + COALESCE((SELECT SUM(nbytes) FROM archived_attachments), 0)
+              + COALESCE((SELECT SUM(LENGTH(data)) FROM path_get_chunks), 0) AS n
             """
         ).fetchone()
         return int(row["n"])
@@ -5214,6 +5215,8 @@ class Store:
         data: bytes,
         max_total_bytes: int,
         ttl_seconds: int,
+        max_storage_bytes: int,
+        max_transfers: int,
     ) -> dict[str, Any]:
         now = time.time()
         cutoff = now - ttl_seconds
@@ -5247,6 +5250,19 @@ class Store:
                 if bytes(existing["data"]) != data:
                     raise StoreError("path GET chunk index was reused with different data", 409)
             else:
+                aggregate = self._conn.execute(
+                    """
+                    SELECT COUNT(DISTINCT request_id) AS transfers
+                      FROM path_get_chunks
+                    """
+                ).fetchone()
+                if not rows and int(aggregate["transfers"]) >= max_transfers:
+                    raise StoreError(
+                        f"path GET transfer limit reached ({max_transfers})",
+                        503,
+                    )
+                if self._storage_bytes() + len(data) > max_storage_bytes:
+                    raise StoreError("path GET chunk would exceed max_storage_bytes", 507)
                 self._conn.execute(
                     """
                     INSERT INTO path_get_chunks(
@@ -5255,11 +5271,12 @@ class Store:
                     """,
                     (request_id, chunk_index, chunk_count, data, now),
                 )
-
-            self._conn.execute(
-                "UPDATE path_get_chunks SET created = ? WHERE request_id = ?",
-                (now, request_id),
-            )
+                # Only progress extends a transfer's lifetime. Exact replays must
+                # not allow abandoned data to evade TTL cleanup indefinitely.
+                self._conn.execute(
+                    "UPDATE path_get_chunks SET created = ? WHERE request_id = ?",
+                    (now, request_id),
+                )
             stats = self._conn.execute(
                 """
                 SELECT COUNT(*) AS received,
@@ -5439,6 +5456,13 @@ class Store:
                   FROM archived_attachments
                 """
             ).fetchone()
+            chunks = self._conn.execute(
+                """
+                SELECT COUNT(DISTINCT request_id) AS transfers,
+                       COALESCE(SUM(LENGTH(data)), 0) AS bytes
+                  FROM path_get_chunks
+                """
+            ).fetchone()
             boards = self._conn.execute("SELECT COUNT(*) AS n FROM boards").fetchone()["n"]
             hashtags = self._conn.execute(
                 "SELECT COUNT(DISTINCT tag) AS n FROM post_tags"
@@ -5448,6 +5472,7 @@ class Store:
         archived_post_bytes = int(archived["post_bytes"])
         archived_file_bytes = int(archived_files["file_bytes"])
         archived_bytes = archived_post_bytes + archived_file_bytes
+        chunk_bytes = int(chunks["bytes"])
         return {
             "boards": int(boards),
             "hashtags": int(hashtags),
@@ -5459,7 +5484,9 @@ class Store:
             "post_bytes": post_bytes,
             "file_bytes": file_bytes,
             "archived_bytes": archived_bytes,
-            "bytes": post_bytes + file_bytes + archived_bytes,
+            "path_chunk_transfers": int(chunks["transfers"]),
+            "path_chunk_bytes": chunk_bytes,
+            "bytes": post_bytes + file_bytes + archived_bytes + chunk_bytes,
             "capacity": self.cfg.max_storage_bytes,
             "latest_id": int(row["latest_id"]),
         }

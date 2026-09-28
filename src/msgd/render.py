@@ -395,6 +395,8 @@ Split the raw compact JSON bytes before base64url encoding. INDEX is zero-based;
 chunks may arrive in any order and exact retries are idempotent. A conservative
 client can use 4096 raw bytes per chunk. The server accepts at most
 {cfg.path_max_chunks} chunks and {cfg.max_path_transfer_bytes} assembled bytes.
+At most {cfg.path_max_transfers} incomplete transfers may be stored globally;
+their bytes count against the global storage capacity.
 Incomplete transfers expire after {cfg.path_chunk_ttl_seconds} seconds of
 inactivity. Commit SHA256 is lowercase hex over the complete raw JSON bytes.
 
@@ -1633,6 +1635,7 @@ def render_schema(cfg: Config) -> str:
             "max_single_decoded_bytes": cfg.max_path_payload_bytes,
             "max_transfer_bytes": cfg.max_path_transfer_bytes,
             "max_chunks": cfg.path_max_chunks,
+            "max_incomplete_transfers": cfg.path_max_transfers,
             "chunk_ttl_seconds": cfg.path_chunk_ttl_seconds,
             "recommended_raw_chunk_bytes": 4096,
             "secrets_allowed": False,
