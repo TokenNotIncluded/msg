@@ -16,7 +16,7 @@ from msg.constants import ROOT_SUBJECT
 from msg.core.codec import canonical, decode, digest, parse_time, wire
 from msg.core.errors import Failure, require
 from msg.core.models import Signature
-from msg.security.certificates import verify_certificate
+from msg.security.certificates import certificate_body
 from msg.security.crypto import key_id, verify
 
 DOMAIN = 'msg-custodial-backup-retirement-v1'
@@ -83,7 +83,7 @@ async def root_verifier(tx, *, now):
                 (credential.expires_at is None or now < credential.expires_at) and
                 key_id(credential.verifier) == credential.id == certificate.key_id,
                 'backup_retirement_root_unavailable')
-        verify_certificate(certificate, credential.verifier)
+        verify(credential.verifier, canonical(certificate_body(certificate)),\n               certificate.signature, purpose='certificate')
     except (Failure, KeyError, TypeError, ValueError) as exc:
         raise Failure('backup_retirement_root_unavailable') from exc
     return credential.verifier
