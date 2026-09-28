@@ -378,10 +378,16 @@ class SqliteSession:
     async def memberships(self, subject):
         if subject is None:
             return ()
-        memberships=tuple(decode(Membership, loads(row[0])) for row in
-                          self.rows("SELECT body FROM memberships WHERE subject=? ORDER BY org", (subject,)))
-        active=tuple(member for member in memberships if member.status=='active'
-                     and member.organization_id!='g_public')
+        rows=self.rows("""SELECT m.org,m.body FROM memberships m
+            JOIN resources r ON r.id=m.org
+            WHERE m.subject=? AND r.type='organization' AND r.state='active'
+            ORDER BY m.org""",(subject,))
+        memberships=((org,decode(Membership,loads(body))) for org,body in rows)
+        # A stale membership row must not revive an archived/missing organization
+        # or borrow an organization/subject identifier from a mismatched body.
+        active=tuple(member for org,member in memberships if member.status=='active'
+                     and member.organization_id==org and member.subject_id==subject
+                     and org!='g_public')
         row=self.one("SELECT body FROM identities WHERE id=? AND kind='subject'",(subject,))
         if row is None:
             return active

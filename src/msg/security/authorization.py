@@ -211,7 +211,6 @@ class AuthorizationService:
                                     (ancestor.id,principal.subject))
                     if ban is not None and (ban[0] is None or parse_time(ban[0])>context.now):
                         require(False,'topic_banned')
-                    break
             direct=None
             for ancestor in chain:
                 direct=session.one('SELECT participant_a,participant_b,state,resource_id FROM dm_conversations WHERE resource_id=?',
