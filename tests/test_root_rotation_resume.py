@@ -94,3 +94,28 @@ async def test_explicit_lost_root_key_rotation_uses_bound_journal(installed):
     await complete(app, journal, pin=NEW_PIN)
     assert open_private_key(loads(path.read_bytes()), NEW_PIN) == successor.private_bytes()
     assert (path.parent/'history'/journal['old_certificate']['resource_id']/'key.json').read_bytes() == original
+
+
+@pytest.mark.asyncio
+async def test_rotation_back_to_retired_root_key_is_rejected_before_commit(installed):
+    app, root = installed
+    old_envelope(app, root)
+    successor = Ed25519Signer.generate()
+    await complete(app, prepare(app, successor, NEW_PIN, old_signer=root, operator='isolated-test'),
+                   pin=NEW_PIN)
+    fresh = Application(app.settings, clock=lambda:NOW)
+    await fresh.load()
+    try:
+        path = root_envelope(app.settings.config_dir)
+        installed_key, trust = path.read_bytes(), app.settings.trust_file.read_bytes()
+        journal = prepare(fresh, root, OLD_PIN, old_signer=successor, operator='isolated-test')
+        with pytest.raises(Failure, match='root_key_reused'):
+            await complete(fresh, journal, pin=OLD_PIN)
+        assert journal_path(app).exists()
+        assert path.read_bytes() == installed_key and app.settings.trust_file.read_bytes() == trust
+        async with fresh.metadata.transaction(write=False) as tx:
+            assert tx.setting('active_root_certificate') == journal['old_certificate']['resource_id']
+            assert (await tx.credential(root.key_id)).revoked_at is not None
+            assert (await tx.credential(successor.key_id)).revoked_at is None
+    finally:
+        await fresh.close()

@@ -146,6 +146,9 @@ async def _complete(app, journal, *, pin):
         else:
             subject=await tx.subject(ROOT_SUBJECT)
             require(subject.local_only,'root_policy_corrupt')
+            # Credential saves are upserts; a retired root key must never be revived.
+            require(tx.one('SELECT 1 FROM credentials WHERE id=?',(signer.key_id,)) is None,
+                    'root_key_reused')
             await tx.save_credential(Credential(id=signer.key_id,subject_id=ROOT_SUBJECT,kind='signing_key',
                 verifier=signer.public_key,ceiling=(),not_before=new.not_before,expires_at=None,revoked_at=None),subject.auth_version)
             await tx.save_credential(replace(old_key,revoked_at=app.clock()),subject.auth_version)
