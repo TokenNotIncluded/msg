@@ -2,7 +2,9 @@ name: Apply reviewed client boundary patch
 on:
   push:
     branches: ['fix/client-boundary-20260929']
-    paths: ['scripts/patches/client-boundary.patch']
+    paths:
+      - 'scripts/patches/client-boundary.patch'
+      - '.github/workflows/prepare-client-boundary.yml'
 permissions:
   contents: read
 jobs:
@@ -17,24 +19,25 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
-      - name: Apply only the reviewed patch to its recorded parent
+      - name: Apply reviewed source patch after explicit repository-format metadata commit
         run: |
-          test "$(git rev-parse HEAD^)" = 6ea463d6fa8b256cb07d0ede2d7795a5336eda4f
-          git apply --index --check scripts/patches/client-boundary.patch
-          git apply --index scripts/patches/client-boundary.patch
+          test "$(git rev-parse HEAD^)" = 93d864b3b003310c6a139a918e5e14e65482e404
+          echo '244778f572724b991a8b14ff3334b810a3af14329de999bf148c5445950c8a02  scripts/patches/client-boundary.patch' | sha256sum --check
+          git apply --index --check --exclude=pyproject.toml scripts/patches/client-boundary.patch
+          git apply --index --exclude=pyproject.toml scripts/patches/client-boundary.patch
           git diff --cached --check
       - name: Publish only this feature branch without force
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           python - <<'PY'
-          import hashlib, json, os, pathlib, subprocess, urllib.request
+          import hashlib, json, os, pathlib, subprocess, tomllib, urllib.request
           repo = 'TokenNotIncluded/msg.lmm.best'
           branch = 'fix/client-boundary-20260929'
           assert os.environ['GITHUB_REPOSITORY'] == repo
           assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
           paths = [
-              'README.md', 'docs/DEPLOYMENT.md', 'pyproject.toml', 'src/msg/atomic_file.py',
+              'README.md', 'docs/DEPLOYMENT.md', 'src/msg/atomic_file.py',
               'src/msg/cli.py', 'src/msg/client.py', 'src/msg/client_certificates.py',
               'src/msg/client_custodial.py', 'src/msg/client_upgrade.py', 'src/msg/core/codec.py',
               'src/msg/core/executor.py', 'src/msg/daemon.py', 'src/msg/security/custodial_migration.py',
@@ -44,6 +47,13 @@ jobs:
           ]
           changed = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
           assert sorted(changed) == sorted(paths), changed
+          metadata = tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']
+          assert metadata['dependencies'] == ['cryptography>=46,<52', 'httpx>=0.28,<1',
+                                             'jsonschema>=4.25,<5', 'referencing>=0.36,<1']
+          assert metadata['optional-dependencies']['server'] == [
+              'starlette>=0.50,<2', 'uvicorn>=0.38,<1', 'aiohttp>=3.13,<4', 'dnspython>=2.8,<3',
+              'graphql-core>=3.2.7,<3.3', 'psycopg[binary]>=3.3,<4', 'valkey>=6.1,<7']
+          assert metadata['optional-dependencies']['dev'][0] == 'msg-lmm-best[server]'
           def api(method, endpoint, payload=None):
               data = None if payload is None else json.dumps(payload).encode()
               request = urllib.request.Request('https://api.github.com/repos/' + repo + endpoint,
@@ -57,7 +67,7 @@ jobs:
           parent = os.environ['GITHUB_SHA']
           assert api('GET', '/git/ref/heads/' + branch)['object']['sha'] == parent
           old = api('GET', '/git/commits/' + parent)
-          assert [p['sha'] for p in old['parents']] == ['6ea463d6fa8b256cb07d0ede2d7795a5336eda4f']
+          assert [p['sha'] for p in old['parents']] == ['93d864b3b003310c6a139a918e5e14e65482e404']
           entries = [{'path': p, 'mode': '100644', 'type': 'blob',
                       'content': pathlib.Path(p).read_text()} for p in paths]
           for p in ['scripts/patches/client-boundary.patch', '.github/workflows/prepare-client-boundary.yml']:
@@ -72,7 +82,7 @@ jobs:
           pathlib.Path('artifacts/patch-result.json').write_text(json.dumps({
               'source': parent, 'commit': commit['sha'], 'tree': tree['sha'],
               'patch_sha256': hashlib.sha256(pathlib.Path('scripts/patches/client-boundary.patch').read_bytes()).hexdigest(),
-              'paths': paths,
+              'paths': paths, 'metadata_committed_before_patch': True,
           }, indent=2) + '\n')
           print('Published reviewed source:', commit['sha'], tree['sha'])
           PY
