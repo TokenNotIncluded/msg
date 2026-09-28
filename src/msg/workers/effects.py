@@ -122,8 +122,6 @@ class EffectWorker:
                 if job.lease_until is None or job.lease_until <= self.app.clock():
                     await tx.save_job(replace(job, state='uncertain', lease_until=None))
                     tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
-                    from msg.market.targets import notification_status
-                    notification_status(tx, job, 'uncertain', 'expired_execution_lease')
                     return job, False
             row = tx.one("SELECT id FROM jobs WHERE state='pending' AND next_at<=? ORDER BY next_at,id LIMIT 1",
                          (wire(self.app.clock()),))
@@ -143,8 +141,6 @@ class EffectWorker:
             await tx.save_job(replace(current, state=state, lease_until=None))
             tx.set_setting('job_status:' + job.id,
                            {'code': code} if status is None else status)
-            from msg.market.targets import notification_status
-            notification_status(tx, job, state, code)
 
     async def _retry(self, job, retry_code, exhausted_code):
         async with self.app.metadata.transaction(write=True) as tx:
@@ -158,9 +154,6 @@ class EffectWorker:
                                      lease_until=None, next_attempt_at=next_at))
             tx.set_setting('job_status:' + job.id,
                            {'code': exhausted_code if exhausted else retry_code})
-            from msg.market.targets import notification_status
-            notification_status(tx, job, 'failed' if exhausted else 'pending',
-                                exhausted_code if exhausted else retry_code)
 
     async def _retry_mail(self, job, code):
         await self._retry(job, code, code)
