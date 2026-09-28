@@ -9,11 +9,12 @@
 ## 本地检查
 
 ```bash
-python3.15 -m pip install -e '.[dev]'
-python3.15 -m compileall -q src
-python3.15 -m pytest tests
-python3.15 -m pytest conformance
-python3.15 -m build
+uv sync --extra dev
+uv run --extra dev python -m compileall -q src
+uv run --extra dev pytest tests
+uv run --extra dev pytest conformance
+uv build
+uv run --extra dev python scripts/check_package_artifacts.py dist
 ```
 
 `tests/` 包含需要 PostgreSQL 的集成测试，以及真实 Git、SQLite、Ed25519 和套接字测试。未设置 `MSG_TEST_POSTGRES_URL_TEMPLATE` 时，根目录的 `conftest.py` 会尝试通过本机 `initdb` 和 `pg_ctl` 启动临时数据库。`conformance/` 包含强制运行时、完整传输与 tokenizer 门槛；缺少依赖时应该失败，而不是静默跳过。宿主 OpenSSH、bubblewrap、SMTP/TLS 与物理控制台还须按部署验收清单单独验证。

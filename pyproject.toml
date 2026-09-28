@@ -1,6 +1,6 @@
 [build-system]
-requires = ["setuptools>=77"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.12.19,<0.13"]
+build-backend = "uv_build"
 
 [project]
 name = "msg-lmm-best"
@@ -19,11 +19,13 @@ msgd = "msg.daemon:main"
 [project.optional-dependencies]
 dev = ["pytest>=8.4", "pytest-asyncio>=1.1", "pytest-cov>=6", "ruff>=0.14", "build>=1.2", "tiktoken>=0.12"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
-
-[tool.setuptools.package-data]
-msg = ["py.typed", "data/*.json", "data/*.txt", "data/*.md", "data/*.svg", "data/*.png"]
+[tool.uv.build-backend]
+module-name = "msg"
+source-include = [
+    "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
+    "conftest.py", "tests/**", "conformance/**", "scripts/**",
+    "docs/*.md", "deploy/**",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra"

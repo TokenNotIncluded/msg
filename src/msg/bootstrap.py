@@ -37,9 +37,8 @@ SOURCE_MIGRATIONS={}
 
 def system_source_root():
     packaged=files('msg.data').joinpath('system')
-    if packaged.is_dir():
-        return packaged
-    return Path(__file__).resolve().parents[2]/'docs'/'system'
+    require(packaged.is_dir(),'system_source_missing')
+    return packaged
 
 
 async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_root=ROOT_SPACE,

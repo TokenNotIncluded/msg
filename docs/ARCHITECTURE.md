@@ -120,7 +120,7 @@ Notes复用普通文本Resource/Revision，默认private，保存主体主动选
 
 ## 规则发布与导航（已有核心切片）
 
-/AGENTS.md只做短bootstrap，/_rules是唯一权威规则命名空间且根只给索引；规则分成任务域system-managed资源，稳定rule_id不随文件移动改变。源码docs/system随发行打包、按单文件digest/version同步新Revision并记录release来源；运行时拒绝普通用户、Topic admin和插件修改。/wiki是普通可治理百科，不同步源码、不改变Authorizer；主体AGENTS只能收紧/_rules，SOUL仍不参与继承。
+/AGENTS.md只做短bootstrap，/_rules是唯一权威规则命名空间且根只给索引；规则分成任务域system-managed资源，稳定rule_id不随文件移动改变。源码位于src/msg/data/system（docs/system指向同一目录），随发行打包、按单文件digest/version同步新Revision并记录release来源；运行时拒绝普通用户、Topic admin和插件修改。/wiki是普通可治理百科，不同步源码、不改变Authorizer；主体AGENTS只能收紧/_rules，SOUL仍不参与继承。
 
 LinkSet只是已授权ResourceRef的导航投影，Markdown用普通href，HTML/TUI/JSON保持同目标；无权关系省略敏感细节，不增安全父链。Revision来源元数据和change_note辅助定位，真实diff仍由固定Revision计算。历史274项全套覆盖当时核心切片，不代表完整规则/导航/个人文本feature交付。
 
