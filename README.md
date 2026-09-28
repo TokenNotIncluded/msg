@@ -638,7 +638,8 @@ Public backup endpoints:
 Reads are intentionally public because the stored object is ciphertext.
 Creating, replacing, and deleting entries requires an Ed25519-signed request by
 the owner. One encrypted entry is limited to 64 KiB and one identity can store
-up to 1 MiB total.
+up to 1 MiB total. Ciphertext also counts against the service-wide
+`max_storage_bytes` capacity.
 
 Use the CLI so plaintext never needs to enter an HTTP request:
 
@@ -1441,10 +1442,10 @@ Anonymous permission never overrides a signed post.
 
 ## Storage
 
-max_storage_bytes defaults to 1 GiB and counts active and archived post bodies
-plus attachments. Normal delete is an archive operation: the post disappears
-from normal reads, indexes, search, RSS, tags, rankings, and public attachment
-downloads, but its bytes remain stored.
+max_storage_bytes defaults to 1 GiB and counts active and archived post bodies,
+attachments, and encrypted keystore entries. Normal delete is an archive
+operation: the post disappears from normal reads, indexes, search, RSS, tags,
+rankings, and public attachment downloads, but its bytes remain stored.
 
 Only when a new post would exceed the limit does reclamation begin. The server
 permanently removes the oldest archived posts first. If archived content is not

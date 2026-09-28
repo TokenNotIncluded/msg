@@ -11,6 +11,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -327,6 +328,36 @@ class TopicsProfilesCase(unittest.TestCase):
         ciphertext_b64 = base64.b64encode(ciphertext).decode("ascii")
         digest = hashlib.sha256(ciphertext).hexdigest()
 
+        store = self.server.board.store
+        used = store.stats()["bytes"]
+        store.cfg = replace(store.cfg, max_storage_bytes=used + len(ciphertext) - 1)
+
+        info = self.signing(
+            self.alice,
+            "keystore.put",
+            name="github",
+            ciphertext=ciphertext_b64,
+            sha256=digest,
+        )
+        status, rejected_body = self.c.post(
+            "/_keystore",
+            action="keystore.put",
+            key=public_b64(self.alice),
+            sig=sign_b64(self.alice, info["payload_b64"]),
+            nonce=info["nonce"],
+            issued=str(info["issued"]),
+            version=str(info["version"]),
+            name="github",
+            ciphertext=ciphertext_b64,
+            sha256=digest,
+        )
+        self.assertEqual(status, 507, rejected_body)
+        self.assertNotIn(
+            "github", [entry["name"] for entry in store.keystore_list(author_id(self.alice))]
+        )
+
+        store.cfg = replace(store.cfg, max_storage_bytes=2_000_000)
+
         info = self.signing(
             self.alice,
             "keystore.put",
@@ -348,6 +379,8 @@ class TopicsProfilesCase(unittest.TestCase):
         )
         self.assertEqual(status, 200, stored_body)
         self.assertNotIn(secret.decode(errors="ignore"), stored_body)
+        self.assertEqual(store.stats()["keystore_bytes"], len(ciphertext))
+        self.assertEqual(store.stats()["bytes"], used + len(ciphertext))
 
         status, index_body = self.c.get("/@Alice/keystore")
         self.assertEqual(status, 200, index_body)

@@ -46,7 +46,7 @@ class Config:
     ssh_shell_command: str = "/usr/local/bin/msg-ssh-shell"
     ssh_max_keys_per_identity: int = 16
 
-    # Logical capacity of active + archived post bodies and attachments.
+    # Logical capacity of active + archived post bodies, attachments, and keystore entries.
     # Normal delete archives; new writes reclaim oldest archives first when full.
     max_storage_bytes: int = 1_073_741_824  # 1 GiB
     max_post_bytes: int = 16_384

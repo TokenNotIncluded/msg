@@ -1422,7 +1422,8 @@ class Store:
                 COALESCE((SELECT SUM(nbytes) FROM posts WHERE system = 0), 0)
               + COALESCE((SELECT SUM(nbytes) FROM attachments), 0)
               + COALESCE((SELECT SUM(nbytes) FROM archived_posts WHERE system = 0), 0)
-              + COALESCE((SELECT SUM(nbytes) FROM archived_attachments), 0) AS n
+              + COALESCE((SELECT SUM(nbytes) FROM archived_attachments), 0)
+              + COALESCE((SELECT SUM(length(ciphertext)) FROM keystore_entries), 0) AS n
             """
         ).fetchone()
         return int(row["n"])
@@ -3048,7 +3049,11 @@ class Store:
         now = time.time()
         with self._lock, self._conn:
             current = self._conn.execute(
-                "SELECT version, created FROM keystore_entries WHERE owner_id = ? AND name = ?",
+                """
+                SELECT version, created, length(ciphertext) AS nbytes
+                  FROM keystore_entries
+                 WHERE owner_id = ? AND name = ?
+                """,
                 (auth.signer_id, name),
             ).fetchone()
             expected_version = int(current["version"] if current is not None else 0) + 1
@@ -3069,6 +3074,12 @@ class Store:
                     f"keystore exceeds per-identity limit {KEYSTORE_MAX_TOTAL_BYTES} bytes",
                     413,
                 )
+            previous_bytes = int(current["nbytes"]) if current is not None else 0
+            if (
+                self._storage_bytes() - previous_bytes + len(ciphertext)
+                > self.cfg.max_storage_bytes
+            ):
+                raise StoreError("keystore write would exceed storage capacity", 507)
             created = float(current["created"]) if current is not None else now
             self._conn.execute(
                 """
@@ -5439,6 +5450,9 @@ class Store:
                   FROM archived_attachments
                 """
             ).fetchone()
+            keystore = self._conn.execute(
+                "SELECT COALESCE(SUM(length(ciphertext)), 0) AS n FROM keystore_entries"
+            ).fetchone()
             boards = self._conn.execute("SELECT COUNT(*) AS n FROM boards").fetchone()["n"]
             hashtags = self._conn.execute(
                 "SELECT COUNT(DISTINCT tag) AS n FROM post_tags"
@@ -5448,6 +5462,7 @@ class Store:
         archived_post_bytes = int(archived["post_bytes"])
         archived_file_bytes = int(archived_files["file_bytes"])
         archived_bytes = archived_post_bytes + archived_file_bytes
+        keystore_bytes = int(keystore["n"])
         return {
             "boards": int(boards),
             "hashtags": int(hashtags),
@@ -5459,7 +5474,8 @@ class Store:
             "post_bytes": post_bytes,
             "file_bytes": file_bytes,
             "archived_bytes": archived_bytes,
-            "bytes": post_bytes + file_bytes + archived_bytes,
+            "keystore_bytes": keystore_bytes,
+            "bytes": post_bytes + file_bytes + archived_bytes + keystore_bytes,
             "capacity": self.cfg.max_storage_bytes,
             "latest_id": int(row["latest_id"]),
         }

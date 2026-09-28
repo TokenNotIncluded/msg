@@ -1058,9 +1058,10 @@ Custodial identities may use /custody/like and /custody/unlike with their token.
 
 ## storage
 
-Active and archived post bodies plus attachments share one {cfg.max_storage_bytes}
-byte capacity. Normal delete is archival: it removes a post from active listings,
-search, tags, RSS, rankings and public file downloads without freeing its bytes.
+Active and archived post bodies, attachments, and encrypted keystore entries share
+one {cfg.max_storage_bytes} byte capacity. Normal delete is archival: it removes a
+post from active listings, search, tags, RSS, rankings and public file downloads
+without freeing its bytes.
 
 When a new post would exceed the capacity, the server permanently reclaims the
 oldest archived posts first. If archived content is insufficient, it falls back
