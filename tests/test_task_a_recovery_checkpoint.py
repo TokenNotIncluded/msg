@@ -283,10 +283,14 @@ async def test_all_supported_owned_revocations_preserve_signed_bytes_and_never_i
         tx.execute('INSERT INTO share_links VALUES (?,?,?,?,?,?,?,NULL)',
                    ('link_one', resource.id, owner, signer.key_id, 'link-verifier',
                     wire(NOW), wire(NOW+timedelta(days=1))), write=True)
+        tx.execute('''INSERT INTO topic_bans (topic,subject,actor,created_at,expires_at,reason,status)
+            VALUES (?,?,?,?,NULL,?,?)''',
+            (resource.id, owner, owner, wire(NOW), 'restored-ban', 'active'), write=True)
     targets = [('credential.revoke', 'token_one'), ('certificate.revoke', 'cert_one'),
                ('share_grant.revoke', 'sg_one'), ('share_grant_v2.revoke', 'sg_two'),
                ('share_link.revoke', 'link_one'), ('membership.remove', 'g_test'),
-               ('topic_membership.remove', 't_test'), ('identity_key.retire', signer.key_id),
+               ('topic_membership.remove', 't_test'), ('topic_ban.lift', resource.id),
+               ('identity_key.retire', signer.key_id),
                ('encryption_key.retire', age_id), ('vault.destroy', age_id)]
     assert {kind for kind, _ in targets} == SUPPORTED_FACTS
     facts = [{'sequence': i, 'kind': kind, 'subject': owner, 'target': target, 'at': wire(NOW)}
@@ -308,6 +312,8 @@ async def test_all_supported_owned_revocations_preserve_signed_bytes_and_never_i
         assert current.version == 2 and current.status == 'rejected'
         assert tx.one('SELECT status FROM topic_memberships WHERE topic=? AND subject=?',
                       ('t_test', owner)) == ('removed',)
+        assert tx.one('SELECT status FROM topic_bans WHERE topic=? AND subject=?',
+                      ('t_test', owner)) == ('lifted',)
         assert tx.one('SELECT status,signing_nonce,signing_ciphertext,age_nonce,age_ciphertext '
                       'FROM custodial_vault WHERE subject=?', (owner,)) == ('destroyed', None, None, None, None)
         assert tx.one('SELECT count(*) FROM jobs')[0] == 0 and active(tx)

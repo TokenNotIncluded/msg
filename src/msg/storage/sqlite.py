@@ -407,6 +407,8 @@ class SqliteSession:
         return decode(OperationResult, loads(row[1]))
 
     async def save_result(self, subject, digest, result):
+        from msg.storage.capacity import require_result_capacity
+        require_result_capacity(self)
         self.execute("INSERT INTO results VALUES (?,?,?,?)", (
             subject, result.request_id, digest, canonical(result).decode()), write=True)
 

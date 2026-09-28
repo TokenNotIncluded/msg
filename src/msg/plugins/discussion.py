@@ -85,8 +85,13 @@ def install(app):
                 'digest':request.arguments['digest'],'time':wire(ctx.now)}
         if method=='signature':
             record.update(signature=wire(request.proof.signature),signed_envelope=b64(signing_bytes(request)))
+        kind='ack.'+method
+        if tx.one('SELECT 1 FROM reactions WHERE subject=? AND resource=? AND kind=? AND revision=?',
+                  (ctx.principal.subject,target.id,kind,rev.id)) is None:
+            from msg.storage.capacity import require_reaction_capacity
+            require_reaction_capacity(tx)
         tx.execute('INSERT INTO reactions VALUES (?,?,?,?,?) ON CONFLICT(subject,resource,kind,revision) DO NOTHING',
-            (ctx.principal.subject,target.id,'ack.'+method,rev.id,canonical(record).decode()),write=True)
+            (ctx.principal.subject,target.id,kind,rev.id,canonical(record).decode()),write=True)
         return HandlerOutput(resources=(target,),data={'auth':method,'acknowledged_revision':rev.id})
 
     @op('discussion.acks',obj({'id':IDENTIFIER,'revision':IDENTIFIER,'cursor':STRING,

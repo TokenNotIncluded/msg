@@ -23,7 +23,8 @@ from msg.security.quarantine import SETTING, active
 FORMAT = 'msg-revocation-checkpoint-v1'
 SUPPORTED_FACTS = frozenset({'credential.revoke', 'certificate.revoke', 'share_grant.revoke',
     'share_grant_v2.revoke', 'share_link.revoke', 'membership.remove',
-    'topic_membership.remove', 'identity_key.retire', 'encryption_key.retire', 'vault.destroy'})
+    'topic_membership.remove', 'topic_ban.lift', 'identity_key.retire',
+    'encryption_key.retire', 'vault.destroy'})
 _SHARE_TABLES = {'share_grant.revoke': 'share_grants', 'share_grant_v2.revoke': 'share_grants_v2',
                  'share_link.revoke': 'share_links'}
 _MAX_ENTRIES = 10000
@@ -156,6 +157,14 @@ async def _apply(tx, fact):
                        (target, subject), write=True)
             return True
         return False
+    if kind == 'topic_ban.lift':
+        row = tx.one('SELECT status FROM topic_bans WHERE topic=? AND subject=?', (target, subject))
+        require(row is not None, 'recovery_fact_missing')
+        if row[0] != 'lifted':
+            tx.execute("UPDATE topic_bans SET status='lifted' WHERE topic=? AND subject=?",
+                       (target, subject), write=True)
+            return True
+        return False
     if kind in {'identity_key.retire', 'encryption_key.retire'}:
         table = 'identity_keys' if kind == 'identity_key.retire' else 'encryption_subkeys'
         row = _owned(tx.one(f'SELECT subject,retired_at,is_primary FROM {table} WHERE key_id=?',
@@ -200,8 +209,8 @@ async def _replay(store, packet, *, pin, operator):
 
     Always re-apply facts, including after a repeated invocation/restart: cached
     watermarks are not evidence that an authorization row has not been restored.
-    This neither imports keys, emits effects, nor clears quarantine. It does not
-    implement ACL/TopicBan policy reconciliation or production promotion.
+    This neither imports keys, emits effects, nor clears quarantine. topic_ban.lift
+    is the only topic-ban fact; it does not reconcile ACLs or promote production.
     """
     require(isinstance(operator, str) and bool(operator), 'recovery_operator_required')
     body = verify_checkpoint(packet, pin=pin)

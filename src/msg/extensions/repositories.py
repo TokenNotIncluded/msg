@@ -35,6 +35,7 @@ _HTTP_RECEIVE=ContextVar('msg_git_http_receive',default=False)
 # the configured (normally 1 MiB) request limit.
 MAX_GIT_PACK_BYTES=32*1024*1024
 MAX_GIT_UPLOAD_SECONDS=120
+MAX_GIT_REPOSITORY_BYTES=2*1024*1024*1024
 _GIT_UPLOAD_SLOTS=asyncio.Semaphore(2)
 MAX_LFS_OBJECT_BYTES=256*1024*1024
 # Deployment-wide, not per-account. Operators may lower this for their shared
@@ -42,6 +43,27 @@ MAX_LFS_OBJECT_BYTES=256*1024*1024
 DEFAULT_LFS_DEPLOYMENT_BYTES=4*1024*1024*1024
 _LFS_UPLOAD_SLOTS=asyncio.Semaphore(2)
 _LFS_STAGED=ContextVar('msg_lfs_staged',default=None)
+
+
+def git_repository_bytes(root):
+    """Byte size of regular files under root, without following symlinks."""
+    total=0
+    if not Path(root).is_dir():
+        return 0
+    for directory,_dirnames,names in os.walk(root,followlinks=False):
+        for name in names:
+            try:
+                total+=(Path(directory)/name).lstat().st_size
+            except OSError:
+                continue
+            if total>MAX_GIT_REPOSITORY_BYTES:
+                return total
+    return total
+
+
+def require_git_repository_capacity(root,incoming=MAX_GIT_PACK_BYTES):
+    require(type(incoming) is int and incoming>=0,'storage_capacity_exceeded')
+    require(git_repository_bytes(root)+incoming<=MAX_GIT_REPOSITORY_BYTES,'storage_capacity_exceeded')
 
 
 async def spool_git_pack(request,path):
@@ -558,6 +580,7 @@ class NativeGitStore:
                     return Response(unb64(cached),media_type='application/x-git-receive-pack-result',
                                     headers={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff'})
                 from msg.extensions.ssh_git import guarded_command
+                require_git_repository_capacity(self.path(rid),incoming=pack_size)
                 code,output,_changed=await guarded_command(self.app,await self._job(job_id),
                     lambda store:['receive-pack','--stateless-rpc',str(store.path(rid))],
                     input_file=pack_path,capture_output=True,output_limit=limits.max_response_bytes,timeout=600,
@@ -722,6 +745,7 @@ async def execute_push(app,job):
             rev=await tx.revision(ref)
             with bundle.open('xb') as output:
                 async for chunk in app.contents.read(rev.content):output.write(chunk)
+        require_git_repository_capacity(store.path(job.arguments['id']),incoming=bundle.stat().st_size)
         await store.import_bundle(job.arguments['id'],bundle,job.arguments['changes'],job.arguments.get('force',False))
         moved=False
         try:

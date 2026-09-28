@@ -10,6 +10,7 @@ from uuid import uuid4
 from msg.core.codec import canonical,decode,digest,loads,wire
 from msg.core.errors import Failure,require
 from msg.core.models import TransferSession,TransferChunk,ResourceRef,AccessRequirement,Page
+from msg.storage.capacity import require_transfer_capacity
 
 
 def validate_digest(value):
@@ -50,6 +51,7 @@ class TransferService:
         require(isinstance(media_type,str) and 0<len(media_type)<=255 and '\r' not in media_type and '\n' not in media_type,
                 'invalid_media_type')
         async with self.metadata.transaction(write=True) as tx:
+            require_transfer_capacity(tx, new_transfer=True)
             if direction=='download':
                 require(target is not None,'target_required')
                 await self._access(context,tx,target.id,'transfer.open','read')
@@ -94,6 +96,7 @@ class TransferService:
                     decode(TransferChunk,loads(rows[0][2])).content.digest==digest,'chunk_conflict')
                 return decode(TransferChunk,loads(rows[0][2]))
             require(transfer.state=='open','transfer_closed')
+            require_transfer_capacity(tx, len(data))
             async def pieces():
                 yield data
             blob=await self.contents.put(pieces(),'application/octet-stream',expected_digest=digest)

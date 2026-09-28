@@ -554,7 +554,14 @@ def install(app):
         'related_resource':{'anyOf':[REF,{'type':'null'}]},
         'expected_revision':IDENTIFIER},('name','title'))
 
+    todo_v2_args=obj({'name':STRING,'title':STRING,'description':STRING,
+        'status':todo_status,'priority':todo_priority,'due_at':{'type':['string','null']},
+        'related_resource':{'anyOf':[REF,{'type':'null'}]},
+        'expected_revision':IDENTIFIER,**personal_signature_fields},
+        ('name','title',*personal_signature_fields))
+
     @op('identity.todo_put',todo_put_args,signature=True)
+    @op('identity.todo_put',todo_v2_args,signature=True,version=2)
     async def todo_put(ctx,request,tx):
         subject=await controlled_owner(app,ctx,request,tx)
         args=request.arguments
@@ -576,6 +583,10 @@ def install(app):
         body=canonical({'title':title,'description':description,
             'status':args.get('status','pending'),'priority':args.get('priority','neutral'),
             'due_at':due_at,'related_resource':related}).decode('utf-8')
+        proof={}
+        if request.contract_version==2:
+            proof={'content_signature':args['content_signature'],'revision_id':args['revision_id'],
+                   'resource_id':args['resource_id']}
         folder=tx.one('SELECT id FROM resources WHERE parent=? AND name=?',
                       (subject.resource_id,'todos'))
         if folder is None:
@@ -590,15 +601,20 @@ def install(app):
         if row is None:
             require('expected_revision' not in args,'todo_revision_not_found')
             resource=await create_resource(app,ctx,request,tx,parent=directory.id,
-                type='todo',name=name,body=body,media_type='application/json',mode=0o600)
+                type='todo',name=name,body=body,media_type='application/json',mode=0o600,
+                resource_id=proof.get('resource_id'),content_signature=proof.get('content_signature'),
+                revision_id=proof.get('revision_id'))
         else:
             resource=await tx.resource(row[0])
             require(resource.type=='todo' and resource.owner==subject.resource_id and
                     resource.state=='active' and resource.mode&0o077==0,
                     'personal_resource_conflict')
+            if proof:
+                require(proof['resource_id']==resource.id,'personal_resource_mismatch')
             require(args.get('expected_revision')==resource.revision,'revision_conflict')
             await assert_generation(request,resource)
-            resource=await revise_resource(app,ctx,request,tx,resource,body,'application/json')
+            resource=await revise_resource(app,ctx,request,tx,resource,body,'application/json',
+                signature=proof.get('content_signature'),revision_id=proof.get('revision_id'))
         save_personal_proof(tx,request,resource,subject.resource_id,'todo',ctx.now)
         return output_for(resource,**loads(body))
 
@@ -1431,6 +1447,8 @@ def install(app):
             possession_proof=decode(Signature,a['possession_proof']))
         csr=replace(csr,request_digest=digest(csr_body(csr)))
         verify_csr(csr)
+        from msg.storage.capacity import require_csr_capacity
+        require_csr_capacity(tx)
         # A CSR-only key is a verifier, not an unrestricted login key.
         existing=tx.one('SELECT subject FROM credentials WHERE id=?',(key_id(public),))
         require(existing is None or existing[0]==ctx.principal.subject,'key_owner_mismatch')
