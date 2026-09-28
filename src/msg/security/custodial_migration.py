@@ -12,7 +12,8 @@ from enum import StrEnum
 from msg.core.codec import canonical, decode, digest, loads, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import ResourceRef, Signature
-from msg.security.crypto import verify
+from msg.security.crypto import key_id, verify
+from msg.security.age_keys import encryption_key_id, public_from_recipient
 
 
 class MigrationPhase(StrEnum):
@@ -128,7 +129,45 @@ class MigrationSnapshot:
                 'custodial_migration_preview_stale')
 
 
+async def verify_challenge_binding(tx, subject, status, challenge, details):
+    """Verify the original challenge even when there are no history ACKs.
+
+    The retired signing credential remains a historical verifier, not current
+    authority. A mutable copy of a key ID in the migration body is not a proof.
+    """
+    try:
+        public = unb64(challenge['public_key'], limit=32)
+        old = await tx.credential(details['old_identity_key_id'])
+        require(challenge['subject_id'] == subject and old.subject_id == subject and
+                old.kind == 'signing_key' and key_id(old.verifier) == old.id and
+                key_id(public) == details['new_identity_key_id'] and
+                old.id != details['new_identity_key_id'] and
+                encryption_key_id(public_from_recipient(challenge['encryption_recipient'])) ==
+                    details['new_encryption_key_id'] and
+                details['old_encryption_key_id'] != details['new_encryption_key_id'],
+                'custodial_challenge_invalid')
+        verify(old.verifier, canonical(challenge), decode(Signature, details['server_signature']),
+               purpose='custodial-upgrade-challenge')
+        old_age = tx.one('SELECT subject,recipient,public_key FROM encryption_subkeys WHERE key_id=?',
+                         (details['old_encryption_key_id'],))
+        require(old_age is not None and old_age[0] == subject and
+                encryption_key_id(public_from_recipient(old_age[1])) == details['old_encryption_key_id'] and
+                unb64(old_age[2], limit=32) == public_from_recipient(old_age[1]),
+                'custodial_challenge_invalid')
+    except (Failure, KeyError, TypeError, ValueError) as exc:
+        raise Failure('custodial_challenge_invalid') from exc
+    if status != 'completed':
+        require(old.revoked_at is None, 'custodial_signing_key_retired')
+    retained = tx.one('SELECT status FROM custodial_vault WHERE subject=?', (subject,))
+    if status == 'pending_rewrap' or (status == 'completed' and retained == ('decrypt_only',)):
+        target = tx.one('SELECT subject,recipient,is_primary,retired_at FROM encryption_subkeys '
+                        'WHERE key_id=?', (details['new_encryption_key_id'],))
+        require(target == (subject, challenge['encryption_recipient'], 1, None),
+                'custodial_encryption_target_changed')
+
+
 async def snapshot(tx, subject, status, challenge, details):
+    await verify_challenge_binding(tx, subject, status, challenge, details)
     frozen = details.get('age_inventory')
     require(isinstance(frozen, list), 'custodial_inventory_required')
     require(frozen == ordered(frozen) and len({i['revision'] for i in frozen}) == len(frozen),
