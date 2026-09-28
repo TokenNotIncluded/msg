@@ -9,40 +9,49 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      PRIOR: 41bb241ef21793b6f951714dbca266bcf67386ef
-      MAIN: e94202899ab48399a586b0c613a1b817f9783d58
-      EXPECTED_TREE: d3f0250b9ed9ffe3ebb3ad55a4db94b2f4e553d6
+      PRIOR: 8eb8b1d62a57ef14bf05ab8d0c519f54e8a5025a
+      EXPECTED_TREE: 9602e2f987d8850e319dffa87758ed3c45113a6e
       TARGET: fix/security-pr-review-20260928-69befd0
-      STAGING: chore/security-integration-e942-d3f0250
+      STAGING: chore/security-preview-v1-9602e2f
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: 41bb241ef21793b6f951714dbca266bcf67386ef
-          fetch-depth: 0
-      - name: Reproduce the reviewed three-way merge and verify the complete tree
+          ref: 8eb8b1d62a57ef14bf05ab8d0c519f54e8a5025a
+          fetch-depth: 1
+      - name: Verify exact corrective patch and product tree
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          gh api repos/TokenNotIncluded/msg.lmm.best/git/blobs/f06e96bfae1e561980727d1344f4c0f6f3f46d20 > /tmp/correction.json
+          python - <<'PY'
+          import base64, gzip, hashlib, json
+          from pathlib import Path
+          source = json.loads(Path('/tmp/correction.json').read_text())
+          patch = gzip.decompress(base64.b64decode(source['content']))
+          assert hashlib.sha256(patch).hexdigest() == '8c5a297ee9298a9220a66f592c849cdc013877bb2a72e04dbbe90b81120ebb61'
+          Path('/tmp/correction.patch').write_bytes(patch)
+          PY
           test "$(git rev-parse HEAD)" = "$PRIOR"
           test "$(git ls-remote --heads origin "refs/heads/$TARGET" | cut -f1)" = "$PRIOR"
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git merge --no-commit --no-ff "$MAIN"
-          test "$(git write-tree)" = "$EXPECTED_TREE"
+          git apply --check /tmp/correction.patch
+          git apply --index /tmp/correction.patch
           git diff --cached --check
-          git commit -m 'Merge current main into security repairs without dropping account-scope protections' -m 'Preserve both parents and all main changes. Complete tree d3f0250b9ed9ffe3ebb3ad55a4db94b2f4e553d6 independently reconstructed locally from the main CI source artifact and unchanged document blob identities. Only the security repair delta remains relative to e942028. Product target-runtime CI and review remain required; no production access or main merge.'
-      - name: Stage immutable source only; a connector updates the PR ref separately
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+      - name: Stage only this correction, not the PR ref or main
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
           if git ls-remote --heads origin "refs/heads/$STAGING" | grep -q .; then
             echo 'Refusing to overwrite an existing staging branch' >&2
             exit 1
           fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(hosting): bound preview work without changing published v1 schema' -m 'The expanded integration regression caught short-code contract drift. Preserve the immutable v1 schema and enforce 128 entries at runtime after authorization, before source traversal/materialization. Replace schema-only assertions with actual signed 129-entry rejection (zero storage IO/writes) and successful 128-entry positive control. Existing immutable-shortcode assertion stays unchanged. Target-runtime CI remains required.'
           git push origin "HEAD:refs/heads/$STAGING"
           mkdir -p /tmp/security-publication
           git rev-parse HEAD HEAD^{tree} > /tmp/security-publication/revision.txt
-          git diff "$MAIN" HEAD --stat > /tmp/security-publication/stat.txt
-          git diff --binary "$MAIN" HEAD > /tmp/security-publication/security.patch
+          cp /tmp/correction.patch /tmp/security-publication/
           cat /tmp/security-publication/revision.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
