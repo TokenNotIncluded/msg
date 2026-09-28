@@ -1,0 +1,61 @@
+name: Verify PR 142 followup transport
+on:
+  push:
+    branches: [workbench/security-142-source-20260928]
+    paths: [.github/workflows/security-followup-transport.yml]
+permissions:
+  contents: write
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: abc452cd385c5cf0735e182d5a6262f5b483d061
+          path: transport
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: cbc5741d45afccafca9f189f4cd27c3f94300b4e
+          path: source
+          fetch-depth: 0
+      - name: Recover and verify transported patch
+        run: |
+          mkdir -p evidence
+          python - <<'PY'
+          import base64, hashlib, pathlib, re, zlib
+          text = pathlib.Path('transport/.github/workflows/security-followup-prepare.yml').read_text()
+          encoded = re.search(r"PATCH_B64: '([^']+)'", text).group(1)
+          pathlib.Path('evidence/received-patch.b64').write_text(encoded)
+          for old, new in (
+              ('NN0Gs3DRa', 'NN0Gs3u3DRa'),
+              ('SWINVPJ3OC1F', 'SWINVPJ3OdE98Lfv1L/DZaKWUTlbOC1F'),
+              ('G90tO8Xeeeq3989', 'G90tO8Xeeq3989'),
+          ):
+              assert encoded.count(old) == 1, old
+              encoded = encoded.replace(old, new)
+          pathlib.Path('evidence/corrected-patch.b64').write_text(encoded)
+          patch = zlib.decompress(base64.b64decode(encoded, validate=True))
+          actual = hashlib.sha256(patch).hexdigest()
+          print('Patch SHA-256:', actual)
+          assert actual == '931f889e681e443d3d25bd6edb432fb3d8c25a7f2ad232c01b3d4a9d481e5e95'
+          pathlib.Path('evidence/followup.patch').write_bytes(patch)
+          PY
+      - name: Prepare source-only commit without moving the PR branch
+        working-directory: source
+        run: |
+          test "$(git rev-parse HEAD)" = cbc5741d45afccafca9f189f4cd27c3f94300b4e
+          git apply --check ../evidence/followup.patch
+          git apply --index ../evidence/followup.patch
+          git diff --cached --check
+          test "$(git write-tree)" = 54b39853ab2ac0f25164ed90ec0fd6b7e300a065
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'fix(security): retain rollback fences and compensate cancelled upload pins'
+          git push origin HEAD:refs/heads/workbench/security-142-prepared-20260928
+          git rev-parse HEAD HEAD^{tree} > ../evidence/prepared-identity.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: security-followup-transport-evidence
+          path: evidence/
+          retention-days: 1
