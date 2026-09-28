@@ -1,0 +1,29 @@
+name: Security source export
+on:
+  push:
+    branches: [workbench/security-142-source-20260928]
+    paths: [.github/workflows/security-source-export.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: cbc5741d45afccafca9f189f4cd27c3f94300b4e
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export tracked source only, never credentials or runtime state
+        run: |
+          mkdir -p export
+          git archive --format=tar.gz HEAD > export/source.tar.gz
+          git bundle create export/source.bundle HEAD
+          git rev-parse HEAD HEAD^{tree} > export/identity.txt
+          sha256sum export/source.tar.gz export/source.bundle > export/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: security-142-source-cbc5741
+          path: export/
+          retention-days: 1
