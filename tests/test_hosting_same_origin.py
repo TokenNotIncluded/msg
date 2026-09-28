@@ -81,6 +81,48 @@ async def test_same_domain_hosted_html_head_304_range_raw_and_no_write_route(ins
 
 
 @pytest.mark.asyncio
+async def test_deploy_entry_bound_matches_preview_before_any_materialization(installed,monkeypatch):
+    app, _ = installed
+    key,user,_=await register(app,'web-bounded')
+    site=await call(app,'hosting.create',{'parent':'/@web-bounded','name':'web'},
+                    key=key,subject=user)
+    source=await call(app,'content.file_put',{'parent':'/@web-bounded/files',
+        'name':'page.html','data':b64(b'<p>bounded</p>'),'media_type':'text/html'},
+        key=key,subject=user)
+    assert site.status==source.status=='ok'
+    site_id=site.resources[0].id
+    arguments={'id':site_id,'entries':[{'path':f'{i}.html','source':wire(source.resources[0])}
+                                       for i in range(129)]}
+    spec=app.registry.operation('hosting.deploy',1)
+    assert 'maxItems' not in app.registry.schema(spec.input_schema)['properties']['entries']
+    app.registry.validate(spec.input_schema,arguments)
+    async with app.metadata.transaction(write=False) as tx:
+        before=tuple(tx.one(f'SELECT COUNT(*) FROM {table}')[0]
+                     for table in ('resources','revisions','settings'))
+    async def no_materialization(*args,**kwargs):
+        pytest.fail('oversized deploy touched the content store')
+    with monkeypatch.context() as patch:
+        patch.setattr(app.contents,'read_bytes',no_materialization)
+        patch.setattr(app.contents,'put_bytes',no_materialization)
+        denied=await call(app,'hosting.deploy',arguments,key=key,subject=user,
+                          expected=((site_id,site.data['generation']),))
+    assert denied.status=='error' and denied.error.code=='too_many_hosting_entries',wire(denied)
+    async with app.metadata.transaction(write=False) as tx:
+        assert tuple(tx.one(f'SELECT COUNT(*) FROM {table}')[0]
+                     for table in ('resources','revisions','settings'))==before
+        assert (await tx.resource(site_id)).revision is None
+    allowed=await call(app,'hosting.deploy',{**arguments,'entries':arguments['entries'][:128]},
+                       key=key,subject=user,expected=((site_id,site.data['generation']),))
+    assert allowed.status=='ok' and allowed.data['files']==128,wire(allowed)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url='http://testserver') as http:
+        last=await http.get('/@web-bounded/web/127.html')
+        assert last.status_code==200 and last.content==b'<p>bounded</p>'
+        isolated(last)
+        assert (await http.get('/@web-bounded/web/128.html')).status_code==404
+
+
+@pytest.mark.asyncio
 async def test_preview_history_and_atomic_activation_share_same_csp(installed):
     app, _ = installed
     key,user,_=await register(app,'web-versions')
