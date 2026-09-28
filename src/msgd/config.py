@@ -25,6 +25,7 @@ class Config:
 
     webhook_secret_key: str = "/var/lib/msg-lmm-best/webhook.key"
     webhook_max_per_identity: int = 8
+    webhook_max_queued_deliveries: int = 10_000
     webhook_delivery_enabled: bool = True
 
     websub_delivery_enabled: bool = True
@@ -122,6 +123,11 @@ class Config:
             webhook_max_per_identity=get(
                 "webhooks", "max_per_identity", base.webhook_max_per_identity
             ),
+            webhook_max_queued_deliveries=get(
+                "webhooks",
+                "max_queued_deliveries",
+                base.webhook_max_queued_deliveries,
+            ),
             webhook_delivery_enabled=get(
                 "webhooks", "delivery_enabled", base.webhook_delivery_enabled
             ),
@@ -201,6 +207,7 @@ class Config:
             "write_per_minute",
             "read_per_minute",
             "webhook_max_per_identity",
+            "webhook_max_queued_deliveries",
             "websub_default_lease_seconds",
             "websub_max_lease_seconds",
             "repo_max_blob_bytes",

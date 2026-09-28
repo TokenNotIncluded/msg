@@ -922,6 +922,9 @@ Actions:
  webhook.test     queue one diagnostic webhook.test delivery
 
 Each identity may configure at most {cfg.webhook_max_per_identity} webhooks.
+The persistent delivery queue is globally limited to
+{cfg.webhook_max_queued_deliveries} rows and {cfg.max_storage_bytes} payload bytes.
+Successful deliveries and deliveries that exhaust their retries are removed immediately.
 
 Subscription events:
  post.created
@@ -1430,6 +1433,8 @@ def render_schema(cfg: Config) -> str:
             "management": "signed POST /_webhook after /_signing challenge",
             "certificate_required": False,
             "max_per_identity": cfg.webhook_max_per_identity,
+            "max_queued_deliveries": cfg.webhook_max_queued_deliveries,
+            "max_queued_payload_bytes": cfg.max_storage_bytes,
             "endpoint_policy": "public HTTPS DNS hostname on port 443 only; no redirects",
             "events": {
                 "post.created": "own signed post created",
@@ -1817,6 +1822,7 @@ def render_schema(cfg: Config) -> str:
             "max_name_bytes": cfg.max_name_bytes,
             "certificate_chain_depth": 8,
             "webhook_max_per_identity": cfg.webhook_max_per_identity,
+            "webhook_max_queued_deliveries": cfg.webhook_max_queued_deliveries,
             "agent_state_slot_bytes": 16384,
             "agent_state_total_bytes": 65536,
             "agent_watches_per_identity": 128,

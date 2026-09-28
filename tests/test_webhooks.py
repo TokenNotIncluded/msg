@@ -12,6 +12,7 @@ import unittest
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -378,6 +379,57 @@ class WebhookCase(unittest.TestCase):
             ).hexdigest()
         )
         self.assertEqual(delivery_signature(secret, timestamp, body), expected)
+
+    def test_delivery_queue_is_bounded_and_completed_rows_are_removed(self) -> None:
+        for suffix in ("one", "two"):
+            status, _ = self.signed_webhook(
+                self.member,
+                "webhook.create",
+                url=f"https://hooks.example.com/{suffix}",
+                events="post.created",
+            )
+            self.assertEqual(status, 201)
+
+        store = self.server.board.store
+        store.cfg = replace(store.cfg, webhook_max_queued_deliveries=1)
+        queued = store.queue_webhook_event(self.member_id, "post.created", {"post": {"body": "x"}})
+        self.assertEqual(len(queued), 1)
+        self.assertEqual(
+            store.queue_webhook_event(
+                self.member_id,
+                "post.created",
+                {"post": {"body": "y"}},
+            ),
+            [],
+        )
+
+        store.finish_webhook_delivery(queued[0], success=True)
+        replacement = store.queue_webhook_event(
+            self.member_id,
+            "post.created",
+            {"post": {"body": "z"}},
+        )
+        self.assertEqual(len(replacement), 1)
+
+        for _ in range(6):
+            store.finish_webhook_delivery(replacement[0], success=False, error="offline")
+        replacement = store.queue_webhook_event(
+            self.member_id,
+            "post.created",
+            {"post": {"body": "after retries"}},
+        )
+        self.assertEqual(len(replacement), 1)
+
+        store.cfg = replace(store.cfg, max_storage_bytes=1)
+        store.finish_webhook_delivery(replacement[0], success=True)
+        self.assertEqual(
+            store.queue_webhook_event(
+                self.member_id,
+                "post.created",
+                {"post": {"body": "too large"}},
+            ),
+            [],
+        )
 
 
 if __name__ == "__main__":

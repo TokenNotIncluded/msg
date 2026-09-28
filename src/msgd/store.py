@@ -4644,13 +4644,31 @@ class Store:
                     (only_webhook_id, subject_id),
                 ).fetchall()
 
+        serialized = json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+        serialized_bytes = len(serialized.encode("utf-8"))
         now = time.time()
         queued: list[str] = []
         with self._lock, self._conn:
+            usage = self._conn.execute(
+                """
+                SELECT COUNT(*) AS deliveries,
+                       COALESCE(SUM(LENGTH(CAST(data AS BLOB))), 0) AS nbytes
+                  FROM webhook_deliveries
+                """
+            ).fetchone()
+            delivery_count = int(usage["deliveries"])
+            delivery_bytes = int(usage["nbytes"])
             for row in rows:
                 subscribed = set(json.loads(str(row["events"])))
                 if event != "webhook.test" and event not in subscribed:
                     continue
+                # Delivery payloads are attacker-influenced persistent data. Keep
+                # both their byte usage and SQLite row overhead globally bounded.
+                if (
+                    delivery_count >= self.cfg.webhook_max_queued_deliveries
+                    or delivery_bytes + serialized_bytes > self.cfg.max_storage_bytes
+                ):
+                    break
                 delivery_id = secrets.token_hex(16)
                 self._conn.execute(
                     """
@@ -4663,12 +4681,14 @@ class Store:
                         str(row["id"]),
                         subject_id,
                         event,
-                        json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+                        serialized,
                         now,
                         now,
                     ),
                 )
                 queued.append(delivery_id)
+                delivery_count += 1
+                delivery_bytes += serialized_bytes
         return queued
 
     def due_webhook_deliveries(self, limit: int = 20) -> list[dict[str, Any]]:
@@ -4722,27 +4742,31 @@ class Store:
                 return
             attempts = int(row["attempts"]) + 1
             if success:
+                # A successful delivery is no longer useful queue state. Removing
+                # it immediately prevents routine traffic from filling the quota.
                 self._conn.execute(
-                    """
-                    UPDATE webhook_deliveries
-                       SET attempts = ?, delivered = ?, last_error = ''
-                     WHERE id = ?
-                    """,
-                    (attempts, now, delivery_id),
+                    "DELETE FROM webhook_deliveries WHERE id = ?",
+                    (delivery_id,),
                 )
                 self._conn.execute(
                     "UPDATE webhooks SET last_error = '' WHERE id = ?",
                     (str(row["webhook_id"]),),
                 )
             else:
-                self._conn.execute(
-                    """
-                    UPDATE webhook_deliveries
-                       SET attempts = ?, next_attempt = ?, last_error = ?
-                     WHERE id = ?
-                    """,
-                    (attempts, now + retry_after, error[:500], delivery_id),
-                )
+                if attempts >= 6:
+                    self._conn.execute(
+                        "DELETE FROM webhook_deliveries WHERE id = ?",
+                        (delivery_id,),
+                    )
+                else:
+                    self._conn.execute(
+                        """
+                        UPDATE webhook_deliveries
+                           SET attempts = ?, next_attempt = ?, last_error = ?
+                         WHERE id = ?
+                        """,
+                        (attempts, now + retry_after, error[:500], delivery_id),
+                    )
                 self._conn.execute(
                     "UPDATE webhooks SET last_error = ? WHERE id = ?",
                     (error[:500], str(row["webhook_id"])),

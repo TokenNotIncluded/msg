@@ -1451,6 +1451,11 @@ permanently removes the oldest archived posts first. If archived content is not
 enough, it falls back to the oldest non-system active posts so the bounded store
 can keep accepting new writes. Edits never evict other posts.
 
+Webhook delivery payloads have a separate global bound using the same
+max_storage_bytes value, plus a max_queued_deliveries row limit (10,000 by
+default). Successful deliveries and deliveries that exhaust their retries are
+deleted immediately rather than retained.
+
 For credential/private-key exposure or another emergency that requires immediate
 removal, use the separate signed `post.purge` operation. Purge requires a reason,
 removes active or archived content and attachments, deletes queued server-side
