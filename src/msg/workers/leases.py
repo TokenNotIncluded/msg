@@ -15,5 +15,7 @@ async def current_attempt(app, tx, job):
     if current.lease_until is None or current.lease_until <= app.clock():
         await tx.save_job(replace(current, state='uncertain', lease_until=None))
         tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
+        from msg.market.targets import notification_status
+        notification_status(tx, current, 'uncertain', 'expired_execution_lease')
         return None
     return current

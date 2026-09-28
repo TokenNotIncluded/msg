@@ -15,7 +15,8 @@ import time
 
 from msg.constants import ROOT_SUBJECT
 from msg.core.codec import decode, wire
-from msg.core.errors import Failure, require
+from msg.core.errors import Failure
+from msg.core.errors import require
 from msg.core.models import (
     CapabilityGrant, EffectJob, EmailSettings, ExecutionContext, Principal, ResourceRef,
 )
@@ -121,6 +122,8 @@ class EffectWorker:
                 if job.lease_until is None or job.lease_until <= self.app.clock():
                     await tx.save_job(replace(job, state='uncertain', lease_until=None))
                     tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
+                    from msg.market.targets import notification_status
+                    notification_status(tx, job, 'uncertain', 'expired_execution_lease')
                     return job, False
             row = tx.one("SELECT id FROM jobs WHERE state='pending' AND next_at<=? ORDER BY next_at,id LIMIT 1",
                          (wire(self.app.clock()),))
@@ -140,6 +143,8 @@ class EffectWorker:
             await tx.save_job(replace(current, state=state, lease_until=None))
             tx.set_setting('job_status:' + job.id,
                            {'code': code} if status is None else status)
+            from msg.market.targets import notification_status
+            notification_status(tx, job, state, code)
 
     async def _retry(self, job, retry_code, exhausted_code):
         async with self.app.metadata.transaction(write=True) as tx:
@@ -153,6 +158,9 @@ class EffectWorker:
                                      lease_until=None, next_attempt_at=next_at))
             tx.set_setting('job_status:' + job.id,
                            {'code': exhausted_code if exhausted else retry_code})
+            from msg.market.targets import notification_status
+            notification_status(tx, job, 'failed' if exhausted else 'pending',
+                                exhausted_code if exhausted else retry_code)
 
     async def _retry_mail(self, job, code):
         await self._retry(job, code, code)
@@ -267,6 +275,18 @@ class EffectWorker:
         require(state in {'sent', 'uncertain'}, 'invalid_delivery_result')
         await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
 
+    async def _market_mail(self, job):
+        from msg.market.targets import mail_enabled, render_notification
+        from msg.market.email import render_verification
+        require(mail_enabled(self.app), 'mail_disabled')
+        async with self.app.metadata.transaction(write=False) as tx:
+            await current_principal(self.app, job.principal, tx)
+            outgoing = await (render_verification(self.app,tx,job) if job.kind=='market_email_verify'
+                              else render_notification(self.app,tx,job))
+        state = await self.mail_sender.send(outgoing)
+        require(state in {'sent', 'uncertain'}, 'invalid_delivery_result')
+        await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
+
     async def _webhook(self, job):
         from msg.core.codec import canonical,decode,loads
         from msg.core.models import Event
@@ -340,6 +360,13 @@ class EffectWorker:
     async def run_once(self):
         if self.app.executor.recovery_drill_active():
             return False
+        if 'orders' in self.app.settings.server.plugins:
+            from msg.market.escrow import resolve_due
+            if await resolve_due(self.app):
+                return True
+            from msg.market.arbitration import resolve_cases
+            if await resolve_cases(self.app):
+                return True
         job, execute = await self._claim()
         if job is None:
             return False
@@ -350,6 +377,8 @@ class EffectWorker:
                 self.app.settings.server.staging_dir.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix='effect-', dir=self.app.settings.server.staging_dir) as temp:
                     await self._tool(job, Path(temp))
+            elif job.kind in {'market_mail','market_email_verify'}:
+                await self._market_mail(job)
             elif job.kind == 'mail':
                 await self._mail(job)
             elif job.kind == 'webhook':
@@ -375,7 +404,7 @@ class EffectWorker:
         except Failure as exc:
             # Known pre-execution rejection is a definite failure. External calls
             # surface uncertain explicitly rather than inventing an exactly-once promise.
-            if job.kind=='mail' and exc.retryable and exc.code=='mail_connection_failed':
+            if job.kind in {'mail','market_mail','market_email_verify'} and exc.retryable and exc.code=='mail_connection_failed':
                 await self._retry_mail(job,exc.code)
                 return True
             await self._finish(job, 'uncertain' if exc.code in {'external_uncertain','job_lease_lost'} else 'failed', exc.code)

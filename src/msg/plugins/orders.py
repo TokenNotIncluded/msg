@@ -209,8 +209,8 @@ def install(app):
     @op('orders.get', obj({'order_id': IDENTIFIER}, ('order_id',)), effect='read')
     async def get(ctx, request, tx):
         viewer = _viewer(ctx)
-        return HandlerOutput(data={'order': _view(_row(tx, request.arguments['order_id'],
-                                                       viewer), viewer)})
+        from msg.market.orders import view
+        return HandlerOutput(data={'order': view(tx, _row(tx, request.arguments['order_id'], viewer), viewer)})
 
     @op('orders.list', obj({'role': {'enum': ['buy', 'sell']},
         'status': {'enum': ['open', 'completed', 'disputed']},
@@ -227,7 +227,7 @@ def install(app):
             where = ('buyer=?' if role == 'buy' else 'seller=?')
             values = [viewer]
         if status:
-            where += (' AND state IN (\'funded\',\'delivered\',\'accepted\')'
+            where += (' AND state IN (\'created\',\'funded\',\'delivered\',\'accepted\')'
                       if status == 'open' else
                       ' AND state IN (\'settled\',\'cancelled\',\'refunded\')'
                       if status == 'completed' else
@@ -243,8 +243,11 @@ def install(app):
     async def payment(ctx, request, tx):
         viewer = _viewer(ctx)
         row = _row(tx, request.arguments['order_id'], viewer)
+        if tx.one('SELECT 1 FROM order_contracts WHERE order_id=?', (row['id'],)):
+            from msg.market.policy import contract
+            contract(tx, row['id'])
         result = {'order_id': row['id'],
-                  'status': 'refunded' if row['state'] == 'refunded' else 'funded',
+                  'status': _view(row, viewer)['payment_status'],
                   'amount_minor': row['total_price_minor'],
                   'currency_id': row['currency_id']}
         if viewer == row['buyer']:
@@ -254,9 +257,13 @@ def install(app):
                                 (transaction_id,))
                 require(ledger is not None, 'order_not_found')
                 receipts.append(loads(ledger[0]))
-            result['receipt'] = receipts[0]
+            result['receipt'] = receipts[0] if receipts else None
             result['receipts'] = receipts
             result['escrow_balance_minor'] = _balance(tx, row['escrow_subject'])
         return HandlerOutput(data={'payment': result})
 
+    from msg.market.orders import install as install_market
+    install_market(app, op)
+    from msg.market.arbitration import install as install_arbitration
+    install_arbitration(app, op)
     finish()

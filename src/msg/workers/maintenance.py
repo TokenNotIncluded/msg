@@ -190,6 +190,9 @@ async def _collect(app,tx, *, grace_seconds=3600):
     # In-flight chunks and sealed uploads are roots until the transfer expires.
     for raw, in tx.execute('SELECT c.body FROM chunks c JOIN transfers t ON t.id=c.transfer_id'):
         live.add(loads(raw)['content']['digest'][7:])
+    from msg.market.references import content_references
+    for content in content_references(tx.execute):
+        live.add(content['digest'][7:])
     recent=time.time()-grace_seconds
     removed=0
     # Explicit pins are live roots even before a Revision/Transfer pointer is

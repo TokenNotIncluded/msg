@@ -159,6 +159,9 @@ def install(app):
         require(buyer is not None and ctx.principal.actor == buyer,
                 'order_not_found')
         order = _buyer_order(tx, request.arguments['order_id'], buyer)
+        if tx.one('SELECT 1 FROM order_contracts WHERE order_id=?', (order['id'],)):
+            from msg.market.delivery import read
+            return await read(app, tx, ctx, request)
         delivery = _delivery(tx, order['id'])
         require(delivery is not None, 'delivery_not_found')
         await _verified_delivery(app, tx, order, delivery)
@@ -177,6 +180,9 @@ def install(app):
         'delivery_digest': {'type': 'string', 'pattern': '^sha256:[a-f0-9]{64}$'}},
         ('order_id', 'delivery_digest')), signature=True)
     async def accept(ctx, request, tx):
+        if tx.one('SELECT 1 FROM order_contracts WHERE order_id=?', (request.arguments['order_id'],)):
+            from msg.market.delivery import accept as market_accept
+            return await market_accept(app, tx, ctx, request)
         receipt,decision,delivery = await EscrowEngine(app).settle(
             ctx,request,tx,reason='buyer_accept')
         return HandlerOutput(data={'order_id':request.arguments['order_id'],'state':'settled',
@@ -214,4 +220,6 @@ def install(app):
                                           enabled=request.arguments.get('enabled', True))
         return HandlerOutput(data={'order_id': order['id'], 'notification': status})
 
+    from msg.market.delivery import install as install_market
+    install_market(app, op)
     finish()

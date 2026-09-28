@@ -1,6 +1,18 @@
 # 项目设计差距报告
 
-## 当前工作树进度与验收边界
+## #73–75：版本化市场实现（2026-09-28）
+
+订单快照、自动交付、独立 checkout 邮箱验证和确定性仲裁已实现；接口、最终性、默认无仲裁员、旧 `@1` 兼容及运维边界集中见 [MARKET_CONTRACTS.md](MARKET_CONTRACTS.md)。下方 `135a190` 及更早测试数字属于历史提交，不能用于本批验收。
+
+| Issue | 实现与测试入口 | 保留的部署边界 |
+| --- | --- | --- |
+| #73 | `market/orders.py`、`escrow.py`；不可变签名快照、显式状态表、单一资金释放、原子分账；`test_market_lifecycle.py` | 不改已签名 `orders.buy@1` 的含义；生产库迁移单独审查 |
+| #74 | `market/delivery.py`、`targets.py`、`email.py`；managed 自动结算但不 claimed，sealed/service 显式验收，真实 Transfer 和买家 endpoint 复核；`test_market_delivery.py` | SMTP 只发最小通知；本地 fake sender 不代表真实 SMTP 验收 |
+| #75 | `market/policy.py`、`arbitration.py`；固定候选/epoch/panel/quorum、一次申诉、私有证据、有效签名 Decision 由 escrow 原子消费；`test_market_arbitration.py` | 默认候选为空；撤权/缺 quorum 持款，不临时挑人或让 AI 自由裁量 |
+
+`market_lifecycle` 隔离 selftest 覆盖 20 MSG 注资、10 MSG PoP 奖励、5 MSG 固定 bundle 自动交易及签名仲裁退款；只读 doctor 检查市场不变量。`test_market_recovery.py` 验证真实备份恢复、CAS 证据及恢复演练副作用隔离。验证结果以本批 PR 的具体 head 和 CI 为准，不能把这些模块扩写为整个项目或生产交易已验收。
+
+## 历史：135a190 时点的工作树进度与验收边界
 
 本次重新读取[ChatGPT权威设计](https://docs.google.com/document/d/1EM5Qr5qdg6tAFi2wvY0EBm6zxMj6DTBMc_dybU5qkz0/edit)，当前191个非空段；[已完成部分](https://docs.google.com/document/d/1FtTdF5uhBPAsi-so-jOfpsiVI19RWKgx6bzIEFvpR2E/edit)当前71个非空段，含A19/A20等归档条款。历史段数和旧CI仅作沿革；归档不取消未迁出需求及回归要求。
 

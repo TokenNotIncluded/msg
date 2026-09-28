@@ -43,6 +43,10 @@ def _db_refs(connection):
         content=loads(raw)['content']
         require(content['digest'].startswith('sha256:'), 'backup_reference_invalid')
         contents[content['digest'][7:]]=content['size']
+    from msg.market.references import content_references
+    for content in content_references(connection.execute):
+        require(content['digest'].startswith('sha256:'), 'backup_reference_invalid')
+        contents[content['digest'][7:]]=content['size']
     live={row[0] for row in connection.execute('SELECT revision FROM resources WHERE revision IS NOT NULL')}
     require(live.issubset(set(revisions)), 'backup_revision_missing')
     return {'contents':contents, 'revisions':revisions}
