@@ -586,6 +586,8 @@ iterate on simple code.
 - no certificate is required for either authenticated Git transport
 - there are no owners, collaborator lists, PRs, issues, approvals, or per-repo ACLs
 - every incoming Git blob is limited to {cfg.repo_max_blob_bytes} bytes (1 MiB by default)
+- repository, identity, global byte, repository-count, and object-count quotas bound
+  durable Git storage; pushes exceeding any quota are rejected in full
 - a push containing any larger blob is rejected in full
 - Git LFS is not provided
 - Git commit objects themselves do not need a separate GPG/SSH signature; the

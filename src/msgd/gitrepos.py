@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import fcntl
 import os
 import re
 import shutil
@@ -162,45 +163,68 @@ class RepoService:
         ):
             return None
 
-    def ensure_repository(self, name: str) -> Path:
+    def ensure_repository(self, name: str, signer_id: str | None = None) -> Path:
         git = self._require_git()
         path = self._path(name)
         with self._lock:
-            if path.exists():
-                if not path.is_dir():
-                    raise StoreError("repository path is not a directory", 500)
-                self._install_hook(path)
-                return path
-
             self.root.mkdir(parents=True, exist_ok=True)
-            try:
-                subprocess.run(
-                    [git, "init", "--bare", "--initial-branch=main", str(path)],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                subprocess.run(
-                    [git, "--git-dir", str(path), "config", "http.receivepack", "true"],
-                    check=True,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                )
-                (path / "description").write_text(
-                    f"Public repository {name} on {self.cfg.site_name}\n",
-                    encoding="utf-8",
-                )
-                self._install_hook(path)
-            except (OSError, subprocess.CalledProcessError) as exc:
-                shutil.rmtree(path, ignore_errors=True)
-                raise StoreError("failed to initialize Git repository", 500) from exc
+            with (self.root / ".quota.lock").open("a+b") as quota_lock:
+                fcntl.flock(quota_lock, fcntl.LOCK_EX)
+                if path.exists():
+                    if not path.is_dir():
+                        raise StoreError("repository path is not a directory", 500)
+                    self._install_hook(path)
+                    self._claim_repository(path, signer_id)
+                    return path
+
+                repositories = [item for item in self.root.glob("*.git") if item.is_dir()]
+                if len(repositories) >= self.cfg.repo_max_repositories:
+                    raise StoreError("Git repository limit reached", 507)
+                if signer_id is not None:
+                    owned = sum(
+                        (item / "msgd-owner").read_text(encoding="ascii").strip() == signer_id
+                        for item in repositories
+                        if (item / "msgd-owner").is_file()
+                    )
+                    if owned >= self.cfg.repo_max_repositories_per_identity:
+                        raise StoreError("Git repository limit for identity reached", 507)
+                try:
+                    subprocess.run(
+                        [git, "init", "--bare", "--initial-branch=main", str(path)],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    subprocess.run(
+                        [git, "--git-dir", str(path), "config", "http.receivepack", "true"],
+                        check=True,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                    )
+                    (path / "description").write_text(
+                        f"Public repository {name} on {self.cfg.site_name}\n",
+                        encoding="utf-8",
+                    )
+                    self._install_hook(path)
+                    self._claim_repository(path, signer_id)
+                except (OSError, subprocess.CalledProcessError) as exc:
+                    shutil.rmtree(path, ignore_errors=True)
+                    raise StoreError("failed to initialize Git repository", 500) from exc
         return path
+
+    def _claim_repository(self, path: Path, signer_id: str | None) -> None:
+        if signer_id is None:
+            return
+        owner = path / "msgd-owner"
+        if owner.exists():
+            return
+        owner.write_text(f"{signer_id}\n", encoding="ascii")
 
     def _install_hook(self, repo: Path) -> None:
         hook = repo / "hooks" / "pre-receive"
-        content = _pre_receive_hook(self.cfg.repo_max_blob_bytes)
+        content = _pre_receive_hook(self.cfg)
         if hook.exists() and hook.read_text(encoding="utf-8") == content:
             return
         hook.write_text(content, encoding="utf-8")
@@ -306,7 +330,7 @@ class RepoService:
         if receive:
             if signer_id is None:
                 raise StoreError("signed Git push authentication required", 401)
-            self.ensure_repository(name)
+            self.ensure_repository(name, signer_id)
         elif not self._path(name).is_dir():
             raise StoreError("repository not found", 404)
 
@@ -428,12 +452,20 @@ def _parse_backend_output(stream: BinaryIO) -> GitBackendResponse:
     )
 
 
-def _pre_receive_hook(limit: int) -> str:
+def _pre_receive_hook(cfg: Config) -> str:
     return f"""#!/usr/bin/env python3
+import fcntl
+import os
 import subprocess
 import sys
 
-LIMIT = {limit}
+MAX_BLOB_BYTES = {cfg.repo_max_blob_bytes}
+MAX_REPO_BYTES = {cfg.repo_max_bytes}
+MAX_IDENTITY_BYTES = {cfg.repo_max_bytes_per_identity}
+MAX_TOTAL_BYTES = {cfg.repo_max_total_bytes}
+MAX_OBJECT_BYTES = {cfg.repo_max_object_bytes}
+MAX_OBJECTS = {cfg.repo_max_objects}
+MAX_PUSH_OBJECTS = {cfg.repo_max_objects_per_push}
 
 
 def fail(message):
@@ -470,6 +502,9 @@ for line in revisions.stdout.splitlines():
 if not objects:
     raise SystemExit(0)
 
+if len(objects) > MAX_PUSH_OBJECTS:
+    fail(f"rejected: push has {{len(objects)}} objects; maximum is {{MAX_PUSH_OBJECTS}}")
+
 batch = subprocess.run(
     ["git", "cat-file", "--batch-check=%(objectname) %(objecttype) %(objectsize)"],
     input="".join(f"{{oid}}\\n" for oid in objects),
@@ -481,14 +516,75 @@ if batch.returncode != 0:
 
 for line in batch.stdout.splitlines():
     oid, object_type, size_raw = line.split()
-    if object_type != "blob":
-        continue
     size = int(size_raw)
-    if size <= LIMIT:
+    if size > MAX_OBJECT_BYTES:
+        fail(
+            f"rejected: {{oid}} is a {{object_type}} of {{size}} bytes; "
+            f"maximum Git object size is {{MAX_OBJECT_BYTES}} bytes"
+        )
+    if object_type != "blob" or size <= MAX_BLOB_BYTES:
         continue
     object_path = objects.get(oid) or oid
     fail(
         f"rejected: {{object_path}} is {{size}} bytes; "
-        f"maximum file/blob size is {{LIMIT}} bytes"
+        f"maximum file/blob size is {{MAX_BLOB_BYTES}} bytes"
     )
+
+
+def disk_bytes(path):
+    total = 0
+    for root, dirs, files in os.walk(path, followlinks=False):
+        for name in dirs + files:
+            try:
+                total += os.lstat(os.path.join(root, name)).st_blocks * 512
+            except FileNotFoundError:
+                pass
+    return total
+
+
+git_dir = os.path.realpath(subprocess.check_output(
+    ["git", "rev-parse", "--absolute-git-dir"], text=True
+).strip())
+repo_root = os.path.dirname(git_dir)
+owner_path = os.path.join(git_dir, "msgd-owner")
+try:
+    with open(owner_path, encoding="ascii") as stream:
+        owner = stream.read().strip()
+except OSError:
+    # Repositories created by an administrator outside an authenticated transport
+    # still receive repository-wide and global quotas.
+    owner = "_unowned"
+
+lock_path = os.path.join(repo_root, ".quota.lock")
+with open(lock_path, "a+b") as lock:
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    repo_bytes = disk_bytes(git_dir)
+    total_bytes = disk_bytes(repo_root)
+    identity_bytes = 0
+    for entry in os.scandir(repo_root):
+        candidate_owner = os.path.join(entry.path, "msgd-owner")
+        if not entry.is_dir(follow_symlinks=False) or not os.path.isfile(candidate_owner):
+            continue
+        try:
+            with open(candidate_owner, encoding="ascii") as stream:
+                if stream.read().strip() == owner:
+                    identity_bytes += disk_bytes(entry.path)
+        except OSError:
+            continue
+
+    if repo_bytes > MAX_REPO_BYTES:
+        fail(f"rejected: repository storage quota {{MAX_REPO_BYTES}} bytes exceeded")
+    if identity_bytes > MAX_IDENTITY_BYTES:
+        fail(f"rejected: identity storage quota {{MAX_IDENTITY_BYTES}} bytes exceeded")
+    if total_bytes > MAX_TOTAL_BYTES:
+        fail(f"rejected: global Git storage quota {{MAX_TOTAL_BYTES}} bytes exceeded")
+
+    count = subprocess.run(
+        ["git", "rev-list", "--objects", "--all"], text=True, capture_output=True
+    )
+    if count.returncode != 0:
+        fail("rejected: cannot count repository objects")
+    existing = {{line.split(" ", 1)[0] for line in count.stdout.splitlines()}}
+    if len(existing | set(objects)) > MAX_OBJECTS:
+        fail(f"rejected: repository object quota {{MAX_OBJECTS}} exceeded")
 """

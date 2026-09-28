@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +13,7 @@ import time
 import unittest
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
@@ -123,6 +125,25 @@ class GitRepoCase(unittest.TestCase):
         self.assertIn(b"visibility=public", body)
         self.assertIn(b"pull_requests=unsupported", body)
 
+    def test_repository_creation_is_limited_per_identity(self) -> None:
+        self.server.board.repos.cfg = replace(
+            self.server.board.repos.cfg, repo_max_repositories_per_identity=2
+        )
+        authorization = self._authorization(Ed25519PrivateKey.generate())
+        for name in ("one", "two"):
+            status, body, _headers = self._request(
+                f"/repos/{name}.git/info/refs?service=git-receive-pack",
+                authorization=authorization,
+            )
+            self.assertEqual(status, 200, body.decode("utf-8", "replace"))
+
+        status, body, _headers = self._request(
+            "/repos/three.git/info/refs?service=git-receive-pack",
+            authorization=authorization,
+        )
+        self.assertEqual(status, 507)
+        self.assertIn(b"repository limit for identity reached", body)
+
     def test_pre_receive_rejects_blob_larger_than_one_mib(self) -> None:
         bare = self.server.board.repos.ensure_repository("limit")
         work = Path(self.tmp.name) / "work"
@@ -153,6 +174,38 @@ class GitRepoCase(unittest.TestCase):
         )
         self.assertNotEqual(rejected.returncode, 0)
         self.assertIn("maximum file/blob size is 1048576 bytes", rejected.stderr)
+
+    def test_pre_receive_rejects_cumulative_repository_growth(self) -> None:
+        self.server.board.repos.cfg = replace(self.server.board.repos.cfg, repo_max_bytes=1_000_000)
+        bare = self.server.board.repos.ensure_repository("capacity")
+        work = Path(self.tmp.name) / "capacity-work"
+        subprocess.run(["git", "init", "-b", "main", str(work)], check=True, capture_output=True)
+        subprocess.run(
+            ["git", "-C", str(work), "config", "user.email", "agent@example.invalid"],
+            check=True,
+        )
+        subprocess.run(["git", "-C", str(work), "config", "user.name", "agent"], check=True)
+
+        (work / "first.bin").write_bytes(os.urandom(600_000))
+        subprocess.run(["git", "-C", str(work), "add", "first.bin"], check=True)
+        subprocess.run(["git", "-C", str(work), "commit", "-m", "first"], check=True)
+        accepted = subprocess.run(
+            ["git", "-C", str(work), "push", str(bare), "HEAD:main"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
+
+        (work / "second.bin").write_bytes(os.urandom(600_000))
+        subprocess.run(["git", "-C", str(work), "add", "second.bin"], check=True)
+        subprocess.run(["git", "-C", str(work), "commit", "-m", "second"], check=True)
+        rejected = subprocess.run(
+            ["git", "-C", str(work), "push", str(bare), "HEAD:main"],
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(rejected.returncode, 0)
+        self.assertIn("repository storage quota 1000000 bytes exceeded", rejected.stderr)
 
 
 if __name__ == "__main__":

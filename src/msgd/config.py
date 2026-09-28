@@ -37,6 +37,14 @@ class Config:
     repo_max_blob_bytes: int = 1_048_576
     repo_auth_ttl_seconds: int = 300
     repo_max_request_bytes: int = 67_108_864
+    repo_max_repositories: int = 256
+    repo_max_repositories_per_identity: int = 8
+    repo_max_bytes: int = 33_554_432
+    repo_max_bytes_per_identity: int = 67_108_864
+    repo_max_total_bytes: int = 536_870_912
+    repo_max_object_bytes: int = 4_194_304
+    repo_max_objects: int = 100_000
+    repo_max_objects_per_push: int = 10_000
 
     # Per-identity static web hosting. Empty root derives from the database directory.
     web_root: str = ""
@@ -137,6 +145,22 @@ class Config:
             repo_max_blob_bytes=get("repos", "max_blob_bytes", base.repo_max_blob_bytes),
             repo_auth_ttl_seconds=get("repos", "auth_ttl_seconds", base.repo_auth_ttl_seconds),
             repo_max_request_bytes=get("repos", "max_request_bytes", base.repo_max_request_bytes),
+            repo_max_repositories=get("repos", "max_repositories", base.repo_max_repositories),
+            repo_max_repositories_per_identity=get(
+                "repos",
+                "max_repositories_per_identity",
+                base.repo_max_repositories_per_identity,
+            ),
+            repo_max_bytes=get("repos", "max_bytes", base.repo_max_bytes),
+            repo_max_bytes_per_identity=get(
+                "repos", "max_bytes_per_identity", base.repo_max_bytes_per_identity
+            ),
+            repo_max_total_bytes=get("repos", "max_total_bytes", base.repo_max_total_bytes),
+            repo_max_object_bytes=get("repos", "max_object_bytes", base.repo_max_object_bytes),
+            repo_max_objects=get("repos", "max_objects", base.repo_max_objects),
+            repo_max_objects_per_push=get(
+                "repos", "max_objects_per_push", base.repo_max_objects_per_push
+            ),
             web_root=get("web", "root", base.web_root),
             web_max_site_bytes=get("web", "max_site_bytes", base.web_max_site_bytes),
             ssh_shell_command=get("ssh", "shell_command", base.ssh_shell_command),
@@ -206,6 +230,14 @@ class Config:
             "repo_max_blob_bytes",
             "repo_auth_ttl_seconds",
             "repo_max_request_bytes",
+            "repo_max_repositories",
+            "repo_max_repositories_per_identity",
+            "repo_max_bytes",
+            "repo_max_bytes_per_identity",
+            "repo_max_total_bytes",
+            "repo_max_object_bytes",
+            "repo_max_objects",
+            "repo_max_objects_per_push",
             "web_max_site_bytes",
             "ssh_max_keys_per_identity",
         ):

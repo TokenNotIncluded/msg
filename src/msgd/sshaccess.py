@@ -468,7 +468,7 @@ def _run_git_command(cfg: Config, item: dict[str, object], argv: list[str]) -> i
     receive = argv[0] == "git-receive-pack"
     _require_scope(item, "repo-write" if receive else "repo-read")
     if receive:
-        path = service.ensure_repository(name)
+        path = service.ensure_repository(name, str(item["owner_id"]))
     else:
         path = service._path(name)
         if not path.is_dir():
