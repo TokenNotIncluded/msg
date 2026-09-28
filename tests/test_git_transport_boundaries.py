@@ -107,14 +107,19 @@ async def test_public_git_read_and_rejected_push_preserve_all_business_state(ins
     assert created.status=='ok',wire(created)
     rid=created.resources[0].id
     repo=NativeGitStore(app).path(rid)
-    seed_ref(repo)
+    commit=seed_ref(repo)
     before=await business_snapshot(app)
     refs=refs_snapshot(repo)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
                                  base_url=app.settings.service_url) as client:
         path='/@git-boundary-read/code.git'
-        head=await client.get(path+'/HEAD')
-        assert head.status_code==200 and b'refs/heads/main' in head.content
+        # Dumb HTTP HEAD is intentionally disabled by http.getanyfile=false.
+        # Exercise the supported smart fetch, not a new endpoint contract.
+        want=f'want {commit}\n'.encode()
+        packet=f'{len(want)+4:04x}'.encode()+want+b'00000009done\n'
+        fetched=await client.post(path+'/git-upload-pack',content=packet,
+            headers={'Content-Type':'application/x-git-upload-pack-request'})
+        assert fetched.status_code==200 and b'PACK' in fetched.content, fetched.text
         advertised=await client.get(path+'/info/refs?service=git-upload-pack')
         assert advertised.status_code==200 and b'git-upload-pack' in advertised.content
         rejected=await client.post(path+'/git-receive-pack',content=b'0000')
