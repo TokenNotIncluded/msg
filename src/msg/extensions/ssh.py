@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from msg.constants import ROOT_SUBJECT
 from msg.core.codec import canonical, decode, digest, wire
 from msg.core.errors import Failure, require
-from msg.core.executor import OperationExecutor, result_wire
+from msg.core.executor import result_wire
 from msg.core.models import Credential, Principal, Signature, SignatureProof, CapabilityGrant, HandlerOutput, EffectJob, ResourceRef
 from msg.core.requests import request_for, payload_fields
 from msg.plugins.common import operation_id, check_access, new_id, resolve
@@ -229,10 +229,8 @@ async def forced_session(config_dir, credential_id):
     try:
         command = parse_command(os.environ.get('SSH_ORIGINAL_COMMAND', ''))
         auth = SSHAuthenticator(app, credential_id)
-        executor = OperationExecutor(app.registry, app.metadata, app.contents, auth, app.authorizer, app.clock, app.receipt_signer)
-        # The normal secret delivery hook remains gated by signed operations.
-        executor.application = app
-        executor.response_hook = app._secrets_for_caller
+        # Use the same finite services and recovery fences with SSH authentication.
+        executor = app.make_executor(authenticator=auth)
         async with app.metadata.transaction(write=False) as tx:
             principal = await ssh_principal(app, credential_id, tx)
         if command[0] in {'call','packet'}:

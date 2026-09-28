@@ -5,6 +5,9 @@ import time
 from dataclasses import replace
 from uuid import uuid4
 from msg.core.codec import wire,digest
+from msg.core.batch import BatchPolicy
+from msg.core.events import event_id
+from msg.core.execution_ports import PacketDecoder, ProjectionReader, EventProjector
 from msg.core.errors import Failure,require
 from msg.core.models import ExecutionContext,HandlerOutput,OperationResult,OperationError,Event,AccessRequirement
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION,receipt_bytes
@@ -13,14 +16,19 @@ log=logging.getLogger(__name__)
 
 
 class OperationExecutor:
-    def __init__(self,registry,metadata,contents,authenticator,authorizer,clock,receipt_signer):
+    def __init__(self,registry,metadata,contents,authenticator,authorizer,clock,receipt_signer, *,
+                 max_request_bytes=1048576, packet_decoder: PacketDecoder | None = None,
+                 projection_reader: ProjectionReader | None = None,
+                 event_projector: EventProjector | None = None):
         self.registry,self.metadata,self.contents=registry,metadata,contents
         self.authenticator,self.authorizer,self.clock=authenticator,authorizer,clock
         self.receipt_signer=receipt_signer
         self.response_hook=None
         self.recovery_drill_marker=None
         self.recovery_quarantined=False
-        self.application=None
+        self.batch_policy=BatchPolicy(registry,packet_decoder,max_request_bytes)
+        self.projection_reader=projection_reader
+        self.event_projector=event_projector
 
     def recovery_drill_active(self):
         marker=self.recovery_drill_marker
@@ -49,9 +57,7 @@ class OperationExecutor:
                 if spec.name=='batch.atomic':
                     # Validate the child set before an old cached parent result
                     # can bypass the handler's secret-delivery exclusion.
-                    from msg.plugins.batch import packets
-                    packets(self.registry,request,principal.subject,
-                            self.application.settings.server.limits.max_request_bytes)
+                    self.batch_policy.packets(request,principal.subject)
                 context=ExecutionContext(request_id=request.request_id,principal=principal,entry=entry,
                                          now=self.clock(),deadline_monotonic=time.monotonic()+30)
                 checks=await spec.requirements(request,session)
@@ -94,10 +100,9 @@ class OperationExecutor:
                                 if exc.code not in {'not_found'}:raise
                     output=await spec.handler(context,request,session)
                     if request.return_fields:
-                        from msg.plugins.discovery import read_projection
-                        require(output.resources,'projection_unavailable')
-                        projections=[await read_projection(self.application,context,request,session,ref.id,revision=ref.revision,
-                                     fields=request.return_fields) for ref in output.resources]
+                        require(output.resources and self.projection_reader is not None,'projection_unavailable')
+                        projections=[await self.projection_reader(context,request,session,ref)
+                                     for ref in output.resources]
                         output=replace(output,data={**(output.data or {}),'projection':projections})
                     if audited:
                         from msg.core.models import AuditEvent,ResourceRef
@@ -114,14 +119,12 @@ class OperationExecutor:
                         resources=output.resources,committed_at=self.clock() if spec.effect!='read' else None,
                         data=output.data,output=output.output)
                     if spec.effect!='read':
-                        from msg.plugins.communication import event_id
                         event=Event(id=event_id(request,principal.subject),type=spec.name,time=result.committed_at,request_id=request.request_id,
                                     actor=principal.actor,subject=principal.subject,resources=output.resources,
                                     data={'operation':spec.name})
                         await session.append_event(event)
-                        from msg.plugins.communication import WEBHOOK_DOMAIN_EVENTS,enqueue_domain_webhooks
-                        if event.type in WEBHOOK_DOMAIN_EVENTS and self.application is not None:
-                            await enqueue_domain_webhooks(self.application,session,event)
+                        if self.event_projector is not None:
+                            await self.event_projector(session,event)
                         result=replace(result,receipt=self.receipt_signer.sign(receipt_bytes(result),purpose='receipt'))
                         await session.save_result(principal.subject,request.payload_digest,result)
             # Only after the enclosing transaction commits may success reach the adapter.
@@ -150,12 +153,10 @@ class OperationExecutor:
         Interrupted batches are resumed by resending the original signed children.
         No child is reported rolled back merely because its sibling failed.
         """
-        from msg.plugins.batch import packets
-        from msg.plugins.communication import event_id
         async with self.metadata.transaction(write=True) as tx:
             principal=await self.authenticator.authenticate(request,tx,entry=entry)
             await self.authorizer._ceiling(principal,f'{spec.name}@{spec.version}',principal.subject,tx)
-            children=packets(self.registry,request,principal.subject)
+            children=self.batch_policy.packets(request,principal.subject,bounded=False)
             existing=tx.one('SELECT digest FROM batches WHERE subject=? AND request_id=?',(principal.subject,request.request_id))
             require(existing is None or existing[0]==request.payload_digest,'idempotency_conflict')
             previous=await tx.request_result(principal.subject,request.request_id,request.payload_digest)

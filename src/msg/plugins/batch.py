@@ -1,32 +1,11 @@
 """Bounded batching is a protocol primitive, not an executable workflow."""
 from __future__ import annotations
-from msg.core.codec import wire,canonical
 from msg.core.errors import Failure,require
 from msg.core.executor import result_wire
-from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
 from msg.core.models import HandlerOutput
 from msg.plugins.common import registration,operation_id
 from msg.plugins.schemas import obj
-from msg.transports.packet import REQUEST_SCHEMA,decode_packet
-
-# Credential delivery has response-only secrets; it requires its own call.
-NO_BATCH=frozenset(SECRET_DELIVERY_MIN_VERSION) | {'identity.register','identity.upgrade'}
-
-
-def packets(registry,request,subject,max_bytes=None):
-    max_bytes=max_bytes or len(canonical(request))
-    values=[]
-    for value in request.arguments['requests']:
-        packet=decode_packet(value,max_bytes)
-        spec=registry.operation(packet.operation,packet.contract_version)
-        require(spec.effect in {'read','transaction'} and not packet.operation.startswith('batch.')
-                and packet.operation not in NO_BATCH and 'network' in spec.entries,'operation_not_batchable')
-        require(packet.subject==subject,'batch_subject_mismatch')
-        values.append(packet)
-    require(len({p.request_id for p in values})==len(values),'duplicate_batch_request_id')
-    require(request.request_id not in {p.request_id for p in values},'recursive_request_id')
-    return values
-
+from msg.transports.packet import REQUEST_SCHEMA
 
 def install(app):
     op,finish=registration(app,'batch',('identity',))
@@ -35,7 +14,7 @@ def install(app):
     @op('batch.atomic',schema)
     async def atomic(ctx,request,tx):
         await app.authorizer._ceiling(ctx.principal,operation_id(request),ctx.principal.subject,tx)
-        children=packets(app.registry,request,ctx.principal.subject,app.settings.server.limits.max_request_bytes)
+        children=app.executor.batch_policy.packets(request,ctx.principal.subject)
         results=[];resources=[]
         for index,packet in enumerate(children):
             result=await app.executor.execute(packet,entry=ctx.entry)

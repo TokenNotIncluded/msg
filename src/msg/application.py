@@ -119,14 +119,36 @@ class Application:
         self.authenticator=AuthenticationService(self.registry,self.certificates,self.settings.service_url,self.clock,
             self.primary_ceiling,self.temporary_ceiling)
         self.authorizer=AuthorizationService(self.registry,self.certificates)
-        self.executor=OperationExecutor(self.registry,self.metadata,self.contents,self.authenticator,self.authorizer,
-                                       self.clock,self.receipt_signer)
-        self.executor.application=self
+        self.executor=self.make_executor()
         self.executor.recovery_drill_marker=marker
         self.executor.recovery_quarantined=quarantined
         self.executor.response_hook=self._secrets_for_caller
         self._loaded=True
         return self
+
+    def make_executor(self, *, authenticator=None):
+        """Compose the same finite services for network and SSH execution."""
+        from functools import partial
+        from msg.plugins.discovery import read_projection
+        from msg.plugins.communication import enqueue_domain_webhooks
+        from msg.transports.packet import decode_packet
+
+        async def projection(context, request, tx, ref):
+            return await read_projection(self,context,request,tx,ref.id,
+                revision=ref.revision,fields=request.return_fields)
+
+        executor=OperationExecutor(self.registry,self.metadata,self.contents,
+            self.authenticator if authenticator is None else authenticator,
+            self.authorizer,self.clock,self.receipt_signer,
+            max_request_bytes=self.settings.server.limits.max_request_bytes,
+            packet_decoder=decode_packet,projection_reader=projection,
+            event_projector=partial(enqueue_domain_webhooks,self))
+        executor.response_hook=self._secrets_for_caller
+        executor.recovery_drill_marker=self.settings.config_dir/'recovery-drill.json'
+        if self.executor is not None:
+            executor.recovery_drill_marker=self.executor.recovery_drill_marker
+            executor.recovery_quarantined=self.executor.recovery_quarantined
+        return executor
 
     async def online_issuer(self,tx):
         issuer=tx.setting('online_ca_certificate')

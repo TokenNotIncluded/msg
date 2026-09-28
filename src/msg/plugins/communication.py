@@ -11,14 +11,12 @@ from msg.core.codec import wire,canonical,loads,decode,digest,parse_time,b64,unb
 from msg.core.errors import Failure,require
 from msg.core.models import HandlerOutput,ResourceRef,ResourceTypeSpec,EmailSettings,EffectJob,Principal
 from msg.core.requests import signing_bytes
+from msg.core.events import event_id
 from msg.plugins.common import *
 from msg.plugins.schemas import *
 from msg.plugins.discovery import visible
 from msg.storage.capacity import require_webhook_capacity
 
-
-def event_id(request,subject):
-    return 'e_'+digest((subject,request.request_id))[7:39]
 
 
 # A deliberately small event vocabulary. An Event is an audit fact, not blanket
