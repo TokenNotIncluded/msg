@@ -8,22 +8,18 @@ calls delivery.notify. Checkout never overwrites an existing mailbox.
 from __future__ import annotations
 
 from dataclasses import replace
-from urllib.parse import urlsplit
 
 from msg.core.errors import require
 from msg.core.models import EffectJob
-from msg.market.delivery_targets import email_binding, validate_email_binding, validate_target
+from msg.market.delivery_targets import (
+    email_binding, mail_enabled, pickup_url, validate_email_binding, validate_target,
+)
 from msg.plugins.common import new_id
 from msg.plugins.communication import event_id
 
 
 def _key(order_id):
     return 'delivery_notification:' + order_id
-
-
-def _mail_enabled(app):
-    config = app.settings.server.mail
-    return config is not None and config.enabled
 
 
 def _fact(tx, order):
@@ -43,10 +39,10 @@ async def notification_status(app, tx, order_id):
         job = await tx.job(fact['job_id'])
         state = {'pending': 'queued', 'running': 'queued', 'done': 'smtp_accepted',
                  'uncertain': 'delivered_unknown', 'failed': 'failed'}[job.state]
-        if job.state in {'pending', 'running'} and (not fact['enabled'] or not _mail_enabled(app)):
+        if job.state in {'pending', 'running'} and (not fact['enabled'] or not mail_enabled(app)):
             state = 'disabled'
         return {'state': state}
-    return {'state': 'pending' if fact['enabled'] and _mail_enabled(app) else 'disabled'}
+    return {'state': 'pending' if fact['enabled'] and mail_enabled(app) else 'disabled'}
 
 
 async def initialize_notification(app, ctx, request, tx, order, address):
@@ -67,7 +63,7 @@ async def queue_notification(app, ctx, request, tx, order, *, enabled):
     require(order['state'] in {'delivered', 'settled'}, 'order_not_deliverable')
     fact['enabled'] = enabled
     tx.set_setting(_key(order['id']), fact)
-    if not enabled or not _mail_enabled(app) or fact['job_id'] is not None:
+    if not enabled or not mail_enabled(app) or fact['job_id'] is not None:
         # A failed/uncertain external attempt is never revived by another request.
         return await notification_status(app, tx, order['id'])
     if fact['endpoint'] is None:
@@ -91,7 +87,7 @@ async def project_notification(app, tx, job, principal):
     """Reconstruct the allowlisted message only after every live owner check."""
     from msg.plugins.orders import _row
     from msg.plugins.delivery import _delivery, _verified_delivery
-    require(_mail_enabled(app), 'mail_disabled')
+    require(mail_enabled(app), 'mail_disabled')
     require((job.operation, job.arguments.get('contract_version')) in {
         ('orders.buy', 2), ('delivery.notify', 1)}, 'invalid_delivery_notification')
     buyer = job.arguments['recipient_subject']
@@ -107,11 +103,7 @@ async def project_notification(app, tx, job, principal):
     await _verified_delivery(app, tx, order, delivery)
     recipient = validate_email_binding(tx, order, fact['endpoint'])
     require(fact['address'] == recipient, 'delivery_recipient_mismatch')
-    base = urlsplit(app.settings.service_url)
-    require(base.scheme in {'http', 'https'} and base.netloc and
-            base.username is None and base.password is None and
-            not base.query and not base.fragment, 'invalid_delivery_origin')
-    link = app.settings.service_url.rstrip('/') + '/_orders/' + order['id'] + '/_delivery'
+    link = pickup_url(app, order['id'])
     text = order['id'] + '\n' + fact['buyer_handle'] + '\n' + link + '\n'
     # Never forward a caller/job-selected subject, text, attachment or token.
     return replace(job, arguments={'recipient': recipient, 'recipient_subject': buyer,

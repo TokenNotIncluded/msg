@@ -8,7 +8,9 @@ from msg.core.errors import require
 from msg.core.models import HandlerOutput
 from msg.market.escrow import settle, transition
 from msg.market.policy import contract, snapshot
-from msg.market.targets import enqueue_notification, save_target, target_for, validate_target
+from msg.market.targets import (
+    enqueue_notification, notification_view, save_target, target_for, validate_target,
+)
 from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _post_transfer
 from msg.plugins.orders import _order_id, _row, _subject, _view, _viewer
 from msg.plugins.schemas import IDENTIFIER, obj
@@ -27,7 +29,9 @@ INTENT_REQUIRED = ('listing_id','listing_revision','quantity','currency_id','tot
 
 
 def view(tx, order, viewer):
-    result = _view(order, viewer)
+    email = notification_view(tx, order)
+    projected = {**order, 'delivery_target': {**order['delivery_target'], 'email': email}}
+    result = _view(projected, viewer)
     row = tx.one('SELECT digest FROM order_contracts WHERE order_id=?', (order['id'],))
     if row:
         result['order_digest'] = row[0]
@@ -38,7 +42,7 @@ def view(tx, order, viewer):
         # Seller needs the *public encryption subkey*, not buyer's email.
         if locked['recipient_key']:
             result['recipient_key'] = locked['recipient_key']
-    result['email_status'] = order['delivery_target'].get('email', {}).get('state', 'disabled')
+    result['email_status'] = email['state']
     return result
 
 
