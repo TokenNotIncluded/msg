@@ -21,200 +21,23 @@ jobs:
           test "$(git rev-parse HEAD)" = "$INPUT_SHA"
           git merge-base --is-ancestor 7f8752e37fe5b5a8021f192b87e731caec2bbc2d HEAD
           git diff --exit-code 7f8752e37fe5b5a8021f192b87e731caec2bbc2d -- src tests docs
-      - name: Extract reviewed session methods without executing project code
+      - name: Replay the exact audited extraction with its trailing-blank-line fix
         run: |
           python - <<'PY'
-          import ast, difflib, hashlib, json, subprocess
-          from pathlib import Path
-
-          paths = {
-              'sqlite': 'src/msg/storage/sqlite.py',
-              'postgres': 'src/msg/storage/postgres.py',
-              'common': 'src/msg/storage/session.py',
-              'notes': 'docs/METADATA_SESSION_PROGRESS.md',
-          }
-          expected = {
-              'sqlite':'880def3daaf59d3ce66d2e5e980a710c200eb988',
-              'postgres':'5ac02cff5b7b048a84e4812c60502ffba889c9c1',
-          }
-          before = {name:Path(path).read_text() if Path(path).exists() else ''
-                    for name,path in paths.items()}
-          for name, sha in expected.items():
-              actual=subprocess.check_output(['git','hash-object',paths[name]],text=True).strip()
-              assert actual == sha, (name,actual,sha)
-          assert not before['common'], 'neutral module already exists'
-
-          def replace_once(text, old, new):
-              assert text.count(old)==1, ('unexpected source',old[:100])
-              return text.replace(old,new)
-
-          old=before['sqlite']
-          start=old.index('class SqliteSession:')
-          end=old.index('\n\nclass SqliteMetadataStore:')
-          session=old[start:end]
-          execute_start=session.index('    def execute(')
-          execute_end=session.index('    def one(')
-          driver_execute=session[execute_start:execute_end]
-          common=replace_once(session,'class SqliteSession:',
-                             'class MetadataSessionBase(ABC):')
-          common=replace_once(common,
-              '    def __init__(self, connection, *, write: bool):\n        self._connection, self.write = connection, write',
-              '    def __init__(self, *, write: bool):\n        self.write = write')
-          common=replace_once(common,driver_execute,
-              '    @abstractmethod\n'
-              '    def execute(self, sql: str, parameters: Sequence[object] = (), *,\n'
-              '                write: bool = False) -> SqlCursor:\n'
-              '        """Run a bound statement after checking this session access."""\n'
-              '        raise NotImplementedError\n\n')
-          models=old[old.index('from msg.core.models import ('):old.index('\n_SCHEMA =')]
-          common_header='''"""Shared metadata model operations over a backend-owned statement adapter.
-
-          The base owns task/read-only guards, model invariants and compensation
-          ordering. Drivers own transactions, locks, bound-parameter translation,
-          exception mapping and durability. No driver handle belongs in this layer.
-          The internal qmark SQL convention is not a public arbitrary-query API.
-          """
-          from __future__ import annotations
-
-          import asyncio
-          from abc import ABC, abstractmethod
-          from collections.abc import Iterator, Sequence
-          from dataclasses import replace
-          from typing import Protocol
-
-          from msg.core.codec import canonical, decode, digest, loads, wire
-          from msg.core.errors import Failure, require
-          '''
-          cursor='''
-          class SqlCursor(Protocol):
-              """Only the cursor behavior used by the shared metadata methods."""
-              @property
-              def rowcount(self) -> int: ...
-              def fetchone(self) -> tuple[object, ...] | None: ...
-              def fetchall(self) -> list[tuple[object, ...]]: ...
-              def __iter__(self) -> Iterator[tuple[object, ...]]: ...
-
-
-          '''
-          after={}
-          after['common']=common_header+models+'\n'+cursor+common+'\n'
-          driver='''class SqliteSession(MetadataSessionBase):
-              def __init__(self, connection: sqlite3.Connection, *, write: bool):
-                  super().__init__(write=write)
-                  self._connection = connection
-
-          '''+driver_execute.rstrip()
-          sqlite=old[:start]+driver+old[end:]
-          sqlite=replace_once(sqlite,'from dataclasses import replace\n','')
-          sqlite=replace_once(sqlite,'from msg.core.codec import canonical, decode, digest, loads, wire\n','')
-          sqlite=replace_once(sqlite,models,'from msg.storage.session import MetadataSessionBase\n')
-          sqlite=replace_once(sqlite,
-              '"""One transactional metadata session; handlers never own commit rights."""',
-              '"""SQLite test adapter; shared metadata invariants live in storage.session."""')
-          after['sqlite']=sqlite
-          postgres=replace_once(before['postgres'],
-              'from msg.storage.sqlite import SqliteSession',
-              'from msg.storage.session import MetadataSessionBase')
-          postgres=replace_once(postgres,'class PostgresSession(SqliteSession):',
-                               'class PostgresSession(MetadataSessionBase):')
-          postgres=replace_once(postgres,
-              '        super().__init__(connection, write=write)',
-              '        super().__init__(write=write)\n        self._connection = connection')
-          after['postgres']=postgres
-          after['notes']=before['notes']+'''
-
-          ## Red evidence and implementation
-
-          Focused run **36481798533** tested exact regression commit
-          `7f8752e37fe5b5a8021f192b87e731caec2bbc2d` / tree
-          `686dbddc1bdfc52d97c127bdb7338f002cabf735`: **4 failed, 12 passed,
-          0 errors, 0 skipped**. All failures were new architecture assertions;
-          all six shared behavior tests passed independently on both adapters.
-          Artifact10997260030 was downloaded and its SHA-256 matched the provider:
-          `50ae1ff1b71684d60e0ff133cde41c6cb81658c0855aeb9c376fff110dc27e2e`.
-
-          The extraction changes only `storage/session.py`, `storage/sqlite.py`
-          and `storage/postgres.py`. `MetadataSessionBase` now owns the existing
-          resource/identity/result/event/audit/job methods, task/read-only guards
-          and rollback compensation. Its sole abstract method is bound statement
-          execution; `SqlCursor` explicitly describes the small real cursor port.
-          Both concrete sessions own their own driver handle and statement adapter.
-
-          `core.contracts.MetadataSession` remains the structural business-facing
-          contract and is not weakened. Existing storage-local helpers (`one`,
-          `rows`, `check`, path/ancestor lookup, settings and job updates) remain
-          explicit concrete session methods; they do not grant callers commit
-          rights. The internal qmark convention is translated only by each driver.
-          No new ORM, repository service, configuration matrix or migration exists.
-
-          The assembly workflow checks exact input blob IDs and compares every
-          extracted method except the constructor/statement port with the original
-          method AST. It also checks both complete Store classes, FakeMetadataStore,
-          driver execute/enqueue methods, PostgreSQL SQL translation, and both
-          schema literals for exact structural equality. It uploads this audit,
-          source patch and source commit/tree. Assembly is not a substitute for
-          green cloud tests. One-shot tooling stays on the build branch and is
-          removed from the submitted tree before final validation.
-
-          PostgreSQL connection-scoped advisory locking through compensation,
-          savepoints, cancellation handling, migration, SQL/error adaptation and
-          post-commit effect signals are unchanged. SQLite retains its own file
-          writer fence, pragmas, connection, schema and exception mapping. No schema,
-          historical ID, ledger entry, signature or receipt bytes are rewritten.
-
-          Final focused/full/recovery results are still pending at this commit.
-          Do not close #157 or broader production-evidence issues from this stage.
-          '''
-
-          def parse(text):
-              return ast.parse(text)
-          def cls(text,name):
-              return next(n for n in parse(text).body if isinstance(n,ast.ClassDef) and n.name==name)
-          def methods(text,name):
-              return {n.name:n for n in cls(text,name).body
-                      if isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef))}
-          def dump(node):
-              return ast.dump(node,include_attributes=False)
-          def schema(text):
-              return next(n.value for n in parse(text).body if isinstance(n,ast.Assign)
-                  and any(isinstance(t,ast.Name) and t.id=='_SCHEMA' for t in n.targets))
-          same=[]
-          original_methods=methods(before['sqlite'],'SqliteSession')
-          shared_methods=methods(after['common'],'MetadataSessionBase')
-          assert set(original_methods)==set(shared_methods)
-          for name,node in original_methods.items():
-              if name not in {'__init__','execute'}:
-                  assert dump(node)==dump(shared_methods[name]),name
-                  same.append('shared.'+name)
-          for backend, name in [('sqlite','SqliteMetadataStore'),('sqlite','FakeMetadataStore'),
-                                ('postgres','PostgresMetadataStore')]:
-              assert dump(cls(before[backend],name))==dump(cls(after[backend],name)),name
-              same.append(name)
-          for backend,name in [('sqlite','SqliteSession'),('postgres','PostgresSession')]:
-              left=methods(before[backend],name)
-              right=methods(after[backend],name)
-              for method in ['execute']+(['enqueue'] if backend=='postgres' else []):
-                  assert dump(left[method])==dump(right[method]),(backend,method)
-                  same.append(backend+'.'+method)
-              assert dump(schema(before[backend]))==dump(schema(after[backend]))
-              same.append(backend+'._SCHEMA')
-          old_sql=next(n for n in parse(before['postgres']).body if isinstance(n,ast.FunctionDef) and n.name=='_postgres_sql')
-          new_sql=next(n for n in parse(after['postgres']).body if isinstance(n,ast.FunctionDef) and n.name=='_postgres_sql')
-          assert dump(old_sql)==dump(new_sql)
-          same.append('postgres._postgres_sql')
-          for forbidden in ('sqlite3','psycopg','_connection','PRAGMA ','CREATE TABLE ',
-                            'INSERT OR IGNORE','.commit(','.rollback(','pg_advisory'):
-              assert forbidden not in after['common'],forbidden
-          for name,text in after.items():
-              Path(paths[name]).write_text(text)
-          out=Path('/tmp/metadata-session-assembly')
-          out.mkdir(parents=True,exist_ok=True)
-          patch=''.join(''.join(difflib.unified_diff(before[name].splitlines(True),after[name].splitlines(True),
-              fromfile='a/'+paths[name] if before[name] else '/dev/null',tofile='b/'+paths[name])) for name in after)
-          (out/'changes.patch').write_text(patch)
-          (out/'audit.json').write_text(json.dumps({'baseline_blobs':expected,
-              'structurally_unchanged':same,'changed_paths':[paths[n] for n in after],
-              'patch_sha256':hashlib.sha256(patch.encode()).hexdigest()},indent=2)+'\n')
+          import subprocess, textwrap
+          recipe_commit='1dc01c0b120642fd0438266085109cdaa6132d46'
+          recipe_path='.github/workflows/assemble-metadata-session.yml'
+          workflow=subprocess.check_output(['git','show',recipe_commit+':'+recipe_path],text=True)
+          step=workflow.index('      - name: Extract reviewed session methods without executing project code\n')
+          opening="          python - <<'PY'\n"
+          begin=workflow.index(opening,step)+len(opening)
+          end=workflow.index('          PY\n',begin)
+          source=textwrap.dedent(workflow[begin:end])
+          old="after['common']=common_header+models+'\\n'+cursor+common+'\\n'"
+          new="after['common']=common_header+models+'\\n'+cursor+common.rstrip()+'\\n'"
+          assert source.count(old)==1, 'unexpected pinned recipe'
+          source=source.replace(old,new)
+          exec(compile(source,recipe_commit+':metadata-session-extraction','exec'))
           PY
       - name: Commit only the audited source extraction
         run: |
@@ -240,7 +63,9 @@ jobs:
           git=lambda *args: subprocess.check_output(['git',*args],text=True).strip()
           Path('/tmp/metadata-session-assembly/source.json').write_text(json.dumps({
               'input':os.environ['INPUT_SHA'],'commit':git('rev-parse','HEAD'),
-              'tree':git('rev-parse','HEAD^{tree}'),'dirty':bool(git('status','--porcelain'))},indent=2)+'\n')
+              'tree':git('rev-parse','HEAD^{tree}'),'dirty':bool(git('status','--porcelain')),
+              'recipe_commit':'1dc01c0b120642fd0438266085109cdaa6132d46',
+              'recipe_adjustment':'trim one extra blank line at common module EOF'},indent=2)+'\n')
           PY
           git archive --format=tar.gz -o /tmp/metadata-session-assembly/source.tar.gz HEAD
       - uses: actions/upload-artifact@v4
