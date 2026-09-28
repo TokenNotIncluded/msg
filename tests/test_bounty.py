@@ -202,6 +202,43 @@ async def test_bad_proof_wrong_subject_expiry_and_top_up_do_not_spend(installed)
 
 
 @pytest.mark.asyncio
+async def test_unknown_eligibility_constraint_fails_closed(installed):
+    app,_=installed
+    pubkey,publisher,_=await register(app,'bounty-eligibility-publisher')
+    key,claimant,_=await register(app,'bounty-eligibility-claimant')
+    await fund(app,publisher,20)
+    rejected=await call(app,'bounty.create',terms(name='unenforced-bounty',
+        eligibility={'kind':'allowlist','subjects':[claimant],'min_account_age_days':30}),
+        key=pubkey,subject=publisher)
+    assert rejected.error.code=='invalid_bounty_eligibility',wire(rejected)
+    assert await balance(app,pubkey,publisher)==20
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM bounty_listings WHERE publisher=?',(publisher,))[0]==0
+    created=await call(app,'bounty.create',terms(budget_minor=20,max_claims=2,
+        eligibility={'kind':'allowlist','subjects':[claimant]}),key=pubkey,subject=publisher)
+    assert created.status=='ok',wire(created)
+    listing=created.data['bounty']['listing_id']
+    ch=await call(app,'bounty.challenge',{'listing_id':listing},key=key,subject=claimant)
+    assert ch.status=='ok',wire(ch)
+    payload=ch.data['challenge']
+    async with app.metadata.transaction(write=True) as tx:
+        tx.execute('UPDATE bounty_listings SET eligibility=? WHERE listing_id=?',
+            (canonical({'kind':'allowlist','subjects':[claimant],'region':'x'}).decode(),
+             listing),write=True)
+    again=await call(app,'bounty.challenge',{'listing_id':listing},key=key,subject=claimant)
+    assert again.error.code=='invalid_bounty_eligibility',wire(again)
+    proof=wire(key.sign(canonical(payload),purpose='bounty-pop-v1'))
+    blocked=await call(app,'bounty.claim',{'challenge_id':payload['challenge_id'],
+                       'proof':proof},key=key,subject=claimant)
+    assert blocked.error.code=='invalid_bounty_eligibility',wire(blocked)
+    assert await balance(app,key,claimant)==0
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM bounty_claims WHERE listing_id=?',(listing,))[0]==0
+        assert tx.one('SELECT consumed_at FROM bounty_challenges WHERE id=?',
+                      (payload['challenge_id'],))[0] is None
+
+
+@pytest.mark.asyncio
 async def test_concurrent_last_reward_only_one_paid_claim(installed):
     app,_=installed
     pubkey,publisher,_=await register(app,'bounty-race-publisher')
