@@ -14,6 +14,8 @@ import subprocess
 from msg.core.codec import canonical,loads
 from msg.core.errors import Failure,require
 from msg.config import load_settings,write_example
+from msg.admin.restore_database import restore_dump
+from msg.storage.git import durable_write
 
 _FORMAT = 'msg-data-backup-v4'
 _KEYS = ('online.key', 'receipt.key', 'tokens.key')
@@ -295,9 +297,11 @@ def restore(source,config_dir,data_dir,*,postgres_dsn='service=msgd'):
             require(connection.execute(
                 "SELECT 1 FROM information_schema.tables WHERE table_schema=current_schema() LIMIT 1"
             ).fetchone() is None,'restore_database_not_empty')
-        subprocess.run(['pg_restore','--single-transaction','--exit-on-error','--no-owner','--no-acl',
-                        '--dbname',safe_dsn,str(directory/'metadata.dump')],
-                       env=env,check=True,capture_output=True)
+        quarantine={'format':'msg-recovery-quarantine-v1','outbound_enabled':False,
+                    'source_backup_sha256':_hash(Path(source)),
+                    'revocation_replay':'required','authority':'health_only'}
+        restore_dump(directory/'metadata.dump',safe_dsn=safe_dsn,env=env,
+                     quarantine=quarantine)
         with psycopg.connect(postgres_dsn) as connection:
             require(_db_refs(connection)==manifest['references'],
                     'backup_database_reference_mismatch')
@@ -313,10 +317,8 @@ def restore(source,config_dir,data_dir,*,postgres_dsn='service=msgd'):
         settings=write_example(config_dir,data_dir,manifest['service_url'],postgres_dsn=postgres_dsn)
         # Install the fail-closed marker as soon as a runnable config exists,
         # including if a later filesystem verification fails.
-        (config_dir/'recovery-drill.json').write_bytes(canonical({
-            'format':'msg-recovery-drill-v1','outbound_enabled':False,
-            'source_backup_sha256':_hash(Path(source))}))
-        os.chmod(config_dir/'recovery-drill.json',0o600)
+        durable_write(config_dir/'recovery-drill.json',canonical({
+            **quarantine,'format':'msg-recovery-drill-v1'}),mode=0o600)
         _write_restored_config(directory/'source-config.toml',settings,postgres_dsn)
         settings=load_settings(config_dir)
         for name,target in (('content',settings.server.content_dir),
@@ -335,4 +337,5 @@ def restore(source,config_dir,data_dir,*,postgres_dsn='service=msgd'):
         _relink_lfs(data_dir,settings)
         _verify_storage(data_dir,manifest['references'],settings=settings)
     return {'status':'restored','root_admin_material':'restore_separate_encrypted_root_backup_locally',
-            'mail':'disabled_until_configured','outbound':'disabled_recovery_drill'}
+            'mail':'disabled_until_configured','outbound':'disabled_recovery_drill',
+            'revocation_replay':'required','promotion':'blocked'}

@@ -9,7 +9,8 @@ from msg.admin.backups import backup, restore
 from msg.admin.market_check import inspect_market
 from msg.application import Application
 from msg.config import load_settings
-from msg.core.codec import unb64, wire
+from msg.core.codec import decode, digest, loads, unb64, wire
+from msg.core.models import BlobRef
 from msg.core.errors import Failure
 from msg.workers.effects import EffectWorker
 
@@ -44,6 +45,17 @@ async def test_restart_and_backup_preserve_private_case_decision_without_reexecu
         assert result.status=='ok',wire(result)
     finally:
         await restarted.close()
+    # Preserve the real signed-operation privacy and byte-integrity checks on
+    # live authority, independently of the restore's stronger quarantine gate.
+    evidence=await call(app,'orders.dispute_evidence_get',{'case_id':cid,'evidence_id':eid},key=bk,subject=buyer)
+    assert evidence.status=='ok' and unb64(evidence.data['data']).decode()==text,wire(evidence)
+    other=await call(app,'orders.dispute_evidence_get',{'case_id':cid,'evidence_id':eid},key=sk,subject=seller)
+    assert other.error.code=='evidence_not_found'
+    rationale=await call(app,'orders.dispute_evidence_get',
+        {'case_id':cid,'evidence_id':reason_id},key=sk,subject=seller)
+    assert rationale.status=='ok',wire(rationale)
+    assert rationale.data['digest']==reason['rationale_digest']
+    assert unb64(rationale.data['data'])==b'The signed allocation follows the case evidence.'
     archive=tmp_path/'market.zip'
     await backup(app,archive)
     async with app.metadata.transaction(write=False) as tx:
@@ -62,18 +74,28 @@ async def test_restart_and_backup_preserve_private_case_decision_without_reexecu
             after=await snapshot(tx)
             for table in set(original)-{'settings','results','events','audit'}:
                 assert after[table]==original[table],table
-        evidence=await call(restored,'orders.dispute_evidence_get',{'case_id':cid,'evidence_id':eid},key=bk,subject=buyer)
-        assert evidence.status=='ok' and unb64(evidence.data['data']).decode()==text,wire(evidence)
-        other=await call(restored,'orders.dispute_evidence_get',{'case_id':cid,'evidence_id':eid},key=sk,subject=seller)
-        assert other.error.code=='evidence_not_found'
-        rationale=await call(restored,'orders.dispute_evidence_get',
-            {'case_id':cid,'evidence_id':reason_id},key=sk,subject=seller)
-        assert rationale.status=='ok',wire(rationale)
-        assert rationale.data['digest']==reason['rationale_digest']
-        assert unb64(rationale.data['data'])==b'The signed allocation follows the case evidence.'
+            # Offline storage inspection is not a network authorization bypass.
+            # Verify the original evidence bytes/digests in the restored backend.
+            for evidence_id,expected in ((eid,text.encode()),
+                    (reason_id,b'The signed allocation follows the case evidence.')):
+                row=tx.one('SELECT body FROM arbitration_evidence WHERE case_id=? AND id=?',
+                           (cid,evidence_id))
+                assert row is not None
+                blob=decode(BlobRef,loads(row[0])['blob'])
+                raw=b''.join([part async for part in restored.contents.read(blob)])
+                assert raw==expected and digest(raw)==blob.digest
+            assert tx.one("SELECT value FROM settings WHERE key='recovery_quarantine'") is not None
+        # The restored case and blobs are intact, but an old ACL is not current
+        # authority. No public read may bypass the persistent quarantine gate.
+        for key,subject,evidence_id in ((bk,buyer,eid),(sk,seller,eid),(sk,seller,reason_id)):
+            denied=await call(restored,'orders.dispute_evidence_get',
+                {'case_id':cid,'evidence_id':evidence_id},key=key,subject=subject)
+            assert denied.status=='error' and denied.error.code=='recovery_quarantined',wire(denied)
         assert await EffectWorker(restored).run_once() is False
         rejected=await call(restored,'orders.dispute_execute',args,key=bk,subject=buyer)
         assert rejected.error.code=='writes_paused'
+        async with restored.metadata.transaction(write=False) as tx:
+            assert await snapshot(tx)==after
     finally:
         await restored.close()
 

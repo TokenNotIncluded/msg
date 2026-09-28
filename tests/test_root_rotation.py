@@ -3,7 +3,7 @@ from msg.admin.rotation import prepare,complete,journal_path
 from msg.security.crypto import Ed25519Signer,open_private_key
 from msg.core.codec import loads,wire
 from msg.application import Application
-from msg.admin.root import _approve_csr
+from msg.admin.root import _approve_csr,root_envelope
 from test_service import call,register,NOW
 
 @pytest.mark.asyncio
@@ -31,6 +31,7 @@ async def test_root_rotation_retires_old_chain_and_requires_explicit_online_ca_a
         renewal=await call(fresh,'identity.certificate_renew',{},key=key,subject=uid)
         assert renewal.error.code=='renewal_source_required',wire(renewal)
         assert fresh.certificates.root_public_key==next_key.public_key
-        envelope=loads((app.settings.config_dir/'root'/'key.json').read_bytes())
+        assert not (app.settings.config_dir/'root').exists()
+        envelope=loads(root_envelope(app.settings.config_dir).read_bytes())
         assert open_private_key(envelope,pin)==next_key.private_bytes()
     finally:await fresh.close()

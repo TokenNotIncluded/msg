@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:msg:recovery-checkpoint:v1",
+  "title": "Independently pinned deny-only recovery checkpoint",
+  "description": "Internal physical-local replay contract only. No network operation or promotion. Missing independent pin always denies; an empty list is accepted only with an exact externally supplied signed zero-entry head.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "checkpoint",
+    "signature"
+  ],
+  "properties": {
+    "checkpoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "service",
+        "source_backup_sha256",
+        "sequence",
+        "entries"
+      ],
+      "properties": {
+        "format": {
+          "const": "msg-revocation-checkpoint-v1"
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source_backup_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10000,
+          "default": 0
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 10000,
+          "default": [],
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sequence",
+              "kind",
+              "subject",
+              "target",
+              "at"
+            ],
+            "properties": {
+              "sequence": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 10000
+              },
+              "kind": {
+                "enum": [
+                  "credential.revoke",
+                  "certificate.revoke",
+                  "share_grant.revoke",
+                  "share_grant_v2.revoke",
+                  "share_link.revoke",
+                  "membership.remove",
+                  "topic_membership.remove",
+                  "identity_key.retire",
+                  "encryption_key.retire",
+                  "vault.destroy"
+                ]
+              },
+              "subject": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "target": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "at": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "Z$"
+              }
+            }
+          }
+        }
+      }
+    },
+    "signature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "algorithm",
+        "value"
+      ],
+      "properties": {
+        "key_id": {
+          "type": "string"
+        },
+        "algorithm": {
+          "const": "ed25519"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      }
+    }
+  }
+}

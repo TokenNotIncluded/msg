@@ -19,11 +19,12 @@ class OperationExecutor:
         self.receipt_signer=receipt_signer
         self.response_hook=None
         self.recovery_drill_marker=None
+        self.recovery_quarantined=False
         self.application=None
 
     def recovery_drill_active(self):
         marker=self.recovery_drill_marker
-        return marker is not None and (marker.exists() or marker.is_symlink())
+        return self.recovery_quarantined or (marker is not None and (marker.exists() or marker.is_symlink()))
 
     async def execute(self,request, *, entry='network'):
         principal=None
@@ -38,8 +39,9 @@ class OperationExecutor:
                     details={'contract_version':min_version} if min_version is not None else None)
             require(entry in spec.entries,'entry_not_allowed')
             self.registry.validate(spec.input_schema,request.arguments)
-            require(not (spec.effect!='read' and self.recovery_drill_active()),
-                    'writes_paused')
+            if self.recovery_drill_active():
+                require(spec.effect=='read','writes_paused')
+                raise Failure('recovery_quarantined')
             if spec.name=='batch.independent':
                 return await self._independent(request,spec,entry)
             async with self.metadata.transaction(write=spec.effect!='read') as session:
