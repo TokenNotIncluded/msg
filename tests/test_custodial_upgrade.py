@@ -1,5 +1,6 @@
 """Custodial exit requires both new private keys and preserves recovery on failure."""
 import os
+from datetime import timedelta
 
 import pytest
 
@@ -8,7 +9,7 @@ from msg.core.models import ResourceRef
 from msg.security.age_keys import generate_age_key
 from msg.security.crypto import Ed25519Signer,verify
 from msg.security.vault import client_upgrade_proof
-from test_service import call
+from test_service import NOW,call
 
 
 async def begin(app,subject,token,signer,recipient, *, handle='new-self',rid='upgrade-start'):
@@ -32,6 +33,30 @@ async def finish(app,subject,token,signer,age_identity,challenge, *, rid='upgrad
         'challenge_id':challenge['challenge_id'],'age_proof':age_proof,
         'external_ciphertexts_migrated':external_migrated,
         'migration_ack':wire(acknowledgement)},subject=subject,token=token,rid=rid)
+
+
+@pytest.mark.asyncio
+async def test_only_one_live_custodial_upgrade_is_allowed(installed):
+    app,_=installed
+    created=await call(app,'identity.custodial_create',{'handle':'cust-bounded',
+        'nonce':b64(os.urandom(32))})
+    subject=created.data['subject_id']
+    token=(created.data['credential_id'],unb64(created.data['token']))
+    first=await begin(app,subject,token,Ed25519Signer.generate(),generate_age_key()[1],
+                      rid='bounded-first')
+    second=await begin(app,subject,token,Ed25519Signer.generate(),generate_age_key()[1],
+                       rid='bounded-second')
+    assert first.status=='ok'
+    assert second.status=='error' and second.error.code=='custodial_upgrade_in_progress'
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM custodial_upgrades WHERE subject=?',(subject,))[0]==1
+
+    app.clock=lambda: NOW+timedelta(seconds=301)
+    replacement=await begin(app,subject,token,Ed25519Signer.generate(),generate_age_key()[1],
+                            rid='bounded-replacement')
+    assert replacement.status=='ok'
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM custodial_upgrades WHERE subject=?',(subject,))[0]==1
 
 
 @pytest.mark.asyncio

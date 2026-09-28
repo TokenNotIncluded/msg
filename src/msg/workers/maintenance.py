@@ -34,7 +34,8 @@ async def purge_revisions(app, tx, resource, *, actor, request_id, reason):
 
 
 async def _cleanup(app,tx, *, scheduled):
-    counts={'expired_resources':0,'expired_transfers':0,'expired_query_sources':0}
+    counts={'expired_resources':0,'expired_transfers':0,'expired_query_sources':0,
+            'expired_custodial_upgrades':0}
     if not tx.setting('runtime_config',{}).get('cleanup_enabled',True):
         return counts
     now=app.clock()
@@ -111,6 +112,9 @@ async def _cleanup(app,tx, *, scheduled):
         tx.execute('DELETE FROM settings WHERE key=?',(key,),write=True)
         counts['expired_query_sources']+=1
     tx.execute('DELETE FROM email_challenges WHERE expires<=?',(wire(now),),write=True)
+    expired=tx.one('SELECT COUNT(*) FROM custodial_upgrades WHERE expires_at<=?',(wire(now),))[0]
+    tx.execute('DELETE FROM custodial_upgrades WHERE expires_at<=?',(wire(now),),write=True)
+    counts['expired_custodial_upgrades']=expired
     return counts
 
 

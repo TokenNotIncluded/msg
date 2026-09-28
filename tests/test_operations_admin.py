@@ -49,6 +49,20 @@ async def test_policy_cleanup_is_explicit_records_tombstone_and_does_not_delete_
 
 
 @pytest.mark.asyncio
+async def test_cleanup_deletes_expired_custodial_upgrades(installed):
+    app,_=installed
+    async with app.metadata.transaction(write=True) as tx:
+        tx.execute('''INSERT INTO custodial_upgrades
+            (id,subject,credential_id,status,expires_at,challenge,body)
+            VALUES (?,?,?,?,?,?,?)''',('cupg_expired','u_test','cred_test','pending',
+            wire(NOW-timedelta(seconds=1)),'{}','{}'),write=True)
+    result=await run_maintenance(app,'cleanup_expired',scheduled=True)
+    assert result['expired_custodial_upgrades']==1
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM custodial_upgrades')[0]==0
+
+
+@pytest.mark.asyncio
 async def test_doctor_does_not_create_database_or_repair_bootstrap(installed,tmp_path):
     app,root=installed
     status=doctor(app.settings.config_dir,clock=lambda:NOW)

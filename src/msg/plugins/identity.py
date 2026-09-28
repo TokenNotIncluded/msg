@@ -255,6 +255,17 @@ def install(app):
                 'request_id':request.request_id}
         verify(public,canonical(signed),decode(Signature,args['possession_proof']),
                purpose='custodial-upgrade-start')
+        # Keep challenge storage bounded even if a client repeatedly abandons
+        # upgrades.  Expired attempts no longer need to be recoverable, while a
+        # live attempt must be finished (or allowed to expire) before restarting.
+        # The no-op update serializes concurrent starts for the same subject.
+        tx.execute('UPDATE custodial_vault SET status=status WHERE subject=?',
+                   (subject.resource_id,),write=True)
+        tx.execute('DELETE FROM custodial_upgrades WHERE subject=? AND expires_at<=?',
+                   (subject.resource_id,wire(ctx.now)),write=True)
+        require(tx.one('''SELECT 1 FROM custodial_upgrades WHERE subject=?
+            AND status IN ('pending','pending_rewrap') AND expires_at>? LIMIT 1''',
+            (subject.resource_id,wire(ctx.now))) is None,'custodial_upgrade_in_progress')
         challenge_id=new_id('cupg')
         ephemeral=X25519PrivateKey.generate()
         expires=ctx.now+timedelta(seconds=300)
