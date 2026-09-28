@@ -13,13 +13,47 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import valkey
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from msgd.config import Config
-from msgd.server import build_server
+from msgd.server import Handler, build_server
+
+
+class RankingMemoryCase(unittest.TestCase):
+    def test_ranking_only_loads_bodies_for_returned_posts(self) -> None:
+        ranked_ids = list(range(1, 101))
+
+        class Engagement:
+            available = True
+
+            def rank(self, *_args, **_kwargs):
+                return ranked_ids
+
+            def remove_ids(self, _ids):
+                raise AssertionError("no ranked IDs should be stale")
+
+        class Store:
+            def post_boards_by_ids(self, post_ids):
+                return dict.fromkeys(post_ids, "main")
+
+            def posts_by_ids(self, post_ids):
+                self.loaded_ids = post_ids
+                return [SimpleNamespace(id=post_id, board="main") for post_id in post_ids]
+
+        store = Store()
+        handler = Handler.__new__(Handler)
+        handler.server = SimpleNamespace(
+            board=SimpleNamespace(engagement=Engagement(), store=store)
+        )
+
+        posts = handler._ranked_posts("hot", board=None, limit=6)
+
+        self.assertEqual([post.id for post in posts], ranked_ids[:6])
+        self.assertEqual(store.loaded_ids, ranked_ids[:6])
 
 
 def public_b64(key: Ed25519PrivateKey) -> str:

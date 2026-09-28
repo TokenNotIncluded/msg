@@ -366,16 +366,18 @@ class Handler(BaseHTTPRequestHandler):
             raise StoreError("Valkey analytics is unavailable", 503)
         scan = min(max(limit * 5, 100), 5000)
         ids = self.board.engagement.rank(metric, board=board, limit=scan, offset=offset)
-        posts = self.board.store.posts_by_ids(ids)
-        live_ids = {post.id for post in posts}
-        stale = [post_id for post_id in ids if post_id not in live_ids]
+        boards = self.board.store.post_boards_by_ids(ids)
+        stale = [post_id for post_id in ids if post_id not in boards]
         if stale:
             self.board.engagement.remove_ids(stale)
             ids = self.board.engagement.rank(metric, board=board, limit=scan, offset=offset)
-            posts = self.board.store.posts_by_ids(ids)
-        if board is not None:
-            posts = [post for post in posts if post.board == board]
-        return posts[:limit]
+            boards = self.board.store.post_boards_by_ids(ids)
+        selected = [
+            post_id
+            for post_id in ids
+            if post_id in boards and (board is None or boards[post_id] == board)
+        ]
+        return self.board.store.posts_by_ids(selected[:limit])
 
     def _sync_reply_count(self, parent_id: int | None) -> None:
         if parent_id is None or not self.board.engagement.available:

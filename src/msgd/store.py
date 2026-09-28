@@ -3736,6 +3736,21 @@ class Store:
         posts = {post.id: post for row in rows if (post := self._row(row)) is not None}
         return [posts[post_id] for post_id in unique if post_id in posts]
 
+    def post_boards_by_ids(self, post_ids: list[int] | tuple[int, ...]) -> dict[int, str]:
+        """Return lightweight existence and board data without loading post bodies."""
+        if not post_ids:
+            return {}
+        unique = list(dict.fromkeys(int(post_id) for post_id in post_ids if post_id > 0))
+        if not unique:
+            return {}
+        placeholders = ",".join("?" for _ in unique)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT id, board FROM posts WHERE id IN ({placeholders})",
+                unique,
+            ).fetchall()
+        return {int(row["id"]): str(row["board"]) for row in rows}
+
     def list_posts(
         self,
         *,
