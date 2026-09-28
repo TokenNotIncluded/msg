@@ -1,20 +1,18 @@
-"""Shared metadata model operations over a backend-owned statement adapter.
+"""Shared relational domain methods, with no driver or transaction ownership.
 
-The base owns task/read-only guards, model invariants and compensation
-ordering. Drivers own transactions, locks, bound-parameter translation,
-exception mapping and durability. No driver handle belongs in this layer.
-The internal qmark SQL convention is not a public arbitrary-query API.
+This SQL-oriented monolith shares the supported placeholder/query subset, not
+an imaginary database-independent object store. Adapters own SQL translation,
+schema migration, connections, writer fences, savepoints and commit/rollback.
+Only this session's owning task can access its transaction or results.
 """
 from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
 from dataclasses import replace
-from typing import Protocol
-
 from msg.core.codec import canonical, decode, digest, loads, wire
-from msg.core.errors import Failure, require
+from msg.core.errors import require
+from msg.core.query import QueryResult, SettingValue, SqlParameters, SqlRow
 from msg.core.models import (
     AuditEvent, Certificate, CertificateRequest, CertificateRequestState, Credential,
     EffectJob, EmailSettings, Event, Membership, OperationResult, Organization, Page,
@@ -22,16 +20,7 @@ from msg.core.models import (
 )
 
 
-class SqlCursor(Protocol):
-    """Only the cursor behavior used by the shared metadata methods."""
-    @property
-    def rowcount(self) -> int: ...
-    def fetchone(self) -> tuple[object, ...] | None: ...
-    def fetchall(self) -> list[tuple[object, ...]]: ...
-    def __iter__(self) -> Iterator[tuple[object, ...]]: ...
-
-
-class MetadataSessionBase(ABC):
+class RelationalSession(ABC):
     def __init__(self, *, write: bool):
         self.write = write
         self.owner_task = asyncio.current_task()
@@ -74,15 +63,15 @@ class MetadataSessionBase(ABC):
             require(self.write, "read_only_transaction")
 
     @abstractmethod
-    def execute(self, sql: str, parameters: Sequence[object] = (), *,
-                write: bool = False) -> SqlCursor:
-        """Run a bound statement after checking this session access."""
+    def execute(self, sql: str, parameters: SqlParameters = (), *,
+                write: bool = False) -> QueryResult:
+        """Run adapter-normalized SQL in this store-owned transaction."""
         raise NotImplementedError
 
-    def one(self, sql, parameters=()):
+    def one(self, sql: str, parameters: SqlParameters = ()) -> SqlRow | None:
         return self.execute(sql, parameters).fetchone()
 
-    def rows(self, sql, parameters=()):
+    def rows(self, sql: str, parameters: SqlParameters = ()) -> list[SqlRow]:
         return self.execute(sql, parameters).fetchall()
 
     async def resource(self, id):
@@ -405,10 +394,10 @@ class MetadataSessionBase(ABC):
         self.execute("UPDATE jobs SET state=?,next_at=?,body=? WHERE id=?",(job.state,
             wire(job.next_attempt_at),canonical(job).decode(),job.id),write=True)
 
-    def setting(self,key,default=None):
+    def setting(self, key: str, default: SettingValue = None) -> SettingValue:
         row=self.one("SELECT value FROM settings WHERE key=?",(key,))
         return loads(row[0]) if row else default
 
-    def set_setting(self,key,value):
+    def set_setting(self, key: str, value: SettingValue) -> None:
         self.execute("INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                      (key,canonical(value).decode()),write=True)

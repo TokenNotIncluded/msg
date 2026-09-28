@@ -1,4 +1,4 @@
-"""SQLite test adapter; shared metadata invariants live in storage.session."""
+"""One transactional metadata session; handlers never own commit rights."""
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +12,9 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from msg.core.errors import Failure, require
-from msg.storage.session import MetadataSessionBase
+from msg.core.query import QueryResult, SqlParameters
+from msg.storage.query import SessionQueryResult
+from msg.storage.session import RelationalSession
 
 _SCHEMA = """
 PRAGMA foreign_keys=ON;
@@ -213,17 +215,19 @@ CREATE INDEX IF NOT EXISTS sync_checkpoints_subject ON sync_checkpoints(subject,
 """
 
 
-class SqliteSession(MetadataSessionBase):
-    def __init__(self, connection: sqlite3.Connection, *, write: bool):
+class SqliteSession(RelationalSession):
+    def __init__(self, connection, *, write: bool):
         super().__init__(write=write)
         self._connection = connection
 
-    def execute(self, sql, parameters=(), *, write=False):
+    def execute(self, sql: str, parameters: SqlParameters = (), *,
+                write: bool = False) -> QueryResult:
         self.check(write)
         try:
-            return self._connection.execute(sql, parameters)
+            return SessionQueryResult(self._connection.execute(sql, parameters), self.check)
         except sqlite3.IntegrityError as exc:
             raise Failure("constraint_conflict") from exc
+
 
 class SqliteMetadataStore:
     def __init__(self,path: Path, *, busy_timeout: float=10):

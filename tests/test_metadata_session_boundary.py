@@ -37,7 +37,7 @@ assert 'sqlite3' not in sys.modules
 def test_backends_share_only_the_neutral_session_implementation():
     from msg.storage.postgres import PostgresSession
     from msg.storage.sqlite import SqliteSession
-    common = importlib.import_module('msg.storage.session').MetadataSessionBase
+    common = importlib.import_module('msg.storage.session').RelationalSession
     assert not issubclass(PostgresSession, SqliteSession)
     assert PostgresSession.__bases__ == SqliteSession.__bases__ == (common,)
     for name in ('resource','children','save_result','append_audit','on_rollback','check'):
@@ -52,12 +52,12 @@ def test_shared_layer_does_not_own_connections_dialects_schemas_or_commits():
     for forbidden in ('sqlite3', 'psycopg', '_connection', 'PRAGMA ', 'CREATE TABLE ',
                       'INSERT OR IGNORE', '.commit(', '.rollback(', 'pg_advisory'):
         assert forbidden not in text
-    assert set(module.MetadataSessionBase.__abstractmethods__) == {'execute'}
-    assert set(inspect.signature(module.MetadataSessionBase).parameters) == {'write'}
+    assert set(module.RelationalSession.__abstractmethods__) == {'execute'}
+    assert set(inspect.signature(module.RelationalSession).parameters) == {'write'}
 
 
 def test_shared_implementation_covers_the_declared_metadata_contract():
-    common = importlib.import_module('msg.storage.session').MetadataSessionBase
+    common = importlib.import_module('msg.storage.session').RelationalSession
     for name, member in vars(MetadataSession).items():
         if not name.startswith('_') and callable(member):
             assert name in vars(common), name

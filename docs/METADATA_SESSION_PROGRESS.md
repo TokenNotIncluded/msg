@@ -1,70 +1,67 @@
 # Metadata session boundary progress
 
-## Coordination and baseline
+## Current integration decision
 
-- Issue #157 only; broader #65/#69/#85 production and architectural acceptance remain separate.
-- Base main: `476e64f04ed1d9c7dcab4a41c4f3cdb72faad6a7`, tree `40ca207a3c49be347120e058e47ed328ec4e3098`.
-- Branch: `fix/metadata-session-boundary-20260929`.
-- #83 comment 5878201914 records the coordination change. The overlapping regression-only #164 is closed without merging; #165 owns #156/#160 and #155 owns recovery. Do not overwrite either branch.
-- Main source was read from CI36472507327 artifact10992168743. Its downloaded SHA-256 matches `9abbc69988b8ffcb45f9931dc87e291145a7680f275bf7aadbedb7bed2189d10`.
+Issue #157. PR #166 is now supplemental backend-parity coverage stacked on #167,
+not a competing source implementation. Coordination: #83 comment5878756363.
+The canonical source is #167 commit `a85b74456be8eb20977ddd144b94483b0b21202f`,
+tree `042422943d4f5a9c43e5d531797dcc3d9c92a787`.
 
-## Stage 1: regression-first
+That implementation includes the explicit QuerySession/QueryResult consumer port,
+transaction-lifetime result guards and missing declared MetadataSession domain
+methods. Reusing it better covers the issue's declaration/actual-dependency
+acceptance condition than maintaining this branch's parallel base extraction.
+All #167 source files are adopted unchanged. #166 adds only this note, its focused
+workflow and the same 16 independent parity tests. The four class-name references
+change from MetadataSessionBase to the canonical RelationalSession; no behavior
+assertion, test, skip condition or existing upstream source is removed or weakened.
+Both histories are preserved with a non-force two-parent commit.
 
-This commit adds 4 architectural contracts and 6 shared behavioral tests, each behavioral test parameterized over real PostgreSQL and SQLite (16 tests total). Source implementation is unchanged. The focused cloud workflow records exact commit/tree and JUnit; no new pass result is claimed before execution.
+No #167 branch, #169 executor branch, #155 recovery branch or main is overwritten.
+The #167/#169 executor overlap must still converge to one implementation before
+main integration. #165 has meanwhile merged to main `08c58928ee3f6c6cb350d9e9fba75d072bd78f08`;
+old main/branch green results do not certify the new combined tree.
 
-Coverage: independent PostgreSQL import, neutral ownership, declared MetadataSession methods, resource generations/path/paging, persisted result/event/audit/job identities, savepoint compensation, read-only/closed/cross-task guards, unique-constraint rollback and driver parameter/literal handling.
+## Original red evidence, preserved
 
-## Planned boundary
-
-Before: `PostgresSession -> SqliteSession -> SQLite connection + shared model operations`.
-
-After: PostgreSQL and SQLite independently implement the driver operation of a neutral MetadataSessionBase. That base owns only model/session invariants and rollback-callback ordering; it does not own a connection, transaction commit, schema, migration, placeholder translation or driver exception handling.
-
-PostgreSQL keeps its direct/session-pooled connection requirement, connection-scoped advisory lock held through compensation, nested savepoints, pending-effect signals only after commit and exact SQL/error adapter. SQLite keeps its own connection, pragmas, error mapping, writer file fence and test/fake stores.
-
-## Required evidence before closure
-
-Obtain actual red evidence, then apply the extraction without schema/migration/domain changes. Run the shared contracts on both adapters, the existing PostgreSQL concurrency/migration/recovery suites, and the complete four-shard node-ID/conformance/build gate on the final head. Verify the tested tree before merging. Production restore/backup/operator evidence is not simulated or marked complete by these tests.
-
-
-## Red evidence and implementation
-
-Focused run **36481798533** tested exact regression commit
-`7f8752e37fe5b5a8021f192b87e731caec2bbc2d` / tree
-`686dbddc1bdfc52d97c127bdb7338f002cabf735`: **4 failed, 12 passed,
-0 errors, 0 skipped**. All failures were new architecture assertions;
-all six shared behavior tests passed independently on both adapters.
-Artifact10997260030 was downloaded and its SHA-256 matched the provider:
+Original base main `476e64f04ed1d9c7dcab4a41c4f3cdb72faad6a7`, tree
+`40ca207a3c49be347120e058e47ed328ec4e3098`.
+Regression commit `7f8752e37fe5b5a8021f192b87e731caec2bbc2d`, tree
+`686dbddc1bdfc52d97c127bdb7338f002cabf735`.
+Run36481798533: **4 failures, 12 passes, 0 errors/skips**; all failures were
+new architecture assertions, while six behaviors passed on both actual adapters.
+Artifact10997260030 SHA-256 independently verified:
 `50ae1ff1b71684d60e0ff133cde41c6cb81658c0855aeb9c376fff110dc27e2e`.
 
-The extraction changes only `storage/session.py`, `storage/sqlite.py`
-and `storage/postgres.py`. `MetadataSessionBase` now owns the existing
-resource/identity/result/event/audit/job methods, task/read-only guards
-and rollback compensation. Its sole abstract method is bound statement
-execution; `SqlCursor` explicitly describes the small real cursor port.
-Both concrete sessions own their own driver handle and statement adapter.
+## Original implementation audit, preserved but superseded
 
-`core.contracts.MetadataSession` remains the structural business-facing
-contract and is not weakened. Existing storage-local helpers (`one`,
-`rows`, `check`, path/ancestor lookup, settings and job updates) remain
-explicit concrete session methods; they do not grant callers commit
-rights. The internal qmark convention is translated only by each driver.
-No new ORM, repository service, configuration matrix or migration exists.
+The original source assembly run36482780156 verified 42 shared methods, both
+complete Store classes plus FakeMetadataStore, driver execute/enqueue, PostgreSQL
+SQL translation and both schemas for unchanged ASTs. Output5474eaf475e7f844244413b1f3e5109d4add4dce.
+Artifact10998045352 hash:
+`521d6a2f3c5d0d6b8e701302f671fad8b7d3b2641ac346b3ce4c48d282525823`.
+One-shot tooling was removed from the final original tree.
 
-The assembly workflow checks exact input blob IDs and compares every
-extracted method except the constructor/statement port with the original
-method AST. It also checks both complete Store classes, FakeMetadataStore,
-driver execute/enqueue methods, PostgreSQL SQL translation, and both
-schema literals for exact structural equality. It uploads this audit,
-source patch and source commit/tree. Assembly is not a substitute for
-green cloud tests. One-shot tooling stays on the build branch and is
-removed from the submitted tree before final validation.
+Original implementation head `0ef416ec99e20604de2398622e72d7f479a84ceb`, tree
+`ad1d3f4a321c25c0c3d4b6c1be8421824809e54f`.
+Focused run36483460243 passed **16 new + 80 existing = 96 tests**, with
+**0 failures, errors or skips**. Actual source.json and both JUnit files were read.
+Artifact10997317418 SHA-256 independently verified:
+`8a9cc70e9c31d19baf18050f42eda11818786d671863ded05d35b5e9ab098354`.
+These results apply to that original head only, not the adopted #167 source.
 
-PostgreSQL connection-scoped advisory locking through compensation,
-savepoints, cancellation handling, migration, SQL/error adaptation and
-post-commit effect signals are unchanged. SQLite retains its own file
-writer fence, pragmas, connection, schema and exception mapping. No schema,
-historical ID, ledger entry, signature or receipt bytes are rewritten.
+## Coverage and next gate
 
-Final focused/full/recovery results are still pending at this commit.
-Do not close #157 or broader production-evidence issues from this stage.
+The same tests verify isolated PostgreSQL imports, neutral-base ownership,
+MetadataSession method declarations, both adapters' resource generations/path/
+paging, result/event/audit/job round trips, idempotency conflicts, nested savepoint
+compensation, read-only/closed/cross-task guards, unique-constraint rollback and
+question-mark/percent bound-parameter handling.
+
+The focused workflow also retains PostgreSQL locks and concurrency, security
+rollback fences, ledger migrations and recovery metadata/unit suites. All project
+execution stays in GitHub Actions. Final combined-head focused/full four-shard,
+exact node-ID union/disjointness, conformance/build and Recovery safety outcomes
+must be inspected and recorded in #166/#83 before merge; no outcome is predicted.
+No production deployment, migration, Root/PIN, real funds/outbound effects, backup
+destruction or recovery promotion. #65/#69/#85 umbrella acceptance remains separate.
