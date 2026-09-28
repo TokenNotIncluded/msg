@@ -16,6 +16,7 @@ import sys
 import threading
 import time
 import unicodedata
+from contextlib import suppress
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -476,12 +477,54 @@ def _run_git_command(cfg: Config, item: dict[str, object], argv: list[str]) -> i
     git = service._require_git()
     env = os.environ.copy()
     env["REMOTE_USER"] = str(item["owner_id"])
-    result = subprocess.run(
-        [git, "receive-pack" if receive else "upload-pack", str(path)],
+    if not receive:
+        result = subprocess.run(
+            [git, "upload-pack", str(path)],
+            env=env,
+            check=False,
+        )
+        return int(result.returncode)
+
+    process = subprocess.Popen(
+        [git, "receive-pack", str(path)],
         env=env,
-        check=False,
+        stdin=subprocess.PIPE,
     )
-    return int(result.returncode)
+    assert process.stdin is not None
+    exceeded = threading.Event()
+
+    def relay_input() -> None:
+        remaining = cfg.repo_max_request_bytes
+        try:
+            while True:
+                chunk = sys.stdin.buffer.read1(min(65_536, remaining + 1))
+                if not chunk:
+                    break
+                if len(chunk) > remaining:
+                    exceeded.set()
+                    process.kill()
+                    break
+                remaining -= len(chunk)
+                process.stdin.write(chunk)
+                process.stdin.flush()
+        except (BrokenPipeError, OSError, ValueError):
+            pass
+        finally:
+            with suppress(BrokenPipeError, OSError, ValueError):
+                process.stdin.close()
+
+    relay = threading.Thread(target=relay_input, name="ssh-git-input", daemon=True)
+    relay.start()
+    try:
+        return_code = process.wait(timeout=cfg.ssh_git_timeout_seconds)
+    except subprocess.TimeoutExpired as exc:
+        process.kill()
+        process.wait()
+        raise StoreError("Git SSH backend timed out", 504) from exc
+    relay.join(timeout=1)
+    if exceeded.is_set():
+        raise StoreError("Git SSH request too large", 413)
+    return int(return_code)
 
 
 def _local_get(cfg: Config, path: str) -> int:

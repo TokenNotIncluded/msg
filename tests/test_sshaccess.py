@@ -142,6 +142,45 @@ class SSHAccessTests(unittest.TestCase):
             _run_git_command(self.cfg, item, ["git-receive-pack", "demo.git"])
         self.assertEqual(ctx.exception.status, 403)
 
+    def test_git_ssh_receive_limits_input_and_runtime(self) -> None:
+        service = RepoService(self.cfg)
+        if not service.available:
+            self.skipTest("git executable unavailable")
+        item = {"owner_id": self.owner, "scopes": ("repo-write",)}
+
+        class Process:
+            returncode = 0
+
+            def __init__(self) -> None:
+                self.stdin = io.BytesIO()
+                self.killed = False
+
+            def wait(self, timeout=None):
+                self.timeout = timeout
+                return self.returncode
+
+            def kill(self):
+                self.killed = True
+
+        process = Process()
+        cfg = Config(
+            database=self.cfg.database,
+            repo_root=self.cfg.repo_root,
+            repo_max_request_bytes=3,
+            ssh_git_timeout_seconds=17,
+        )
+        service.ensure_repository("demo")
+        stdin = io.TextIOWrapper(io.BytesIO(b"four"))
+        with (
+            patch("msgd.sshaccess.subprocess.Popen", return_value=process),
+            patch("msgd.sshaccess.sys.stdin", stdin),
+            self.assertRaises(StoreError) as ctx,
+        ):
+            _run_git_command(cfg, item, ["git-receive-pack", "demo.git"])
+        self.assertEqual(ctx.exception.status, 413)
+        self.assertTrue(process.killed)
+        self.assertEqual(process.timeout, 17)
+
     def test_expired_key_does_not_authenticate(self) -> None:
         key = public_key()
         expires = int(time.time()) + 60

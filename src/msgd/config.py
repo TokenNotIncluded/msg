@@ -45,6 +45,7 @@ class Config:
     # OpenSSH restricted-shell integration.
     ssh_shell_command: str = "/usr/local/bin/msg-ssh-shell"
     ssh_max_keys_per_identity: int = 16
+    ssh_git_timeout_seconds: int = 120
 
     # Logical capacity of active + archived post bodies and attachments.
     # Normal delete archives; new writes reclaim oldest archives first when full.
@@ -143,6 +144,9 @@ class Config:
             ssh_max_keys_per_identity=get(
                 "ssh", "max_keys_per_identity", base.ssh_max_keys_per_identity
             ),
+            ssh_git_timeout_seconds=get(
+                "ssh", "git_timeout_seconds", base.ssh_git_timeout_seconds
+            ),
             max_storage_bytes=get("storage", "max_storage_bytes", base.max_storage_bytes),
             max_post_bytes=get("limits", "max_post_bytes", base.max_post_bytes),
             max_post_bytes_post=get("limits", "max_post_bytes_post", base.max_post_bytes_post),
@@ -208,6 +212,7 @@ class Config:
             "repo_max_request_bytes",
             "web_max_site_bytes",
             "ssh_max_keys_per_identity",
+            "ssh_git_timeout_seconds",
         ):
             if getattr(self, key) < 1:
                 raise SystemExit(f"{key} must be >= 1")
