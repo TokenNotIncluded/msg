@@ -5143,17 +5143,37 @@ class Store:
         operation: str,
     ) -> tuple[bool, dict[str, Any] | None]:
         with self._lock, self._conn:
+            existing = self.path_get_receipt(request_id)
+            if existing is not None:
+                if existing["payload_sha256"] != payload_sha256:
+                    raise StoreError(
+                        "path GET request id was reused with different payload",
+                        409,
+                    )
+                return False, existing
+
             try:
-                self._conn.execute(
+                cur = self._conn.execute(
                     """
                     INSERT INTO path_get_receipts(
                         request_id, payload_sha256, operation, created
-                    ) VALUES (?, ?, ?, ?)
+                    )
+                    SELECT ?, ?, ?, ?
+                     WHERE (SELECT COUNT(*) FROM path_get_receipts) < ?
                     """,
-                    (request_id, payload_sha256, operation, time.time()),
+                    (
+                        request_id,
+                        payload_sha256,
+                        operation,
+                        time.time(),
+                        self.cfg.max_path_get_receipts,
+                    ),
                 )
-                return True, None
+                if cur.rowcount == 1:
+                    return True, None
             except sqlite3.IntegrityError as exc:
+                # Retain the conflict handling for a second Store instance sharing
+                # this database; the in-process lock only serializes this instance.
                 existing = self.path_get_receipt(request_id)
                 if existing is None:
                     raise StoreError("path GET receipt conflict", 409) from exc
@@ -5163,6 +5183,11 @@ class Store:
                         409,
                     ) from exc
                 return False, existing
+            raise StoreError(
+                "path GET receipt capacity is exhausted",
+                507,
+                "retry an existing request id or contact the site operator",
+            )
 
     def complete_path_get(
         self,

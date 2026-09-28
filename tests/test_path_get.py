@@ -186,6 +186,28 @@ class PathGetCase(unittest.TestCase):
         self.assertEqual(headers["X-Path-GET-Replay"], "1")
         self.assertIsNone(self.server.board.store.get_post(post_id))
 
+    def test_receipt_capacity_rejects_new_mutations_but_allows_replays(self) -> None:
+        object.__setattr__(self.server.board.cfg, "max_path_get_receipts", 1)
+        first = {
+            "op": "guest.post",
+            "rid": "capacityreq01",
+            "name": "Capacity",
+            "text": "first",
+        }
+        first_path = self.path(first)
+        status, body, _ = self.c.raw(first_path)
+        self.assertEqual(status, 201, body)
+
+        status, replay, headers = self.c.raw(first_path)
+        self.assertEqual(status, 201, replay)
+        self.assertEqual(headers["X-Path-GET-Replay"], "1")
+
+        second = dict(first, rid="capacityreq02", text="second")
+        status, body, _ = self.c.raw(self.path(second))
+        self.assertEqual(status, 507, body)
+        self.assertIn("receipt capacity is exhausted", body)
+        self.assertEqual(len(self.server.board.store.list_posts(board="guest", limit=20)), 1)
+
     def test_chunked_large_post_is_resumable_and_idempotent(self) -> None:
         request_id = "chunkreq00000000000000001"
         text = ("0123456789abcdef" * 3000) + " #chunked"

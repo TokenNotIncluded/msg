@@ -54,6 +54,7 @@ class Config:
     max_request_bytes: int = 33_554_432
     max_path_payload_bytes: int = 18_432
     max_path_transfer_bytes: int = 1_114_112  # 1 MiB body plus JSON/signature overhead
+    max_path_get_receipts: int = 100_000
     path_chunk_ttl_seconds: int = 3_600
     path_max_chunks: int = 1_024
     max_file_bytes: int = 16_777_216
@@ -153,6 +154,9 @@ class Config:
             max_path_transfer_bytes=get(
                 "limits", "max_path_transfer_bytes", base.max_path_transfer_bytes
             ),
+            max_path_get_receipts=get(
+                "limits", "max_path_get_receipts", base.max_path_get_receipts
+            ),
             path_chunk_ttl_seconds=get(
                 "limits", "path_chunk_ttl_seconds", base.path_chunk_ttl_seconds
             ),
@@ -187,6 +191,7 @@ class Config:
             "max_request_bytes",
             "max_path_payload_bytes",
             "max_path_transfer_bytes",
+            "max_path_get_receipts",
             "path_chunk_ttl_seconds",
             "path_max_chunks",
             "max_file_bytes",
