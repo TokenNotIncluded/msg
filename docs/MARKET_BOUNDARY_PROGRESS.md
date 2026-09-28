@@ -2,79 +2,75 @@
 
 ## Scope and coordination
 
-Issue #159; references #85/#83, not completion of #71/#72 or production acceptance.
-Base: `476e64f04ed1d9c7dcab4a41c4f3cdb72faad6a7`, tree
-`40ca207a3c49be347120e058e47ed328ec4e3098`. Branch:
-`fix/market-boundaries-20260929`. Coordination is #83 comment5878359290.
+Issue #159, PR #168; references #85/#83, not completion of #71/#72 or production acceptance.
+Base main: `476e64f04ed1d9c7dcab4a41c4f3cdb72faad6a7`, tree
+`40ca207a3c49be347120e058e47ed328ec4e3098`. Branch: `fix/market-boundaries-20260929`.
+Coordination: #83 comments5878359290 and5878591036; #159 comment5878570249.
 
-This work does not modify #165/#167 core/tool/executor ownership, #155 recovery,
-or #166 metadata session extraction. Main and all active claims were refreshed
-before starting. No production, real funds, Root/PIN or outward delivery action.
+This change does not modify #165/#167 core/tool/executor ownership, #155 recovery,
+or #166 metadata sessions. No production, real funds, Root/PIN or outward delivery.
 
-## Regression first
+## Verified regression-first evidence
 
-The first commit changes no production implementation. It adds ten tests:
-seven ownership/import/unique-guard checks and three real PostgreSQL behavior
-contracts. Current expected failures concern the new module boundaries; expected
-passing characterizations cover buyer/seller privacy, forged escrow authority
-with no ledger changes, receipt verification/byte preservation and replay.
-No test result is claimed until the exact cloud run is inspected.
+Red run **36483360971**, job109134178838, tested exact commit
+`8692ad6c0056e793bbe7b0efc9f5fd0b08ab89c8` / tree
+`907f51806164625749e57bf754713ae9f365f9b6`: **7 failed, 3 passed,
+0 errors, 0 skipped**. All failures were new ownership/import assertions.
+The real PostgreSQL buyer/seller privacy, forged-escrow zero-write guard,
+and signed-receipt byte preservation/idempotent replay tests passed.
 
-## Observed dependency graph
+Artifact10998081065 was independently downloaded and hashed; source.json and JUnit
+were read. SHA-256: `07f566e15500142c37223782d5cc10086bb9e92a967e5a204c52c374abae3600`.
+No project tests ran locally.
 
-`market.orders/email/arbitration/delivery -> plugins.orders` for order records,
-subject checks and existing projections. `market -> plugins.store` for listing
-and package reads. `market.escrow/orders -> plugins.money` for protected posting.
-`market.policy/targets/notifications/escrow/delivery -> plugins.delivery` for
-managed delivery records and verification. `plugins.orders/delivery -> market.escrow`
-closes the reverse dependency. Function-local imports are included in this audit.
+## Implemented ownership
 
-## Intended ownership and invariants
+Before: market use cases imported records/catalog/posting/managed-delivery from
+`plugins.orders/store/money/delivery`, including function-local imports, while
+those entrypoints depended on market escrow and policies.
 
-- `market.order_records`: signed subject/viewer checks, order IDs, authorized
+After:
+
+- `market.order_records` owns signed subject/viewer checks, order IDs, authorized
   record lookup and explicitly legacy-compatible projections.
-- `market.catalog`: existing authorized listing/body/package reads, not plugin
-  registration or version-specific catalog schema/defaults.
-- `market.ledger`: existing policy constants, account requirements and one posting
-  implementation. The in-process escrow guard has one owner; moving it does not
-  make it a credential or a network operation. Local-only Root issuance is unchanged.
-- `market.managed_delivery`: existing bounded managed-package verification,
-  local preparation and read helpers. Their published version semantics remain;
-  they do not replace v3 service/manual delivery or arbitration state machines.
+- `market.catalog` owns existing authorized listing/body/package reads, not
+  version-specific schemas, defaults or registration.
+- `market.ledger` owns policy constants, account requirements and the single
+  posting implementation. It alone defines the existing `_ESCROW_WRITE` object;
+  escrow re-exports that same object. It is not a public/network credential.
+- `market.managed_delivery` owns existing bounded managed-package verification,
+  preparation and read helpers; it does not replace manual/service/arbitration flows.
 
-Old plugin imports re-export these same functions, never wrappers with new policy
-or copied implementations. Version-specific schema, request signing and response
-adaptation stay at their existing entrypoints. Existing transactions, account
-locks, receipt purposes, ID generation and recovery/lease fences remain intact.
-No new Manager, Factory, Repository, ORM or alternate money/escrow path is added.
+Old plugin paths re-export the same function objects, never wrappers or copies.
+Existing market use cases and versioned handlers import the neutral owners.
+The duplicate store subject check is the same function as the order subject check.
+No new Manager, Factory, Repository, ORM, ledger or escrow state machine exists.
 
-## Verification and integration
+## Verified source assembly and review
 
-Focused cloud Actions run the new contracts and existing checkout v1/v2/v3,
-account-scope, deterministic clearing, Bounty, redemption, storage and recovery
-suites. Full four-shard exact node-ID/conformance/build and applicable recovery
-checks remain required on the final synchronized head. No skips, weakened
-assertions, changed published versions or historical fact/schema migration.
+Cloud assembly **36483781552** succeeded from input
+`d0d7f4f61f138b0ced266f2324f4a90c1689b6b5`. Output commit
+`f92390fe8f54fbf63fe21d770f37d6fdbb56190e`, tree
+`f3f8a2c20c031e0fdf0e1129b2123e7350e7cfaa`.
 
+Its audit checks exact input blobs and all **23** moved functions after identifier-only
+renaming, every remaining handler/schema, and the complete existing market state
+machines after excluding import statements. The only guard change is its owner;
+its identity check and the checked escrow-release call path remain unchanged.
+SQL strings, account locks, signatures, IDs, receipt purposes and transactions were
+not rewritten. Shared posting still cannot commit or grant remote Root issuance.
 
-## Implementation and source audit
+Artifact10997307359 was downloaded, its audit/patch/source read, and its SHA-256
+verified as `2dbcbf167086480216596757ffd32b42fa8ccc61cdea3d767e2862d1aba3ae74`.
+The contained patch independently hashes to
+`0f3ee2de9d5cb04c50ebf4b573c44652fa7a50a225f3e006f50944432e9173c9`.
+The two one-shot assembly files are removed from the submitted tree.
 
-PR #168 extracts the existing shared implementation into `order_records`,
-`catalog`, `ledger` and `managed_delivery`, with canonical public function names.
-Old plugin names re-export those same function objects. All existing market use
-cases, including function-local imports, and legacy plugin handlers use these
-owners. The duplicate store subject check becomes the same order-subject check.
+## Final-head gates
 
-The exact-base cloud assembly checks source blob identities, compares every
-moved function after identifier-only renaming, and checks every remaining handler
-and market state machine after ignoring import statements. SQL strings, schemas,
-IDs, receipt purposes, positional order and existing algorithm bodies are not
-rewritten. The only guard change is its owner: `ledger` defines `_ESCROW_WRITE`
-once, escrow re-exports it, and protected posting reads that same object directly.
-The guard is still supplied only by the existing checked escrow release path.
-
-No generated source is imported or executed during assembly. Cloud test jobs run
-both new real-database contracts and existing published-version/recovery suites.
-The assembly artifact contains the exact changed paths, audit and patch. Its
-one-shot helper files are removed from the submitted tree before final validation.
-No successful final-head result is claimed by this source-only audit.
+Source review/assembly is not green test evidence. The new boundary contracts,
+existing v1/v2/v3 checkout, clearing, Bounty, redemption and recovery regressions,
+and complete four-shard exact-node-ID/conformance/build gate must run on the final
+synchronized head. No skip, weakened assertion or published-version migration.
+Actual final results and merge SHA are recorded in PR #168 and coordination #83;
+this source commit does not predict those outcomes or close umbrella issues.
