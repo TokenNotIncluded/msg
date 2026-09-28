@@ -391,9 +391,11 @@ the same endpoint and is only applied after its callback challenge succeeds, so
 a failed renewal or removal request does not disturb the active subscription.
 
 The default lease is 10 days and the production maximum is 30 days. Expired
-subscriptions are removed automatically. Callback URLs must use public HTTPS on
-port 443; local names and IP literals are rejected to prevent the hub from
-becoming an SSRF primitive.
+subscriptions are removed automatically. The built-in hub limits active and
+pending subscriptions globally and per callback origin; deployments can tune
+`[websub] max_subscriptions` and `max_subscriptions_per_origin`. Callback URLs
+must use public HTTPS on port 443; local names and IP literals are rejected to
+prevent the hub from becoming an SSRF primitive.
 
 When a post is created, edited, archived, or purged, the built-in hub queues the
 affected global and per-topic feeds. Delivery uses the full RSS document with

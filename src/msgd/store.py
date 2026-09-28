@@ -17,7 +17,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -502,6 +502,8 @@ CREATE TABLE IF NOT EXISTS websub_deliveries (
 );
 CREATE INDEX IF NOT EXISTS websub_deliveries_due
     ON websub_deliveries(delivered, next_attempt, created);
+CREATE INDEX IF NOT EXISTS websub_deliveries_subscription_pending
+    ON websub_deliveries(subscription_id, delivered, attempts);
 
 CREATE TABLE IF NOT EXISTS websub_hub_pings (
     id           TEXT PRIMARY KEY,
@@ -4759,9 +4761,36 @@ class Store:
         challenge: str,
         secret_nonce: bytes,
         secret_ciphertext: bytes,
+        max_subscriptions: int,
+        max_subscriptions_per_origin: int,
     ) -> None:
         now = time.time()
         with self._lock, self._conn:
+            if mode == "subscribe":
+                # Count queued verifications too, so requests cannot reserve
+                # unbounded storage before the callback worker catches up.
+                self._conn.execute(
+                    "DELETE FROM websub_subscriptions WHERE expires <= ?",
+                    (now,),
+                )
+                rows = self._conn.execute(
+                    """
+                    SELECT id, callback FROM websub_subscriptions
+                    UNION
+                    SELECT id, callback FROM websub_verifications
+                     WHERE mode = 'subscribe'
+                    """
+                ).fetchall()
+                existing = {str(row["id"]): str(row["callback"]) for row in rows}
+                if verification_id not in existing:
+                    if len(existing) >= max_subscriptions:
+                        raise StoreError("WebSub subscription capacity reached", 429)
+                    origin = urlsplit(callback).hostname
+                    origin_count = sum(
+                        urlsplit(value).hostname == origin for value in existing.values()
+                    )
+                    if origin_count >= max_subscriptions_per_origin:
+                        raise StoreError("WebSub callback origin capacity reached", 429)
             self._conn.execute(
                 """
                 INSERT INTO websub_verifications(

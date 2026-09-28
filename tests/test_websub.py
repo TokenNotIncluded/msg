@@ -82,6 +82,8 @@ class WebSubCase(unittest.TestCase):
             webhook_delivery_enabled=False,
             websub_delivery_enabled=False,
             websub_external_hubs="https://hub.example/hub",
+            websub_max_subscriptions=3,
+            websub_max_subscriptions_per_origin=2,
             write_burst=200,
             write_per_minute=3000,
             read_per_minute=3000,
@@ -277,6 +279,26 @@ class WebSubCase(unittest.TestCase):
             },
         )
         self.assertEqual(status, 400)
+
+    def test_subscription_capacity_counts_pending_requests(self) -> None:
+        def request(callback: str) -> int:
+            status, _ = self.c.post(
+                "/hub",
+                **{
+                    "hub.mode": "subscribe",
+                    "hub.topic": self.topic,
+                    "hub.callback": callback,
+                },
+            )
+            return status
+
+        first = "https://subscriber.example/one"
+        self.assertEqual(request(first), 202)
+        self.assertEqual(request("https://subscriber.example/two"), 202)
+        self.assertEqual(request(first), 202)  # Renewals do not consume capacity.
+        self.assertEqual(request("https://subscriber.example/three"), 429)
+        self.assertEqual(request("https://other.example/one"), 202)
+        self.assertEqual(request("https://third.example/one"), 429)
 
 
 if __name__ == "__main__":

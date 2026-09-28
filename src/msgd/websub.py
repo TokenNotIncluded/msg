@@ -264,6 +264,8 @@ class WebSubService:
             challenge=secrets.token_urlsafe(32),
             secret_nonce=secret_nonce,
             secret_ciphertext=secret_ciphertext,
+            max_subscriptions=self.cfg.websub_max_subscriptions,
+            max_subscriptions_per_origin=self.cfg.websub_max_subscriptions_per_origin,
         )
         self._wake.set()
 

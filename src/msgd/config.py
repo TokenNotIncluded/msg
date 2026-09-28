@@ -30,6 +30,8 @@ class Config:
     websub_delivery_enabled: bool = True
     websub_default_lease_seconds: int = 864_000
     websub_max_lease_seconds: int = 2_592_000
+    websub_max_subscriptions: int = 1_000
+    websub_max_subscriptions_per_origin: int = 20
     websub_external_hubs: str = ""
 
     # Public Git repositories. Empty root derives from the database directory.
@@ -132,6 +134,14 @@ class Config:
             websub_max_lease_seconds=get(
                 "websub", "max_lease_seconds", base.websub_max_lease_seconds
             ),
+            websub_max_subscriptions=get(
+                "websub", "max_subscriptions", base.websub_max_subscriptions
+            ),
+            websub_max_subscriptions_per_origin=get(
+                "websub",
+                "max_subscriptions_per_origin",
+                base.websub_max_subscriptions_per_origin,
+            ),
             websub_external_hubs=get("websub", "external_hubs", base.websub_external_hubs),
             repo_root=get("repos", "root", base.repo_root),
             repo_max_blob_bytes=get("repos", "max_blob_bytes", base.repo_max_blob_bytes),
@@ -203,6 +213,8 @@ class Config:
             "webhook_max_per_identity",
             "websub_default_lease_seconds",
             "websub_max_lease_seconds",
+            "websub_max_subscriptions",
+            "websub_max_subscriptions_per_origin",
             "repo_max_blob_bytes",
             "repo_auth_ttl_seconds",
             "repo_max_request_bytes",
