@@ -348,9 +348,14 @@ def install(app):
                                 next_requires_auth=ctx.principal.subject is not None)
         else:
             data=await read_projection(app,ctx,request,tx,rid,revision=a.get('revision'),fields=a.get('fields',()))
-        version=digest(data)
-        if a.get('known_digest')==version:
-            return HandlerOutput(data={'not_modified':True,'digest':version})
+        # Enveloped clients receive compact JSON, while direct resource reads
+        # preserve optional nulls. Match either exact public representation only
+        # after the current projection has passed authorization. Never normalize
+        # stored Revision/signature bytes or use a cache hint as authority.
+        known=a.get('known_digest')
+        if known is not None and (known==digest(data) or
+                                  known==digest(wire(data,compact=True))):
+            return HandlerOutput(data={'not_modified':True,'digest':known})
         return HandlerOutput(data=data)
 
     @op('discovery.read_segment',obj({'id':IDENTIFIER,'revision':IDENTIFIER,
