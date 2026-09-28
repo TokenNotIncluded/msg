@@ -1,0 +1,331 @@
+diff --git a/src/msg/application.py b/src/msg/application.py
+index 591920d..df294fb 100644
+--- a/src/msg/application.py
++++ b/src/msg/application.py
+@@ -119,15 +119,37 @@ class Application:
+         self.authenticator=AuthenticationService(self.registry,self.certificates,self.settings.service_url,self.clock,
+             self.primary_ceiling,self.temporary_ceiling)
+         self.authorizer=AuthorizationService(self.registry,self.certificates)
+-        self.executor=OperationExecutor(self.registry,self.metadata,self.contents,self.authenticator,self.authorizer,
+-                                       self.clock,self.receipt_signer)
+-        self.executor.application=self
++        self.executor=self.make_executor()
+         self.executor.recovery_drill_marker=marker
+         self.executor.recovery_quarantined=quarantined
+         self.executor.response_hook=self._secrets_for_caller
+         self._loaded=True
+         return self
+ 
++    def make_executor(self, *, authenticator=None):
++        """Compose the same finite services for network and SSH execution."""
++        from functools import partial
++        from msg.plugins.discovery import read_projection
++        from msg.plugins.communication import enqueue_domain_webhooks
++        from msg.transports.packet import decode_packet
++
++        async def projection(context, request, tx, ref):
++            return await read_projection(self,context,request,tx,ref.id,
++                revision=ref.revision,fields=request.return_fields)
++
++        executor=OperationExecutor(self.registry,self.metadata,self.contents,
++            self.authenticator if authenticator is None else authenticator,
++            self.authorizer,self.clock,self.receipt_signer,
++            max_request_bytes=self.settings.server.limits.max_request_bytes,
++            packet_decoder=decode_packet,projection_reader=projection,
++            event_projector=partial(enqueue_domain_webhooks,self))
++        executor.response_hook=self._secrets_for_caller
++        executor.recovery_drill_marker=self.settings.config_dir/'recovery-drill.json'
++        if self.executor is not None:
++            executor.recovery_drill_marker=self.executor.recovery_drill_marker
++            executor.recovery_quarantined=self.executor.recovery_quarantined
++        return executor
++
+     async def online_issuer(self,tx):
+         issuer=tx.setting('online_ca_certificate')
+         require(issuer is not None,'issuer_not_ready')
+diff --git a/src/msg/core/batch.py b/src/msg/core/batch.py
+new file mode 100644
+index 0000000..aea934e
+--- /dev/null
++++ b/src/msg/core/batch.py
+@@ -0,0 +1,34 @@
++"""One bounded child-admission policy for both named batch primitives."""
++from __future__ import annotations
++
++from .codec import canonical
++from .errors import require
++from .execution_ports import PacketDecoder
++from .requests import SECRET_DELIVERY_MIN_VERSION
++
++# Response-only credentials require their own non-batched delivery call.
++NO_BATCH = frozenset(SECRET_DELIVERY_MIN_VERSION) | {'identity.register', 'identity.upgrade'}
++
++
++class BatchPolicy:
++    def __init__(self, registry, decoder: PacketDecoder | None, max_request_bytes: int):
++        self.registry = registry
++        self.decoder = decoder
++        self.max_request_bytes = max_request_bytes
++
++    def packets(self, request, subject, *, bounded=True):
++        require(self.decoder is not None, 'batch_decoder_not_configured')
++        # Independent batches historically use the validated parent envelope size.
++        max_bytes = self.max_request_bytes if bounded else len(canonical(request))
++        values = []
++        for value in request.arguments['requests']:
++            packet = self.decoder(value, max_bytes)
++            spec = self.registry.operation(packet.operation, packet.contract_version)
++            require(spec.effect in {'read', 'transaction'} and not packet.operation.startswith('batch.')
++                    and packet.operation not in NO_BATCH and 'network' in spec.entries,
++                    'operation_not_batchable')
++            require(packet.subject == subject, 'batch_subject_mismatch')
++            values.append(packet)
++        require(len({p.request_id for p in values}) == len(values), 'duplicate_batch_request_id')
++        require(request.request_id not in {p.request_id for p in values}, 'recursive_request_id')
++        return values
+diff --git a/src/msg/core/events.py b/src/msg/core/events.py
+new file mode 100644
+index 0000000..aa28f84
+--- /dev/null
++++ b/src/msg/core/events.py
+@@ -0,0 +1,6 @@
++"""Stable request Event identity shared by execution and domain adapters."""
++from .codec import digest
++
++
++def event_id(request, subject):
++    return 'e_' + digest((subject, request.request_id))[7:39]
+diff --git a/src/msg/core/execution_ports.py b/src/msg/core/execution_ports.py
+new file mode 100644
+index 0000000..b9798a3
+--- /dev/null
++++ b/src/msg/core/execution_ports.py
+@@ -0,0 +1,19 @@
++"""Narrow trusted assembly dependencies, not resource-configurable hooks."""
++from __future__ import annotations
++
++from typing import Protocol
++from .contracts import MetadataSession
++from .models import Event, ExecutionContext, JsonMap, OperationRequest, ResourceRef
++
++
++class PacketDecoder(Protocol):
++    def __call__(self, value: object, max_bytes: int, /) -> OperationRequest: ...
++
++
++class ProjectionReader(Protocol):
++    async def __call__(self, context: ExecutionContext, request: OperationRequest,
++                       session: MetadataSession, ref: ResourceRef, /) -> JsonMap: ...
++
++
++class EventProjector(Protocol):
++    async def __call__(self, session: MetadataSession, event: Event, /) -> None: ...
+diff --git a/src/msg/core/executor.py b/src/msg/core/executor.py
+index d00ac08..ba27481 100644
+--- a/src/msg/core/executor.py
++++ b/src/msg/core/executor.py
+@@ -5,6 +5,9 @@ import time
+ from dataclasses import replace
+ from uuid import uuid4
+ from msg.core.codec import wire,digest
++from msg.core.batch import BatchPolicy
++from msg.core.events import event_id
++from msg.core.execution_ports import PacketDecoder, ProjectionReader, EventProjector
+ from msg.core.errors import Failure,require
+ from msg.core.models import ExecutionContext,HandlerOutput,OperationResult,OperationError,Event,AccessRequirement
+ from msg.core.requests import SECRET_DELIVERY_MIN_VERSION,receipt_bytes
+@@ -13,14 +16,19 @@ log=logging.getLogger(__name__)
+ 
+ 
+ class OperationExecutor:
+-    def __init__(self,registry,metadata,contents,authenticator,authorizer,clock,receipt_signer):
++    def __init__(self,registry,metadata,contents,authenticator,authorizer,clock,receipt_signer, *,
++                 max_request_bytes=1048576, packet_decoder: PacketDecoder | None = None,
++                 projection_reader: ProjectionReader | None = None,
++                 event_projector: EventProjector | None = None):
+         self.registry,self.metadata,self.contents=registry,metadata,contents
+         self.authenticator,self.authorizer,self.clock=authenticator,authorizer,clock
+         self.receipt_signer=receipt_signer
+         self.response_hook=None
+         self.recovery_drill_marker=None
+         self.recovery_quarantined=False
+-        self.application=None
++        self.batch_policy=BatchPolicy(registry,packet_decoder,max_request_bytes)
++        self.projection_reader=projection_reader
++        self.event_projector=event_projector
+ 
+     def recovery_drill_active(self):
+         marker=self.recovery_drill_marker
+@@ -49,9 +57,7 @@ class OperationExecutor:
+                 if spec.name=='batch.atomic':
+                     # Validate the child set before an old cached parent result
+                     # can bypass the handler's secret-delivery exclusion.
+-                    from msg.plugins.batch import packets
+-                    packets(self.registry,request,principal.subject,
+-                            self.application.settings.server.limits.max_request_bytes)
++                    self.batch_policy.packets(request,principal.subject)
+                 context=ExecutionContext(request_id=request.request_id,principal=principal,entry=entry,
+                                          now=self.clock(),deadline_monotonic=time.monotonic()+30)
+                 checks=await spec.requirements(request,session)
+@@ -94,10 +100,9 @@ class OperationExecutor:
+                                 if exc.code not in {'not_found'}:raise
+                     output=await spec.handler(context,request,session)
+                     if request.return_fields:
+-                        from msg.plugins.discovery import read_projection
+-                        require(output.resources,'projection_unavailable')
+-                        projections=[await read_projection(self.application,context,request,session,ref.id,revision=ref.revision,
+-                                     fields=request.return_fields) for ref in output.resources]
++                        require(output.resources and self.projection_reader is not None,'projection_unavailable')
++                        projections=[await self.projection_reader(context,request,session,ref)
++                                     for ref in output.resources]
+                         output=replace(output,data={**(output.data or {}),'projection':projections})
+                     if audited:
+                         from msg.core.models import AuditEvent,ResourceRef
+@@ -114,14 +119,12 @@ class OperationExecutor:
+                         resources=output.resources,committed_at=self.clock() if spec.effect!='read' else None,
+                         data=output.data,output=output.output)
+                     if spec.effect!='read':
+-                        from msg.plugins.communication import event_id
+                         event=Event(id=event_id(request,principal.subject),type=spec.name,time=result.committed_at,request_id=request.request_id,
+                                     actor=principal.actor,subject=principal.subject,resources=output.resources,
+                                     data={'operation':spec.name})
+                         await session.append_event(event)
+-                        from msg.plugins.communication import WEBHOOK_DOMAIN_EVENTS,enqueue_domain_webhooks
+-                        if event.type in WEBHOOK_DOMAIN_EVENTS and self.application is not None:
+-                            await enqueue_domain_webhooks(self.application,session,event)
++                        if self.event_projector is not None:
++                            await self.event_projector(session,event)
+                         result=replace(result,receipt=self.receipt_signer.sign(receipt_bytes(result),purpose='receipt'))
+                         await session.save_result(principal.subject,request.payload_digest,result)
+             # Only after the enclosing transaction commits may success reach the adapter.
+@@ -150,12 +153,10 @@ class OperationExecutor:
+         Interrupted batches are resumed by resending the original signed children.
+         No child is reported rolled back merely because its sibling failed.
+         """
+-        from msg.plugins.batch import packets
+-        from msg.plugins.communication import event_id
+         async with self.metadata.transaction(write=True) as tx:
+             principal=await self.authenticator.authenticate(request,tx,entry=entry)
+             await self.authorizer._ceiling(principal,f'{spec.name}@{spec.version}',principal.subject,tx)
+-            children=packets(self.registry,request,principal.subject)
++            children=self.batch_policy.packets(request,principal.subject,bounded=False)
+             existing=tx.one('SELECT digest FROM batches WHERE subject=? AND request_id=?',(principal.subject,request.request_id))
+             require(existing is None or existing[0]==request.payload_digest,'idempotency_conflict')
+             previous=await tx.request_result(principal.subject,request.request_id,request.payload_digest)
+diff --git a/src/msg/extensions/ssh.py b/src/msg/extensions/ssh.py
+index d12baad..c855eea 100644
+--- a/src/msg/extensions/ssh.py
++++ b/src/msg/extensions/ssh.py
+@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+ from msg.constants import ROOT_SUBJECT
+ from msg.core.codec import canonical, decode, digest, wire
+ from msg.core.errors import Failure, require
+-from msg.core.executor import OperationExecutor, result_wire
++from msg.core.executor import result_wire
+ from msg.core.models import Credential, Principal, Signature, SignatureProof, CapabilityGrant, HandlerOutput, EffectJob, ResourceRef
+ from msg.core.requests import request_for, payload_fields
+ from msg.plugins.common import operation_id, check_access, new_id, resolve
+@@ -229,10 +229,8 @@ async def forced_session(config_dir, credential_id):
+     try:
+         command = parse_command(os.environ.get('SSH_ORIGINAL_COMMAND', ''))
+         auth = SSHAuthenticator(app, credential_id)
+-        executor = OperationExecutor(app.registry, app.metadata, app.contents, auth, app.authorizer, app.clock, app.receipt_signer)
+-        # The normal secret delivery hook remains gated by signed operations.
+-        executor.application = app
+-        executor.response_hook = app._secrets_for_caller
++        # Use the same finite services and recovery fences with SSH authentication.
++        executor = app.make_executor(authenticator=auth)
+         async with app.metadata.transaction(write=False) as tx:
+             principal = await ssh_principal(app, credential_id, tx)
+         if command[0] in {'call','packet'}:
+diff --git a/src/msg/plugins/batch.py b/src/msg/plugins/batch.py
+index beb05db..327edfb 100644
+--- a/src/msg/plugins/batch.py
++++ b/src/msg/plugins/batch.py
+@@ -1,32 +1,11 @@
+ """Bounded batching is a protocol primitive, not an executable workflow."""
+ from __future__ import annotations
+-from msg.core.codec import wire,canonical
+ from msg.core.errors import Failure,require
+ from msg.core.executor import result_wire
+-from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
+ from msg.core.models import HandlerOutput
+ from msg.plugins.common import registration,operation_id
+ from msg.plugins.schemas import obj
+-from msg.transports.packet import REQUEST_SCHEMA,decode_packet
+-
+-# Credential delivery has response-only secrets; it requires its own call.
+-NO_BATCH=frozenset(SECRET_DELIVERY_MIN_VERSION) | {'identity.register','identity.upgrade'}
+-
+-
+-def packets(registry,request,subject,max_bytes=None):
+-    max_bytes=max_bytes or len(canonical(request))
+-    values=[]
+-    for value in request.arguments['requests']:
+-        packet=decode_packet(value,max_bytes)
+-        spec=registry.operation(packet.operation,packet.contract_version)
+-        require(spec.effect in {'read','transaction'} and not packet.operation.startswith('batch.')
+-                and packet.operation not in NO_BATCH and 'network' in spec.entries,'operation_not_batchable')
+-        require(packet.subject==subject,'batch_subject_mismatch')
+-        values.append(packet)
+-    require(len({p.request_id for p in values})==len(values),'duplicate_batch_request_id')
+-    require(request.request_id not in {p.request_id for p in values},'recursive_request_id')
+-    return values
+-
++from msg.transports.packet import REQUEST_SCHEMA
+ 
+ def install(app):
+     op,finish=registration(app,'batch',('identity',))
+@@ -35,7 +14,7 @@ def install(app):
+     @op('batch.atomic',schema)
+     async def atomic(ctx,request,tx):
+         await app.authorizer._ceiling(ctx.principal,operation_id(request),ctx.principal.subject,tx)
+-        children=packets(app.registry,request,ctx.principal.subject,app.settings.server.limits.max_request_bytes)
++        children=app.executor.batch_policy.packets(request,ctx.principal.subject)
+         results=[];resources=[]
+         for index,packet in enumerate(children):
+             result=await app.executor.execute(packet,entry=ctx.entry)
+diff --git a/src/msg/plugins/communication.py b/src/msg/plugins/communication.py
+index d704aa7..579350a 100644
+--- a/src/msg/plugins/communication.py
++++ b/src/msg/plugins/communication.py
+@@ -11,15 +11,13 @@ from msg.core.codec import wire,canonical,loads,decode,digest,parse_time,b64,unb
+ from msg.core.errors import Failure,require
+ from msg.core.models import HandlerOutput,ResourceRef,ResourceTypeSpec,EmailSettings,EffectJob,Principal
+ from msg.core.requests import signing_bytes
++from msg.core.events import event_id
+ from msg.plugins.common import *
+ from msg.plugins.schemas import *
+ from msg.plugins.discovery import visible
+ from msg.storage.capacity import require_webhook_capacity
+ 
+ 
+-def event_id(request,subject):
+-    return 'e_'+digest((subject,request.request_id))[7:39]
+-
+ 
+ # A deliberately small event vocabulary. An Event is an audit fact, not blanket
+ # permission to disclose its data to an external receiver.
+diff --git a/tests/issue_78_80/conftest.py b/tests/issue_78_80/conftest.py
+index ada0f4a..954c25d 100644
+--- a/tests/issue_78_80/conftest.py
++++ b/tests/issue_78_80/conftest.py
+@@ -125,9 +125,16 @@ async def harness(tmp_path):
+     app.authorizer=AuthorizationService(registry,app.certificates)
+     app.authenticator=AuthenticationService(registry,app.certificates,app.settings.service_url,
+         app.clock,lambda:base_grants(registry),lambda:base_grants(registry))
++    from msg.transports.packet import decode_packet
++
++    async def project(context, request, tx, ref):
++        return await discovery.read_projection(app,context,request,tx,ref.id,
++            revision=ref.revision,fields=request.return_fields)
++
+     app.executor=OperationExecutor(registry,metadata,app.contents,app.authenticator,
+-        app.authorizer,app.clock,Ed25519Signer.generate())
+-    app.executor.application=app
++        app.authorizer,app.clock,Ed25519Signer.generate(),
++        max_request_bytes=app.settings.server.limits.max_request_bytes,
++        packet_decoder=decode_packet,projection_reader=project)
+     app._loaded=True
+ 
+     def packet(operation,args,version=1, *, signed=True,**kwargs):

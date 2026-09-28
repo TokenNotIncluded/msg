@@ -1,0 +1,80 @@
+name: Apply reviewed executor boundary patch
+on:
+  push:
+    branches: ['fix/executor-boundary-20260929']
+    paths: ['scripts/patches/executor-boundary.patch']
+permissions:
+  contents: read
+jobs:
+  apply-reviewed-patch:
+    if: github.repository == 'TokenNotIncluded/msg.lmm.best'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Apply exactly the reviewed patch to its recorded parent
+        run: |
+          test "$(git rev-parse HEAD^)" = 1953beeda08cb34570f2c56535c4e4b1249546eb
+          git apply --index --check scripts/patches/executor-boundary.patch
+          git apply --index scripts/patches/executor-boundary.patch
+          git diff --cached --check
+      - name: Publish only to this feature branch, without force
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, subprocess, urllib.request
+          repo = 'TokenNotIncluded/msg.lmm.best'
+          branch = 'fix/executor-boundary-20260929'
+          assert os.environ['GITHUB_REPOSITORY'] == repo
+          assert os.environ['GITHUB_REF'] == 'refs/heads/' + branch
+          paths = [
+              'src/msg/application.py', 'src/msg/core/batch.py', 'src/msg/core/events.py',
+              'src/msg/core/execution_ports.py', 'src/msg/core/executor.py',
+              'src/msg/extensions/ssh.py', 'src/msg/plugins/batch.py',
+              'src/msg/plugins/communication.py', 'tests/issue_78_80/conftest.py',
+          ]
+          changed = subprocess.check_output(['git', 'diff', '--cached', '--name-only'], text=True).splitlines()
+          assert sorted(changed) == sorted(paths), changed
+          def api(method, endpoint, payload=None):
+              data = None if payload is None else json.dumps(payload).encode()
+              request = urllib.request.Request('https://api.github.com/repos/' + repo + endpoint,
+                  data=data, method=method, headers={
+                      'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                      'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  })
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  return json.load(response)
+          parent = os.environ['GITHUB_SHA']
+          assert api('GET', '/git/ref/heads/' + branch)['object']['sha'] == parent
+          old = api('GET', '/git/commits/' + parent)
+          assert [p['sha'] for p in old['parents']] == ['1953beeda08cb34570f2c56535c4e4b1249546eb']
+          entries = [{'path': p, 'mode': '100644', 'type': 'blob',
+                      'content': pathlib.Path(p).read_text()} for p in paths]
+          # The one-shot patch publisher is retained in history, not in the final tree.
+          for p in ['scripts/patches/executor-boundary.patch', '.github/workflows/prepare-executor-boundary.yml']:
+              entries.append({'path': p, 'mode': '100644', 'type': 'blob', 'sha': None})
+          tree = api('POST', '/git/trees', {'base_tree': old['tree']['sha'], 'tree': entries})
+          commit = api('POST', '/git/commits', {
+              'message': 'refactor(core): inject bounded executor services at the composition root\n\nRefs #156 #83 #85. Preserve the existing transaction, authentication and secret-delivery paths.',
+              'tree': tree['sha'], 'parents': [parent],
+          })
+          api('PATCH', '/git/refs/heads/' + branch, {'sha': commit['sha'], 'force': False})
+          pathlib.Path('artifacts').mkdir(exist_ok=True)
+          pathlib.Path('artifacts/patch-result.json').write_text(json.dumps({
+              'source': parent, 'commit': commit['sha'], 'tree': tree['sha'],
+              'patch_sha256': hashlib.sha256(pathlib.Path('scripts/patches/executor-boundary.patch').read_bytes()).hexdigest(),
+              'paths': paths,
+          }, indent=2) + '\n')
+          print('Published reviewed source:', commit['sha'], tree['sha'])
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: executor-patch-result
+          path: artifacts/
