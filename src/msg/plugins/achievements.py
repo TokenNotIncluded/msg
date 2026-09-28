@@ -143,6 +143,18 @@ def install(app):
     async def start(ctx, request, tx):
         subject = _owner(ctx)
         await tx.subject(subject)
+        grant = tx.one(
+            'SELECT 1 FROM achievement_grants WHERE subject=? AND achievement_id=? AND spec_version=?',
+            (subject, I_AM_NOT_HUMAN.id, I_AM_NOT_HUMAN.version),
+        )
+        require(grant is None, 'achievement_already_granted')
+        ceremonies = [loads(row[0]) for row in tx.rows(
+            'SELECT body FROM achievement_ceremonies WHERE subject=?', (subject,))]
+        require(not any(item['status'] == 'active' and ctx.now < parse_time(item['expires_at'])
+                        for item in ceremonies), 'achievement_ceremony_active')
+        # A subject can retain at most one ceremony. Reclaim failed, completed, and
+        # expired attempts before allocating a replacement challenge.
+        tx.execute('DELETE FROM achievement_ceremonies WHERE subject=?', (subject,), write=True)
         state = {'id': new_id('achc'), 'subject_id': subject, 'achievement_id': I_AM_NOT_HUMAN.id,
                  'spec_version': I_AM_NOT_HUMAN.version, 'status': 'active', 'round': 1,
                  'started_at': wire(ctx.now), 'expires_at': wire(ctx.now + timedelta(seconds=CEREMONY_TTL_SECONDS)),

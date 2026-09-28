@@ -55,7 +55,8 @@ class OperationExecutor:
                     capacity_writes={'identity.register','identity.temporary','identity.custodial_create','content.topic_create',
                         'content.post_create','content.post_edit','content.file_put','content.attach',
                         'content.template_put','discussion.reply','discussion.quote','discussion.repost',
-                        'transfer.part_put','git.create','git.push','git.receive','hosting.deploy','keystore.put'}
+                        'transfer.part_put','git.create','git.push','git.receive','hosting.deploy','keystore.put',
+                        'achievement.start'}
                     if spec.name in capacity_writes:
                         require(session.setting('runtime_config',{}).get('accept_writes',True),'writes_paused')
                     for rid,generation in request.expected_generations:

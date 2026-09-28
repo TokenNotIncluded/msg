@@ -91,6 +91,36 @@ async def test_wrong_nonce_and_round_ttl_fail_closed(installed):
 
 
 @pytest.mark.asyncio
+async def test_start_keeps_only_one_ceremony_per_subject(installed):
+    app, _ = installed
+    key, subject, _ = await register(app, 'achievement-bounded')
+    started = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    duplicate = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    assert duplicate.status == 'error' and duplicate.error.code == 'achievement_ceremony_active'
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM achievement_ceremonies WHERE subject=?', (subject,))[0] == 1
+
+    app.executor.clock = lambda: NOW + timedelta(seconds=301)
+    replacement = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    assert replacement.status == 'ok', wire(replacement)
+    assert replacement.data['challenge_id'] != started.data['challenge_id']
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM achievement_ceremonies WHERE subject=?', (subject,))[0] == 1
+
+
+@pytest.mark.asyncio
+async def test_start_obeys_capacity_pause(installed):
+    app, _ = installed
+    key, subject, _ = await register(app, 'achievement-paused')
+    async with app.metadata.transaction(write=True) as tx:
+        tx.set_setting('runtime_config', {'accept_writes': False, 'cleanup_enabled': True})
+    blocked = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    assert blocked.status == 'error' and blocked.error.code == 'writes_paused'
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM achievement_ceremonies WHERE subject=?', (subject,))[0] == 0
+
+
+@pytest.mark.asyncio
 async def test_machine_payload_and_final_digest_are_required(installed):
     app, _ = installed
     key, subject, _ = await register(app, 'achievement-payload')
