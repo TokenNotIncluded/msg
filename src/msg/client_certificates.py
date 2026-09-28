@@ -12,7 +12,7 @@ from msg.core.errors import require
 from msg.core.models import CertificateRequest,Certificate,Signature,CapabilityGrant,IssuancePolicy
 from msg.security.certificates import csr_body,verify_csr,sign_certificate
 from msg.security.crypto import Ed25519Signer,key_id
-from msg.storage.git import durable_write
+from msg.atomic_file import durable_write
 
 
 def local_key(path, *, create=False):

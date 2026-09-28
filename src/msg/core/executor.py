@@ -4,7 +4,7 @@ import logging
 import time
 from dataclasses import replace
 from uuid import uuid4
-from msg.core.codec import wire,digest
+from msg.core.codec import wire,digest,result_wire
 from msg.core.errors import Failure,require
 from msg.core.models import ExecutionContext,HandlerOutput,OperationResult,OperationError,Event,AccessRequirement
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION,receipt_bytes
@@ -186,11 +186,3 @@ class OperationExecutor:
                 request_id=request.request_id,actor=principal.actor,subject=principal.subject,resources=result.resources,data={'operation':spec.name}))
             await tx.save_result(principal.subject,request.payload_digest,result)
         return replace(result,prefer_cli=request.source!='msg',cli_url='/AGENTS.md' if request.source!='msg' else None)
-
-
-def result_wire(result):
-    value=wire(result,compact=True)
-    for name in ('replayed','prefer_cli'):
-        if not value.get(name):
-            value.pop(name,None)
-    return value

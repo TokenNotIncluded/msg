@@ -163,7 +163,7 @@ class MCPHTTPTransport(HTTPTransport):
     async def call(self, request):
         self._secure_delivery(request)
         await self._effect(request.operation)
-        from msg.transports.mcp import PROTOCOL_VERSION
+        from msg.transports.mcp_protocol import PROTOCOL_VERSION
         tool_name = request.operation if request.contract_version==1 else (
             f'{request.operation}@{request.contract_version}')
         value = await self._json('POST','/-/mcp',body={'jsonrpc':'2.0','id':request.request_id,

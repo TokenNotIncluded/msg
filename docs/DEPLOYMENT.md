@@ -27,7 +27,7 @@ service_keys = "/var/lib/msgd/service"
 ```bash
 sudo install -d -m 0755 /opt/msgd
 sudo python3.15 -m venv /opt/msgd/venv
-sudo /opt/msgd/venv/bin/python -m pip install .
+sudo /opt/msgd/venv/bin/python -m pip install '.[server]'
 ```
 
 在真实本机 VT 或串行控制台运行：

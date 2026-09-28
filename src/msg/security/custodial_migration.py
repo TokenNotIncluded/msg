@@ -13,6 +13,7 @@ from msg.core.codec import canonical, decode, digest, loads, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import ResourceRef, Signature
 from msg.security.crypto import key_id, verify
+from msg.security.custodial_protocol import stage_statement, ack_statement
 from msg.security.age_keys import encryption_key_id, public_from_recipient
 from msg.security.backup_retirement import BackupRetirement, verified as verified_backup
 
@@ -41,22 +42,6 @@ def inventory_commitment(subject, details, challenge):
         'recipient': challenge['encryption_recipient'],
         'items': details['age_inventory'],
         'source_keys': details.get('source_keys', {})})
-
-
-def stage_statement(subject, arguments, request_id):
-    """Sign every decision field, not a caller-selected subset of the manifest."""
-    return {'domain': 'msg-custodial-decision-v1', 'subject_id': subject,
-            'request_id': request_id,
-            'decision': {key: value for key, value in arguments.items()
-                         if key != 'migration_ack'}}
-
-
-def ack_statement(subject, challenge_id, inventory_digest, source, target,
-                  plaintext_digest, request_id, *, method='rewrap'):
-    return {'domain': 'msg-custodial-history-ack-v1', 'subject_id': subject,
-            'challenge_id': challenge_id, 'inventory_digest': inventory_digest,
-            'source': source, 'target': target, 'method': method,
-            'plaintext_digest': plaintext_digest, 'request_id': request_id}
 
 
 def keyed_source(item, details):
