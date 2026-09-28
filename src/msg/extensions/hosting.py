@@ -15,6 +15,8 @@ from msg.core.requests import request_for
 from msg.plugins.common import check_access,create_resource,revise_resource,resolve,output_for,assert_generation,new_id
 from msg.plugins.schemas import obj,STRING,IDENTIFIER,REF
 
+MAX_HOSTING_ENTRIES=128
+
 
 def path_name(value):
     require(isinstance(value,str) and 0<len(value)<=2048 and not value.startswith('/') and '\\' not in value and
@@ -41,6 +43,8 @@ def register(app,op):
         require(resource.type=='website' and resource.state=='active','not_a_website')
         await check_access(app,ctx,request,tx,resource.id,'write')
         await assert_generation(request,resource)
+        # A deployment must stay within what a preview could have shown first.
+        require(len(request.arguments['entries'])<=MAX_HOSTING_ENTRIES,'too_many_hosting_entries')
         sources=[];names=set()
         for item in request.arguments['entries']:
             path=path_name(item['path'])
@@ -75,7 +79,7 @@ def register(app,op):
         await assert_generation(request,website)
         # Keep the published v1 wire schema immutable; bound work before any
         # source traversal or materialization, just like runtime capacity checks.
-        require(len(request.arguments['entries'])<=128,'too_many_preview_entries')
+        require(len(request.arguments['entries'])<=MAX_HOSTING_ENTRIES,'too_many_preview_entries')
         sources=[];names=set()
         for item in request.arguments['entries']:
             path=path_name(item['path'])
