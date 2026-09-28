@@ -1,11 +1,11 @@
 """One current buyer binding for site delivery and optional email projections."""
 from __future__ import annotations
 
-import re
 from urllib.parse import urlsplit
 
 from msg.core.codec import decode, loads, wire
 from msg.core.errors import Failure, require
+from msg.core.email_address import validate_address
 from msg.core.models import EmailSettings
 
 
@@ -50,13 +50,6 @@ def validate_target(order, delivery=None):
         require(delivery['order_id'] == order['id'] and
                 delivery['recipient_subject'] == order['buyer'] and
                 delivery['channel'] == 'site', 'delivery_recipient_mismatch')
-
-
-def validate_address(address):
-    require(isinstance(address, str) and len(address) <= 254 and
-            re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', address) is not None and
-            not any(ord(c) < 32 or ord(c) == 127 for c in address),
-            'invalid_email')
 
 
 def email_binding(tx, buyer, address):
