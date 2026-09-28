@@ -1,5 +1,19 @@
 # 实现范围与需求差异
 
+## 市场修复：#71–#73
+
+本节对应本次代码，验收边界与命令见 [MARKET_CLEARING.md](MARKET_CLEARING.md)。下面较早提交的测试数、缺口和 CI 记录只归各自历史提交，不覆盖本次增量；本次结果以 PR 的精确提交与 CI 为准，未部署生产。
+
+| 范围 | 本次实现与回归入口 |
+| --- | --- |
+| #71 清算与兑换 | 共用精确整数清算、具名账项与不可变回执；本机 `bank fund` 两次确认后原子授角色和注资；Registry website 的真实容量兑现器，锁价、pending/settle/refund、凭据范围及恢复测试 |
+| #72 预托管奖励 | PoP 当前钥/nonce/TTL/版本验证；Claim、奖励、Inbox、Event 同事务；暂停/限额投影、关闭并发、撤销与备份恢复；CLI `bounty prove`；隔离 `market_e2e` 正式命令链 |
+| 默认与检查 | 仍为零发行、无银行/报价/商品；BootstrapManifest、只读 market_clearing doctor、隔离 market_e2e；最终 buyer=5、bank=15、escrow=0、supply=20 MSG |
+
+明确保留的边界：生产旧数据迁移、真实部署与现场门槛仍单独验收；本轮不修改生产发行量、报价或权限。已签旧 CA/凭据不因新增操作自动扩权。
+
+## 较早实现快照（市场状态已由上节更新）
+
 ## #73–75：版本化市场实现（2026-09-28）
 
 订单快照、自动交付、独立 checkout 邮箱验证和确定性仲裁已实现；接口、最终性、默认无仲裁员、旧 `@1` 兼容及运维边界集中见 [MARKET_CONTRACTS.md](MARKET_CONTRACTS.md)。下方 `135a190` 及更早测试数字属于历史提交，不能用于本批验收。

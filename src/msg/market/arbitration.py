@@ -14,7 +14,7 @@ from msg.market.orders import HASH, view
 from msg.market.policy import contract
 from msg.market.rationale import PINNED_REF
 from msg.market.rationale import verified as verify_rationale
-from msg.plugins.common import check_access, new_id
+from msg.plugins.common import check_access, new_id, no_requirements
 from msg.plugins.orders import _row, _subject
 from msg.plugins.schemas import IDENTIFIER, REF, SIGNATURE, obj
 from msg.security.crypto import verify
@@ -311,7 +311,7 @@ def install(app, op):
             'votes': [{'arbitrator':v['arbitrator'],'proposal':v['proposal'],'signature':v['signature']}
                       for v in votes], 'decisions': decisions})
 
-    @op('orders.dispute_summary', CASE, effect='read')
+    @op('orders.dispute_summary', CASE, effect='read', requirements=no_requirements)
     async def summary(ctx, request, tx):
         case = _read(tx, request.arguments['case_id'])
         row = tx.one('SELECT body FROM arbitration_decisions WHERE case_id=? AND round=?',

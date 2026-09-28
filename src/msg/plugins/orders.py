@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import base64
 import os
+from functools import partial
 
 from msg.market.escrow import EscrowEngine, validate_policy
 from msg.core.codec import canonical, digest, loads, parse_time, wire
 from msg.core.errors import require
 from msg.core.models import HandlerOutput
 from msg.plugins.common import registration
-from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _balance, _post_transfer
+from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _balance, _post_transfer, account_requirements
 from msg.plugins.schemas import IDENTIFIER, obj
 from msg.plugins.store import _body, _listing, _package_row
 
@@ -81,6 +82,9 @@ def _view(row, viewer):
 
 def install(app):
     op, finish = registration(app, 'orders', ('store', 'money'))
+    # Account authority belongs to the operation contract, not just the handler:
+    # the executor must apply it before returning an idempotent cached result.
+    op = partial(op, requirements=account_requirements)
     amount = {'type': 'integer', 'minimum': 1, 'maximum': MAX_MINOR}
     quantity = {'type': 'integer', 'minimum': 1, 'maximum': 10**9}
 

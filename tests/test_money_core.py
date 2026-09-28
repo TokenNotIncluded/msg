@@ -42,7 +42,7 @@ async def test_zero_supply_signed_transfer_and_private_views(installed):
     args={'to_subject':bob,'currency_id':'primary','amount_minor':400_000}
     sent = await call(app,'money.transfer',args,key=alice_key,subject=alice,rid='money-once')
     assert sent.status=='ok', wire(sent)
-    assert sent.data['transfer']['body']['policy_version']==1
+    assert sent.data['transfer']['body']['policy_version']==POLICY_VERSION==2
     assert sent.data['transfer']['body']['policy_digest']==POLICY_DIGEST
     assert sent.data['transfer']['body']['ledger_sequence']>0
     verify(app.receipt_signer.public_key, canonical(sent.data['transfer']['body']),

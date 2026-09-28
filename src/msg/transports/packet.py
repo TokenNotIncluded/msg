@@ -1,5 +1,6 @@
 """Bounded wire decoding shared by every network adapter."""
 from __future__ import annotations
+from collections.abc import Mapping
 import re
 import zlib
 from msg.core.codec import decode,loads,unb64,canonical,wire
@@ -61,7 +62,20 @@ def decode_packet(value,max_bytes=1048576):
     return packet
 
 
+def safe_error_code(value, fallback):
+    """Only bounded contract identifiers, never exception text or credential URLs."""
+    return (value if isinstance(value, str) and
+            re.fullmatch(r'[a-z][a-z0-9_]{0,95}', value) else fallback)
+
+
 def decode_result(value):
+    # Reject malformed signed/unsigned results rather than rewriting their error
+    # fields. Valid receipts and persisted result bytes are left unchanged.
+    require(isinstance(value, Mapping), 'invalid_result_envelope')
+    error = value.get('error')
+    if error is not None:
+        require(isinstance(error, Mapping) and safe_error_code(error.get('code'), None) is not None,
+                'invalid_result_envelope')
     # Compact results omit anonymous actor/subject; these required domain fields
     # are restored explicitly, not inferred from a transport connection.
     return decode(OperationResult,dict({'actor':None,'subject':None},**value))

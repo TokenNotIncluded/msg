@@ -69,6 +69,7 @@ class Settings:
     tool_ports: tuple[int,...]=(80,443)
     recovery_custodians: tuple[RecoveryCustodian,...]=()
     money: MoneyConfig=MoneyConfig()
+    hosting_base_capacity_bytes: int=10*1024*1024
 
     @property
     def config_dir(self):
@@ -96,7 +97,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
     path=server_config_file(config_dir)
     require(path.is_file(),'configuration_missing')
     data=tomllib.loads(path.read_text())
-    require(set(data)<={'server','storage','limits','plugins','tools','recovery','identity','money'},'unknown_configuration_section')
+    require(set(data)<={'server','storage','limits','plugins','tools','recovery','identity','money','hosting'},'unknown_configuration_section')
     identity=data.get('identity',{})
     require(isinstance(identity,dict) and set(identity)<={'credential_delivery_recovery_window'},
             'unknown_identity_configuration')
@@ -106,6 +107,12 @@ def load_settings(config_dir=Path('/etc/msgd')):
             'invalid_credential_delivery_recovery_window')
     window_minutes=int(window[:-1])
     require(1<=window_minutes<=60,'invalid_credential_delivery_recovery_window')
+    hosting=data.get('hosting',{})
+    require(isinstance(hosting,dict) and set(hosting)<={'base_capacity_bytes'},
+            'unknown_hosting_configuration')
+    hosting_base=hosting.get('base_capacity_bytes',10*1024*1024)
+    require(type(hosting_base) is int and 0 < hosting_base <= 1024**4,
+            'invalid_hosting_capacity')
     money=data.get('money',{})
     require(isinstance(money,dict) and set(money)<=set(MoneyConfig.__dataclass_fields__),
             'unknown_money_configuration')
@@ -247,7 +254,8 @@ def load_settings(config_dir=Path('/etc/msgd')):
         tool_max_response_bytes=tools.get('max_response_bytes',4194304),
         tool_methods=tuple(tools.get('methods',('GET','HEAD'))),tool_ports=tuple(tools.get('ports',(80,443))),
         recovery_custodians=tuple(custodians),
-        money=MoneyConfig(display_name=display_name,code=code))
+        money=MoneyConfig(display_name=display_name,code=code),
+        hosting_base_capacity_bytes=hosting_base)
 
 
 def write_example(config_dir,data_dir,service_url='https://msg.lmm.best',*,postgres_dsn='service=msgd',valkey_url=None):
@@ -272,6 +280,9 @@ code = "MSG"
 scale = 6
 transfer_fee = 0
 allow_overdraft = false
+
+[hosting]
+base_capacity_bytes = 10485760
 
 [storage]
 postgres_dsn = {json.dumps(postgres_dsn)}
