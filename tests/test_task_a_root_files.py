@@ -2,12 +2,12 @@
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
+from test_root_rotation_resume import old_envelope
 
-from msg.admin.rotation import prepare, complete, journal_path
+from msg.admin.rotation import complete, journal_path, prepare
 from msg.core.codec import canonical, loads
 from msg.core.errors import Failure
 from msg.security.crypto import Ed25519Signer
-from test_root_rotation_resume import old_envelope
 
 PIN = 'independent-task-a-test-root-passphrase'
 
@@ -68,6 +68,6 @@ async def test_concurrent_prepare_does_not_replace_an_approved_journal(installed
         results = list(pool.map(attempt, range(2)))
     journals = [result for result in results if isinstance(result, dict)]
     assert len(journals) == 1
-    assert [result for result in results if isinstance(result, str)][0] in {
+    assert next(result for result in results if isinstance(result, str)) in {
         'root_rotation_busy', 'root_rotation_pending'}
     assert canonical(loads(journal_path(app).read_bytes())) == canonical(journals[0])

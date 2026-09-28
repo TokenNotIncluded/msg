@@ -10,7 +10,7 @@ from datetime import timedelta
 import os
 
 from msg.constants import ROOT_SUBJECT, ONLINE_CA, ADMINS_GROUP, CSR_SPACE
-from msg.core.codec import canonical, decode, digest, wire, b64
+from msg.core.codec import canonical, decode, digest, wire, b64, loads
 from msg.core.errors import require
 from msg.core.models import Certificate, CertificateRequest, Credential, Signature, IssuancePolicy, AuditEvent, Event, ResourceRef
 from msg.plugins.common import new_id
@@ -18,6 +18,7 @@ from msg.plugins.identity import certificate_resource
 from msg.security.crypto import seal_private_key, Ed25519Signer
 from msg.security.certificates import sign_certificate, csr_body
 from msg.security.rotation_journal import authorization, validate as validate_journal
+from msg.security.root_files import read_private, rotation_lock
 from msg.security.capabilities import grant_for
 from msg.storage.git import durable_write
 from msg.bootstrap import seed_resource
@@ -29,6 +30,11 @@ def journal_path(app):
 
 
 def prepare(app, new_signer, new_pin, *, old_signer, operator):
+    with rotation_lock(journal_path(app).parent):
+        return _prepare(app, new_signer, new_pin, old_signer=old_signer, operator=operator)
+
+
+def _prepare(app, new_signer, new_pin, *, old_signer, operator):
     require(not journal_path(app).exists(), 'root_rotation_pending')
     old = app.certificates.root_certificate
     if old_signer is not None:
@@ -61,7 +67,7 @@ def prepare(app, new_signer, new_pin, *, old_signer, operator):
     journal={'version':2,'old_certificate':wire(old),'new_trust':{'version':1,
         'public_key':b64(new_signer.public_key),'certificate':wire(new)},
         'new_envelope':seal_private_key(new_signer.private_bytes(),new_pin),
-        'previous_envelope_digest':digest(key_file.read_bytes()) if key_file.exists() else None,
+        'previous_envelope_digest':digest(read_private(key_file)) if key_file.exists() else None,
         'online_csr':wire(csr),'statement':statement}
     proof=canonical(authorization(journal))
     journal['new_signature']=wire(new_signer.sign(proof,purpose='root-rotation'))
@@ -75,6 +81,11 @@ def prepare(app, new_signer, new_pin, *, old_signer, operator):
 
 
 async def complete(app, journal, *, pin):
+    with rotation_lock(journal_path(app).parent):
+        return await _complete(app, journal, pin=pin)
+
+
+async def _complete(app, journal, *, pin):
     from msg.security.crypto import verify
     pending=journal_path(app)
     protected=pending.parent
@@ -86,11 +97,26 @@ async def complete(app, journal, *, pin):
     key_file=protected/'key.json'
     require(not key_file.is_symlink(),'unsafe_root_private_path')
     if key_file.exists():
-        require(digest(key_file.read_bytes()) in {
+        require(digest(read_private(key_file)) in {
             journal['previous_envelope_digest'],digest(canonical(journal['new_envelope']))},
             'root_envelope_changed')
     else:
         require(journal['previous_envelope_digest'] is None,'root_envelope_missing')
+    # Reject unsafe or substituted history BEFORE changing the database anchor.
+    history = protected/'history'/old.resource_id/'key.json'
+    for directory in (protected/'history', history.parent):
+        require(not directory.is_symlink(), 'unsafe_root_private_path')
+    require(not history.is_symlink(), 'unsafe_root_private_path')
+    if history.exists():
+        require(digest(read_private(history)) == journal['previous_envelope_digest'],
+                'rotation_history_mismatch')
+    elif journal['previous_envelope_digest'] is not None:
+        require(key_file.exists() and
+                digest(read_private(key_file)) == journal['previous_envelope_digest'],
+                'rotation_history_missing')
+    require(app.settings.trust_file.is_file() and not app.settings.trust_file.is_symlink(),
+            'rotation_trust_missing')
+    current_trust = loads(app.settings.trust_file.read_bytes())
     # This method is called only after the local console has approved the exact
     # journal. It also handles the state where PostgreSQL committed but protected files did not.
     await app.open_storage()
@@ -103,6 +129,9 @@ async def complete(app, journal, *, pin):
         require(old_key.subject_id==ROOT_SUBJECT and
                 digest(old_key.verifier)==journal['statement']['old_fingerprint'],
                 'rotation_statement_mismatch')
+        old_trust = {'version': 1, 'public_key': b64(old_key.verifier), 'certificate': wire(old)}
+        require(canonical(current_trust) in (canonical(old_trust), canonical(journal['new_trust'])),
+                'rotation_trust_changed')
         if journal['old_signature'] is not None:
             verify(old_key.verifier,canonical(proof),decode(Signature,journal['old_signature']),
                    purpose='root-rotation')
@@ -145,14 +174,14 @@ async def complete(app, journal, *, pin):
     history=protected/'history'/old.resource_id/'key.json'
     require(not history.is_symlink(),'unsafe_root_private_path')
     if history.exists():
-        require(digest(history.read_bytes())==journal['previous_envelope_digest'],
+        require(digest(read_private(history))==journal['previous_envelope_digest'],
                 'rotation_history_mismatch')
     elif journal['previous_envelope_digest'] is not None:
         # Never archive an already installed new envelope as the old key.
         require(key_file.exists() and
-                digest(key_file.read_bytes())==journal['previous_envelope_digest'],
+                digest(read_private(key_file))==journal['previous_envelope_digest'],
                 'rotation_history_missing')
-        durable_write(history,key_file.read_bytes(),mode=0o600)
+        durable_write(history,read_private(key_file),mode=0o600)
     durable_write(key_file,canonical(journal['new_envelope']),mode=0o600)
     durable_write(app.settings.trust_file,canonical(journal['new_trust']),mode=0o444)
     # Journal survives every earlier failure and is removed only after both

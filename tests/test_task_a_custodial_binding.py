@@ -6,15 +6,15 @@ become trusted merely because there is no ciphertext ACK to verify.
 from copy import deepcopy
 
 import pytest
+from test_service import NOW
 
 from msg.core.codec import b64, canonical, wire
 from msg.core.errors import Failure
 from msg.core.models import Credential
-from msg.security.age_keys import generate_age_key, encryption_key_id, public_from_recipient
+from msg.security.age_keys import encryption_key_id, generate_age_key, public_from_recipient
 from msg.security.crypto import Ed25519Signer
 from msg.security.custodial_migration import snapshot
 from msg.storage.postgres import PostgresMetadataStore
-from test_service import NOW
 
 
 @pytest.fixture
