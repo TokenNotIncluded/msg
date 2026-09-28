@@ -14,6 +14,7 @@ from msg.core.errors import Failure, require
 from msg.core.models import ResourceRef, Signature
 from msg.security.crypto import key_id, verify
 from msg.security.age_keys import encryption_key_id, public_from_recipient
+from msg.security.backup_retirement import BackupRetirement, verified as verified_backup
 
 
 class MigrationPhase(StrEnum):
@@ -94,21 +95,25 @@ def output_refs(details):
     return result
 
 
-def retirement_view(details, vault, *, identity_switched):
+def retirement_view(details, vault, *, identity_switched, subject_id=None, backup=None,
+                    backup_status='requires_offline_verification'):
     """An absent online key cannot prove that historical backups lost that key."""
     signing_deleted = bool(vault and vault[1] is None and vault[2] is None)
     encryption_deleted = bool(vault and vault[3] is None and vault[4] is None)
-    # Only a separately validated, local retirement record may set this field.
-    # The network migration API deliberately never writes or accepts one.
-    backup = details.get('backup_retirement')
+    # Only a locally imported, root-signed record verified by
+    # msg.security.backup_retirement may set this field. The network migration
+    # API never writes or accepts one; details['backup_retirement'] is ignored.
+    retired = isinstance(backup, BackupRetirement) and backup.binds(subject_id, details)
+    online = bool(identity_switched and vault and vault[0] == 'destroyed' and
+                  signing_deleted and encryption_deleted)
     return {'identity_switched': identity_switched,
             'token_revoked': identity_switched,
             'online_signing_key_deleted': signing_deleted,
             'online_encryption_key_deleted': encryption_deleted,
-            'backup_retired': False,
-            'backup_status': 'requires_offline_verification',
-            'backup_retirement_record': backup,
-            'server_key_retired': False}
+            'backup_retired': retired,
+            'backup_status': 'local_attestation_verified' if retired else backup_status,
+            'backup_retirement_record': backup.view() if retired else None,
+            'server_key_retired': retired and online}
 
 
 @dataclass(frozen=True)
@@ -166,7 +171,8 @@ async def verify_challenge_binding(tx, subject, status, challenge, details):
                 'custodial_encryption_target_changed')
 
 
-async def snapshot(tx, subject, status, challenge, details):
+async def snapshot(tx, subject, status, challenge, details, *, now=None):
+    """Without a trusted clock a backup attestation cannot be current, so it is not used."""
     await verify_challenge_binding(tx, subject, status, challenge, details)
     frozen = details.get('age_inventory')
     require(isinstance(frozen, list), 'custodial_inventory_required')
@@ -245,13 +251,19 @@ async def snapshot(tx, subject, status, challenge, details):
     vault = tx.one('''SELECT status,signing_nonce,signing_ciphertext,age_nonce,age_ciphertext
         FROM custodial_vault WHERE subject=?''', (subject,))
     switched = status == 'completed'
-    retirement = retirement_view(details, vault, identity_switched=switched)
+    backup_status, backup = await verified_backup(tx, subject, details, now=now) if switched \
+        else ('unavailable', None)
+    retirement = retirement_view(details, vault, identity_switched=switched, subject_id=subject,
+        backup=backup, backup_status='requires_offline_verification' if backup_status == 'unavailable'
+                                     else 'local_attestation_' + backup_status)
     complete = not drift and verified == set(sources)
     phase = MigrationPhase.CHALLENGE if status == 'pending' else MigrationPhase.MIGRATING
     if switched:
         phase = MigrationPhase.HISTORY_RECOVERABLE if complete else MigrationPhase.IDENTITY_SWITCHED
         if retirement['online_signing_key_deleted'] and retirement['online_encryption_key_deleted']:
             phase = MigrationPhase.ONLINE_KEY_RETIRED
+        if retirement['server_key_retired']:
+            phase = MigrationPhase.SERVER_KEY_RETIRED
     results = {'mappings': mappings, 'acks': acks, 'recovery_envelope': envelope,
                'recovery_acks': recovery_acks, 'resolution': details.get('resolution')}
     return MigrationSnapshot({'challenge_id': challenge['challenge_id'], 'status': status,

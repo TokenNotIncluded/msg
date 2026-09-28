@@ -21,8 +21,10 @@ only the challenge's new signing key may inspect its completed result. The
 read reports `identity_switched`, `history_recoverable`, `online_retired`,
 `backup_retired`, `server_key_retired` and a separate `completion_status`.
 Online retirement requires the new primary keys, retired old keys, revoked old
-signing credential and empty destroyed vault fields. No backup-destruction
-attestation exists yet, so `backup_retired` and `server_key_retired` remain false.
+signing credential and empty destroyed vault fields. `backup_retired` becomes true
+only for one exact root-signed record imported at the physical console and
+re-verified on each read (see `CUSTODIAL_HISTORY.md`); `server_key_retired`
+additionally needs online retirement. Without that record both remain false.
 The legacy `status=completed` from an empty-inventory identity switch is not a
 claim that every server-held backup has been destroyed; use the independent
 retirement fields.
