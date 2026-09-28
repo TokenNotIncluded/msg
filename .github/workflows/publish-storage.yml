@@ -1,0 +1,40 @@
+name: Publish pinned storage patch
+on:
+  push:
+    branches: [work/issue-workspace-20260929]
+    paths: ['.publish/apply_storage.py', '.github/workflows/publish-storage.yml']
+permissions:
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Apply exactly the reviewed tree to a staging ref
+        env:
+          BASE: 2daf1e0b81783d8b52685540b041ba9563333282
+          EXPECTED_TREE: 32e13775b0e2e0e85d240bebccae8fd2d56adfa8
+          SCRIPT_HASH: 9349eb38393a5a0638c3086da6ff72533fbe7069b5327d27fb4e18040ad9b211
+        run: |
+          set -euo pipefail
+          echo "$SCRIPT_HASH  .publish/apply_storage.py" | sha256sum -c -
+          cp .publish/apply_storage.py "$RUNNER_TEMP/apply_storage.py"
+          git fetch --no-tags origin "$BASE"
+          git checkout --detach "$BASE"
+          test "$(git rev-parse HEAD^{tree})" = e1668ddcbf5879bce9520a31f8bfe911c813370c
+          python "$RUNNER_TEMP/apply_storage.py"
+          git add src docs/ISSUE_PROGRESS.md
+          git diff --cached --check
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+          git config user.name 'LIghtJUNction'
+          git config user.email 'lightjunction.me@gmail.com'
+          git commit -m 'refactor(storage): share neutral sessions and expose guarded query ports' -m 'Refs #157 #83 #85. Preserve driver transactions, rollback fences, SQL and migration behavior.'
+          git push origin HEAD:refs/heads/work/storage-session-staged-20260929-2050
+          mkdir -p artifacts
+          git show -s --format='%H%n%T%n%P%n%s' HEAD > artifacts/published.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: storage-published-source
+          path: artifacts/published.txt
+          if-no-files-found: error
