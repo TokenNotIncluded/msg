@@ -101,7 +101,8 @@ async def test_core_executor_runs_with_explicit_services_and_no_application():
     result = await executor.execute(request_for('testing.read', {}, 'https://unit.invalid',
         return_fields=('id',)))
     assert result.status == 'ok', result
-    assert result.data == {'original': True, 'projection': [{'id': 'r_test'}]}
+    # Models freeze nested JSON; compare its complete wire representation.
+    assert wire(result.data) == {'original': True, 'projection': [{'id': 'r_test'}]}
     assert active == []
 
 

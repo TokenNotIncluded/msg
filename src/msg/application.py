@@ -128,21 +128,25 @@ class Application:
 
     def make_executor(self, *, authenticator=None):
         """Compose the same finite services for network and SSH execution."""
-        from functools import partial
         from msg.plugins.discovery import read_projection
-        from msg.plugins.communication import enqueue_domain_webhooks
+        from msg.plugins import communication
         from msg.transports.packet import decode_packet
 
         async def projection(context, request, tx, ref):
             return await read_projection(self,context,request,tx,ref.id,
                 revision=ref.revision,fields=request.return_fields)
 
+        async def project_event(tx, event):
+            # Keep the installed adapter's live binding for instrumentation and
+            # fault injection; the executor still knows only its narrow port.
+            await communication.enqueue_domain_webhooks(self,tx,event)
+
         executor=OperationExecutor(self.registry,self.metadata,self.contents,
             self.authenticator if authenticator is None else authenticator,
             self.authorizer,self.clock,self.receipt_signer,
             max_request_bytes=self.settings.server.limits.max_request_bytes,
             packet_decoder=decode_packet,projection_reader=projection,
-            event_projector=partial(enqueue_domain_webhooks,self))
+            event_projector=project_event)
         executor.response_hook=self._secrets_for_caller
         executor.recovery_drill_marker=self.settings.config_dir/'recovery-drill.json'
         if self.executor is not None:
