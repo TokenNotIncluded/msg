@@ -27,6 +27,33 @@ def test_feature_inventory_has_unique_real_samples_and_explicit_checks():
         'content':('content_layout','idempotency'),
         'git_content':('git',None),
     }
+    assert {key:mapped[key] for key in ('recovery','search','hosting')} == {
+        'recovery':('recovery_checkpoint','recovery_checkpoint_replay'),
+        'search':('lexical_search','lexical_search_access'),
+        'hosting':('hosting','hosting_deploy'),
+    }
+
+
+def test_recovery_checkpoint_inspection_detects_vocabulary_drift(monkeypatch):
+    from msg.admin import recovery_replay
+    from msg.admin.diagnostics import inspect_recovery_checkpoint
+    assert inspect_recovery_checkpoint()=={'fact_kinds':len(recovery_replay.SUPPORTED_FACTS),
+                                           'promotion':'blocked'}
+    monkeypatch.setattr(recovery_replay,'SUPPORTED_FACTS',
+                        recovery_replay.SUPPORTED_FACTS-{'vault.destroy'})
+    with pytest.raises(Failure,match='^recovery_checkpoint_schema_drift$'):
+        inspect_recovery_checkpoint()
+
+
+def test_disabled_plugins_are_reported_as_skipped_not_passed():
+    rows=feature_manifest()
+    observations={'lexical_search':{'ok':True,'status':'disabled'},
+                  'hosting':{'ok':False,'code':'unknown_operation'}}
+    result=feature_results(rows,observations,'doctor_check')
+    assert result['search']=={'status':'skip','check':'lexical_search'}
+    assert result['hosting']=={'status':'fail','check':'hosting'}
+    assert result['recovery']=={'status':'fail','check':'recovery_checkpoint',
+                                'reason':'check_missing'}
 
 
 @pytest.mark.parametrize('change',[
@@ -60,11 +87,13 @@ async def test_doctor_feature_results_are_grounded_in_read_only_checks(installed
     app,_=installed
     result=doctor(app.settings.config_dir,clock=lambda:NOW)
     for feature_id in ('bootstrap','postgres','root_trust','online_ca','authorization',
-                       'audit','content','git_content','identity_upgrade'):
+                       'audit','content','git_content','identity_upgrade',
+                       'recovery','search','hosting'):
         row=result['features'][feature_id]
         assert row['status']=='pass',result
         assert result['checks'][row['check']]['ok'] is True
-    assert result['features']['recovery']['status']=='disabled'
+    assert result['checks']['lexical_search']['read_only'] is True
+    assert result['checks']['recovery_checkpoint']['promotion']=='blocked'
 
 
 @pytest.mark.asyncio
@@ -72,7 +101,7 @@ async def test_selftest_feature_results_are_grounded_in_isolated_operations():
     result=await selftest()
     assert result['ok'] and result['cleaned_up'],result
     for feature_id in ('bootstrap','postgres','root_trust','online_ca','authorization',
-                       'audit','content','identity_upgrade'):
+                       'audit','content','identity_upgrade','recovery','search','hosting'):
         row=result['features'][feature_id]
         assert row['status']=='pass',result
         assert result['checks'][row['check']] is True

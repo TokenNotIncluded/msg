@@ -88,6 +88,77 @@ def feature_results(features, observations, field):
     return result
 
 
+def inspect_recovery_checkpoint():
+    """Compare packaged replay schema and code vocabulary; opens no database or quarantine."""
+    from importlib.resources import files
+
+    from msg.admin.recovery_replay import FORMAT, SUPPORTED_FACTS
+    schema=loads(files('msg.data').joinpath('recovery-checkpoint.schema.json').read_bytes())
+    checkpoint=schema['properties']['checkpoint']['properties']
+    kinds=checkpoint['entries']['items']['properties']['kind']['enum']
+    require(checkpoint['format'].get('const')==FORMAT and len(kinds)==len(set(kinds)) and
+            set(kinds)==SUPPORTED_FACTS,'recovery_checkpoint_schema_drift')
+    return {'fact_kinds':len(kinds),'promotion':'blocked'}
+
+
+def inspect_lexical_search(app):
+    specs=[spec for spec in app.registry.operations() if spec.name=='discovery.lexical_search']
+    require(bool(specs) and all(spec.effect=='read' for spec in specs),'lexical_search_contract_invalid')
+    return {'versions':sorted(spec.version for spec in specs),'read_only':True}
+
+
+def inspect_hosting(app):
+    for name in ('hosting.create','hosting.deploy'):
+        require(app.registry.operation(name).require_signature,'hosting_contract_invalid')
+    app.registry.resource_type('website')
+    return {'operations':['hosting.create@1','hosting.deploy@1']}
+
+
+async def _selftest_search_hosting(app,call,register,test_path):
+    """Exercise search and publishing only inside the disposable test namespace."""
+    handle='test-features'
+    key,uid=await register(handle)
+    marker='selftestsearch'+uuid.uuid4().hex[:12]
+    search=False
+    try:
+        post=await call('content.post_create',{'parent':test_path+'/tmp','body':'isolated '+marker},key,uid)
+        require(post.status=='ok','selftest_search_post_failed')
+        found=await call('discovery.lexical_search',{'scope':test_path+'/tmp','terms':marker},
+                         key,uid,contract_version=4)
+        denied=await call('discovery.lexical_search',{'scope':test_path+'/private','terms':marker},
+                          key,uid,contract_version=4)
+        search=(found.status=='ok' and
+                [item['id'] for item in found.data['items']]==[post.resources[0].id] and
+                denied.error is not None and denied.error.code=='permission_denied')
+    except Failure:
+        search=False
+    hosting=False
+    try:
+        page=b'<h1>isolated selftest</h1>'
+        source=await call('content.file_put',{'parent':test_path+'/@'+handle+'/files','name':'index.html',
+            'data':b64(page),'media_type':'text/html'},key,uid)
+        require(source.status=='ok','selftest_hosting_source_failed')
+        site=await call('hosting.create',{'parent':test_path+'/@'+handle,'name':'site'},key,uid)
+        require(site.status=='ok','selftest_hosting_create_failed')
+        website_id=site.resources[0].id
+        deployed=await call('hosting.deploy',{'id':website_id,
+            'entries':[{'path':'index.html','source':wire(source.resources[0])}]},key,uid,
+            expected=((website_id,site.data['generation']),))
+        require(deployed.status=='ok','selftest_hosting_deploy_failed')
+        async with app.metadata.transaction(write=False) as tx:
+            website=await tx.resource(website_id)
+            revision=await tx.revision(ResourceRef(id=website_id,revision=website.revision))
+            manifest=loads(await app.contents.read_bytes(revision.content))
+            entry=decode(ResourceRef,manifest['entries']['index.html'])
+            published=await app.contents.read_bytes((await tx.revision(entry)).content)
+            site_path=await tx.path(website_id)
+        hosting=(site_path.startswith(test_path+'/') and set(manifest['entries'])=={'index.html'} and
+                 published==page)
+    except (Failure,KeyError,TypeError,ValueError):
+        hosting=False
+    return {'lexical_search_access':search,'hosting_deploy':hosting}
+
+
 async def authority_snapshot_drift(app, root, online, tx):
     """Show signed authority missing from this installation's current vocabulary.
 
@@ -292,6 +363,16 @@ async def _doctor(config_dir,clock):
             pass
         success('root_private_boundary')
     except (Failure,OSError) as exc:failed('root_private_boundary',getattr(exc,'code','root_material_missing'))
+    try:success('recovery_checkpoint',**inspect_recovery_checkpoint())
+    except (Failure,OSError,ValueError,KeyError,TypeError,AttributeError) as exc:
+        failed('recovery_checkpoint',getattr(exc,'code','recovery_checkpoint_schema_invalid'))
+    for name,plugin,inspect_feature in (('lexical_search','discovery',inspect_lexical_search),
+                                        ('hosting','extensions',inspect_hosting)):
+        if plugin not in settings.server.plugins:
+            checks[name]={'ok':True,'status':'disabled'}
+            continue
+        try:success(name,**inspect_feature(app))
+        except Failure as exc:failed(name,exc.code)
     features=feature_results(feature_manifest(),checks,'doctor_check')
     return {'ok':all(c['ok'] for c in checks.values()) and
             all(row['status']!='fail' for row in features.values()),
@@ -499,7 +580,13 @@ async def selftest():
     from msg.security.certificates import csr_body
     from msg.security.capabilities import grant_for
     from msg.bootstrap import feature_manifest
+    from msg.admin import recovery_replay
     checks={}
+    try:
+        inspect_recovery_checkpoint()
+        checks['recovery_checkpoint_replay']=recovery_replay.selftest()['status']=='passed'
+    except (Failure,OSError,ValueError,KeyError,TypeError,AttributeError):
+        checks['recovery_checkpoint_replay']=False
     with tempfile.TemporaryDirectory(prefix='msg-selftest-') as temporary, temporary_postgres() as dsn:
         folder=Path(temporary)
         now=datetime.now(UTC)
@@ -652,6 +739,7 @@ async def selftest():
             from msg.admin.market_check import check_market, check_market_e2e
             checks['market_lifecycle']=await check_market(app,root,call,register,now)
             checks['market_e2e']=await check_market_e2e(app,root,call,register)
+            checks.update(await _selftest_search_hosting(app,call,register,test_path))
         except Failure as exc:
             checks['failure']={'code':exc.code}
         finally:
