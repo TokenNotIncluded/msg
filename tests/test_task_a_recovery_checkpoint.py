@@ -289,7 +289,7 @@ async def test_all_supported_owned_revocations_preserve_signed_bytes_and_never_i
         tx.execute('''INSERT INTO topic_bans (topic,subject,actor,created_at,expires_at,reason,status)
             VALUES (?,?,?,?,NULL,?,?)''',
             (resource.id, owner, owner, wire(NOW), 'restored-ban', 'active'), write=True)
-        banned = replace(resource, id='t_ban', name='ban')
+        banned = replace(resource, id='t_ban', name='ban', parent=resource.id)
         await tx.insert(banned)
     targets = [('credential.revoke', 'token_one'), ('certificate.revoke', 'cert_one'),
                ('share_grant.revoke', 'sg_one'), ('share_grant_v2.revoke', 'sg_two'),
