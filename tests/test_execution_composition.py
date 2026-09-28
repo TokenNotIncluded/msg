@@ -1,8 +1,7 @@
 """Retain PR #169's useful assembly/rollback cases on the one executor port.
 
-Source cases: f7f8a890d91e4eda5d3da5f3c2ac4d8988e70848; complete frozen-JSON
-comparison correction: 3db973ab1784926eb4e545cabdf832e7faa0a4bc.
-No alternative BatchPolicy/decoder/factory is installed for a competing API.
+Source cases: 3db973ab1784926eb4e545cabdf832e7faa0a4bc. No alternative
+BatchPolicy/decoder/factory is installed solely to satisfy a competing API.
 """
 from contextlib import asynccontextmanager
 from datetime import timedelta

@@ -1,8 +1,4 @@
-"""PR #166 contracts retained against the single integrated session owner.
-
-Adapted from 0ef416ec99e20604de2398622e72d7f479a84ceb. Only the proposed
-base-class name changes; every structural and behavioral assertion remains.
-"""
+"""One storage contract exercised independently against PostgreSQL and SQLite."""
 from __future__ import annotations
 
 import asyncio

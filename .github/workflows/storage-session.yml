@@ -73,6 +73,9 @@ jobs:
           python -m pytest tests/test_session_boundary.py tests/test_metadata_session_boundary.py tests/test_foundation.py
           tests/test_postgres.py tests/test_security_rollback_fences.py
           tests/test_security_storage_rollback.py tests/test_ledger_accounts.py
+          tests/test_ledger_account_isolation.py tests/test_ledger_migration_json.py
+          tests/test_ledger_migration_references.py tests/test_recovery_safety_units.py
+          tests/test_recovery_metadata.py
           --junitxml=artifacts/storage-session.xml
       - uses: actions/upload-artifact@v4
         if: always()
