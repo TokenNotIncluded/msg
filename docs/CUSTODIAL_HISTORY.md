@@ -90,11 +90,25 @@ Test Root, rewraps, locally decrypts, ACKs and finalizes it. It refuses a produc
 application without the isolated selftest namespace.
 
 `history_recoverable` covers **enumerated and client-verified revisions only**.
-`online_key_retired` describes online vault material only. `backup_retired` and
-`server_key_retired` remain false until a separate independently verified offline
-retirement procedure exists. Neither a boolean supplied by a network caller nor a
-green test run can establish that old backups lost a key. Restore/revocation replay
-and real operator acceptance are tracked separately in issues #69 and #70.
+`online_key_retired` describes online vault material only. `backup_retired` stays
+false unless a root-signed backup retirement record was imported at the physical
+console (`RootAdmin.sign_backup_retirement` / `RootAdmin.import_backup_retirement`,
+both behind `require_local_console`). The record binds the subject, both old key
+IDs, a non-empty list of named backup sets and a validity window of at most 400
+days; it is signed with purpose `custodial-backup-retirement-v1`. Every read
+re-verifies it against the active, unrevoked root credential, so an altered,
+expired, misbound or pre-rotation record reports `backup_retired=false`
+(`backup_status=local_attestation_invalid|expired`). `server_key_retired` is true
+only when that record and observable online retirement both hold.
+
+The record is an operator attestation for the **listed backup sets only**. It
+does not prove that no other copy exists and it does not claim that production
+backups were destroyed. No network operation writes, accepts or forwards it; a
+`backup_retirement` value inside the network-writable migration body is ignored.
+Neither a boolean supplied by a network caller nor a green test run can establish
+that old backups lost a key. There is no `msg-admin` CLI wiring yet. Restore/
+revocation replay and real operator acceptance are tracked separately in issues
+#69 and #70.
 
 ## Published contract compatibility
 

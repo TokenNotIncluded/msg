@@ -66,7 +66,7 @@ async def transition(app, ctx, request, tx, subject):
     else:
         require(hmac.compare_digest(details['age_possession_digest'], digest(args['age_proof'])),
                 'age_possession_failed')
-    state = await snapshot(tx, subject.resource_id, row[1], challenge, details)
+    state = await snapshot(tx, subject.resource_id, row[1], challenge, details, now=ctx.now)
     state.require_observation(args)
     before = digest(details)
     if args['action'] == 'refresh':
@@ -142,7 +142,8 @@ async def transition(app, ctx, request, tx, subject):
     await audit(tx, ctx, request, subject.resource_id, 'identity.custodial_' + args['action'],
                 {'challenge_id': args['challenge_id'], 'before_digest': before,
                  'after_digest': digest(details), 'decision_signature': wire(args['migration_ack'])})
-    return HandlerOutput(data=(await snapshot(tx, subject.resource_id, row[1], challenge, details)).data)
+    return HandlerOutput(data=(await snapshot(tx, subject.resource_id, row[1], challenge, details,
+                                              now=ctx.now)).data)
 
 
 async def switch_identity(app, ctx, request, tx, subject, challenge, details, *, retain_decrypt=False):
@@ -204,7 +205,7 @@ async def switch_identity(app, ctx, request, tx, subject, challenge, details, *,
         tx.execute('''UPDATE custodial_vault SET status='destroyed',signing_nonce=NULL,
             signing_ciphertext=NULL,age_nonce=NULL,age_ciphertext=NULL,destroyed_at=? WHERE subject=?''',
             (wire(ctx.now), uid), write=True)
-    current = await snapshot(tx, uid, 'completed', challenge, details)
+    current = await snapshot(tx, uid, 'completed', challenge, details, now=ctx.now)
     completed.update(completion_scope='identity_switch_only', phase=current.data['phase'],
         history_recoverable=current.data['history_recoverable'],
         verification_scope=current.data['verification_scope'],

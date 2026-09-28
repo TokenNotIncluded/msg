@@ -67,6 +67,7 @@
                   "share_link.revoke",
                   "membership.remove",
                   "topic_membership.remove",
+                  "topic_ban.apply",
                   "topic_ban.lift",
                   "identity_key.retire",
                   "encryption_key.retire",
