@@ -23,8 +23,6 @@ from msg.security.certificates import CertificateValidator
 from msg.security.crypto import Ed25519Signer
 from msg.security.quarantine import active as quarantine_active
 from msg.storage.git import GitContentStore
-from msg.storage.postgres import PostgresMetadataStore
-from msg.storage.valkey_bus import ValkeyOutboxSignal
 
 
 class Application:
@@ -73,6 +71,8 @@ class Application:
 
     async def open_storage(self):
         if self.metadata is None:
+            from msg.storage.postgres import PostgresMetadataStore
+            from msg.storage.valkey_bus import ValkeyOutboxSignal
             signal=(ValkeyOutboxSignal(self.settings.server.valkey_url)
                     if self.settings.server.valkey_url else None)
             self.metadata=PostgresMetadataStore(self.settings.server.postgres_dsn,signal=signal)

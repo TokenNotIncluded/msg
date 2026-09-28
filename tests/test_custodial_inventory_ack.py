@@ -134,7 +134,9 @@ async def test_client_keeps_challenge_and_decrypts_locally_before_ack(installed,
                                                external_ciphertexts_migrated=True)
         assert resumed.status=='ok' and resumed.data['challenge_id']==challenge_id
         assert resumed.data['acks'][old_revision]['plaintext_digest']==digest(plaintext)
-        assert resumed.data['finalize_ready'] is False
+        assert resumed.data['finalize_ready'] is True
+        assert resumed.data['history_recoverable'] is True
+        assert resumed.data['retirement']['server_key_retired'] is False
         assert loads((state.directory/'custodial-upgrade.json').read_bytes())['challenge'][
             'challenge_id']==challenge_id
         assert state.token is not None

@@ -474,6 +474,7 @@ class MsgClient:
                     pending['encryption_recipient']==recipient,'custodial_upgrade_journal_mismatch')
         else:
             pending={'handle':handle,'public_key':public,'encryption_recipient':recipient,
+                     'server':self.state.server,'subject_id':self.state.subject,
                      'start_request_id':uuid4().hex,'finish_request_id':uuid4().hex,
                      'challenge':None}
             durable_write(journal,canonical(pending),mode=0o600)

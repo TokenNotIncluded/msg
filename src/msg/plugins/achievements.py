@@ -13,7 +13,7 @@ from datetime import timedelta
 from msg.core.codec import canonical, digest, loads, parse_time, wire
 from msg.core.errors import Failure, require
 from msg.core.models import AuditEvent, Event, HandlerOutput, ResourceRef
-from msg.plugins.common import new_id, registration
+from msg.plugins.common import new_id, registration, operation_id
 from msg.plugins.schemas import IDENTIFIER, obj
 
 
@@ -127,6 +127,34 @@ def public_grant(grant):
             'evidence_digest', 'automatic', 'revoked_at', 'metadata', 'signature')}
 
 
+MAX_PINS = 32
+
+
+def _pins(tx, subject):
+    # Revocation hides the pin immediately, without a read-time cleanup write.
+    rows = tx.rows('''SELECT p.grant_id,g.body FROM achievement_pins p
+        JOIN achievement_grants g ON g.id=p.grant_id AND g.subject=p.subject
+        WHERE p.subject=? ORDER BY p.position,p.grant_id''', (subject,))
+    return [gid for gid,body in rows if loads(body).get('revoked_at') is None]
+
+
+def _owned_grant(tx, subject, grant_id, *, active=True):
+    row = tx.one('SELECT subject,body FROM achievement_grants WHERE id=?', (grant_id,))
+    require(row is not None and row[0]==subject, 'achievement_grant_not_found')
+    grant = loads(row[1])
+    require(grant.get('subject_id')==subject and grant.get('id')==grant_id and
+            (not active or grant.get('revoked_at') is None), 'achievement_grant_not_found')
+    return grant
+
+
+def _save_pins(tx, subject, grant_ids):
+    require(len(grant_ids)<=MAX_PINS, 'achievement_pin_limit')
+    tx.execute('DELETE FROM achievement_pins WHERE subject=?', (subject,), write=True)
+    for position,grant_id in enumerate(grant_ids):
+        tx.execute('INSERT INTO achievement_pins VALUES (?,?,?)',
+                   (subject,grant_id,position), write=True)
+
+
 def install(app):
     op, finish = registration(app, 'achievements', ('identity',))
 
@@ -137,7 +165,42 @@ def install(app):
         rows = tx.rows('SELECT body FROM achievement_grants WHERE subject=? ORDER BY achievement_id,spec_version',
                        (subject,))
         return HandlerOutput(data={'subject_id': subject,
-                                   'achievements': [public_grant(loads(row[0])) for row in rows]})
+                                   'achievements': [public_grant(loads(row[0])) for row in rows],
+                                   'pinned_grant_ids': _pins(tx,subject)})
+
+    async def pin_owner(ctx, request, tx):
+        subject=_owner(ctx)
+        await app.authorizer.require_base(ctx.principal,operation_id(request),subject,tx)
+        return subject
+
+    @op('achievement.pin',obj({'grant_id':IDENTIFIER},('grant_id',)),signature=True)
+    async def pin(ctx, request, tx):
+        subject=await pin_owner(ctx,request,tx)
+        gid=request.arguments['grant_id']
+        _owned_grant(tx,subject,gid)
+        pins=_pins(tx,subject)
+        if gid not in pins:
+            pins.append(gid)
+        _save_pins(tx,subject,pins)
+        return HandlerOutput(data={'subject_id':subject,'pinned_grant_ids':pins})
+
+    @op('achievement.unpin',obj({'grant_id':IDENTIFIER},('grant_id',)),signature=True)
+    async def unpin(ctx, request, tx):
+        subject=await pin_owner(ctx,request,tx)
+        gid=request.arguments['grant_id']
+        _owned_grant(tx,subject,gid,active=False)
+        pins=[item for item in _pins(tx,subject) if item!=gid]
+        _save_pins(tx,subject,pins)
+        return HandlerOutput(data={'subject_id':subject,'pinned_grant_ids':pins})
+
+    @op('achievement.reorder',obj({'grant_ids':{'type':'array','items':IDENTIFIER,
+        'uniqueItems':True,'maxItems':MAX_PINS}},('grant_ids',)),signature=True)
+    async def reorder(ctx, request, tx):
+        subject=await pin_owner(ctx,request,tx)
+        pins=list(request.arguments['grant_ids'])
+        require(set(pins)==set(_pins(tx,subject)), 'achievement_pin_set_mismatch')
+        _save_pins(tx,subject,pins)
+        return HandlerOutput(data={'subject_id':subject,'pinned_grant_ids':pins})
 
     @op('achievement.start', obj())
     async def start(ctx, request, tx):

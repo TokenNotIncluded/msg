@@ -31,7 +31,8 @@ BASE_FAMILIES = {
         'identity.recovery_policy_get','identity.recovery_policy_set',
         'identity.recovery_envelope_register','identity.recovery_envelope_get',
         'identity.recovery_envelope_list','identity.recovery_custodians',
-        'achievement.start', 'achievement.answer', 'achievement.finish'),
+        'achievement.start', 'achievement.answer', 'achievement.finish',
+        'achievement.pin','achievement.unpin','achievement.reorder'),
     'resource.basic': ('content.',),
     'sharing.basic': ('sharing.',),
     'discussion.basic': ('discussion.',),
@@ -150,6 +151,7 @@ def temporary_ceiling(registry,scope=None):
     temporary=frozenset(f'{name}@1' for name in TEMPORARY_OPERATIONS)|{
         'identity.upgrade@2','identity.temporary@2','identity.temporary@3',
         'identity.custodial_create@2',
+        'identity.custodial_upgrade_finish@2','identity.custodial_rewrap_ack@2',
         'identity.token_rotate@2'}
     return tuple(grant_for(spec,scope=scope,operations=spec.operations&temporary) for spec in registry.capabilities()
         if spec.name in BASE_FAMILIES and spec.operations&temporary)
