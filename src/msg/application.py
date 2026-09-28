@@ -119,14 +119,34 @@ class Application:
         self.authenticator=AuthenticationService(self.registry,self.certificates,self.settings.service_url,self.clock,
             self.primary_ceiling,self.temporary_ceiling)
         self.authorizer=AuthorizationService(self.registry,self.certificates)
-        self.executor=OperationExecutor(self.registry,self.metadata,self.contents,self.authenticator,self.authorizer,
-                                       self.clock,self.receipt_signer)
-        self.executor.application=self
+        self.executor=self.new_executor(self.authenticator)
         self.executor.recovery_drill_marker=marker
         self.executor.recovery_quarantined=quarantined
-        self.executor.response_hook=self._secrets_for_caller
         self._loaded=True
         return self
+
+    def new_executor(self, authenticator=None):
+        """Compose identical limits/ports for HTTP and the restricted SSH entry."""
+        executor=OperationExecutor(self.registry,self.metadata,self.contents,
+            self.authenticator if authenticator is None else authenticator,
+            self.authorizer,self.clock,self.receipt_signer,
+            max_request_bytes=self.settings.server.limits.max_request_bytes,
+            result_projection=self._result_projection,
+            event_notifications=self._event_notifications)
+        executor.response_hook=self._secrets_for_caller
+        executor.recovery_drill_marker=self.settings.config_dir/'recovery-drill.json'
+        if self.executor is not None:
+            executor.recovery_quarantined=self.executor.recovery_quarantined
+        return executor
+
+    async def _result_projection(self, context, request, session, resource, *, fields):
+        from msg.plugins.discovery import read_projection
+        return await read_projection(self,context,request,session,resource.id,
+                                     revision=resource.revision,fields=fields)
+
+    async def _event_notifications(self, session, event):
+        from msg.plugins.communication import enqueue_domain_webhooks
+        await enqueue_domain_webhooks(self,session,event)
 
     async def online_issuer(self,tx):
         issuer=tx.setting('online_ca_certificate')

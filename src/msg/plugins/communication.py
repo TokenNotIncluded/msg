@@ -17,8 +17,7 @@ from msg.plugins.discovery import visible
 from msg.storage.capacity import require_webhook_capacity
 
 
-def event_id(request,subject):
-    return 'e_'+digest((subject,request.request_id))[7:39]
+from msg.core.events import event_id
 
 
 # A deliberately small event vocabulary. An Event is an audit fact, not blanket
