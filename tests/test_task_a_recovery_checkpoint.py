@@ -89,7 +89,10 @@ async def test_replay_is_atomic_monotonic_idempotent_and_never_promotes(restored
     body, pin, signed = checkpoint
     results = await asyncio.gather(*(replay(restored, signed(body), pin=pin) for _ in range(3)))
     assert sum(result['changed'] for result in results) == 1
-    assert all(result['promotion'] == 'blocked' and result['backup_retired'] is False for result in results)
+    assert all(result['promotion'] == 'blocked' and result['backup_retired'] is False and
+               result['promotion_blocked_reasons'] == [
+                   'quarantine_remains', 'supported_facts_are_deny_only',
+                   'backup_retirement_not_attested'] for result in results)
     async with restored.transaction(write=False) as tx:
         assert active(tx)
         credential = await tx.credential('token_one')
@@ -286,10 +289,13 @@ async def test_all_supported_owned_revocations_preserve_signed_bytes_and_never_i
         tx.execute('''INSERT INTO topic_bans (topic,subject,actor,created_at,expires_at,reason,status)
             VALUES (?,?,?,?,NULL,?,?)''',
             (resource.id, owner, owner, wire(NOW), 'restored-ban', 'active'), write=True)
+        banned = replace(resource, id='t_ban', name='ban')
+        await tx.insert(banned)
     targets = [('credential.revoke', 'token_one'), ('certificate.revoke', 'cert_one'),
                ('share_grant.revoke', 'sg_one'), ('share_grant_v2.revoke', 'sg_two'),
                ('share_link.revoke', 'link_one'), ('membership.remove', 'g_test'),
-               ('topic_membership.remove', 't_test'), ('topic_ban.lift', resource.id),
+               ('topic_membership.remove', 't_test'), ('topic_ban.apply', 't_ban'),
+               ('topic_ban.lift', resource.id),
                ('identity_key.retire', signer.key_id),
                ('encryption_key.retire', age_id), ('vault.destroy', age_id)]
     assert {kind for kind, _ in targets} == SUPPORTED_FACTS
@@ -299,6 +305,8 @@ async def test_all_supported_owned_revocations_preserve_signed_bytes_and_never_i
     pin = replace(pin, sequence=len(facts), digest=digest(body))
     result = await replay(restored, signed(body), pin=pin)
     assert result['changed'] == len(facts) and result['backup_retired'] is False
+    assert result['promotion_blocked_reasons'] == [
+        'quarantine_remains', 'supported_facts_are_deny_only', 'backup_retirement_not_attested']
     async with restored.transaction(write=False) as tx:
         assert tx.one('SELECT body,revoked FROM certificates WHERE id=?', ('cert_one',)) == (original, 1)
         assert (await tx.credential(signer.key_id)).revoked_at == NOW
@@ -314,6 +322,8 @@ async def test_all_supported_owned_revocations_preserve_signed_bytes_and_never_i
                       ('t_test', owner)) == ('removed',)
         assert tx.one('SELECT status FROM topic_bans WHERE topic=? AND subject=?',
                       ('t_test', owner)) == ('lifted',)
+        assert tx.one('SELECT status,actor,reason FROM topic_bans WHERE topic=? AND subject=?',
+                      ('t_ban', owner)) == ('active', 'u_root', 'recovery-replay')
         assert tx.one('SELECT status,signing_nonce,signing_ciphertext,age_nonce,age_ciphertext '
                       'FROM custodial_vault WHERE subject=?', (owner,)) == ('destroyed', None, None, None, None)
         assert tx.one('SELECT count(*) FROM jobs')[0] == 0 and active(tx)
