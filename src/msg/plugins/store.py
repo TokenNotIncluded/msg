@@ -225,6 +225,7 @@ def install(app):
                   'total_size':total,'delivery_mode':'managed_instant'}
         package_digest=digest(snapshot)
         for blob in blobs:
+            tx.on_rollback(lambda blob=blob: app.contents.unpin(blob, package_revision))
             await app.contents.pin(blob, package_revision)
         tx.execute('''INSERT INTO store_packages
             (id,listing_id,listing_revision,seller,revision,kind,manifest,payload_refs,

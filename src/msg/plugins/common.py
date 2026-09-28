@@ -154,6 +154,8 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
                        (ctx.principal.subject,))
         require(primary is not None and primary[0]==signer.key_id,'custodial_vault_key_mismatch')
         revision=replace(revision,signature=signer.sign(canonical(body_to_sign),purpose='revision'))
+    if revision_id is None or not await app.contents.pinned(blob,rid):
+        tx.on_rollback(lambda: app.contents.unpin(blob,rid))
     await app.contents.pin(blob,rid)
     ancestors=await tx.ancestors(resource.id)
     topic=next((p.id for p in reversed(ancestors) if p.type=='topic'),ROOT_SPACE)

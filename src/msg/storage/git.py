@@ -333,11 +333,31 @@ class GitContentStore:
         require(blob.size<=limit,'use_transfer')
         return b''.join([chunk async for chunk in self.read(blob)])
 
+    async def _update_pin_ref(self, *args):
+        # Cancelling to_thread does not stop Git. Finish the mutation before the
+        # metadata transaction can compensate it or release its writer fence.
+        pending = asyncio.create_task(asyncio.to_thread(self._run, *args))
+        try:
+            return await asyncio.shield(pending)
+        except asyncio.CancelledError as cancelled:
+            while not pending.done():
+                try:
+                    await asyncio.shield(pending)
+                except asyncio.CancelledError:
+                    pass
+                except BaseException:
+                    break
+            try:
+                pending.result()
+            except BaseException as exc:
+                cancelled.add_note('pin update failed: ' + type(exc).__name__)
+            raise
+
     async def pin(self,blob,lease_id):
         entry=self._entry(blob)
         name=hashlib.sha256(lease_id.encode()).hexdigest()
         if entry['kind']=='git':
-            await asyncio.to_thread(self._run,'update-ref',f'refs/pins/{name}/{self._key(blob)}',entry['oid'])
+            await self._update_pin_ref('update-ref',f'refs/pins/{name}/{self._key(blob)}',entry['oid'])
         else:
             durable_write(self.path/'pins'/name/self._key(blob),b'1\n')
 
@@ -345,7 +365,7 @@ class GitContentStore:
         entry=self._entry(blob)
         name=hashlib.sha256(lease_id.encode()).hexdigest()
         if entry['kind']=='git':
-            await asyncio.to_thread(self._run,'update-ref','-d',f'refs/pins/{name}/{self._key(blob)}')
+            await self._update_pin_ref('update-ref','-d',f'refs/pins/{name}/{self._key(blob)}')
         else:
             (self.path/'pins'/name/self._key(blob)).unlink(missing_ok=True)
 

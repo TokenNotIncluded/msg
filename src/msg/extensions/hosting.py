@@ -73,6 +73,9 @@ def register(app,op):
         require(website.type=='website' and website.state=='active','not_a_website')
         await check_access(app,ctx,request,tx,website.id,'write')
         await assert_generation(request,website)
+        # Keep the published v1 wire schema immutable; bound work before any
+        # source traversal or materialization, just like runtime capacity checks.
+        require(len(request.arguments['entries'])<=128,'too_many_preview_entries')
         sources=[];names=set()
         for item in request.arguments['entries']:
             path=path_name(item['path'])

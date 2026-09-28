@@ -55,6 +55,7 @@ async def worker_loop(app, *, once=False):
                 continue
             if loop.time()>=next_cleanup:
                 await run_maintenance(app,'cleanup_expired',scheduled=True)
+                await run_maintenance(app,'collect_garbage',scheduled=True)
                 await run_maintenance(app,'deliver_due_todos',scheduled=True)
                 next_cleanup=loop.time()+60
             processed=await worker.run_once()
