@@ -1613,5 +1613,5 @@ def install(app):
     all_types=('topic','post','template','file','attachment','tool','user','organization','certificate','csr','delegation','repo','website','keystore','skill','legacy_directive','todo')
     types=[ResourceTypeSpec(name=name,version=1,container=name in {'topic','user','organization','repo','website'},
         content_schema=None,operations=frozenset(),relations=frozenset({'reply_to','thread_root','quote','repost','attachment','template'}),
-        taggable=name in {'post','topic','repo'}) for name in all_types]
+        taggable=name in {'post','topic','repo'},purchasable=name=='website') for name in all_types]
     finish(types)

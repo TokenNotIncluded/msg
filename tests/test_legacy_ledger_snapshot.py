@@ -26,10 +26,19 @@ HISTORY_TABLES = ('money_accounts', 'money_ledger', 'money_bank_roles', 'store_o
     'credentials', 'certificates', 'memberships', 'messages', 'jobs')
 
 
-def snapshot(dsn):
+def snapshot(dsn, *, columns=None):
     with psycopg.connect(dsn) as conn:
-        facts = {table: conn.execute(sql.SQL('SELECT * FROM {} ORDER BY 1').format(
+        # Capture every column of the pinned old schema, then compare those
+        # exact fields after an additive migration. SELECT * after an upgrade
+        # would mistake a new column for a changed historical value.
+        if columns is None:
+            columns = {table: tuple(column.name for column in conn.execute(
+                sql.SQL('SELECT * FROM {} LIMIT 0').format(sql.Identifier(table))).description)
+                for table in HISTORY_TABLES}
+        facts = {table: conn.execute(sql.SQL('SELECT {} FROM {} ORDER BY 1').format(
+            sql.SQL(',').join(map(sql.Identifier, columns[table])),
             sql.Identifier(table))).fetchall() for table in HISTORY_TABLES}
+        facts['columns'] = columns
         facts['ledger_sequence'] = conn.execute('SELECT last_value,is_called FROM money_ledger_seq_seq').fetchone()
         facts['total_supply'] = conn.execute("""SELECT COALESCE(SUM(CASE kind
             WHEN 'mint' THEN amount_minor WHEN 'burn' THEN -amount_minor ELSE 0 END),0)
@@ -39,6 +48,12 @@ def snapshot(dsn):
             UNION ALL SELECT debit_account,-amount_minor FROM money_ledger WHERE debit_account IS NOT NULL
             ) e GROUP BY account_id ORDER BY account_id''').fetchall()
         return facts
+
+
+def assert_unmigrated_schema(conn):
+    # A failed migration must roll back newly created tables as well as rows.
+    for table in ('ledger_accounts', 'money_purchases', 'store_order_events'):
+        assert conn.execute('SELECT to_regclass(%s)', (table,)).fetchone() == (None,)
 
 
 @pytest.fixture(scope='session')
@@ -59,7 +74,7 @@ def legacy_market_archive(tmp_path_factory, pg_cluster):
             str(source), str(directory), dsn], env=env, capture_output=True, timeout=120)
         assert process.returncode == 0, process.stderr.decode()
         with psycopg.connect(dsn) as conn:
-            assert conn.execute("SELECT to_regclass('ledger_accounts')").fetchone() == (None,)
+            assert_unmigrated_schema(conn)
         original = snapshot(dsn)
         assert original['total_supply'] == 100_000_000
         archive = directory/'legacy.zip'
@@ -83,7 +98,7 @@ def restored_legacy(tmp_path, pg_dsn, legacy_market_archive):
     assert result['outbound'] == 'disabled_recovery_drill'
     assert snapshot(pg_dsn) == before
     with psycopg.connect(pg_dsn) as conn:
-        assert conn.execute("SELECT to_regclass('ledger_accounts')").fetchone() == (None,)
+        assert_unmigrated_schema(conn)
         escrows = {row[0] for row in conn.execute('''SELECT escrow_subject FROM store_orders
             UNION SELECT escrow_subject FROM bounty_listings''')}
         assert len(escrows) == 5
@@ -92,13 +107,20 @@ def restored_legacy(tmp_path, pg_dsn, legacy_market_archive):
 
 
 def assert_migrated(dsn, before, escrows, identities):
-    assert snapshot(dsn) == before
+    assert snapshot(dsn, columns=before['columns']) == before
     with psycopg.connect(dsn) as conn:
         assert conn.execute('SELECT * FROM identities ORDER BY id').fetchall() == [row for row in identities if row[0] not in escrows]
         actual = conn.execute("""SELECT id,kind,subject_id,source_id FROM ledger_accounts
             WHERE kind<>'subject'""").fetchall()
         assert len(actual) == 5 and {row[0] for row in actual} == escrows
         assert all(row[2] is None and row[3] is not None for row in actual)
+        # New metadata must preserve v1 semantics without fabricating signed
+        # receipt fields, order quotes, delivery deadlines or transition events.
+        assert conn.execute('SELECT DISTINCT entry_key FROM money_ledger').fetchall() == [('primary',)]
+        assert conn.execute('''SELECT DISTINCT delivery_mode,deadline_at,quote_digest
+            FROM store_orders''').fetchall() == [('managed_instant', None, None)]
+        assert conn.execute('SELECT COUNT(*) FROM store_order_events').fetchone() == (0,)
+        assert conn.execute('SELECT COUNT(*) FROM money_purchases').fetchone() == (0,)
         for table, _, current, _ in ledger_migration._LEDGER_ACCOUNT_FKS:
             assert conn.execute('SELECT confrelid::regclass::text FROM pg_constraint WHERE conrelid=%s::regclass AND conname=%s',
                                 (table, current)).fetchone() == ('ledger_accounts',)
@@ -125,7 +147,7 @@ def test_real_old_backup_twice_and_two_concurrent_startups_keep_all_history(rest
         with pytest.raises(psycopg.errors.CheckViolation, match='append_only_money_ledger'):
             with psycopg.connect(dsn) as conn:
                 conn.execute(statement)
-    assert snapshot(dsn) == before
+    assert snapshot(dsn, columns=before['columns']) == before
 
 
 @pytest.mark.parametrize('stage', ['_install_accounts', '_switch_account_foreign_keys',
@@ -142,7 +164,7 @@ def test_each_migration_stage_rolls_back_the_actual_old_database(restored_legacy
             PostgresMetadataStore(dsn)
     assert snapshot(dsn) == before
     with psycopg.connect(dsn) as conn:
-        assert conn.execute("SELECT to_regclass('ledger_accounts')").fetchone() == (None,)
+        assert_unmigrated_schema(conn)
         assert conn.execute('SELECT * FROM identities ORDER BY id').fetchall() == identities
         for table, old, _, _ in ledger_migration._LEDGER_ACCOUNT_FKS:
             assert conn.execute('SELECT confrelid::regclass::text FROM pg_constraint WHERE conrelid=%s::regclass AND conname=%s',
@@ -181,7 +203,7 @@ def test_real_old_backup_rejects_active_semantic_references(restored_legacy, ref
         PostgresMetadataStore(dsn)
     assert snapshot(dsn) == before
     with psycopg.connect(dsn) as conn:
-        assert conn.execute("SELECT to_regclass('ledger_accounts')").fetchone() == (None,)
+        assert_unmigrated_schema(conn)
         assert conn.execute('SELECT * FROM identities ORDER BY id').fetchall() == identities
 
 
@@ -198,4 +220,44 @@ def test_plain_historical_text_is_not_an_identity_reference(restored_legacy):
     before = snapshot(dsn)
     instance = PostgresMetadataStore(dsn)
     asyncio.run(instance.close())
+    assert_migrated(dsn, before, escrows, identities)
+
+
+def test_history_snapshot_still_detects_a_changed_legacy_order_fact(restored_legacy):
+    dsn, before, _, escrows, identities, _ = restored_legacy
+    instance = PostgresMetadataStore(dsn)
+    asyncio.run(instance.close())
+    assert_migrated(dsn, before, escrows, identities)
+    with psycopg.connect(dsn) as conn:
+        conn.execute("UPDATE store_orders SET terms_digest='changed-legacy-terms'")
+    after = snapshot(dsn, columns=before['columns'])
+    assert after['store_orders'] != before['store_orders']
+    assert {key: value for key, value in after.items() if key != 'store_orders'} == {
+        key: value for key, value in before.items() if key != 'store_orders'}
+
+
+@pytest.mark.parametrize('column,value', [
+    ('delivery_mode', 'service'),
+    ('deadline_at', '2026-09-28T00:00:00.000000Z'),
+    ('quote_digest', 'unexpected-legacy-quote'),
+])
+def test_migrated_order_defaults_are_not_hidden_by_history_projection(restored_legacy, column, value):
+    dsn, before, _, escrows, identities, _ = restored_legacy
+    instance = PostgresMetadataStore(dsn)
+    asyncio.run(instance.close())
+    assert_migrated(dsn, before, escrows, identities)
+    with psycopg.connect(dsn) as conn:
+        conn.execute(sql.SQL('UPDATE store_orders SET {}=%s').format(sql.Identifier(column)), (value,))
+    assert snapshot(dsn, columns=before['columns']) == before
+    with pytest.raises(AssertionError):
+        assert_migrated(dsn, before, escrows, identities)
+
+
+def test_named_ledger_leg_is_immutable_after_legacy_migration(restored_legacy):
+    dsn, before, _, escrows, identities, _ = restored_legacy
+    instance = PostgresMetadataStore(dsn)
+    asyncio.run(instance.close())
+    with pytest.raises(psycopg.errors.CheckViolation, match='append_only_money_ledger'):
+        with psycopg.connect(dsn) as conn:
+            conn.execute("UPDATE money_ledger SET entry_key='rewritten'")
     assert_migrated(dsn, before, escrows, identities)

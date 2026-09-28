@@ -13,6 +13,7 @@ from msg.transports.http import create_app
 from test_authorization import approve, scoped
 from test_authorization_sources import private_post, grant
 from test_service import NOW, call, register
+from read_only_evidence import readonly_evidence
 
 
 SOURCES = ('owner','mode','inheritance','group-member','group-maintainer','group-owner',
@@ -85,19 +86,20 @@ async def test_live_source_loss_across_transports_cli_and_projections(installed,
         monkeypatch.setattr(cli,'MsgClient',lambda saved,adapter:MsgClient(saved,adapter,clock=lambda:NOW))
 
         async def matrix(expected):
-            for args in ({'id':rid},{'id':rid,'view':'history'},{'id':rid,'revision':revision}):
-                packet = request_for('discovery.get',args,app.settings.service_url,
-                    signer=reader[0],subject=reader[1],certificates=certs,source='msg',
-                    expires_at=NOW+timedelta(seconds=60))
-                for adapter in adapters:
-                    result = await adapter.call(packet)
-                    assert result.status == expected,(source,adapter.name,args,wire(result))
-            parsed = cli.parser().parse_args(['--config-dir',str(state.directory),'--server',
-                app.settings.service_url,'call','discovery.get',canonical({'id':rid}).decode()])
-            result = await cli.run(parsed)
-            rendered = loads(capsys.readouterr().out.strip())
-            assert (result == 0) == (expected == 'ok'),rendered
-            assert rendered['status'] == expected,rendered
+            async with readonly_evidence(app, monkeypatch):
+                for args in ({'id':rid},{'id':rid,'view':'history'},{'id':rid,'revision':revision}):
+                    packet = request_for('discovery.get',args,app.settings.service_url,
+                        signer=reader[0],subject=reader[1],certificates=certs,source='msg',
+                        expires_at=NOW+timedelta(seconds=60))
+                    for adapter in adapters:
+                        result = await adapter.call(packet)
+                        assert result.status == expected,(source,adapter.name,args,wire(result))
+                parsed = cli.parser().parse_args(['--config-dir',str(state.directory),'--server',
+                    app.settings.service_url,'call','discovery.get',canonical({'id':rid}).decode()])
+                result = await cli.run(parsed)
+                rendered = loads(capsys.readouterr().out.strip())
+                assert (result == 0) == (expected == 'ok'),rendered
+                assert rendered['status'] == expected,rendered
 
         await matrix('ok')
         # Queue an actual reference. Notification projections must not retain
@@ -124,19 +126,16 @@ async def test_live_source_loss_across_transports_cli_and_projections(installed,
             authority = await approve(app,root,owner[1],owner[0],(
                 scoped(app,'cert.revoke',cert.resource_id,('cert.revoke@1',)),))
             await invoke('cert.revoke',{'id':cert.resource_id,'reason':'matrix revocation'},certs=(authority.resource_id,))
-        async with app.metadata.transaction(write=False) as tx:
-            before = tuple(tx.one('SELECT COUNT(*) FROM '+table)[0] for table in ('events','jobs','audit','revisions'))
         await matrix('error')
-        # Drop a revoked certificate before testing ordinary projections: the
-        # revoked envelope itself has already been rejected by every adapter.
-        for operation,args in (('discovery.search',{'query':'source-matrix-private'}),
-            ('communication.sync',{}),('communication.inbox',{}),('communication.outbox',{})):
-            packet = request_for(operation,args,app.settings.service_url,signer=reader[0],subject=reader[1],
-                source='msg',expires_at=NOW+timedelta(seconds=60))
-            for adapter in adapters:
-                result = ok(await adapter.call(packet))
-                assert 'source-matrix-private' not in canonical(result.data).decode(),(source,operation,wire(result))
-                if operation != 'communication.sync':
-                    assert rid not in canonical(result.data).decode(),(source,operation,wire(result))
-        async with app.metadata.transaction(write=False) as tx:
-            assert before == tuple(tx.one('SELECT COUNT(*) FROM '+table)[0] for table in ('events','jobs','audit','revisions'))
+        async with readonly_evidence(app, monkeypatch):
+            # Drop a revoked certificate before testing ordinary projections: the
+            # revoked envelope itself has already been rejected by every adapter.
+            for operation,args in (('discovery.search',{'query':'source-matrix-private'}),
+                ('communication.sync',{}),('communication.inbox',{}),('communication.outbox',{})):
+                packet = request_for(operation,args,app.settings.service_url,signer=reader[0],subject=reader[1],
+                    source='msg',expires_at=NOW+timedelta(seconds=60))
+                for adapter in adapters:
+                    result = ok(await adapter.call(packet))
+                    assert 'source-matrix-private' not in canonical(result.data).decode(),(source,operation,wire(result))
+                    if operation != 'communication.sync':
+                        assert rid not in canonical(result.data).decode(),(source,operation,wire(result))

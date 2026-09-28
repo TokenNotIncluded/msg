@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import pytest
 
-from msg.admin.diagnostics import doctor
+from msg.admin.diagnostics import doctor, selftest
 from msg.config import MoneyConfig, load_settings, write_example
 from msg.core.errors import Failure
 from test_service import NOW, call
@@ -59,16 +59,47 @@ def test_money_rejects_policy_changes_and_business_facts(tmp_path,before,after,c
 
 
 @pytest.mark.asyncio
-async def test_doctor_reports_money_config_without_claiming_market_e2e(installed):
+@pytest.mark.parametrize('inspection_failure', [None, 'money_receipt_mismatch'])
+async def test_doctor_reports_money_config_without_claiming_market_e2e(
+        installed, monkeypatch, inspection_failure):
     app,_=installed
     before=app.settings.money
+    tables = ('money_ledger', 'money_bank_roles', 'server_offers', 'money_purchases',
+              'resource_entitlements', 'bounty_listings', 'store_orders', 'store_deliveries',
+              'store_order_events', 'identities', 'events', 'audit', 'results')
+    async def snapshot():
+        async with app.metadata.transaction(write=False) as tx:
+            return {table: tx.rows(f'SELECT * FROM {table} ORDER BY 1') for table in tables}
+    original = await snapshot()
+    from msg.admin import market_check
+    async def unexpected_selftest(*args, **kwargs):
+        raise AssertionError('doctor must not execute a market transaction selftest')
+    monkeypatch.setattr(market_check, 'check_market_e2e', unexpected_selftest)
+    if inspection_failure is not None:
+        def reject_inspection(*args):
+            raise Failure(inspection_failure)
+        monkeypatch.setattr(market_check, 'inspect_clearing', reject_inspection)
     report=doctor(app.settings.config_dir,clock=lambda:NOW)
     assert report['checks']['money_config']=={
         'ok':True,'enabled':True,'currency_id':'primary',
         'display_name':'MSG','code':'MSG','scale':6,
         'transfer_fee':0,'allow_overdraft':False}
     assert load_settings(app.settings.config_dir).money==before
-    assert 'money' not in report['features'] or report['features']['money']['status']!='pass'
+    # Doctor verifies existing ledger facts; only the disposable selftest may
+    # execute mint -> bank funding -> bounty -> purchase. A configuration-only
+    # pass must never hide a failed clearing inspection.
+    assert 'market_e2e' not in report['checks']
+    clearing = report['checks']['market_clearing']
+    expected = 'fail' if inspection_failure else 'pass'
+    for feature in ('money', 'bounty', 'orders'):
+        assert report['features'][feature] == {'status': expected, 'check': 'market_clearing'}
+    if inspection_failure is not None:
+        assert clearing == {'ok': False, 'code': inspection_failure}
+    else:
+        assert clearing['ok'] and clearing['conserved'] and clearing['signed_receipts_verified']
+        assert clearing['total_supply_minor'] == clearing['banks'] == clearing['enabled_offers'] == 0
+        assert clearing['ledger_entries'] == 0
+    assert await snapshot() == original
 
 
 @pytest.mark.asyncio
@@ -82,3 +113,28 @@ async def test_public_money_state_uses_configured_labels(installed):
     assert result.data['display_name']=='Community credits'
     assert result.data['code']=='CREDIT'
     assert result.data['scale']==6
+
+
+@pytest.mark.asyncio
+async def test_doctor_rejects_missing_market_schema_without_repairing_it(installed):
+    app,_=installed
+    async with app.metadata.transaction(write=True) as tx:
+        tx.execute('DROP TABLE store_order_events')
+    report=doctor(app.settings.config_dir,clock=lambda:NOW)
+    assert not report['ok'] and report['checks']['money_config']['ok']
+    assert report['checks']['market_clearing']=={'ok':False,'code':'market_schema_missing'}
+    for feature in ('money','bounty','orders'):
+        assert report['features'][feature]=={'status':'fail','check':'market_clearing'}
+    assert 'market_e2e' not in report['checks']
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one("SELECT to_regclass('store_order_events')")[0] is None
+        assert tx.one('SELECT COUNT(*) FROM money_ledger')[0]==0
+
+
+@pytest.mark.asyncio
+async def test_market_selftest_features_require_the_actual_isolated_flow():
+    result=await selftest()
+    assert result['ok'] and result['cleaned_up'],result
+    assert result['checks']['market_e2e'] is True
+    for feature in ('money','bounty','orders'):
+        assert result['features'][feature]=={'status':'pass','check':'market_e2e'}

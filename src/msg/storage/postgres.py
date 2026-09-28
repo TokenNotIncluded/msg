@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS money_ledger (
        (kind='burn' AND debit_account IS NOT NULL AND credit_account IS NULL) OR
        (kind IN ('transfer','redeem','refund') AND debit_account IS NOT NULL AND
         credit_account IS NOT NULL AND debit_account<>credit_account)),
- UNIQUE(actor,request_id));
+ entry_key TEXT NOT NULL DEFAULT 'primary',
+ UNIQUE(actor,request_id,entry_key));
 CREATE INDEX IF NOT EXISTS money_ledger_debit ON money_ledger(debit_account,seq);
 CREATE INDEX IF NOT EXISTS money_ledger_credit ON money_ledger(credit_account,seq);
 CREATE OR REPLACE FUNCTION msg_money_ledger_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -538,6 +539,8 @@ class PostgresMetadataStore:
                 # Multiple daemon workers may initialize the same fresh database.
                 conn.execute('SELECT pg_advisory_xact_lock(725274758, 1886265951)')
                 conn.execute(_SCHEMA)
+                from msg.storage.market_migration import migrate_market
+                migrate_market(conn)
                 _migrate_ledger_accounts(conn)
                 from msg.storage.custodial_migration import migrate_custodial_vault
                 migrate_custodial_vault(conn)

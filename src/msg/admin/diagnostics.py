@@ -182,6 +182,11 @@ async def _doctor(config_dir,clock):
             else:
                 checks['market']={'ok':True,'status':'disabled'}
             try:
+                from msg.admin.market_check import inspect_clearing
+                success('market_clearing',**inspect_clearing(app,tx))
+            except (Failure,OSError,ValueError,KeyError,psycopg.Error) as exc:
+                failed('market_clearing',getattr(exc,'code','market_inspection_failed'))
+            try:
                 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
                 columns={row[0] for row in tx.rows("SELECT column_name FROM information_schema.columns "
                     "WHERE table_schema='public' AND table_name='token_deliveries'")}
@@ -194,6 +199,17 @@ async def _doctor(config_dir,clock):
                 success('credential_delivery',recovery_window_seconds=settings.credential_delivery_recovery_window,
                         release='once',secret_url=False,versions=SECRET_DELIVERY_MIN_VERSION)
             except Failure as exc:failed('credential_delivery',exc.code)
+            if 'communication' in settings.server.plugins:
+                try:
+                    spec=app.registry.operation('communication.following')
+                    require(spec.effect=='read','following_contract_invalid')
+                    columns={row[0] for row in tx.rows("SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema='public' AND table_name='watches'")}
+                    require({'subject','resource'}<=columns,'following_schema_missing')
+                    success('following',default='empty',read_only=True,max_page_size=100)
+                except Failure as exc:failed('following',exc.code)
+            else:
+                checks['following']={'ok':True,'status':'disabled'}
             try:
                 await validator.validate(root.resource_id,tx)
                 require((await tx.subject(ROOT_SUBJECT)).local_only,'root_policy_corrupt')
@@ -532,6 +548,25 @@ async def selftest():
             alice,ua=await register('alice');bob,ub=await register('bob')
             post=await call('content.post_create',{'parent':test_path+'/tmp','body':'retained source bytes\r\n'},alice,ua,request_id='same-write')
             require(post.status=='ok',post.error.code if post.error else 'selftest_post_failed')
+            # Following reads only existing watches; use a separate fixture so
+            # its explicit permission change cannot alter other lifecycle tests.
+            empty_following=await call('communication.following',{},bob,ub)
+            anonymous_following=await call('communication.following',{})
+            followed=await call('content.post_create',
+                {'parent':test_path+'/tmp','body':'isolated Following fixture'},alice,ua)
+            require(followed.status=='ok','selftest_following_post_failed')
+            followed_id=followed.resources[0].id
+            watched=await call('communication.watch',{'id':followed_id},bob,ub)
+            shown=await call('communication.following',{},bob,ub)
+            hidden=await call('content.chmod',{'id':followed_id,'mode':'0600'},alice,ua,
+                expected=((followed_id,followed.data['generation']),))
+            redacted=await call('communication.following',{},bob,ub)
+            checks['following']=(empty_following.status=='ok' and not empty_following.data['items'] and
+                anonymous_following.error is not None and
+                anonymous_following.error.code=='authentication_required' and
+                watched.status=='ok' and shown.status=='ok' and
+                [item['id'] for item in shown.data['items']]==[followed_id] and
+                hidden.status=='ok' and redacted.status=='ok' and not redacted.data['items'])
             # OnlineIssuer exercises only the independent temporary Test Root
             # created above. No production trust material or signer is opened.
             async with app.metadata.transaction(write=False) as tx:
@@ -614,8 +649,9 @@ async def selftest():
             checks['credential_delivery_recovery']=await check_token_delivery(app,now)
             from msg.admin.custodial_check import check_custodial_history
             checks['custodial_history_recovery']=await check_custodial_history(app,now)
-            from msg.admin.market_check import check_market
+            from msg.admin.market_check import check_market, check_market_e2e
             checks['market_lifecycle']=await check_market(app,root,call,register,now)
+            checks['market_e2e']=await check_market_e2e(app,root,call,register)
         except Failure as exc:
             checks['failure']={'code':exc.code}
         finally:

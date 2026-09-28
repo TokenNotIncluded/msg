@@ -845,5 +845,7 @@ def install(app):
                                    'next_requires_auth':True})
     from msg.plugins.collaboration import install as install_collaboration
     install_collaboration(app, op)
+    from msg.plugins.following import install as install_following
+    install_following(app, op)
     finish((ResourceTypeSpec(name='claim',version=1,container=False,content_schema=None,
                              operations=frozenset(),relations=frozenset()),))

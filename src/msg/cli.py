@@ -72,6 +72,9 @@ def parser():
     read=commands.add_parser('read');read.add_argument('resource');read.add_argument('--revision')
     read.add_argument('--field',action='append',default=[]);read.add_argument('--meta',action='store_true')
     read.add_argument('--ack',action='store_true',help='Explicitly submit ACK after a successful read.')
+    following=commands.add_parser('following',help='One private page of currently readable watched resources.')
+    following.add_argument('--limit',type=int)
+    following.add_argument('--cursor')
     search=commands.add_parser('search',help='One bounded page of scoped lexical results.')
     search.add_argument('scope',nargs='?',help='Required for a new search; omit with --cursor.')
     search.add_argument('terms',nargs='?',help='Words to find; omit with --cursor.')
@@ -214,6 +217,8 @@ def parser():
     hosting_activate.add_argument('website');hosting_activate.add_argument('revision')
     hosting_history=hosting_actions.add_parser('history')
     hosting_history.add_argument('website')
+    from msg.client_market import add_commands
+    add_commands(commands)
     return cli
 
 
@@ -278,6 +283,9 @@ async def run(args):
                 expected.append((rid,int(generation)))
             result=await client.call(args.operation,arguments(args.arguments),request_id=args.request_id,
                                      expected=expected,return_fields=args.return_field)
+        elif command in {'money','store','bounty','orders','delivery'}:
+            from msg.client_market import run_command
+            result=await run_command(client,args,arguments)
         elif command=='operations': result=await client.call('discovery.operations')
         elif command=='schema': result=await client.call('discovery.schema',{'operation':args.operation})
         elif command=='read':
@@ -290,6 +298,15 @@ async def run(args):
                 require(result.data.get('revision'),'ack_revision_required')
                 ack=await client.ack(ResourceRef(id=result.data['id'],revision=result.data['revision']))
                 result={'read':result_wire(result),'ack':result_wire(ack)}
+        elif command=='following':
+            if args.cursor:
+                require(args.limit is None,'cursor_query_mismatch')
+                params={'cursor':args.cursor}
+            else:
+                limit=20 if args.limit is None else args.limit
+                require(1<=limit<=100,'invalid_limit')
+                params={'limit':limit}
+            result=await client.call('communication.following',params)
         elif command=='search':
             require(1<=args.limit<=100,'invalid_search_limit')
             if args.cursor:
