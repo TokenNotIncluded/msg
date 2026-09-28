@@ -1,8 +1,0 @@
-enabled = false
-host = "smtp.example.org"
-port = 587
-tls = "starttls"
-sender = "notifications@example.org"
-# A separate file containing {"username":"...","password":"..."}, mode 0640,
-# owned by root:msgd. It must not be placed in /etc/msgd/root or committed to Git.
-credential_file = "/etc/msgd/smtp-credentials.json"
