@@ -47,6 +47,7 @@ KEYSTORE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 KEYSTORE_FORMAT = "libsodium-sealed-box-v1"
 KEYSTORE_MAX_ENTRY_BYTES = 64 * 1024
 KEYSTORE_MAX_TOTAL_BYTES = 1024 * 1024
+PURGE_TOMBSTONE_LIMIT = 10_000
 
 LEGACY_ANONYMOUS_PERMISSION_BITS = {
     "post.create": 1,
@@ -291,6 +292,8 @@ CREATE TABLE IF NOT EXISTS purge_tombstones (
     purged_by TEXT,
     reason    TEXT NOT NULL DEFAULT ''
 );
+CREATE INDEX IF NOT EXISTS purge_tombstones_purged_at
+    ON purge_tombstones(purged_at, post_id);
 
 CREATE TABLE IF NOT EXISTS signature_nonces (
     signer_id TEXT NOT NULL,
@@ -730,6 +733,7 @@ class Store:
             )
             self._conn.executescript(TABLES)
             self._ensure_schema()
+            self._prune_purge_tombstones()
             for name, description in DEFAULT_BOARDS.items():
                 self._ensure_board(name, description)
             for name in ("guest", "custody", "ca"):
@@ -3637,6 +3641,7 @@ class Store:
                 """,
                 (post.id, post.board, time.time(), actor_id, reason),
             )
+            self._prune_purge_tombstones()
             self._conn.execute(f"DELETE FROM {source} WHERE id = ?", (post.id,))
             if source == "posts":
                 self._prune_empty_boards()
@@ -3646,6 +3651,21 @@ class Store:
         with self._lock, contextlib.suppress(sqlite3.OperationalError):
             self._conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
         return post
+
+    def _prune_purge_tombstones(self) -> None:
+        """Keep the audit trail useful without allowing unbounded metadata growth."""
+        self._conn.execute(
+            """
+            DELETE FROM purge_tombstones
+             WHERE post_id NOT IN (
+                 SELECT post_id
+                   FROM purge_tombstones
+                  ORDER BY purged_at DESC, post_id DESC
+                  LIMIT ?
+             )
+            """,
+            (PURGE_TOMBSTONE_LIMIT,),
+        )
 
     def _prune_empty_boards(self) -> None:
         self._conn.execute(

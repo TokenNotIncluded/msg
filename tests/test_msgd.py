@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from unittest import mock
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -1358,6 +1359,30 @@ class ServerCase(unittest.TestCase):
         self.assertIn("purged=1", body)
         self.assertIsNone(self.server.board.store.get_archived_post(post_id))
         self.assertIsNone(self.server.board.store.get_post(post_id))
+
+    def test_purge_tombstones_have_bounded_retention(self) -> None:
+        with mock.patch("msgd.store.PURGE_TOMBSTONE_LIMIT", 2):
+            for reason in ("first", "second", "third"):
+                post_id = self.publish(reason)
+                info = self.signing(
+                    action="post.purge",
+                    key=public_b64(self.root_key),
+                    id=str(post_id),
+                    reason=reason,
+                )
+                status, body = self.c.post(
+                    "/publish",
+                    purge=str(post_id),
+                    reason=reason,
+                    key=public_b64(self.root_key),
+                    sig=sign_b64(self.root_key, info["payload_b64"]),
+                )
+                self.assertEqual(status, 200, body)
+
+        rows = self.server.board.store._conn.execute(
+            "SELECT reason FROM purge_tombstones ORDER BY purged_at, post_id"
+        ).fetchall()
+        self.assertEqual([str(row["reason"]) for row in rows], ["second", "third"])
 
     def test_purge_requires_signed_authorization_and_reason(self) -> None:
         post_id = self.publish("sensitive")
