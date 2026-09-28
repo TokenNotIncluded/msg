@@ -93,14 +93,19 @@ async def test_pending_rewrap_converts_only_selected_revision_and_keeps_vault(in
     assert done.status=='ok',wire(done)
     assert done.data['client_decryption_verified'] is False
     assert 'one selected' not in str(wire(done))
+    new_id=done.resources[0].id
+    assert new_id!=rid  # Neither the source revision nor its current pointer is rewritten.
     new_revision=done.resources[0].revision
     assert new_revision!=revision
     old=await call(app,'keystore.get',{'id':rid,'revision':revision},subject=subject,token=token)
-    new=await call(app,'keystore.get',{'id':rid,'revision':new_revision},subject=subject,token=token)
+    new=await call(app,'keystore.get',{'id':new_id,'revision':new_revision},subject=subject,token=token)
     assert old.status==new.status=='ok'
     async with app.metadata.transaction(write=False) as tx:
         old_blob=await app.contents.read_bytes((await tx.revision(ResourceRef(id=rid,revision=revision))).content)
-        new_blob=await app.contents.read_bytes((await tx.revision(ResourceRef(id=rid,revision=new_revision))).content)
+        new_blob=await app.contents.read_bytes((await tx.revision(ResourceRef(id=new_id,revision=new_revision))).content)
+        assert (await tx.resource(rid)).revision==revision
+        assert (await tx.resource(rid)).generation==1
+        assert (await tx.resource(new_id)).mode==0o600
         old_identity=open_age_identity(app,tx,subject)
         assert (await tx.subject(subject)).kind=='custodial'
         assert tx.one('SELECT status FROM custodial_vault WHERE subject=?',(subject,))[0]=='active'
@@ -114,4 +119,4 @@ async def test_pending_rewrap_converts_only_selected_revision_and_keeps_vault(in
     assert _age('--decrypt','--identity',str(new_path),input_data=new_blob)==plaintext
     stale=await call(app,'identity.custodial_rewrap_entry',args,subject=subject,token=token,
                      expected=((rid,1),))
-    assert stale.status=='error' and stale.error.code in {'generation_conflict','revision_conflict'}
+    assert stale.status=='error' and stale.error.code in {'custodial_rewrap_already_mapped'}
