@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from .models import *
+from .query import QuerySession
 
-class MetadataSession(Protocol):
+class MetadataSession(QuerySession, Protocol):
     def on_rollback(self, effect: Callable[[], Awaitable[None]]) -> None: ...
     async def resource(self, id: ResourceId) -> Resource: ...
     async def resolve(self, path: str) -> ResourceId: ...
