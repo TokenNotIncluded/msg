@@ -1,6 +1,6 @@
 # Clearing, bounty and order contracts
 
-This page records the #71–#73 implementation boundary. It is not production deployment approval. Currency is `primary`, scale **6**; `MSG` is a display name, not a fiat peg. Initialization creates zero supply, no bank, no server offer and no listing.
+This page records the current clearing and bounty implementation and its integration with versioned market contracts. It is not production deployment approval. Currency is `primary`, scale **6**; `MSG` is a display name, not a fiat peg. Initialization creates zero supply, no bank, no server offer and no listing.
 
 ## Local central bank
 
@@ -41,53 +41,82 @@ A paid Claim, nonce consumption, escrow transfer, signed receipt, Event and mini
 
 **PoP proves control of the current signing key, not humanity, one-person-one-account or Sybil resistance.**
 
-## Order policies and failures
+## Versioned orders, delivery and disputes
 
-| Policy | Delivery mode | Funds release |
-| --- | --- | --- |
-| `escrow-v1` | managed_instant | Existing compatible flow: explicit buyer prepare and accept |
-| `managed-instant-v1` | managed_instant | Atomic verified deposit → site delivery → policy settlement |
-| `sealed-manual-v1` | sealed_manual | Seller uploads a buyer-key-bound envelope; buyer explicitly accepts |
-| `service-accept-v1` | service | Seller submits completion evidence; buyer explicitly accepts |
+See [Market contracts](MARKET_CONTRACTS.md) for the existing mail, large-delivery,
+evidence and arbitration implementation. Purchase versions differ intentionally:
 
-All four use `dispute-v1`; unknown combinations are rejected. A policy name/version is part of the locked order. Existing signed listings and historical receipts are not rewritten to choose automatic settlement.
+| Operation | Managed delivery and funds release |
+| --- | --- |
+| `orders.buy@1` | Buyer prepares the legacy delivery and explicitly accepts it. |
+| `orders.buy@2` | Requires package digest; prepares delivery at checkout. Acceptance is explicit unless `auto_accept=true` binds `escrow-instant-v1`. |
+| `orders.buy@3` | Pins a v3 contract. Managed goods are delivered and settled under its policy; sealed/manual and service orders require acceptance. |
 
-`orders.create` creates an unpaid, private quote valid for **900 seconds**. It reserves neither funds nor stock. `orders.pay` requires that quote's digest, exact total and currency; current stock/availability are checked at payment, while later seller edits do not replace the locked price/terms/package. `orders.buy` combines quote and payment. Competing buyers cannot consume the same last quantity. Opaque random IDs are not authorization; unauthorized and missing orders have the same error.
+New design-default explicit-acceptance checkout is still pending, not a renamed
+v3. Published requests, policies, prices, terms and signed receipts stay unchanged.
 
-The transition table is `created → funded → delivered → accepted → settled`, plus `cancelled`, `refunded` and `disputed`. Every transition is append-only history inside the transaction. `accepted` is never left half-committed. System escrows have no Subject, keys, profile or ordinary transfer capability. Ordinary/bank/arbitrator identities cannot supply an arbitrary escrow debit, recipient or split.
+`orders.create@1` creates an unpaid v3 quote; `orders.fund@1` binds its digest,
+exact total and currency. Default funding/delivery windows are 900 seconds/24
+hours. Active quotes count toward listing quantity at creation, not unlimited
+stock-free reservations. `orders.cancel@2` cancels unpaid v3 quotes. Later edits
+to a listing do not replace the locked terms or package.
 
-Automatic `accepted` records **policy consent in the signed order**, not a fabricated inspection signature. Automatic settlement leaves Delivery `prepared`, with no `claimed_at`. A later signed `delivery.claim` records actual buyer acknowledgement without paying again. Read-only download and HTTP/SMTP success never set `claimed`. Legacy/manual `delivery.accept` acknowledges receipt and settles escrow together.
+Automatic settlement leaves delivery prepared, not acknowledged. V3 buyers sign
+`delivery.accept@2` with its exact digest; settled funds are not paid twice.
+Legacy `delivery.claim@1` retains managed-v2 semantics. Downloads, GET/HEAD, SMTP
+and Transfer reads never acknowledge or settle. Escrows are keyless non-Subjects.
 
-Funded orders have a **24-hour delivery deadline**. Buyer `orders.resolve` derives evidence from server facts: missing immutable deposit/content, digest/size mismatch, missing recorded delivery, or an expired undelivered order. It can cancel an expired unpaid quote or refund an unfulfilled escrow. Temporary storage/network errors do not prove merchant fault. A healthy delivered service cannot be automatically refunded merely because the buyer dislikes it. Buyer `orders.dispute` freezes a delivered order; seller `orders.refund` can return the full escrow only to that buyer. No ordinary subject can invent a reason, amount, recipient or arbitration decision for the resolver.
-
-For sealed delivery the current buyer EncryptionSubkey is checked at submission; the immutable envelope and key metadata are fixed. The server verifies an age envelope and its digest, **not** successful decryption or the quality of the encrypted goods. The buyer must decrypt and inspect before acceptance. Service delivery similarly records evidence, not a quality guarantee. Payloads remain bounded to the existing 1 MiB inline delivery path; large Transfer delivery is separate work.
-
-ArbitrationCase, panel/quorum/appeal and signed split decisions remain in **#75**. Email endpoint ownership/revocation, minimal SMTP notification and large deliveries remain in **#74**. These operations do not silently bypass those missing facilities: delivery is site-only, and subjective disputed funds remain held unless the seller refunds.
+`orders.dispute_open@1` takes an order ID and reason, checks objective faults and
+otherwise opens a private case. `orders.dispute_execute@1` requires a case and
+signed quorum decision, not a chosen refund amount or payee. The default empty
+arbitrator policy holds subjective disputes instead of inventing a decision.
 
 ## CLI and recovery
 
 ```sh
-msg money balance
-msg money offers
 msg money redeem @exact-quote.json --request-id my-purchase-1
-msg money purchase pur_example
 msg bounty prove bounty_listing_id --request-id my-claim-1
+msg store package pkg_example
 msg orders create @listing-intent.json --request-id my-order-1
 msg orders pay @payment-intent.json --request-id my-payment-1
-msg orders history ord_example
-msg orders resolve ord_example --request-id my-resolution-1
-msg delivery claim @delivery-digest.json --request-id my-receipt-1
+msg orders contract ord_example
+msg orders dispute @order-and-reason.json --request-id my-dispute-1
+msg orders case case_example
+msg orders resolve @case-and-decision.json --request-id my-resolution-1
+msg delivery get ord_example --contract-version 2
+msg delivery accept @delivery-digest.json --contract-version 2 --request-id my-receipt-1
 ```
 
-These commands use the normal signed client and Registry schemas, not a second API. JSON arguments accept literal JSON, `@file` or `-` for stdin. Prices are never silently refreshed. The CLI uses `money.redeem@2`; published `@1` retains its exact input schema and immediate semantics, and its short codes are never repurposed. `bounty prove` signs a validated canonical challenge, then submits its proof; retrying the same request ID reuses the same challenge request and claim ID, never a fresh nonce hidden behind an old claim ID. For uncertain results retain both the exact arguments and request ID.
+`pay`, `dispute` and `resolve` call `orders.fund`, `orders.dispute_open` and
+`orders.dispute_execute`. `contract` reads the authorized contract projection,
+not history; `store package` supplies `id`, not `package_id`. Unregistered
+`orders.history`, `orders.refund` and `orders.recipient_key` are not advertised.
 
-Operation name alone is insufficient authority: private money/market operations also check the credential's scope against the represented account, including cached replays. New operations do not automatically extend old signed CA grants or finite credential ceilings; explicit authority renewal may be needed. Doctor reports authority snapshot gaps instead of upgrading signatures silently.
+JSON accepts literal JSON, `@file` or `-` for stdin. `--contract-version` selects
+an explicit published version without changing input. Defaults remain v1 except
+`money redeem` uses v2; `--contract-version 1` selects original redemption.
+Prices are never refreshed silently. Retain exact arguments/request ID after an
+uncertain response. `bounty prove` reuses its original challenge and claim IDs,
+never a fresh nonce behind a retried claim.
 
-`doctor`'s read-only `market_clearing` verifies conservation, nonnegative balances, signed ledger receipts, escrow/source consistency, order history, purchase entitlements and bounty nonce/Claim linkage. Default zero supply/no banks/no offers is separately visible. `selftest`'s `market_e2e` is restricted to a fresh isolated instance and Test Root: parse and execute mint 20 and **bank fund 20**, escrow a 10 MSG bounty, pay a current-key PoP Claim, publish the fixed 5 MSG bundle, then automatically deliver and settle. Its final balances are **buyer 5, bank 15, every escrow 0, supply 20 MSG**. The manifest is `msg.lmm.best store selftest`; `hello.txt` is exactly `delivery-ok\n`. It sends no external mail and does not claim SMTP acceptance testing.
+Doctor checks conservation, signed receipts, escrow/source consistency,
+entitlements and bounty linkage without writes. Fresh isolated `market_e2e`
+uses Test Root mint/bank-fund20, prefunded PoP reward10 and the fixed 5 MSG bundle:
+`msg.lmm.best store selftest`, `hello.txt` containing `delivery-ok\n`. Existing
+v3 settlement ends at buyer5/bank15/escrows0/supply20, prepared-not-claimed.
+It sends no external mail and does not substitute for the pending new acceptance
+version, real SMTP or physical-console evidence.
 
-Backup/restore tests include pending purchases, active entitlement grants, funded/unpaid/settled orders, delivery references, nonce consumption and Claim receipts. Restore intentionally pauses writes; only disposable test restores lift that guard before replay checks. Old ledger-account migration remains idempotent; history is not reconstructed from mutable catalog values. Production migration, real console/SMTP/ingress and deployment acceptance remain separate, authorized work (#84).
+Restored snapshots stay quarantined; deleting a config marker cannot reopen old
+permissions. Tests compare retained ledger/claim/purchase/entitlement/content
+facts offline while external requests/workers remain blocked; live authorization
+checks precede backup. Controlled promotion and independent current-policy
+proof remain unfinished. Old receipts are not reconstructed or re-signed.
 
-Regression entry points: `tests/test_market_71.py`, `test_market_redemption.py`, `test_market_72.py`, `test_market_73.py`, `test_market_contracts.py`, plus existing money/admin/offers/bounty/orders/delivery, migration, hosting, dictionary, backup and conformance suites. Test totals and exact commit/CI identity belong in the PR verification record, not an unversioned completion percentage.
+Regressions include `test_market_71.py`, `test_market_72.py`,
+`test_market_redemption.py`, `test_market_contracts.py`, `test_market_lifecycle.py`
+and `test_market_cli_bindings.py`, alongside existing storage/client suites.
+Exact source/CI results belong in PR evidence, not a completion percentage.
 
 ## Account-scoped market authority
 
