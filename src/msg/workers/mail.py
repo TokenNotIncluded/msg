@@ -6,6 +6,7 @@ import smtplib
 import ssl
 from msg.core.codec import loads
 from msg.core.errors import Failure, require
+from msg.core.email_address import validate_address
 
 
 class SmtpSender:
@@ -18,9 +19,12 @@ class SmtpSender:
 
     def _send(self, job):
         config = self.config
+        # Revalidate at the external boundary, including jobs queued by old code.
+        # Invalid targets fail before opening a connection or reading credentials.
+        recipient = validate_address(job.arguments['recipient'])
         message = EmailMessage()
         message['From'] = config.sender
-        message['To'] = job.arguments['recipient']
+        message['To'] = recipient
         message['Subject'] = job.arguments['subject']
         # A stable Message-ID is useful for tracing; not a remote dedup guarantee.
         message['Message-ID'] = '<'+job.id+'@msgd.local>'
@@ -43,7 +47,7 @@ class SmtpSender:
             # Once send_message starts, an exception can happen after the receiver
             # accepted DATA. Do not automatically retry this ambiguous boundary.
             sending = True
-            refused = connection.send_message(message)
+            refused = connection.send_message(message, to_addrs=[recipient.addr_spec])
             require(not refused, 'mail_recipient_refused')
             return 'sent'
         except (smtplib.SMTPException, OSError, Failure) as exc:
