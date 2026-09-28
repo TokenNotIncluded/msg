@@ -1199,6 +1199,38 @@ class ServerCase(unittest.TestCase):
         ca_posts = self.server.board.store.list_posts(board="ca", limit=50)
         self.assertTrue(any("[REVOKED]" in post.title for post in ca_posts))
 
+    def test_csr_quota_rejects_without_leaving_partial_records(self) -> None:
+        object.__setattr__(self.server.board.store.cfg, "max_csr_storage_bytes", 1)
+        applicant = Ed25519PrivateKey.generate()
+        grants = [{"topic": "main", "actions": ["post.create"]}]
+        grants_json = json.dumps(grants, separators=(",", ":"))
+        info = self.signing(
+            action="cert.request",
+            key=public_b64(applicant),
+            grants=grants_json,
+            delegate="false",
+            message="",
+        )
+        status, _ = self.c.post(
+            "/_csr",
+            key=public_b64(applicant),
+            sig=sign_b64(applicant, info["payload_b64"]),
+            nonce=info["nonce"],
+            issued=str(info["issued"]),
+            grants=grants_json,
+            delegate="false",
+            message="",
+        )
+        self.assertEqual(status, 507)
+        store = self.server.board.store
+        self.assertEqual(store.list_csrs(), [])
+        self.assertFalse(
+            any(
+                post.title.startswith("[REQUEST] CSR #")
+                for post in store.list_posts(board="ca", limit=50)
+            )
+        )
+
     def test_csr_cannot_be_expanded_and_can_be_cancelled(self) -> None:
         applicant = Ed25519PrivateKey.generate()
         csr = self.create_csr(

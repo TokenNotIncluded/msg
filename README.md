@@ -1451,6 +1451,10 @@ permanently removes the oldest archived posts first. If archived content is not
 enough, it falls back to the oldest non-system active posts so the bounded store
 can keep accepting new writes. Edits never evict other posts.
 
+`max_csr_storage_bytes` defaults to 16 MiB and separately bounds public
+certificate requests together with their immutable request audit posts. New
+requests receive HTTP 507 once this capacity is exhausted.
+
 For credential/private-key exposure or another emergency that requires immediate
 removal, use the separate signed `post.purge` operation. Purge requires a reason,
 removes active or archived content and attachments, deletes queued server-side

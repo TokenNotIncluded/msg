@@ -1685,6 +1685,29 @@ class Store:
         body = "\n".join([f"type={kind}", *lines, "authority=/_csr /_cert /_revocations"])
         self._create_system_post(title, body)
 
+    def _csr_storage_bytes(self) -> int:
+        """Return logical storage consumed by public CSRs and their audit posts."""
+        row = self._conn.execute(
+            """
+            SELECT
+                COALESCE((
+                    SELECT SUM(
+                        length(CAST(subject_key AS BLOB))
+                      + length(CAST(subject_id AS BLOB))
+                      + length(CAST(requested_issuer AS BLOB))
+                      + length(CAST(grants AS BLOB))
+                      + length(CAST(message AS BLOB))
+                    ) FROM certificate_requests
+                ), 0)
+              + COALESCE((
+                    SELECT SUM(nbytes) FROM posts
+                     WHERE system = 1 AND board = 'ca'
+                       AND title LIKE '[REQUEST] CSR #%'
+                ), 0) AS n
+            """
+        ).fetchone()
+        return int(row["n"])
+
     def create_csr(
         self,
         *,
@@ -1699,9 +1722,17 @@ class Store:
         if len(message.encode("utf-8")) > 4096:
             raise StoreError("CSR message exceeds 4096 bytes", 413)
         grant_list = self._grant_list(grants)
+        # Do not create another permanent nonce after this certificate-free
+        # endpoint has exhausted its dedicated storage allowance.
+        with self._lock:
+            if self._csr_storage_bytes() >= self.cfg.max_csr_storage_bytes:
+                raise StoreError("certificate request storage capacity reached", 507)
         self.consume_nonce(auth)
         now = time.time()
         with self._lock, self._conn:
+            # sqlite3 is configured for autocommit; start an explicit transaction
+            # so quota or audit validation failures roll back both durable records.
+            self._conn.execute("BEGIN")
             cur = self._conn.execute(
                 """
                 INSERT INTO certificate_requests(
@@ -1720,21 +1751,41 @@ class Store:
                 ),
             )
             csr_id = int(cur.lastrowid or 0)
+            title = f"[REQUEST] CSR #{csr_id}"
+            body = "\n".join(
+                [
+                    "type=request",
+                    f"csr=/_csr?id={csr_id}",
+                    f"subject={auth.signer_id}",
+                    f"requested_issuer={requested_issuer or 'any'}",
+                    f"delegate={str(delegate).lower()}",
+                    f"grants={canonical_json(grant_list)}",
+                    *([f"message={message[:300]}"] if message else []),
+                    "authority=/_csr /_cert /_revocations",
+                ]
+            )
+            audit_bytes = len(body.encode("utf-8"))
+            if audit_bytes > self.cfg.max_post_bytes_post:
+                raise StoreError("system audit body is too large", 413)
+            seq = int(
+                self._conn.execute(
+                    "SELECT COALESCE(MAX(seq), 0) + 1 AS n FROM posts WHERE board = 'ca'"
+                ).fetchone()["n"]
+            )
+            cur = self._conn.execute(
+                """
+                INSERT INTO posts(
+                    board, seq, name, title, body, created, updated, nbytes, system
+                ) VALUES ('ca', ?, 'ca-audit', ?, ?, ?, ?, ?, 1)
+                """,
+                (seq, title, body, now, now, audit_bytes),
+            )
+            self._reindex_tags(int(cur.lastrowid or 0))
+            if self._csr_storage_bytes() > self.cfg.max_csr_storage_bytes:
+                raise StoreError("certificate request storage capacity reached", 507)
         csr = self.csr(csr_id)
         if csr is None:
             raise StoreError("failed to create CSR", 500)
-        self._audit_ca(
-            "request",
-            f"[REQUEST] CSR #{csr_id}",
-            [
-                f"csr=/_csr?id={csr_id}",
-                f"subject={auth.signer_id}",
-                f"requested_issuer={requested_issuer or 'any'}",
-                f"delegate={str(delegate).lower()}",
-                f"grants={canonical_json(grant_list)}",
-                *([f"message={message[:300]}"] if message else []),
-            ],
-        )
         return csr
 
     def csr(self, csr_id: int) -> dict[str, Any] | None:

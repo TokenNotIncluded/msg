@@ -49,6 +49,8 @@ class Config:
     # Logical capacity of active + archived post bodies and attachments.
     # Normal delete archives; new writes reclaim oldest archives first when full.
     max_storage_bytes: int = 1_073_741_824  # 1 GiB
+    # Separate bound for public certificate requests and their immutable audit posts.
+    max_csr_storage_bytes: int = 16_777_216  # 16 MiB
     max_post_bytes: int = 16_384
     max_post_bytes_post: int = 1_048_576
     max_request_bytes: int = 33_554_432
@@ -144,6 +146,9 @@ class Config:
                 "ssh", "max_keys_per_identity", base.ssh_max_keys_per_identity
             ),
             max_storage_bytes=get("storage", "max_storage_bytes", base.max_storage_bytes),
+            max_csr_storage_bytes=get(
+                "storage", "max_csr_storage_bytes", base.max_csr_storage_bytes
+            ),
             max_post_bytes=get("limits", "max_post_bytes", base.max_post_bytes),
             max_post_bytes_post=get("limits", "max_post_bytes_post", base.max_post_bytes_post),
             max_request_bytes=get("limits", "max_request_bytes", base.max_request_bytes),
@@ -182,6 +187,7 @@ class Config:
             raise SystemExit(f"port out of range: {self.port}")
         for key in (
             "max_storage_bytes",
+            "max_csr_storage_bytes",
             "max_post_bytes",
             "max_post_bytes_post",
             "max_request_bytes",
