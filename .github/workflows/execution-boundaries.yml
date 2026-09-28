@@ -1,0 +1,65 @@
+name: Execution boundary contracts
+on:
+  push:
+    branches: [fix/execution-boundaries-20260929]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: execution-boundaries-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  boundaries:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+          cache: pip
+      - name: Install isolated fixture dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          python -m pip install -e '.[dev]'
+      - name: Record exact tested source
+        env:
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          mkdir -p artifacts
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          git = lambda *args: subprocess.check_output(['git', *args], text=True).strip()
+          Path('artifacts/source.json').write_text(json.dumps({
+              'commit':git('rev-parse','HEAD'), 'tree':git('rev-parse','HEAD^{tree}'),
+              'event_sha':os.environ['EXPECTED_SHA'], 'dirty':bool(git('status','--porcelain')),
+          }, indent=2)+'\n')
+          PY
+      - name: Run architecture and existing semantic regressions
+        run: |
+          python -m pytest tests/test_execution_boundaries.py tests/test_batch.py tests/test_batch_secret_release.py tests/test_tools.py tests/test_effect_completion_fencing.py tests/test_effect_lease_deadlines.py tests/test_effect_retry_state.py tests/test_webhook_domain_events.py tests/test_ssh_rss.py tests/test_credential_delivery_contract.py --junitxml=artifacts/execution-boundaries.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: execution-boundaries-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
