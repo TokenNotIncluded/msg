@@ -1,0 +1,42 @@
+name: Issue integration workspace
+on:
+  push:
+    branches: [work/issue-workspace-20260929]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export the reviewed source histories
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin refs/heads/main:refs/heads/snapshot-main refs/pull/155/head:refs/heads/snapshot-recovery refs/pull/145/head:refs/heads/snapshot-ban
+          mkdir -p artifacts
+          git bundle create artifacts/workspace.bundle snapshot-main snapshot-recovery snapshot-ban
+          git bundle verify artifacts/workspace.bundle
+          python - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          refs = ['snapshot-main', 'snapshot-recovery', 'snapshot-ban']
+          Path('artifacts/source.json').write_text(json.dumps({
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'refs': {ref: {'head': git('rev-parse', ref), 'tree': git('rev-parse', ref+'^{tree}')} for ref in refs},
+              'scope': 'repository-source-only-no-production-access'
+          }, indent=2)+'\n')
+          PY
+          sha256sum artifacts/workspace.bundle > artifacts/workspace.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: issue-workspace
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
