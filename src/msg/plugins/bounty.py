@@ -1,7 +1,7 @@
 """Prefunded bounties with one-use identity-key proof of possession.
 
 All account movements run inside the executor's PostgreSQL write transaction.
-An escrow identity has no credential or public transfer operation.
+An escrow LedgerAccount is not a Subject and has no credential or public transfer operation.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from msg.core.errors import require
 from msg.core.models import HandlerOutput, ResourceRef, Signature
 from msg.plugins.common import (check_access, create_resource, new_id, operation_id,
                                 registration)
-from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _balance, _post_transfer
+from msg.plugins.money import account_requirements, CURRENCY_ID, MAX_MINOR, _balance, _post_transfer
 from msg.plugins.schemas import IDENTIFIER, SIGNATURE, obj
 from msg.security.crypto import verify
 
@@ -55,7 +55,16 @@ def _row(tx, listing_id):
                     (*row[:9], loads(row[9]), *row[10:])))
 
 
-def _public(row, balance, claims):
+def _public(row, balance, claims, now=None):
+    # Derive read projections without writing lifecycle state during GET.
+    row = dict(row)
+    if row['state'] != 'closed':
+        if now is not None and row['expires_at'] is not None and parse_time(row['expires_at']) <= now:
+            row.update(state='paused', pause_reason='expired')
+        elif balance < row['reward_minor']:
+            row.update(state='paused', pause_reason='out_of_budget')
+        elif claims >= row['max_claims']:
+            row.update(state='paused', pause_reason='claims_exhausted')
     return {key: row[key] for key in ('listing_id', 'publisher', 'reward_minor',
         'budget_minor', 'max_claims', 'claim_limit_per_subject', 'verifier_id',
         'verifier_version', 'eligibility', 'state', 'pause_reason', 'expires_at',
@@ -68,6 +77,11 @@ def _claim_count(tx, listing_id, claimant=None):
                           (listing_id,))[0])
     return int(tx.one("SELECT COUNT(*) FROM bounty_claims WHERE listing_id=? AND claimant=? AND status='paid'",
                       (listing_id, claimant))[0])
+
+
+def projection(tx, listing_id, now):
+    row = _row(tx, listing_id)
+    return _public(row, _balance(tx,row['escrow_subject']), _claim_count(tx,listing_id), now)
 
 
 def _ready(tx, row, now, claimant):
@@ -100,7 +114,7 @@ def install(app):
         'verifier_id': {'const': VERIFIER_ID},
         'verifier_version': {'const': VERIFIER_VERSION},
     }, ('name', 'terms', 'reward_minor', 'budget_minor', 'max_claims')),
-        signature=True)
+        signature=True, requirements=account_requirements)
     async def create(ctx, request, tx):
         publisher = _subject(ctx)
         await app.authorizer.require_base(ctx.principal, operation_id(request), publisher, tx)
@@ -159,11 +173,10 @@ def install(app):
     async def get(ctx, request, tx):
         row = _row(tx, request.arguments['listing_id'])
         await check_access(app, ctx, request, tx, row['listing_id'], 'read')
-        return HandlerOutput(data={'bounty': _public(row,
-            _balance(tx, row['escrow_subject']), _claim_count(tx, row['listing_id']))})
+        return HandlerOutput(data={'bounty': projection(tx,row['listing_id'],ctx.now)})
 
     @op('bounty.top_up', obj({'listing_id': IDENTIFIER, 'amount_minor': amount},
-        ('listing_id', 'amount_minor')), signature=True)
+        ('listing_id', 'amount_minor')), signature=True, requirements=account_requirements)
     async def top_up(ctx, request, tx):
         publisher = _subject(ctx)
         row = _row(tx, request.arguments['listing_id'])
@@ -191,7 +204,7 @@ def install(app):
             balance, _claim_count(tx, row['listing_id'])), 'funding': receipt})
 
     @op('bounty.challenge', obj({'listing_id': IDENTIFIER}, ('listing_id',)),
-        signature=True)
+        signature=True, requirements=account_requirements)
     async def challenge(ctx, request, tx):
         claimant = _subject(ctx)
         row = _row(tx, request.arguments['listing_id'])
@@ -215,7 +228,7 @@ def install(app):
         return HandlerOutput(data={'challenge': payload})
 
     @op('bounty.close', obj({'listing_id': IDENTIFIER}, ('listing_id',)),
-        signature=True)
+        signature=True, requirements=account_requirements)
     async def close(ctx, request, tx):
         publisher = _subject(ctx)
         row = _row(tx, request.arguments['listing_id'])
@@ -236,11 +249,11 @@ def install(app):
             0, _claim_count(tx, row['listing_id'])), 'returned': refund})
 
     @op('bounty.claim', obj({'challenge_id': IDENTIFIER,
-        'proof': SIGNATURE}, ('challenge_id', 'proof')), signature=True)
+        'proof': SIGNATURE}, ('challenge_id', 'proof')), signature=True, requirements=account_requirements)
     async def claim(ctx, request, tx):
         claimant = _subject(ctx)
         row = tx.one('''SELECT listing_id,claimant,key_id,expires_at,
-            verifier_version,payload,consumed_at FROM bounty_challenges WHERE id=?''',
+            verifier_version,payload,consumed_at,nonce,issued_at FROM bounty_challenges WHERE id=?''',
             (request.arguments['challenge_id'],))
         require(row is not None and row[1] == claimant, 'bounty_challenge_not_found')
         listing = _row(tx, row[0])
@@ -257,6 +270,10 @@ def install(app):
         proof = decode(Signature, request.arguments['proof'])
         require(proof.key_id == current[0], 'bounty_proof_key_mismatch')
         payload = loads(row[5])
+        require(payload == {'challenge_id':request.arguments['challenge_id'],
+            'listing_id':row[0], 'claimant_subject_id':claimant, 'nonce':row[7],
+            'issued_at':row[8], 'expires_at':row[3], 'verifier_version':row[4]},
+            'bounty_challenge_mismatch')
         verify(unb64(current[1], limit=32), canonical(payload), proof,
                purpose='bounty-pop-v1')
         proof_digest = digest({'payload': payload, 'proof': wire(proof)})
@@ -273,14 +290,17 @@ def install(app):
             (claim_id, listing['listing_id'], claimant,
              request.arguments['challenge_id'], proof_digest, 'paid',
              listing['reward_minor'], transaction_id, wire(ctx.now)), write=True)
-        tx.execute('''UPDATE bounty_challenges SET consumed_at=? WHERE id=? AND
+        consumed = tx.execute('''UPDATE bounty_challenges SET consumed_at=? WHERE id=? AND
             consumed_at IS NULL''', (wire(ctx.now), request.arguments['challenge_id']),
             write=True)
+        require(consumed.rowcount == 1, 'bounty_challenge_consumed')
         balance = _balance(tx, listing['escrow_subject'])
         paid_count = _claim_count(tx, listing['listing_id'])
-        if balance < listing['reward_minor']:
-            tx.execute("UPDATE bounty_listings SET state='paused',pause_reason='out_of_budget' WHERE listing_id=?",
-                       (listing['listing_id'],), write=True)
+        reason = ('out_of_budget' if balance < listing['reward_minor'] else
+                  'claims_exhausted' if paid_count >= listing['max_claims'] else None)
+        if reason:
+            tx.execute("UPDATE bounty_listings SET state='paused',pause_reason=? WHERE listing_id=?",
+                       (reason,listing['listing_id']), write=True)
         from msg.plugins.communication import event_id
         notice = {'id': new_id('message'), 'sender': None, 'actor': claimant,
             'recipient': claimant,
@@ -291,12 +311,54 @@ def install(app):
         tx.execute('INSERT INTO messages VALUES (?,?,?,?,?,?)',
             (notice['id'], None, claimant, listing['listing_id'],
              event_id(request, claimant), canonical(notice).decode()), write=True)
-        return HandlerOutput(data={'claim': {'id': claim_id,
+        return HandlerOutput(resources=(ResourceRef(id=listing['listing_id']),),
+            data={'claim': {'id': claim_id,
             'listing_id': listing['listing_id'], 'claimant': claimant,
             'challenge_id': request.arguments['challenge_id'],
             'proof_digest': proof_digest, 'status': 'paid',
             'reward_minor': listing['reward_minor'],
             'transaction_id': transaction_id, 'claimed_at': wire(ctx.now)},
             'reward': receipt, 'escrow_balance_minor': balance})
+
+    @op('bounty.pause', obj({'listing_id':IDENTIFIER},('listing_id',)), signature=True, requirements=account_requirements)
+    async def pause(ctx,request,tx):
+        row = _row(tx,request.arguments['listing_id'])
+        require(row['publisher'] == _subject(ctx),'bounty_not_found')
+        await check_access(app,ctx,request,tx,row['listing_id'],'write')
+        require(row['state'] != 'closed','bounty_closed')
+        tx.execute("UPDATE bounty_listings SET state='paused',pause_reason='publisher_paused' WHERE listing_id=?",
+                   (row['listing_id'],),write=True)
+        return HandlerOutput(data={'bounty':projection(tx,row['listing_id'],ctx.now)})
+
+    @op('bounty.resume', obj({'listing_id':IDENTIFIER},('listing_id',)), signature=True, requirements=account_requirements)
+    async def resume(ctx,request,tx):
+        row = _row(tx,request.arguments['listing_id'])
+        require(row['publisher'] == _subject(ctx),'bounty_not_found')
+        await check_access(app,ctx,request,tx,row['listing_id'],'write')
+        require(row['state'] != 'closed','bounty_closed')
+        require(row['expires_at'] is None or parse_time(row['expires_at']) > ctx.now,'bounty_expired')
+        require(_claim_count(tx,row['listing_id']) < row['max_claims'],'bounty_claims_exhausted')
+        require(_balance(tx,row['escrow_subject']) >= row['reward_minor'],'bounty_out_of_budget')
+        tx.execute("UPDATE bounty_listings SET state='active',pause_reason=NULL WHERE listing_id=?",
+                   (row['listing_id'],),write=True)
+        return HandlerOutput(data={'bounty':projection(tx,row['listing_id'],ctx.now)})
+
+    @op('bounty.claims',obj({'listing_id':IDENTIFIER,'cursor':IDENTIFIER,
+        'limit':{'type':'integer','minimum':1,'maximum':100}},('listing_id',)),effect='read', requirements=account_requirements)
+    async def claims(ctx,request,tx):
+        from msg.plugins.money import _owner
+        subject = _owner(ctx)
+        row = _row(tx,request.arguments['listing_id'])
+        await check_access(app,ctx,request,tx,row['listing_id'],'read')
+        args = request.arguments
+        limit = args.get('limit',50)
+        rows = tx.rows('''SELECT id,claimant,challenge_id,proof_digest,status,reward_minor,
+            transaction_id,claimed_at FROM bounty_claims WHERE listing_id=? AND
+            (claimant=? OR ?=?) AND id>? ORDER BY id LIMIT ?''',
+            (row['listing_id'],subject,subject,row['publisher'],args.get('cursor',''),limit+1))
+        items = [dict(zip(('id','claimant','challenge_id','proof_digest','status',
+            'reward_minor','transaction_id','claimed_at'),r)) for r in rows[:limit]]
+        return HandlerOutput(data={'claims':items,
+            'next_cursor':items[-1]['id'] if len(rows)>limit else None})
 
     finish()

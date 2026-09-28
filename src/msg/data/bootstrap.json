@@ -42,6 +42,9 @@
     "t_sos":{"recommended_template":"sos"}
   },
   "features": [
+    {"feature_id":"money","enabled_by_default":true,"default_config":{"currency_id":"primary","scale":6,"initial_supply_minor":0,"banks":[],"offers":[]},"sample_resource":null,"doctor_check":"market_clearing","selftest_case":"market_e2e"},
+    {"feature_id":"bounty","enabled_by_default":true,"default_config":{"listings":[],"verifier":"signature_pop_v1","human_or_sybil_proof":false},"sample_resource":"t_store","doctor_check":"market_clearing","selftest_case":"market_e2e"},
+    {"feature_id":"orders","enabled_by_default":true,"default_config":{"orders":[],"instant_policy":"managed-instant-v1","subjective_refund":false},"sample_resource":"t_store","doctor_check":"market_clearing","selftest_case":"market_e2e"},
     {"feature_id":"bootstrap","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"bootstrap","selftest_case":"isolated_namespace"},
     {"feature_id":"market","enabled_by_default":true,"default_config":{"checkout_version":2,"production_fixtures":false,"arbitrators":[]},"sample_resource":null,"doctor_check":"market","selftest_case":"market_lifecycle"},
     {"feature_id":"postgres","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"storage","selftest_case":"stable_id_read"},

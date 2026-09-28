@@ -163,15 +163,16 @@ def install(app):
         body, rev = await _body(app, tx, resource, revision)
         result = _public(resource, body)
         if body['mode'] == 'bounty':
-            state = tx.one('SELECT state,pause_reason,budget_minor FROM bounty_listings WHERE listing_id=?',
-                           (resource.id,))
-            require(state is not None, 'listing_not_found')
-            result['current_state'] = state[0]
-            result['pause_reason'] = state[1]
-            result['current_budget_minor'] = state[2]
+            from msg.plugins.bounty import projection
+            live = projection(tx,resource.id,ctx.now)
+            result['current_state'] = live['state']
+            result['pause_reason'] = live['pause_reason']
+            result['current_budget_minor'] = live['budget_minor']
+            result['escrow_balance_minor'] = live['escrow_balance_minor']
+            result['paid_claims'] = live['paid_claims']
             if revision is None:
-                result['state'] = state[0]
-                result['budget_minor'] = state[2]
+                result['state'] = live['state']
+                result['budget_minor'] = live['budget_minor']
         result['listing_revision'] = rev.id
         result['terms_revision'] = rev.id
         return HandlerOutput(resources=(ResourceRef(id=resource.id, revision=rev.id),),

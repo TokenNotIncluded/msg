@@ -9,7 +9,7 @@ from msg.core.codec import canonical, b64, loads, wire, decode
 from msg.core.errors import Failure, require
 from msg.core.models import TransportLimits
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
-from msg.transports.packet import decode_result, require_url_safe_packet
+from msg.transports.packet import decode_result, require_url_safe_packet, safe_error_code
 from msg.transports.url_safety import require_safe_relative_url
 
 
@@ -17,10 +17,19 @@ class HTTPTransport:
     name = 'http'
 
     def __init__(self, server, *, http=None, max_response_bytes=1048576, max_path_bytes=8192):
+        require(isinstance(server, str) and
+                all(ord(char) > 32 and ord(char) != 127 for char in server) and
+                '\\' not in server, 'invalid_server_url')
         server = server.rstrip('/')
-        parsed = urlsplit(server)
-        require(parsed.scheme in {'https','http'} and parsed.hostname and not parsed.username
-                and not parsed.query and not parsed.fragment and parsed.path in {'','/'}, 'invalid_server_url')
+        try:
+            parsed = urlsplit(server)
+            valid = (parsed.scheme in {'https', 'http'} and parsed.hostname and
+                     parsed.username is None and parsed.password is None and
+                     not parsed.query and not parsed.fragment and parsed.path in {'', '/'} and
+                     (parsed.port is None or parsed.port > 0))
+        except ValueError:
+            raise Failure('invalid_server_url') from None
+        require(valid, 'invalid_server_url')
         self.server = server
         self.http = http or httpx.AsyncClient(base_url=server, timeout=30, follow_redirects=False)
         self._owns_http = http is None
@@ -55,9 +64,12 @@ class HTTPTransport:
                 value = loads(bytes(data))
             except Failure:
                 raise Failure('invalid_server_response') from None
+            require(isinstance(value, dict), 'invalid_server_response')
             if response.status_code>=400 and 'status' not in value:
-                code = value.get('error',{}).get('code','transport_error') if isinstance(value,dict) else 'transport_error'
-                raise Failure(code,retryable=response.status_code in {502,503,504})
+                error = value.get('error')
+                code = error.get('code') if isinstance(error, dict) else None
+                raise Failure(safe_error_code(code, 'transport_error'),
+                              retryable=response.status_code in {502,503,504})
             return value
 
     async def description(self):
@@ -130,10 +142,19 @@ class GraphQLTransport(HTTPTransport):
                    'variables':{'packet':wire(request)}}
         endpoint = '/_read/graphql' if effect=='read' else '/-/graphql'
         result = await self._json('POST',endpoint,body=payload)
-        if result.get('errors'):
-            raise Failure(result['errors'][0].get('extensions',{}).get('code','graphql_error'))
-        require(isinstance(result.get('data',{}).get('call'),dict),'invalid_graphql_result')
-        return decode_result(result['data']['call'])
+        require(isinstance(result, dict), 'invalid_graphql_result')
+        errors = result.get('errors')
+        require(errors is None or isinstance(errors, list), 'invalid_graphql_result')
+        if errors:
+            require(isinstance(errors, list) and isinstance(errors[0], dict),
+                    'invalid_graphql_result')
+            extensions = errors[0].get('extensions')
+            code = extensions.get('code') if isinstance(extensions, dict) else None
+            raise Failure(safe_error_code(code, 'graphql_error'))
+        data = result.get('data')
+        require(isinstance(data, dict) and isinstance(data.get('call'), dict),
+                'invalid_graphql_result')
+        return decode_result(data['call'])
 
 
 class MCPHTTPTransport(HTTPTransport):
@@ -148,10 +169,15 @@ class MCPHTTPTransport(HTTPTransport):
         value = await self._json('POST','/-/mcp',body={'jsonrpc':'2.0','id':request.request_id,
             'method':'tools/call','params':{'name':tool_name,'arguments':{'packet':wire(request)}}},
             headers={'Accept':'application/json, text/event-stream','MCP-Protocol-Version':PROTOCOL_VERSION})
+        require(isinstance(value, dict), 'invalid_mcp_result')
         if 'error' in value:
-            raise Failure(value['error'].get('message','mcp_error'))
-        require(isinstance(value.get('result',{}).get('structuredContent'),dict),'invalid_mcp_result')
-        return decode_result(value['result']['structuredContent'])
+            error = value['error']
+            code = error.get('message') if isinstance(error, dict) else None
+            raise Failure(safe_error_code(code, 'mcp_error'))
+        result = value.get('result')
+        require(isinstance(result, dict) and isinstance(result.get('structuredContent'), dict),
+                'invalid_mcp_result')
+        return decode_result(result['structuredContent'])
 
 
 TRANSPORTS = {'http':HTTPTransport,'path_get':PathGETTransport,'graphql':GraphQLTransport,'mcp_http':MCPHTTPTransport}

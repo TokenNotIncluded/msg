@@ -11,12 +11,14 @@ import sys
 import unicodedata
 from urllib.parse import urlsplit
 
+import httpx
+
 from msg.core.errors import Failure
 
 
 READ_OPERATIONS = frozenset({
     'discovery.get', 'discovery.read_query', 'discovery.lexical_search',
-    'communication.inbox', 'communication.outbox', 'discussion.thread',
+    'communication.inbox', 'communication.outbox', 'communication.following', 'discussion.thread',
     'identity.note_list', 'identity.note_get', 'identity.todo_list', 'identity.todo_get',
 })
 _CONTROL = re.compile(r'[\x00-\x1f\x7f-\x9f]')
@@ -59,7 +61,7 @@ def terminal_lines(value, width):
         yield line.rstrip()
 
 
-HELP = ('命令：h Home，id 身份，topics 话题，i Inbox，o Outbox，notes 笔记，'
+HELP = ('命令：h Home，id 身份，topics 话题，following 关注，i Inbox，o Outbox，notes 笔记，'
         'todos 待办，files 文件，groups 组织，credentials 本地凭据，'
         's <scope> <terms> 搜索，t <id> 线程，r <id> 读取，'
         'n 下一页，retry 重新读取，q 退出。')
@@ -86,6 +88,25 @@ class TerminalUI:
         self.width = width
         self.page = None
         self._last_read = None
+        self._read_context = None
+
+    def _context(self):
+        state = self.client.state
+        # Public identifiers only; do not inspect the token, signer or journals.
+        return (getattr(state, 'subject', None), getattr(state, 'server', None),
+                tuple(getattr(state, 'certificates', ())))
+
+    def _remember_read(self, function, *arguments):
+        self.page = None
+        self._last_read = (function, arguments)
+        self._read_context = self._context()
+
+    def _discard_stale_read(self):
+        if self._read_context is not None and self._read_context != self._context():
+            self.page = self._last_read = self._read_context = None
+            self._write('身份或服务已变化；请重新选择视图。')
+            return True
+        return False
 
     def _write(self, value=''):
         columns = self.width if self.width is not None else shutil.get_terminal_size((80, 24)).columns
@@ -99,7 +120,9 @@ class TerminalUI:
             raise ValueError('TUI only supports read operations')
         try:
             result = await self.client.call(operation, arguments)
-        except (Failure, OSError, TimeoutError) as exc:
+            if self._discard_stale_read():
+                return None
+        except (Failure, OSError, TimeoutError, httpx.HTTPError) as exc:
             self.page = None
             code = exc.code if isinstance(exc, Failure) else 'transport_unavailable'
             self._read_error(code)
@@ -131,8 +154,7 @@ class TerminalUI:
     async def _show_page(self, operation, arguments, title):
         # A cursor may become invalid after a grant changes. Never keep the
         # previous page selectable after a failed permission recheck.
-        self.page = None
-        self._last_read = (self._show_page, (operation, dict(arguments), title))
+        self._remember_read(self._show_page, operation, dict(arguments), title)
         data = await self._read(operation, arguments)
         if data is None:
             return
@@ -166,7 +188,7 @@ class TerminalUI:
 
     async def private_page(self, operation, arguments, title):
         if not getattr(self.client.state, 'subject', None):
-            self.page = self._last_read = None
+            self.page = self._last_read = self._read_context = None
             self._write(title + ' 需要已登录身份。')
             return
         await self._show_page(operation, arguments, title)
@@ -175,10 +197,10 @@ class TerminalUI:
         subject = getattr(self.client.state, 'subject', None)
         self.page = None
         if not subject:
-            self._last_read = None
+            self._last_read = self._read_context = None
             self._write('Files 需要已登录身份。')
             return
-        self._last_read = (self.files, ())
+        self._remember_read(self.files)
         profile = await self._read('discovery.get', {'id': subject, 'fields': ['path']})
         if profile is not None:
             await self._show_page('discovery.read_query',
@@ -212,7 +234,7 @@ class TerminalUI:
         await self._document('discovery.get', {'id': rid}, rid)
 
     async def _document(self, operation, arguments, title):
-        self._last_read = (self._document, (operation, dict(arguments), title))
+        self._remember_read(self._document, operation, dict(arguments), title)
         data = await self._read(operation, arguments)
         if data is None:
             return
@@ -229,17 +251,20 @@ class TerminalUI:
         self._write('读取不会发送 ACK。')
 
     async def next_page(self):
+        if self._discard_stale_read():
+            return
         if not self.page or not self.page['cursor']:
             self._write('没有下一页。')
             return
         current = self.page
         arguments = ({'cursor': current['cursor']} if current['operation'] in
-                     {'discovery.read_query', 'discovery.lexical_search'} else
+                     {'discovery.read_query', 'discovery.lexical_search', 'communication.following'} else
                      {**current['arguments'],
                       'after_name' if current['operation'] == 'identity.todo_list' else 'cursor': current['cursor']})
         await self._show_page(current['operation'], arguments, current['title'])
 
     async def command(self, raw):
+        self._discard_stale_read()
         command = raw.strip()
         if command in {'q', 'quit', 'exit'}:
             return False
@@ -255,6 +280,8 @@ class TerminalUI:
             await self._show_page('discovery.read_query', {'type': 'organization', 'limit': 20}, 'Groups')
         elif command in {'o', 'outbox'}:
             await self.private_page('communication.outbox', {'limit': 20}, 'Outbox')
+        elif command == 'following':
+            await self.private_page('communication.following', {'limit': 20}, 'Following')
         elif command == 'notes':
             await self.private_page('identity.note_list', {}, 'Notes')
         elif command == 'todos':
@@ -280,7 +307,7 @@ class TerminalUI:
         elif command.startswith('r '):
             await self.read(command[2:].strip())
         elif command.isdecimal() and self.page:
-            index = int(command) - 1
+            index = int(command) - 1 if len(command) <= 6 else -1
             if 0 <= index < len(self.page['items']):
                 item = self.page['items'][index]
                 ref = item.get('ref') or item.get('resource') or {}

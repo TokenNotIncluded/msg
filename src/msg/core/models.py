@@ -322,6 +322,7 @@ class ResourceTypeSpec:
     operations: frozenset[str]
     relations: frozenset[str]
     taggable: bool = False
+    purchasable: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

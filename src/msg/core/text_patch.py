@@ -83,8 +83,14 @@ _HUNK = re.compile(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:[^\r\n]*)\r?\n
 _NO_NEWLINE = '\\ No newline at end of file'
 
 
+def _diff_lines(text):
+    # Git/unified diff separates lines only at LF. str.splitlines also splits
+    # Unicode separators and CR, changing the signed bytes and hunk counts.
+    return re.findall(r'[^\n]*\n|[^\n]+$', text)
+
+
 def _hunks(text):
-    lines = text.splitlines(keepends=True)
+    lines = _diff_lines(text)
     require(len(lines) <= MAX_LINES, 'patch_too_complex')
     i = 0
     if lines and lines[0].startswith('--- '):
@@ -127,7 +133,7 @@ def _hunks(text):
 
 
 def _unified(source, hunks, *, rebase=False):
-    lines = source.splitlines(keepends=True)
+    lines = _diff_lines(source)
     require(len(lines) <= MAX_LINES, 'patch_too_complex')
     require(not rebase or len(lines)*len(hunks)<=1000000, 'patch_too_complex')
     result = []
@@ -186,7 +192,8 @@ _SETEXT = re.compile(r'^ {0,3}(=+|-+)[ \t]*$')
 
 def _markdown(source):
     """Locate raw spans; this is intentionally not a semantic Markdown AST."""
-    lines = source.splitlines(keepends=True)
+    # Markdown admits CR/LF/CRLF, not Unicode paragraph/line separators.
+    lines = re.findall(r'[^\r\n]*(?:\r\n|\r|\n)|[^\r\n]+$', source)
     require(len(lines)<=MAX_LINES, 'patch_too_complex')
     offsets = [0]
     for line in lines:

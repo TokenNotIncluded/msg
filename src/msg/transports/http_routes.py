@@ -65,7 +65,7 @@ SUBJECT_KEY_ALIASES={'pk':('identity.identity_key_get','pk'),
 SUBJECT_OPERATION_ALIASES={'ach':'achievement.list','achievements':'achievement.list',
                            'in':'communication.inbox','inbox':'communication.inbox',
                            'out':'communication.outbox','outbox':'communication.outbox',
-                           'dm':'communication.dm_list'}
+                           'dm':'communication.dm_list','following':'communication.following'}
 SEARCH_V2_SEGMENTS={'scope':'s','terms':'t','mode':'m','field':'f','order':'o',
                     'limit':'n','snippet':'x','explain':'e','exact':'h',
                     'not_terms':'z','type':'y','owner':'w','tag':'g','state':'a',
@@ -735,7 +735,7 @@ def create_app(service):
                             query,_=service.cursors.inspect_page(cursor,service.clock())
                             operation=query.get('operation')
                             require(operation in {'discovery.read_query','discovery.links',
-                                                  'discovery.lexical_search'},
+                                                  'discovery.lexical_search','communication.following'},
                                     'cursor_kind_mismatch')
                             if operation=='discovery.lexical_search':
                                 saved_args=query.get('arguments',{})
@@ -1405,7 +1405,7 @@ def create_app(service):
                     key_alias=name in SUBJECT_KEY_ALIASES
                     if not key_alias and not certificate_detail:
                         require(remainder in {None,'/'},'not_found')
-                    require(not request.url.query or name in {'in','inbox','out','outbox'},
+                    require(not request.url.query or name in {'in','inbox','out','outbox','following'},
                             'unknown_query_parameter')
                     async with service.metadata.transaction(write=False) as tx:
                         subject_id=await tx.resolve('/@'+handle)
@@ -1430,7 +1430,8 @@ def create_app(service):
                     else:
                         operation=SUBJECT_OPERATION_ALIASES[name]
                         args={'subject_id':subject_id} if operation=='achievement.list' else {}
-                    if operation in {'communication.inbox','communication.outbox'}:
+                    if operation in {'communication.inbox','communication.outbox',
+                                     'communication.following'}:
                         pairs=request.query_params.multi_items()
                         require(len(pairs)==len({key for key,_ in pairs}),'duplicate_query_parameter')
                         query=dict(pairs)
@@ -1450,7 +1451,7 @@ def create_app(service):
                     if result.error:
                         return json_response(result_wire(result),error_status(result.error.code))
                     if operation in {'communication.inbox','communication.outbox',
-                                     'communication.dm_list'}:
+                                     'communication.dm_list','communication.following'}:
                         require(result.subject==subject_id,'permission_denied')
                     value=wire(result.data)
                     if certificate_detail:
@@ -1458,7 +1459,8 @@ def create_app(service):
                     canonical_name=('cert' if certificate_detail else
                                     SUBJECT_KEY_ALIASES[name][1] if key_alias else
                                     {'achievement.list':'ach','communication.inbox':'in',
-                                     'communication.outbox':'out','communication.dm_list':'dm'}[operation])
+                                     'communication.outbox':'out','communication.dm_list':'dm',
+                                     'communication.following':'following'}[operation])
                     key_suffix=args.get('key_id') or (args.get('id') if certificate_detail else None)
                     value['path']='/@'+handle+'/'+canonical_name+('/'+key_suffix if key_suffix else '')
                     etag='"'+digest(value)[7:]+'"'

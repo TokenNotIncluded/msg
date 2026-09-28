@@ -1,102 +1,183 @@
-"""Server resource offers, closed until a Registry-backed entitlement is usable.
+"""Versioned resource offers and atomic, owner-bound purchases.
 
-An offer is a business fact, never a grant of authorization.  Merely inserting a
-row into ``server_offers`` cannot make a resource purchasable: both the Registry
-and an installed deterministic entitlement fulfiller must explicitly opt in.
+Only installed quota consumers are sellable. Purchases lock the quote; neither
+an offer edit nor a bank role can change the entitlement or bypass permission.
 """
-from __future__ import annotations
+from datetime import timedelta
 
+from msg.constants import ROOT_SUBJECT
+from msg.core.codec import canonical, digest, loads, parse_time, wire
 from msg.core.errors import Failure, require
 from msg.core.models import HandlerOutput
-from msg.plugins.common import registration
-from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _owner
+from msg.plugins.common import new_id, registration
+from msg.plugins.hosting_capacity import ENTITLEMENT_KIND, MAX_CAPACITY_BYTES, extra_capacity
+from msg.plugins.money import account_requirements, CURRENCY_ID, MAX_MINOR, _owner, _balance, _post_transfer
 from msg.plugins.schemas import IDENTIFIER, obj
 
+PURCHASE_TTL = 900
+FORBIDDEN_KINDS = frozenset({'user','organization','certificate','csr','delegation',
+    'keystore','identity','capability','admin','system','priority','bank_role'})
 
-# No quota consumer/entitlement fulfiller is installed yet.  Keep this mapping
-# empty rather than treating a money transfer as successful resource delivery.
-ENTITLEMENT_FULFILLERS = {}
-FORBIDDEN_KINDS = frozenset({
-    'user', 'organization', 'certificate', 'csr', 'delegation', 'keystore',
-    'identity', 'capability', 'admin', 'system', 'priority', 'bank_role',
-})
+
+def _grant_hosting(app, tx, purchase, now, transaction_id):
+    snapshot = purchase['offer_snapshot']
+    require(extra_capacity(tx, purchase['subject_id'], now) + purchase['quantity'] +
+            app.settings.hosting_base_capacity_bytes <= MAX_CAPACITY_BYTES,
+            'entitlement_capacity_exceeded')
+    expiry = (wire(now + timedelta(seconds=snapshot['duration_seconds']))
+              if snapshot['duration_seconds'] is not None else None)
+    eid = 'ent_' + digest((purchase['subject_id'], purchase['request_id']))[7:39]
+    tx.execute('''INSERT INTO resource_entitlements
+        (id,subject_id,offer_id,purchase_request_id,quantity,entitlement_kind,
+         granted_at,expires_at,redeem_transaction_id) VALUES (?,?,?,?,?,?,?,?,?)''',
+        (eid,purchase['subject_id'],snapshot['offer_id'],purchase['request_id'],
+         purchase['quantity'],snapshot['entitlement_kind'],wire(now),expiry,transaction_id),write=True)
+    return eid
+
+
+# Finite, trusted code registrations. No evaluator names or code from config.
+ENTITLEMENT_FULFILLERS = {ENTITLEMENT_KIND: ('website', 'byte', 1, _grant_hosting)}
 
 
 def purchasable(app, resource_kind: str, entitlement_kind: str) -> bool:
-    """Check both the published type contract and actual quota enforcement."""
     if resource_kind in FORBIDDEN_KINDS:
         return False
+    provider = ENTITLEMENT_FULFILLERS.get(entitlement_kind)
     try:
         spec = app.registry.resource_type(resource_kind, 1)
+        app.registry.operation('hosting.deploy', 1)
     except Failure:
         return False
-    return (getattr(spec, 'purchasable', False) is True and
-            entitlement_kind in ENTITLEMENT_FULFILLERS)
+    return bool(spec.purchasable and provider and provider[0] == resource_kind)
 
 
 def validate_local_offer(app, *, resource_kind: str, entitlement_kind: str,
                          unit: str, price_minor: int, min_quantity: int,
                          max_quantity: int, duration_seconds: int | None = None):
-    """RootAdmin's offer set entrypoint must call this before any DB write.
-
-    The current Registry has no purchasable types, so all sets fail closed.
-    Disabling an existing offer remains a local administrative operation.
-    """
-    require(purchasable(app, resource_kind, entitlement_kind),
-            'resource_not_purchasable')
-    require(isinstance(unit, str) and 0 < len(unit) <= 64, 'invalid_offer_unit')
-    require(type(price_minor) is int and 0 < price_minor <= MAX_MINOR,
-            'invalid_offer_price')
+    require(purchasable(app, resource_kind, entitlement_kind), 'resource_not_purchasable')
+    require(unit == ENTITLEMENT_FULFILLERS[entitlement_kind][1], 'invalid_offer_unit')
+    require(type(price_minor) is int and 0 < price_minor <= MAX_MINOR, 'invalid_offer_price')
     require(type(min_quantity) is int and type(max_quantity) is int and
-            0 < min_quantity <= max_quantity and price_minor * max_quantity <= MAX_MINOR,
-            'invalid_offer_quantity')
+            0 < min_quantity <= max_quantity <= MAX_CAPACITY_BYTES and
+            price_minor * max_quantity <= MAX_MINOR, 'invalid_offer_quantity')
     require(duration_seconds is None or
             (type(duration_seconds) is int and 0 < duration_seconds <= 315360000),
             'invalid_offer_duration')
 
 
 def _public_offer(row):
-    return {'offer_id': row[0], 'resource_kind': row[1], 'unit': row[2],
-            'price_minor': row[3], 'min_quantity': row[4], 'max_quantity': row[5],
-            'entitlement_kind': row[6], 'duration_seconds': row[7],
-            'price_revision': row[8], 'currency_id': CURRENCY_ID}
+    return dict(zip(('offer_id','resource_kind','unit','price_minor','min_quantity',
+                     'max_quantity','entitlement_kind','duration_seconds','price_revision'),row)) | {
+        'currency_id': CURRENCY_ID, 'provider_version': 1}
+
+
+def _purchase(tx, purchase_id, subject):
+    row = tx.one('''SELECT id,subject_id,request_id,offer_snapshot,quantity,total_minor,
+        escrow_account,state,created_at,expires_at,funding_transaction_id,
+        final_transaction_id,entitlement_id,reason FROM money_purchases WHERE id=? AND subject_id=?''',
+        (purchase_id,subject))
+    require(row is not None, 'purchase_not_found')
+    result = dict(zip(('id','subject_id','request_id','offer_snapshot','quantity','total_minor',
+        'escrow_account','state','created_at','expires_at','funding_transaction_id',
+        'final_transaction_id','entitlement_id','reason'),row))
+    result['offer_snapshot'] = loads(result['offer_snapshot'])
+    return result
+
+
+def _finalize(app, tx, purchase, now, request_id, *, cancel=False):
+    require(purchase['state'] == 'pending', 'purchase_not_pending')
+    snapshot = purchase['offer_snapshot']
+    provider = ENTITLEMENT_FULFILLERS.get(snapshot['entitlement_kind'])
+    reason = ('cancelled' if cancel else 'expired' if parse_time(purchase['expires_at']) <= now
+              else 'provider_unavailable' if not purchasable(app,snapshot['resource_kind'],snapshot['entitlement_kind'])
+              or provider[2] != snapshot['provider_version'] else None)
+    require(_balance(tx,purchase['escrow_account']) == purchase['total_minor'], 'escrow_balance_mismatch')
+    receipt = _post_transfer(tx,sender=purchase['escrow_account'],
+        recipient=purchase['subject_id'] if reason else ROOT_SUBJECT,
+        amount=purchase['total_minor'],actor=purchase['subject_id'],request_id=request_id,
+        now=now,receipt_signer=app.receipt_signer,kind='refund' if reason else 'redeem',
+        reference='purchase_' + ('refund:' if reason else 'settle:') + purchase['id'],
+        entry_key='purchase_final')
+    tid = receipt['body']['transaction_id']
+    eid = None if reason else provider[3](app,tx,purchase,now,tid)
+    tx.execute('''UPDATE money_purchases SET state=?,final_transaction_id=?,entitlement_id=?,reason=?
+        WHERE id=? AND state='pending' ''',
+        ('refunded' if reason else 'settled',tid,eid,reason,purchase['id']),write=True)
+    return receipt
 
 
 def install(app):
-    op, finish = registration(app, 'offers', ('money',))
+    op,finish = registration(app,'offers',('money',))
 
-    @op('money.offers', obj(), effect='read')
-    async def offers(ctx, request, tx):
+    @op('money.offers',obj(),effect='read')
+    async def offers(ctx,request,tx):
         rows = tx.rows('''SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
-                               max_quantity,entitlement_kind,duration_seconds,price_revision
-                        FROM server_offers WHERE enabled=TRUE ORDER BY offer_id''')
-        return HandlerOutput(data={'currency_id': CURRENCY_ID,
-            'offers': [_public_offer(row) for row in rows
-                       if purchasable(app, row[1], row[6])]})
+            max_quantity,entitlement_kind,duration_seconds,price_revision
+            FROM server_offers WHERE enabled=TRUE ORDER BY offer_id''')
+        return HandlerOutput(data={'currency_id':CURRENCY_ID,'offers':[
+            _public_offer(row) for row in rows if purchasable(app,row[1],row[6])]})
 
-    @op('money.redeem', obj({
-        'offer_id': IDENTIFIER,
-        'quantity': {'type': 'integer', 'minimum': 1, 'maximum': MAX_MINOR},
-        'currency_id': {'const': CURRENCY_ID},
-        'price_revision': IDENTIFIER,
-    }, ('offer_id', 'quantity', 'currency_id', 'price_revision')), signature=True)
-    async def redeem(ctx, request, tx):
-        _owner(ctx)
+    @op('money.redeem',obj({'offer_id':IDENTIFIER,'quantity':{'type':'integer','minimum':1,'maximum':MAX_MINOR},
+        'currency_id':{'const':CURRENCY_ID},'price_revision':IDENTIFIER},
+        ('offer_id','quantity','currency_id','price_revision')),signature=True, requirements=account_requirements)
+    @op('money.redeem',obj({'offer_id':IDENTIFIER,'quantity':{'type':'integer','minimum':1,'maximum':MAX_MINOR},
+        'currency_id':{'const':CURRENCY_ID},'price_revision':IDENTIFIER,'defer':{'type':'boolean'}},
+        ('offer_id','quantity','currency_id','price_revision')),signature=True, version=2, requirements=account_requirements)
+    async def redeem(ctx,request,tx):
+        owner = _owner(ctx)
         args = request.arguments
         row = tx.one('''SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
-                              max_quantity,entitlement_kind,duration_seconds,price_revision
-                       FROM server_offers WHERE offer_id=? AND enabled=TRUE''',
-                     (args['offer_id'],))
-        require(row is not None and purchasable(app, row[1], row[6]),
-                'offer_not_found')
-        # A price change must invalidate a prior quote, even if the numeric
-        # price returns to the same value.  No funds are touched before this.
-        require(args['price_revision'] == row[8], 'offer_price_changed')
-        require(row[4] <= args['quantity'] <= row[5] and
-                row[3] * args['quantity'] <= MAX_MINOR, 'invalid_offer_quantity')
-        # A future fulfiller must atomically post a redeem ledger entry and
-        # deterministic ResourceEntitlement in this same transaction.  There
-        # is deliberately no placeholder success or asynchronous fire-and-forget.
-        require(False, 'entitlement_provider_unavailable')
+            max_quantity,entitlement_kind,duration_seconds,price_revision FROM server_offers
+            WHERE offer_id=? AND enabled=TRUE''',(args['offer_id'],))
+        require(row is not None and purchasable(app,row[1],row[6]),'offer_not_found')
+        require(args['price_revision'] == row[8],'offer_price_changed')
+        require(row[4] <= args['quantity'] <= row[5] and row[3]*args['quantity'] <= MAX_MINOR,
+                'invalid_offer_quantity')
+        require(extra_capacity(tx,owner,ctx.now) + args['quantity'] + app.settings.hosting_base_capacity_bytes
+                <= MAX_CAPACITY_BYTES,'entitlement_capacity_exceeded')
+        purchase_id = new_id('pur')
+        escrow = new_id('esc')
+        tx.execute("INSERT INTO ledger_accounts(id,kind,subject_id,source_id) VALUES (?,'purchase_escrow',NULL,?)",
+                   (escrow,purchase_id),write=True)
+        funding = _post_transfer(tx,sender=owner,recipient=escrow,amount=row[3]*args['quantity'],
+            actor=owner,request_id=request.request_id,now=ctx.now,receipt_signer=app.receipt_signer,
+            reference='purchase_fund:'+purchase_id,entry_key='purchase_fund')
+        tx.execute('''INSERT INTO money_purchases
+            (id,subject_id,request_id,offer_snapshot,quantity,total_minor,escrow_account,state,
+             created_at,expires_at,funding_transaction_id) VALUES (?,?,?,?,?,?,?,'pending',?,?,?)''',
+            (purchase_id,owner,request.request_id,canonical(_public_offer(row)).decode(),args['quantity'],
+             row[3]*args['quantity'],escrow,wire(ctx.now),wire(ctx.now+timedelta(seconds=PURCHASE_TTL)),
+             funding['body']['transaction_id']),write=True)
+        settlement = None
+        if not args.get('defer',False):
+            settlement = _finalize(app,tx,_purchase(tx,purchase_id,owner),ctx.now,request.request_id)
+        return HandlerOutput(data={'purchase':_purchase(tx,purchase_id,owner),
+                                   'funding':funding,'settlement':settlement})
 
+    @op('money.purchase_get',obj({'purchase_id':IDENTIFIER},('purchase_id',)),effect='read', requirements=account_requirements)
+    async def get(ctx,request,tx):
+        return HandlerOutput(data={'purchase':_purchase(tx,request.arguments['purchase_id'],_owner(ctx))})
+
+    @op('money.purchase_settle',obj({'purchase_id':IDENTIFIER},('purchase_id',)),signature=True, requirements=account_requirements)
+    async def settle(ctx,request,tx):
+        owner = _owner(ctx)
+        purchase = _purchase(tx,request.arguments['purchase_id'],owner)
+        receipt = _finalize(app,tx,purchase,ctx.now,request.request_id)
+        return HandlerOutput(data={'purchase':_purchase(tx,purchase['id'],owner),'settlement':receipt})
+
+    @op('money.purchase_cancel',obj({'purchase_id':IDENTIFIER},('purchase_id',)),signature=True, requirements=account_requirements)
+    async def cancel(ctx,request,tx):
+        owner = _owner(ctx)
+        purchase = _purchase(tx,request.arguments['purchase_id'],owner)
+        receipt = _finalize(app,tx,purchase,ctx.now,request.request_id,cancel=True)
+        return HandlerOutput(data={'purchase':_purchase(tx,purchase['id'],owner),'refund':receipt})
+
+    @op('money.entitlements',obj(),effect='read', requirements=account_requirements)
+    async def entitlements(ctx,request,tx):
+        owner = _owner(ctx)
+        rows = tx.rows('''SELECT id,offer_id,quantity,entitlement_kind,granted_at,expires_at,
+            redeem_transaction_id FROM resource_entitlements WHERE subject_id=? ORDER BY id''',(owner,))
+        return HandlerOutput(data={'entitlements':[dict(zip(('id','offer_id','quantity','entitlement_kind',
+            'granted_at','expires_at','transaction_id'),row)) for row in rows],
+            'hosting_extra_bytes':extra_capacity(tx,owner,ctx.now)})
     finish()

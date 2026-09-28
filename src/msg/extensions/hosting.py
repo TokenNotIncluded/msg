@@ -49,6 +49,8 @@ def register(app,op):
             await check_access(app,ctx,request,tx,ref.id,'read')
             revision=await tx.revision(ref)
             sources.append((path,ref,revision.content))
+        from msg.plugins.hosting_capacity import require_capacity
+        await require_capacity(app,tx,resource,sum(blob.size for _,_,blob in sources),ctx.now)
         # Public copies share CAS bytes but get their own explicit publication
         # facts and ACL. A later source chmod does not secretly unpublish a site.
         deployment=await create_resource(app,ctx,request,tx,parent=resource.id,type='topic',
@@ -78,6 +80,8 @@ def register(app,op):
             ref=decode(ResourceRef,item['source']);require(ref.revision is not None,'source_revision_required')
             await check_access(app,ctx,request,tx,ref.id,'read')
             sources.append((path,(await tx.revision(ref)).content))
+        from msg.plugins.hosting_capacity import require_capacity
+        await require_capacity(app,tx,website,sum(blob.size for _,blob in sources),ctx.now)
         candidate=await create_resource(app,ctx,request,tx,parent=website.id,type='topic',
             name='preview-'+new_id('p'),mode=0o700)
         entries={}
@@ -105,6 +109,8 @@ def register(app,op):
         # Validation binds the deployment to this website, not an arbitrary JSON file.
         value=loads(await app.contents.read_bytes(revision.content))
         require((await tx.resource(value['deployment'])).parent==resource.id,'deployment_mismatch')
+        from msg.plugins.hosting_capacity import manifest_size,require_capacity
+        await require_capacity(app,tx,resource,await manifest_size(app,tx,resource,revision.id),ctx.now)
         changed=replace(resource,revision=revision.id,generation=resource.generation+1,modified_at=ctx.now,modified_by=ctx.principal.actor)
         await tx.replace(changed,resource.generation)
         return output_for(changed)
