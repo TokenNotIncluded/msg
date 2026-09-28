@@ -55,3 +55,26 @@ account-scope, deterministic clearing, Bounty, redemption, storage and recovery
 suites. Full four-shard exact node-ID/conformance/build and applicable recovery
 checks remain required on the final synchronized head. No skips, weakened
 assertions, changed published versions or historical fact/schema migration.
+
+
+## Implementation and source audit
+
+PR #168 extracts the existing shared implementation into `order_records`,
+`catalog`, `ledger` and `managed_delivery`, with canonical public function names.
+Old plugin names re-export those same function objects. All existing market use
+cases, including function-local imports, and legacy plugin handlers use these
+owners. The duplicate store subject check becomes the same order-subject check.
+
+The exact-base cloud assembly checks source blob identities, compares every
+moved function after identifier-only renaming, and checks every remaining handler
+and market state machine after ignoring import statements. SQL strings, schemas,
+IDs, receipt purposes, positional order and existing algorithm bodies are not
+rewritten. The only guard change is its owner: `ledger` defines `_ESCROW_WRITE`
+once, escrow re-exports it, and protected posting reads that same object directly.
+The guard is still supplied only by the existing checked escrow release path.
+
+No generated source is imported or executed during assembly. Cloud test jobs run
+both new real-database contracts and existing published-version/recovery suites.
+The assembly artifact contains the exact changed paths, audit and patch. Its
+one-shot helper files are removed from the submitted tree before final validation.
+No successful final-head result is claimed by this source-only audit.

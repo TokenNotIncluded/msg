@@ -9,12 +9,11 @@ from msg.core.models import Event, Signature
 from msg.core.requests import signing_bytes
 from msg.market.policy import contract, delivery_snapshot
 from msg.plugins.common import new_id
-from msg.plugins.money import CURRENCY_ID, _balance, _post_transfer
+from msg.market.ledger import CURRENCY_ID, balance as _balance, post_transfer as _post_transfer
 from msg.security.crypto import verify
 
-# Not a credential, account or public capability. Only trusted in-process market
-# code can reach this token; ordinary signed money.transfer never receives it.
-_ESCROW_WRITE = object()
+from msg.market.ledger import _ESCROW_WRITE
+
 TRANSITIONS = {
     'created': {'funded', 'cancelled'},
     'funded': {'delivered', 'refunded', 'disputed'},
@@ -132,7 +131,7 @@ async def resolve_due(app, *, limit=100):
     services/manual ciphertext refund; subjective complaints and expired panels
     remain held. This function has no external side effect.
     """
-    from msg.plugins.orders import _row
+    from msg.market.order_records import read_order as _row
     now = app.clock()
     changed = []
     async with app.metadata.transaction(write=True) as tx:
@@ -200,8 +199,8 @@ class EscrowEngine:
 
     async def settle(self, ctx, request, tx, *, reason, order_id=None):
         # Import handlers' read-only projections, never their write entry points.
-        from msg.plugins.delivery import _delivery, _verified_delivery
-        from msg.plugins.orders import _row, _subject
+        from msg.market.managed_delivery import read_delivery as _delivery, verify_managed_delivery as _verified_delivery
+        from msg.market.order_records import read_order as _row, require_signed_subject as _subject
         buyer=_subject(ctx)
         require(order_id is None or reason == 'checkout_accept', 'escrow_decision_mismatch')
         order=_row(tx,order_id or request.arguments['order_id'],buyer)

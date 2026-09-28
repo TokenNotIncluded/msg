@@ -85,8 +85,8 @@ async def queue_notification(app, ctx, request, tx, order, *, enabled):
 
 async def project_notification(app, tx, job, principal):
     """Reconstruct the allowlisted message only after every live owner check."""
-    from msg.plugins.orders import _row
-    from msg.plugins.delivery import _delivery, _verified_delivery
+    from msg.market.order_records import read_order as _row
+    from msg.market.managed_delivery import read_delivery as _delivery, verify_managed_delivery as _verified_delivery
     require(mail_enabled(app), 'mail_disabled')
     require((job.operation, job.arguments.get('contract_version')) in {
         ('orders.buy', 2), ('delivery.notify', 1)}, 'invalid_delivery_notification')

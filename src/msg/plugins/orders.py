@@ -14,70 +14,18 @@ from msg.core.codec import canonical, digest, loads, parse_time, wire
 from msg.core.errors import require
 from msg.core.models import HandlerOutput
 from msg.plugins.common import registration
-from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _balance, _post_transfer, account_requirements
+from msg.market.ledger import CURRENCY_ID, MAX_MINOR, balance as _balance, post_transfer as _post_transfer, account_requirements
 from msg.plugins.schemas import IDENTIFIER, obj
-from msg.plugins.store import _body, _listing, _package_row
+from msg.market.catalog import read_listing_body as _body, read_listing as _listing, read_package_record as _package_row
 
 
-_COLUMNS = ('id', 'buyer', 'seller', 'listing_id', 'listing_revision',
-            'package_id', 'package_revision', 'package_digest', 'quantity',
-            'unit_price_minor', 'total_price_minor', 'currency_id',
-            'escrow_subject', 'escrow_policy', 'dispute_policy', 'terms_digest',
-            'delivery_target', 'payment_intent_digest', 'payment_transaction_id',
-            'state', 'created_at', 'funded_at', 'delivered_at', 'settled_at',
-            'receipt_refs')
-
-
-def _subject(ctx):
-    subject = ctx.principal.subject
-    require(subject is not None and ctx.principal.actor == subject and
-            ctx.principal.method == 'signature', 'signature_required')
-    return subject
-
-
-def _viewer(ctx):
-    subject = ctx.principal.subject
-    require(subject is not None and ctx.principal.actor == subject,
-            'order_not_found')
-    return subject
-
-
-def _order_id():
-    # 160 random bits, unguessable even if an attacker sees other order IDs.
-    return 'ord_' + base64.b32encode(os.urandom(20)).decode('ascii').rstrip('=').lower()
-
-
-def _row(tx, order_id, viewer):
-    row = tx.one('''SELECT id,buyer,seller,listing_id,listing_revision,
-        package_id,package_revision,package_digest,quantity,unit_price_minor,
-        total_price_minor,currency_id,escrow_subject,escrow_policy,
-        dispute_policy,terms_digest,delivery_target,payment_intent_digest,
-        payment_transaction_id,state,created_at,funded_at,delivered_at,
-        settled_at,receipt_refs FROM store_orders WHERE id=?''', (order_id,))
-    # A valid ID is not an access grant. Keep nonexistent and unauthorized alike.
-    require(row is not None and viewer in row[1:3], 'order_not_found')
-    result = dict(zip(_COLUMNS, row))
-    result['delivery_target'] = loads(result['delivery_target'])
-    result['receipt_refs'] = loads(result['receipt_refs'])
-    return result
-
-
-def _view(row, viewer):
-    keys = ('id', 'buyer', 'seller', 'listing_id', 'listing_revision',
-            'package_revision', 'package_digest', 'quantity',
-            'unit_price_minor', 'total_price_minor', 'currency_id',
-            'escrow_policy', 'dispute_policy', 'terms_digest', 'state',
-            'created_at', 'funded_at', 'delivered_at', 'settled_at')
-    result = {key: row[key] for key in keys}
-    result['payment_status'] = ('refunded' if row['state'] == 'refunded' else
-                                'funded' if row['payment_transaction_id'] else
-                                'pending')
-    result['delivery_channel'] = row['delivery_target']['channel']
-    if viewer == row['buyer']:
-        result['delivery_target'] = row['delivery_target']
-        result['payment_intent_digest'] = row['payment_intent_digest']
-        result['receipt_refs'] = row['receipt_refs']
-    return result
+# Compatibility imports; shared implementation has one market owner.
+from msg.market.order_records import require_signed_subject as _subject
+from msg.market.order_records import require_order_viewer as _viewer
+from msg.market.order_records import new_order_id as _order_id
+from msg.market.order_records import read_order as _row
+from msg.market.order_records import legacy_order_view as _view
+from msg.market.order_records import _COLUMNS
 
 
 def install(app):
@@ -188,7 +136,7 @@ def install(app):
              canonical([receipt_id]).decode()), write=True)
         data = {'payment': receipt}
         if instant:
-            from msg.plugins.delivery import prepare_managed, delivery_summary
+            from msg.market.managed_delivery import prepare_managed, delivery_summary
             from msg.market.delivery_notifications import initialize_notification
             order = _row(tx, order_id, buyer)
             delivery = await prepare_managed(app, ctx, tx, order)

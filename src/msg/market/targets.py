@@ -106,8 +106,8 @@ async def enqueue_notification(app, tx, ctx, request, order):
 
 
 async def render_notification(app, tx, job):
-    from msg.plugins.delivery import _delivery
-    from msg.plugins.orders import _row
+    from msg.market.managed_delivery import read_delivery as _delivery
+    from msg.market.order_records import read_order as _row
     order = _row(tx, job.arguments['order_id'], job.principal.subject)
     require(order['buyer'] == job.principal.subject and job.principal.actor == order['buyer'],
             'delivery_recipient_mismatch')

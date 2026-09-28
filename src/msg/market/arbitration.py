@@ -15,7 +15,7 @@ from msg.market.policy import contract
 from msg.market.rationale import PINNED_REF
 from msg.market.rationale import verified as verify_rationale
 from msg.plugins.common import check_access, new_id, no_requirements
-from msg.plugins.orders import _row, _subject
+from msg.market.order_records import read_order as _row, require_signed_subject as _subject
 from msg.plugins.schemas import IDENTIFIER, REF, SIGNATURE, obj
 from msg.security.crypto import verify
 

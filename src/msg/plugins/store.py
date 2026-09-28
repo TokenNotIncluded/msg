@@ -17,36 +17,6 @@ MAX_REFS = 32
 MAX_MANIFEST_BYTES = 65536
 
 
-def _subject(ctx):
-    subject = ctx.principal.subject
-    require(subject is not None and ctx.principal.actor == subject and
-            ctx.principal.method == 'signature', 'signature_required')
-    return subject
-
-
-async def _listing(app, ctx, request, tx, value, *, seller=False):
-    try:
-        rid = await resolve(tx, value)
-        resource = await tx.resource(rid)
-        require(resource.type == 'listing' and resource.parent == 't_store', 'listing_not_found')
-        await check_access(app, ctx, request, tx, rid, 'read')
-        if seller:
-            require(resource.owner == _subject(ctx), 'listing_not_found')
-        return resource
-    except Failure as exc:
-        if exc.code in {'not_found', 'permission_denied', 'credential_ceiling',
-                        'certificate_gate', 'ancestor_inactive'}:
-            raise Failure('listing_not_found') from None
-        raise
-
-
-async def _body(app, tx, resource, revision=None):
-    rev = await tx.revision(ResourceRef(id=resource.id, revision=revision))
-    body = loads(await app.contents.read_bytes(rev.content))
-    # Listings deposited before the sale/bounty split were all sale listings.
-    return {'mode': 'sale', **body}, rev
-
-
 def _public(resource, body):
     # A package identifier is not a capability; package payloads are seller-only.
     return {'listing_id': resource.id, 'listing_revision': resource.revision,
@@ -74,17 +44,18 @@ def _validate(body, now):
         require(body['package_ref'] is not None, 'package_required')
 
 
-async def _package_row(tx, package_id):
-    return tx.one('''SELECT id,listing_id,listing_revision,seller,revision,kind,manifest,
-        payload_refs,digest,total_size,delivery_mode,deposited_at FROM store_packages WHERE id=?''',
-        (package_id,))
-
-
 def _package_public(row):
     return dict(zip(('id', 'listing_id', 'listing_revision', 'seller', 'revision',
                      'kind', 'manifest', 'payload_refs', 'digest', 'total_size',
                      'delivery_mode', 'deposited_at'),
                     (*row[:6], loads(row[6]), loads(row[7]), *row[8:])))
+
+
+# Compatibility imports; shared implementation has one market owner.
+from msg.market.catalog import read_listing as _listing
+from msg.market.catalog import read_listing_body as _body
+from msg.market.catalog import read_package_record as _package_row
+from msg.market.order_records import require_signed_subject as _subject
 
 
 def install(app):

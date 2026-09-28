@@ -15,7 +15,7 @@ from msg.core.errors import require
 from msg.core.models import EffectJob, HandlerOutput
 from msg.market.targets import enqueue_notification, mail_enabled, save_target, validate_target
 from msg.plugins.common import new_id
-from msg.plugins.orders import _row, _subject
+from msg.market.order_records import read_order as _row, require_signed_subject as _subject
 from msg.plugins.schemas import IDENTIFIER, obj
 
 
