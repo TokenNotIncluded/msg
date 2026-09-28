@@ -100,7 +100,9 @@ class TransferService:
             async def pieces():
                 yield data
             blob=await self.contents.put(pieces(),'application/octet-stream',expected_digest=digest)
-            await self.contents.pin(blob,transfer_id+':'+str(offset))
+            lease=transfer_id+':'+str(offset)
+            tx.on_rollback(lambda: self.contents.unpin(blob,lease))
+            await self.contents.pin(blob,lease)
             chunk=TransferChunk(transfer_id=transfer_id,offset=offset,content=blob)
             await tx.put_chunk(chunk)
             await tx.save_transfer(replace(transfer,generation=transfer.generation+1),transfer.generation)
@@ -162,6 +164,7 @@ class TransferService:
                 limits=self._limits(tx,transfer_id)
                 blob=await self.contents.put(pieces(),limits['media_type'],expected_digest=final_digest)
                 require(blob.size==final_size,'final_size_mismatch')
+                tx.on_rollback(lambda: self.contents.unpin(blob,transfer_id+':sealed'))
                 await self.contents.pin(blob,transfer_id+':sealed')
                 output=await self.publish(context,tx,transfer.target.id,blob)
             await tx.save_transfer(replace(transfer,state='sealed',expected_size=final_size,expected_digest=final_digest,

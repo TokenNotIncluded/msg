@@ -11,9 +11,20 @@ from pathlib import Path
 from msg.constants import ROOT_SPACE, ONLINE_CA
 from msg.core.codec import canonical, decode, digest, loads, wire, parse_time
 from msg.core.errors import Failure, require
-from msg.core.models import AuditEvent, Event, ResourceRef, Revision, Resource, TransferSession
+from msg.core.models import AuditEvent, BlobRef, Event, ResourceRef, Revision, Resource, TransferSession
 from msg.plugins.common import new_id
 from msg.storage.capacity import trim_purge_records
+
+TODO_DELIVERY_BATCH_SIZE = 64
+GARBAGE_COLLECTION_INTERVAL_SECONDS = 3600
+
+
+async def _release_pin(app, tx, blob, lease):
+    # Restore a pre-existing pin if a later step aborts the SQL transaction.
+    # Metadata writers (including the collector) share one serialization fence.
+    if await app.contents.pinned(blob, lease):
+        tx.on_rollback(lambda: app.contents.pin(blob, lease))
+        await app.contents.unpin(blob, lease)
 
 
 async def purge_revisions(app, tx, resource, *, actor, request_id, reason):
@@ -24,6 +35,8 @@ async def purge_revisions(app, tx, resource, *, actor, request_id, reason):
     changed = replace(resource, state='purged', revision=None, generation=resource.generation+1,
                       modified_at=app.clock(), modified_by=actor)
     await tx.replace(changed,resource.generation)
+    for revision in revisions:
+        await _release_pin(app,tx,revision.content,revision.id)
     tx.execute('DELETE FROM revisions WHERE resource_id=?',(resource.id,),write=True)
     tx.execute('DELETE FROM projections WHERE resource_id=?',(resource.id,),write=True)
     # A surviving reply keeps its own revision. Relations into this tombstone
@@ -36,7 +49,8 @@ async def purge_revisions(app, tx, resource, *, actor, request_id, reason):
 
 
 async def _cleanup(app,tx, *, scheduled):
-    counts={'expired_resources':0,'expired_transfers':0,'expired_query_sources':0}
+    counts={'expired_resources':0,'expired_transfers':0,'expired_query_sources':0,
+            'expired_custodial_upgrades':0}
     if not tx.setting('runtime_config',{}).get('cleanup_enabled',True):
         return counts
     now=app.clock()
@@ -73,6 +87,16 @@ async def _cleanup(app,tx, *, scheduled):
         transfer=decode(TransferSession,loads(raw))
         if transfer.expires_at<=now and transfer.state!='expired':
             await tx.save_transfer(replace(transfer,state='expired',generation=transfer.generation+1),transfer.generation)
+            for offset,chunk_raw in tx.execute(
+                    'SELECT offset,body FROM chunks WHERE transfer_id=?',(transfer.id,)):
+                blob=decode(BlobRef,loads(chunk_raw)['content'])
+                await _release_pin(app,tx,blob,transfer.id+':'+str(offset))
+            if transfer.state=='sealed' and transfer.direction=='upload':
+                # The output revision may already have been purged. The sealed
+                # transfer itself retains the content identity needed to unpin.
+                blob=BlobRef(digest=transfer.expected_digest,size=transfer.expected_size,
+                             media_type='application/octet-stream')
+                await _release_pin(app,tx,blob,transfer.id+':sealed')
             tx.execute('DELETE FROM chunks WHERE transfer_id=?',(transfer.id,),write=True)
             counts['expired_transfers']+=1
     for key,raw in tx.rows("SELECT key,value FROM settings WHERE key LIKE 'query_ref_source:%'"):
@@ -113,6 +137,9 @@ async def _cleanup(app,tx, *, scheduled):
         tx.execute('DELETE FROM settings WHERE key=?',(key,),write=True)
         counts['expired_query_sources']+=1
     tx.execute('DELETE FROM email_challenges WHERE expires<=?',(wire(now),),write=True)
+    counts['expired_custodial_upgrades']=tx.execute(
+        "DELETE FROM custodial_upgrades WHERE status IN ('pending','failed') AND expires_at<=?",
+        (wire(now),),write=True).rowcount
     return counts
 
 
@@ -138,7 +165,15 @@ async def _deliver_due_todos(app,tx):
     """
     now=app.clock()
     delivered=0
-    for (raw,) in tx.execute("SELECT body FROM resources WHERE type='todo' AND state='active' ORDER BY id"):
+    cursor=tx.setting('todo_delivery_cursor','')
+    rows=tx.rows("SELECT id,body FROM resources WHERE type='todo' AND state='active' "
+                 "AND id>? ORDER BY id LIMIT ?",(cursor,TODO_DELIVERY_BATCH_SIZE))
+    if len(rows)<TODO_DELIVERY_BATCH_SIZE:
+        rows+=tx.rows("SELECT id,body FROM resources WHERE type='todo' AND state='active' "
+                      "AND id<=? ORDER BY id LIMIT ?",(cursor,TODO_DELIVERY_BATCH_SIZE-len(rows)))
+    if rows:
+        tx.set_setting('todo_delivery_cursor',rows[-1][0])
+    for _id,raw in rows:
         resource=decode(Resource,loads(raw))
         if resource.revision is None or resource.mode&0o077:
             continue
@@ -263,4 +298,13 @@ async def run_maintenance(app,action, *, scheduled=False,principal=None):
         if action=='cleanup_expired':return await _cleanup(app,tx,scheduled=scheduled)
         if action=='deliver_due_todos':return await _deliver_due_todos(app,tx)
         if action=='rebuild_search':return await _rebuild(app,tx)
-        return await _collect(app,tx)
+        if scheduled:
+            if not tx.setting('runtime_config',{}).get('cleanup_enabled',True):
+                return {'skipped':'cleanup_disabled'}
+            last=tx.setting('garbage_collection_last')
+            if last and (app.clock()-parse_time(last)).total_seconds()<GARBAGE_COLLECTION_INTERVAL_SECONDS:
+                return {'skipped':'not_due'}
+        result=await _collect(app,tx)
+        if scheduled:
+            tx.set_setting('garbage_collection_last',wire(app.clock()))
+        return result

@@ -249,6 +249,11 @@ def install(app):
                 'request_id':request.request_id}
         verify(public,canonical(signed),decode(Signature,args['possession_proof']),
                purpose='custodial-upgrade-start')
+        # Keep the existing pending/pending_rewrap fence above. Accepted rewrap
+        # state and completed results outlive the possession challenge's TTL.
+        tx.execute("DELETE FROM custodial_upgrades WHERE subject=? AND "
+                   "(status='failed' OR (status='pending' AND expires_at<=?))",
+                   (subject.resource_id,wire(ctx.now)),write=True)
         challenge_id=new_id('cupg')
         ephemeral=X25519PrivateKey.generate()
         expires=ctx.now+timedelta(seconds=300)

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
+import fcntl
+import os
 import sqlite3
 import tempfile
 import uuid
@@ -33,6 +35,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS one_root ON resources((1)) WHERE parent IS NUL
 CREATE INDEX IF NOT EXISTS resources_parent ON resources(parent,id);
 CREATE INDEX IF NOT EXISTS resources_time ON resources(created_at,id);
 CREATE INDEX IF NOT EXISTS resources_owner ON resources(owner,id);
+CREATE INDEX IF NOT EXISTS resources_type_state ON resources(type,state,id);
 CREATE TABLE IF NOT EXISTS resource_tags (
  resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
  tag TEXT NOT NULL, PRIMARY KEY(tag,resource_id));
@@ -74,6 +77,9 @@ CREATE TABLE IF NOT EXISTS batches (subject TEXT, request_id TEXT, digest TEXT N
 CREATE TABLE IF NOT EXISTS transfers (id TEXT PRIMARY KEY, subject TEXT NOT NULL, generation INTEGER NOT NULL, body TEXT NOT NULL, limits TEXT NOT NULL DEFAULT '{}');
 CREATE TABLE IF NOT EXISTS chunks (transfer_id TEXT NOT NULL, offset INTEGER NOT NULL, length INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY(transfer_id,offset));
 CREATE TABLE IF NOT EXISTS events (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, body TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS topic_event_projection (
+ seq INTEGER PRIMARY KEY REFERENCES events(seq) ON DELETE CASCADE, topic TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS topic_event_projection_topic ON topic_event_projection(topic,seq DESC);
 CREATE TABLE IF NOT EXISTS audit (seq INTEGER PRIMARY KEY AUTOINCREMENT, digest TEXT UNIQUE NOT NULL, previous TEXT, body TEXT NOT NULL);
 CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit BEGIN SELECT RAISE(ABORT,'append_only_audit'); END;
 CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit BEGIN SELECT RAISE(ABORT,'append_only_audit'); END;
@@ -218,6 +224,36 @@ class SqliteSession:
         self._connection, self.write = connection, write
         self.owner_task = asyncio.current_task()
         self.closed = False
+        self.rollback_effects = []
+
+    def on_rollback(self, effect):
+        """Compensate external work if this transaction or savepoint aborts."""
+        self.check(write=True)
+        self.rollback_effects.append(effect)
+
+    async def run_rollback_effects(self, cause, start=0):
+        effects = self.rollback_effects[start:]
+        del self.rollback_effects[start:]
+        if not effects:
+            return
+
+        async def compensate():
+            for effect in reversed(effects):
+                try:
+                    await effect()
+                except BaseException as exc:
+                    # Keep the primary error and try every independent cleanup.
+                    cause.add_note('rollback compensation failed: ' + type(exc).__name__)
+
+        # A second cancellation must not abandon a pin operation (including its
+        # worker thread) and release the writer fence before it finishes.
+        pending = asyncio.create_task(compensate())
+        while not pending.done():
+            try:
+                await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                pass
+        pending.result()
 
     def check(self, write=False):
         require(not self.closed, "transaction_closed")
@@ -577,6 +613,14 @@ class SqliteMetadataStore:
         try:
             conn.execute("PRAGMA journal_mode=WAL")
             conn.executescript(_SCHEMA)
+            from msg.storage.topic_event_migration import migrate_topic_events
+            conn.execute('BEGIN IMMEDIATE')
+            try:
+                migrate_topic_events(conn)
+                conn.execute('COMMIT')
+            except BaseException:
+                conn.execute('ROLLBACK')
+                raise
         finally:
             conn.close()
 
@@ -586,6 +630,25 @@ class SqliteMetadataStore:
         conn.execute("PRAGMA synchronous=FULL")
         return conn
 
+    async def _acquire_write_fence(self):
+        # SQLite can release its own lock on an implicit transaction abort.
+        # Keep independent processes out until external compensation completes.
+        fd=os.open(self.path.with_name(self.path.name+'.writer.lock'),
+                   os.O_CREAT|os.O_RDWR|os.O_CLOEXEC|os.O_NOFOLLOW,0o600)
+        loop=asyncio.get_running_loop()
+        deadline=loop.time()+self.busy_timeout
+        try:
+            while True:
+                try:
+                    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    return fd
+                except BlockingIOError:
+                    require(loop.time()<deadline,'server_busy',retryable=True)
+                    await asyncio.sleep(min(0.01,max(0,deadline-loop.time())))
+        except BaseException:
+            os.close(fd)
+            raise
+
     @asynccontextmanager
     async def transaction(self, *, write):
         existing=self._current.get()
@@ -593,18 +656,23 @@ class SqliteMetadataStore:
             existing.check(write)
             name='nested_'+uuid.uuid4().hex
             existing.execute('SAVEPOINT '+name)
+            rollback_at=len(existing.rollback_effects)
             try:
                 yield existing
                 existing.execute('RELEASE SAVEPOINT '+name)
-            except BaseException:
+            except BaseException as exc:
                 existing.execute('ROLLBACK TO SAVEPOINT '+name)
                 existing.execute('RELEASE SAVEPOINT '+name)
+                await existing.run_rollback_effects(exc,rollback_at)
                 raise
             return
         conn=self._connect()
         tx=SqliteSession(conn,write=write)
         token=None
+        writer_fence=None
         try:
+            if write:
+                writer_fence=await self._acquire_write_fence()
             if not write:
                 conn.execute("PRAGMA query_only=ON")
             try:
@@ -623,15 +691,20 @@ class SqliteMetadataStore:
             token=self._current.set(tx)
             yield tx
             conn.execute("COMMIT")
-        except BaseException:
+        except BaseException as exc:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
+            await tx.run_rollback_effects(exc)
             raise
         finally:
             tx.closed=True
             if token is not None:
                 self._current.reset(token)
-            conn.close()
+            try:
+                conn.close()
+            finally:
+                if writer_fence is not None:
+                    os.close(writer_fence)
 
     async def close(self):
         # Connections are scoped to transactions, not retained per account.
