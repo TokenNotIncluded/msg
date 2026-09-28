@@ -23,7 +23,8 @@ def restore_dump(dump, *, safe_dsn, env, quarantine):
         # Values are fixed recovery metadata, not secrets. Escape as a SQL
         # literal (including backslashes) independently of session string flags.
         value = canonical(quarantine).decode().replace('\\', '\\\\').replace("'", "''")
-        gate = (f"\nINSERT INTO settings(key,value) VALUES('{SETTING}',E'{value}') "
+        gate = ("\nSET search_path = public, pg_catalog;\n"
+                f"INSERT INTO settings(key,value) VALUES('{SETTING}',E'{value}') "
                 "ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value;\n")
         with script.open('ab') as stream:
             stream.write(gate.encode())

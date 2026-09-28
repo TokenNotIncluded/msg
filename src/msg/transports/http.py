@@ -33,7 +33,7 @@ class PassiveGetBoundary:
         self.service = service
 
     async def __call__(self, scope, receive, send):
-        executor = self.service.executor
+        executor = getattr(self.service, 'executor', None)
         if scope['type'] == 'http' and executor is not None and executor.recovery_drill_active():
             # Public ACLs in an old snapshot can also have been revoked. Do not
             # serve business content before authority replay and local promotion.
