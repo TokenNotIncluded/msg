@@ -14,6 +14,7 @@ from msg.core.requests import signing_bytes
 from msg.plugins.common import *
 from msg.plugins.schemas import *
 from msg.plugins.discovery import visible
+from msg.storage.capacity import require_webhook_capacity
 
 
 def event_id(request,subject):
@@ -55,6 +56,7 @@ async def enqueue_domain_webhooks(app,tx,event):
             # that can be retargeted by an event emitted from another account.
             if principal.subject!=owner or principal.actor!=owner or principal.method!='signature':
                 continue
+            require_webhook_capacity(tx)
             await tx.enqueue(EffectJob(id=new_id('job'),event_id=event.id,kind='webhook',
                 dedupe_key=f'{event.id}:{owner}:{scope.id}:{ref.id}:{category}:webhook',
                 principal=principal,operation='communication.webhook_subscribe',
@@ -490,6 +492,7 @@ def install(app):
         if r.type=='user':
             row=tx.one('SELECT enabled,generation FROM webhook_endpoints WHERE subject=?',(recipient,))
             if row and row[0]:
+                require_webhook_capacity(tx)
                 await tx.enqueue(EffectJob(id=new_id('job'),event_id=eid,kind='webhook',
                     dedupe_key=f'{eid}:{recipient}:webhook',principal=ctx.principal,
                     operation=request.operation,arguments={'recipient_subject':recipient,

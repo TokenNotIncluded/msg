@@ -207,6 +207,7 @@ class AuthorizationService:
                                       'identity.personal_put@2','identity.note_put@2',
                                       'identity.soul_visibility@1','identity.note_archive@1',
                                       'identity.note_restore@1','identity.todo_put@1',
+                                      'identity.todo_put@2',
                                       'identity.todo_archive@1','identity.todo_restore@1'}) and
                         principal.subject==resource.owner,'personal_managed_resource')
             if check.check in _WRITE_CHECKS and principal.subject is not None:

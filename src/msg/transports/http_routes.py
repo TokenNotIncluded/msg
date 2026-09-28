@@ -391,6 +391,7 @@ def error_status(code):
     if code in {'method_not_allowed','effect_mismatch'}: return 405
     if code=='secure_channel_required': return 400
     if code in {'server_busy','issuer_not_ready','dependency_unavailable','service_restart_required','writes_paused'}: return 503
+    if code=='storage_capacity_exceeded': return 507
     if code=='internal_error': return 500
     return 400
 

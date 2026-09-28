@@ -23,7 +23,7 @@ from test_service import NOW, call, register
     (['money','balance'],'money.balance',{}),
     (['money','purchase','pur_one'],'money.purchase_get',{'purchase_id':'pur_one'}),
     (['orders','list','{"status":"open"}'],'orders.list',{'status':'open'}),
-    (['orders','history','ord_one'],'orders.history',{'order_id':'ord_one'}),
+    (['orders','contract','ord_one'],'orders.contract',{'order_id':'ord_one'}),
     (['delivery','submit','{"order_id":"ord_one","completion_statement":"done"}'],
      'delivery.submit',{'order_id':'ord_one','completion_statement':'done'}),
     (['store','update','{"id":"listing","state":"paused"}','--generation','2'],

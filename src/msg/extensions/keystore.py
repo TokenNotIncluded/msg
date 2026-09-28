@@ -1,5 +1,6 @@
 """Opaque encrypted records reuse the same resource, revision and ACL machinery."""
 from msg.core.codec import decode, unb64, wire, loads
+from msg.storage.capacity import require_keystore_capacity
 from msg.core.errors import require
 from msg.core.models import HandlerOutput, ResourceRef
 from msg.plugins.common import check_access, create_resource, revise_resource, resolve, output_for, assert_generation
@@ -46,6 +47,8 @@ def register(app,op):
         else:
             require(content.startswith(b'-----BEGIN PGP MESSAGE-----') or bool(content and content[0]&0x80),
                     'invalid_ciphertext_envelope')
+        incoming=len(body) if isinstance(body,bytes) else body.size
+        require_keystore_capacity(tx,incoming)
         if 'id' in a:
             resource=await tx.resource(await resolve(tx,a['id']))
             require(resource.type=='keystore' and resource.parent==parent[0],'not_a_keystore_entry')

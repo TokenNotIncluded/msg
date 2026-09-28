@@ -52,6 +52,31 @@ async def test_personal_v2_preserves_independently_signed_history(installed):
 
 
 @pytest.mark.asyncio
+async def test_todo_v2_uses_an_independent_revision_signature(installed):
+    app,_=installed
+    key,subject,_=await register(app,'signed-todo')
+    body=canonical({'title':'Ship the note','description':'','status':'pending',
+                    'priority':'neutral','due_at':None,'related_resource':None}).decode()
+    rid='r_'+uuid.uuid4().hex
+    vid='v_'+uuid.uuid4().hex
+    blob=await app.contents.put_bytes(body.encode(),'application/json')
+    revision=Revision(format_version=1,id=vid,resource_id=rid,parents=(),content=blob,relations=(),
+        actor=subject,subject=subject,author=subject,created_at=NOW,manifest_digest='')
+    manifest={k:v for k,v in wire(revision).items() if k not in {'manifest_digest','signature'}}
+    saved=await call(app,'identity.todo_put',{'name':'ship','title':'Ship the note',
+        'resource_id':rid,'revision_id':vid,'content_created_at':wire(NOW),
+        'content_signature':wire(key.sign(canonical(manifest),purpose='revision'))},
+        key=key,subject=subject,contract_version=2)
+    assert saved.status=='ok',wire(saved)
+    async with app.metadata.transaction(write=False) as tx:
+        stored=await tx.revision(saved.resources[0])
+        verify(key.public_key,canonical(manifest),stored.signature,purpose='revision')
+    unsigned=await call(app,'identity.todo_put',{'name':'plain','title':'Still version one'},
+                        key=key,subject=subject)
+    assert unsigned.status=='ok',wire(unsigned)
+
+
+@pytest.mark.asyncio
 async def test_bad_content_signature_rolls_back_personal_creation(installed):
     app,_=installed
     key,subject,_=await register(app,'signed-rejection')

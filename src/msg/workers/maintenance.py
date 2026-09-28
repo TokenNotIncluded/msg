@@ -13,6 +13,7 @@ from msg.core.codec import canonical, decode, digest, loads, wire, parse_time
 from msg.core.errors import Failure, require
 from msg.core.models import AuditEvent, BlobRef, Event, ResourceRef, Revision, Resource, TransferSession
 from msg.plugins.common import new_id
+from msg.storage.capacity import trim_purge_records
 
 TODO_DELIVERY_BATCH_SIZE = 64
 GARBAGE_COLLECTION_INTERVAL_SECONDS = 3600
@@ -30,6 +31,7 @@ async def purge_revisions(app, tx, resource, *, actor, request_id, reason):
     revisions = [decode(Revision,loads(raw)) for (raw,) in tx.execute(
         'SELECT body FROM revisions WHERE resource_id=?',(resource.id,))]
     tx.set_setting('purge_record:'+resource.id, {'revisions':wire(revisions),'reason':reason,'time':wire(app.clock())})
+    trim_purge_records(tx)
     changed = replace(resource, state='purged', revision=None, generation=resource.generation+1,
                       modified_at=app.clock(), modified_by=actor)
     await tx.replace(changed,resource.generation)

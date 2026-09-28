@@ -19,7 +19,8 @@ import tempfile
 
 from msg.core.codec import b64, canonical, loads, wire
 from msg.core.errors import Failure, require
-from msg.extensions.repositories import NativeGitStore
+from msg.extensions.repositories import (NativeGitStore, MAX_GIT_PACK_BYTES, MAX_GIT_UPLOAD_SECONDS,
+    require_git_repository_capacity)
 from msg.plugins.common import check_access
 from msg.storage.git import durable_write
 from msg.workers.effects import current_principal, worker_context, effect_request
@@ -154,8 +155,28 @@ def hook_program(socket_path, secret):
         'sys.exit(0 if r and len(r)<=8192 and json.loads(r).get("ok") else 1)\n').encode()
 
 
+async def relay_bounded_stdin(process, stream, *, limit, timeout):
+    """Copy stream to process stdin, rejecting once limit bytes have been seen."""
+    loop=asyncio.get_running_loop()
+    total=0
+    async def pump():
+        nonlocal total
+        while True:
+            chunk=await loop.run_in_executor(None, stream.read, 65536)
+            if not chunk:
+                break
+            total+=len(chunk)
+            require(total<=limit,'request_too_large')
+            process.stdin.write(chunk)
+            await process.stdin.drain()
+        process.stdin.close()
+    await asyncio.wait_for(pump(), timeout)
+    return await asyncio.wait_for(process.wait(), timeout)
+
+
 async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None, stderr=None, timeout=600,
-                          input_data=None,input_file=None,capture_output=False,output_limit=None,cache_result_key=None):
+                          input_data=None,input_file=None,capture_output=False,output_limit=None,cache_result_key=None,
+                          stdin_byte_limit=None,stdin_stream=None):
     """Run a fixed Git command with a private reference-transaction hook.
 
     command_factory is installed adapter code, never a value accepted from wire.
@@ -163,6 +184,7 @@ async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None,
     """
     store = NativeGitStore(app)
     require(input_data is None or input_file is None,'ambiguous_git_input')
+    require(stdin_byte_limit is None or (input_data is None and input_file is None),'ambiguous_git_input')
     app.settings.server.staging_dir.mkdir(parents=True, exist_ok=True)
     # Unix socket path has a small OS limit; the random private directory is not
     # an account directory and contains no application credentials.
@@ -199,7 +221,7 @@ async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None,
         output = b''
         try:
             process = await asyncio.create_subprocess_exec(*command,
-                stdin=asyncio.subprocess.PIPE if input_data is not None or input_file is not None else stdin,
+                stdin=asyncio.subprocess.PIPE if input_data is not None or input_file is not None or stdin_byte_limit is not None else stdin,
                 stdout=asyncio.subprocess.PIPE if capture_output else stdout,
                 stderr=asyncio.subprocess.DEVNULL if capture_output else stderr,
                 env=env,start_new_session=True)
@@ -236,7 +258,11 @@ async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None,
                 output=await asyncio.wait_for(exchange(),timeout)
                 code=process.returncode
             else:
-                code = await asyncio.wait_for(process.wait(), timeout)
+                if stdin_byte_limit is not None:
+                    code = await relay_bounded_stdin(process, sys.stdin.buffer if stdin_stream is None else stdin_stream,
+                                                     limit=stdin_byte_limit, timeout=timeout)
+                else:
+                    code = await asyncio.wait_for(process.wait(), timeout)
         finally:
             if process is not None and process.returncode is None:
                 import signal
@@ -265,8 +291,10 @@ async def guarded_command(app, job, command_factory, *, stdin=None, stdout=None,
         return (result,output,guard.changed) if capture_output else result
 
 
-async def receive_pack(app, job_id):
+async def receive_pack(app, job_id, *, stdin_stream=None):
     async with app.metadata.transaction(write=False) as tx:
         job = await tx.job(job_id)
         require(job.kind == 'git.receive' and job.state == 'running', 'invalid_git_session')
-    return await guarded_command(app, job, lambda store:['receive-pack',str(store.path(job.arguments['id']))])
+    require_git_repository_capacity(NativeGitStore(app).path(job.arguments['id']))
+    return await guarded_command(app, job, lambda store:['receive-pack',str(store.path(job.arguments['id']))],
+        timeout=MAX_GIT_UPLOAD_SECONDS, stdin_byte_limit=MAX_GIT_PACK_BYTES, stdin_stream=stdin_stream)
