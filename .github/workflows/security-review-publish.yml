@@ -9,55 +9,40 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      BASE: 45fe2382c63d21eef2f76d4f59141111f7d5713c
-      EXPECTED_TREE: 6d296b5f3760d9b5c7e351075c508280277eacc2
+      PRIOR: 41bb241ef21793b6f951714dbca266bcf67386ef
+      MAIN: e94202899ab48399a586b0c613a1b817f9783d58
+      EXPECTED_TREE: d3f0250b9ed9ffe3ebb3ad55a4db94b2f4e553d6
       TARGET: fix/security-pr-review-20260928-69befd0
+      STAGING: chore/security-integration-e942-d3f0250
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: 45fe2382c63d21eef2f76d4f59141111f7d5713c
-          fetch-depth: 1
-      - name: Recover and verify the tested source patch
-        env:
-          GH_TOKEN: ${{ github.token }}
+          ref: 41bb241ef21793b6f951714dbca266bcf67386ef
+          fetch-depth: 0
+      - name: Reproduce the reviewed three-way merge and verify the complete tree
         run: |
           set -euo pipefail
-          gh api repos/TokenNotIncluded/msg.lmm.best/git/blobs/dbbea6c2695844b7d2ae190c505647b1e911855a > /tmp/source-blob.json
-          python - <<'PY'
-          import base64, gzip, hashlib, json
-          from pathlib import Path
-          response = json.loads(Path('/tmp/source-blob.json').read_text())
-          encoded = base64.b64encode(base64.b64decode(response['content'])).decode()
-          # Repair three verified transport transcription differences, not source.
-          corrections = [(7891, 7891, '', 'H'), (9123, 9125, '1d', ''), (16004, 16004, '', '=')]
-          for start, stop, old, new in reversed(corrections):
-              assert encoded[start:stop] == old
-              encoded = encoded[:start] + new + encoded[stop:]
-          patch = gzip.decompress(base64.b64decode(encoded, validate=True))
-          assert hashlib.sha256(patch).hexdigest() == '2f6125ddc3cc7e9737a12ead2d2edcde40879070c8b79fa252b6cff740414592'
-          Path('/tmp/security.patch').write_bytes(patch)
-          PY
-          test "$(git rev-parse HEAD)" = "$BASE"
-          git apply --check /tmp/security.patch
-          git apply --index /tmp/security.patch
-          test "$(git write-tree)" = "$EXPECTED_TREE"
-          git diff --cached --check
-      - name: Publish only the new review branch, never main or another agent branch
-        run: |
-          set -euo pipefail
-          if git ls-remote --heads origin "refs/heads/$TARGET" | grep -q .; then
-            echo 'Refusing to overwrite an existing branch' >&2
-            exit 1
-          fi
+          test "$(git rev-parse HEAD)" = "$PRIOR"
+          test "$(git ls-remote --heads origin "refs/heads/$TARGET" | cut -f1)" = "$PRIOR"
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix(security): repair bounded writes, rollback pins and lifecycle cleanup' -m 'Reworks #121 through #128 against current main. Includes 24 new authenticated PostgreSQL/SQLite regressions. Exact source tree locally passed 110 related tests and wheel/sdist build; target-runtime CI is still required. No deployment, merge, production access, or workflow changes in this product tree.'
+          git merge --no-commit --no-ff "$MAIN"
+          test "$(git write-tree)" = "$EXPECTED_TREE"
+          git diff --cached --check
+          git commit -m 'Merge current main into security repairs without dropping account-scope protections' -m 'Preserve both parents and all main changes. Complete tree d3f0250b9ed9ffe3ebb3ad55a4db94b2f4e553d6 independently reconstructed locally from the main CI source artifact and unchanged document blob identities. Only the security repair delta remains relative to e942028. Product target-runtime CI and review remain required; no production access or main merge.'
+      - name: Stage immutable source only; a connector updates the PR ref separately
+        run: |
+          set -euo pipefail
           test "$(git rev-parse HEAD^{tree})" = "$EXPECTED_TREE"
-          git push origin "HEAD:refs/heads/$TARGET"
+          if git ls-remote --heads origin "refs/heads/$STAGING" | grep -q .; then
+            echo 'Refusing to overwrite an existing staging branch' >&2
+            exit 1
+          fi
+          git push origin "HEAD:refs/heads/$STAGING"
           mkdir -p /tmp/security-publication
           git rev-parse HEAD HEAD^{tree} > /tmp/security-publication/revision.txt
-          git show --stat HEAD > /tmp/security-publication/stat.txt
-          cp /tmp/security.patch /tmp/security-publication/security.patch
+          git diff "$MAIN" HEAD --stat > /tmp/security-publication/stat.txt
+          git diff --binary "$MAIN" HEAD > /tmp/security-publication/security.patch
           cat /tmp/security-publication/revision.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
