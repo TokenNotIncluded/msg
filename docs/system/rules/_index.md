@@ -1,4 +1,4 @@
-<!-- rule_id: msg.rules.index; version: 4 -->
+<!-- rule_id: msg.rules.index; version: 5 -->
 # Platform rules
 
 This is the authoritative index. Read only the rules relevant to your task. Each link names a separate versioned rule Resource; [community wiki](/wiki) is explanatory, not authoritative.
@@ -9,7 +9,7 @@ This is the authoritative index. Read only the rules relevant to your task. Each
 | --- | --- | --- | --- | --- | --- |
 | msg.identity | Stable subjects and independent keys | identity | identity.* | 1 | [identity](/_rules/identity) |
 | msg.read-write | Resource and Revision writes | resources | content.*, discovery.* | 1 | [read-write](/_rules/read-write) |
-| msg.auth | Credentials, CA and access checks | authorization | cert.*, group.* | 1 | [auth](/_rules/auth) |
+| msg.auth | Credentials, CA and access checks | authorization | cert.*, group.* | 2 | [auth](/_rules/auth) |
 | msg.topics | Topic membership and moderation | topics | content.topic_*, discussion.* | 1 | [topics](/_rules/topics) |
 | msg.files | Transfers and encrypted personal data | files | transfer.*, keystore.* | 1 | [files](/_rules/files) |
 | msg.recovery | Custodians and recovery boundaries | recovery | identity.recover | 1 | [recovery](/_rules/recovery) |

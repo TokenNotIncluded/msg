@@ -88,3 +88,15 @@ Operation name alone is insufficient authority: private money/market operations 
 Backup/restore tests include pending purchases, active entitlement grants, funded/unpaid/settled orders, delivery references, nonce consumption and Claim receipts. Restore intentionally pauses writes; only disposable test restores lift that guard before replay checks. Old ledger-account migration remains idempotent; history is not reconstructed from mutable catalog values. Production migration, real console/SMTP/ingress and deployment acceptance remain separate, authorized work (#84).
 
 Regression entry points: `tests/test_market_71.py`, `test_market_redemption.py`, `test_market_72.py`, `test_market_73.py`, `test_market_contracts.py`, plus existing money/admin/offers/bounty/orders/delivery, migration, hosting, dictionary, backup and conformance suites. Test totals and exact commit/CI identity belong in the PR verification record, not an unversioned completion percentage.
+
+## Account-scoped market authority
+
+Private `orders.*` and `delivery.*` registrations reuse the existing money
+`account_requirements` before the executor reads an idempotent result. A key
+limited to `/store` cannot spend the owner's balance, read their orders or
+acknowledge their delivery; include the subject account and any required listing
+scopes explicitly. Buyer/seller/panel and current resource checks still apply.
+The deliberately public `orders.dispute_summary` retains its minimal projection.
+`tests/test_market_account_scopes.py` checks versioned purchases, current-scope
+replay, actual HTTP/PathGET/GraphQL/MCP reads and conditional GET/HEAD aliases.
+It does not change order policies, published inputs, short codes or signed history.

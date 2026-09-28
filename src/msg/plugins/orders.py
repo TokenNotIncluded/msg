@@ -6,6 +6,7 @@ transitions before escrow may be debited for any other reason.
 from __future__ import annotations
 
 import base64
+from functools import partial
 import os
 
 from msg.market.escrow import EscrowEngine, validate_policy
@@ -13,7 +14,7 @@ from msg.core.codec import canonical, digest, loads, parse_time, wire
 from msg.core.errors import require
 from msg.core.models import HandlerOutput
 from msg.plugins.common import registration
-from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _balance, _post_transfer
+from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _balance, _post_transfer, account_requirements
 from msg.plugins.schemas import IDENTIFIER, obj
 from msg.plugins.store import _body, _listing, _package_row
 
@@ -81,6 +82,9 @@ def _view(row, viewer):
 
 def install(app):
     op, finish = registration(app, 'orders', ('store', 'money'))
+    # Private market actions need the account scope before idempotent replay.
+    # The deliberately public dispute summary opts out at its own registration.
+    op = partial(op, requirements=account_requirements)
     amount = {'type': 'integer', 'minimum': 1, 'maximum': MAX_MINOR}
     quantity = {'type': 'integer', 'minimum': 1, 'maximum': 10**9}
 

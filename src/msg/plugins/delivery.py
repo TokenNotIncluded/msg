@@ -6,11 +6,13 @@ or sending an email never claims a delivery.
 """
 from __future__ import annotations
 
+from functools import partial
+
 from msg.core.codec import b64, canonical, decode, digest, loads, wire
 from msg.core.errors import require
 from msg.core.models import BlobRef, HandlerOutput
 from msg.plugins.common import new_id, registration
-from msg.plugins.money import CURRENCY_ID, _balance
+from msg.plugins.money import CURRENCY_ID, _balance, account_requirements
 from msg.market.escrow import EscrowEngine
 from msg.market.delivery_targets import validate_target
 from msg.plugins.orders import _row as order_row, _subject
@@ -144,6 +146,7 @@ def delivery_summary(delivery):
 
 def install(app):
     op, finish = registration(app, 'delivery', ('orders',))
+    op = partial(op, requirements=account_requirements)
 
     @op('delivery.prepare', obj({'order_id': IDENTIFIER}, ('order_id',)),
         signature=True)
