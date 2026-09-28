@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/msg/**'
       - 'tests/test_session_boundary.py'
+      - 'tests/test_metadata_session_boundary.py'
       - '.github/workflows/storage-session.yml'
   workflow_dispatch:
 permissions:
@@ -69,7 +70,7 @@ jobs:
           PY
       - name: Exercise boundaries and unchanged security contracts
         run: >-
-          python -m pytest tests/test_session_boundary.py tests/test_foundation.py
+          python -m pytest tests/test_session_boundary.py tests/test_metadata_session_boundary.py tests/test_foundation.py
           tests/test_postgres.py tests/test_security_rollback_fences.py
           tests/test_security_storage_rollback.py tests/test_ledger_accounts.py
           --junitxml=artifacts/storage-session.xml

@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/msg/**'
       - 'tests/test_architecture_ports.py'
+      - 'tests/test_execution_composition.py'
       - '.github/workflows/architecture-ports.yml'
   workflow_dispatch:
 permissions:
@@ -69,7 +70,7 @@ jobs:
           PY
       - name: Exercise boundaries and unchanged security contracts
         run: >-
-          python -m pytest tests/test_architecture_ports.py tests/test_batch.py
+          python -m pytest tests/test_architecture_ports.py tests/test_execution_composition.py tests/test_batch.py
           tests/test_batch_secret_release.py tests/test_tools.py tests/test_webhook_domain_events.py
           tests/test_read_projection_cache_transports.py tests/test_read_projection_cache_unit.py
           tests/issue_78_80 --junitxml=artifacts/architecture-ports.xml
