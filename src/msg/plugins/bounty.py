@@ -34,7 +34,9 @@ def _subject(ctx):
 def _eligibility(value, subject):
     if value == {'kind': 'any'}:
         return True
-    require(isinstance(value, Mapping) and value.get('kind') == 'allowlist' and
+    # Unknown constraints would be published but never enforced; reject them.
+    require(isinstance(value, Mapping) and set(value) == {'kind', 'subjects'} and
+            value.get('kind') == 'allowlist' and
             isinstance(value.get('subjects'), (list, tuple)) and
             len(value['subjects']) <= 1000 and
             all(isinstance(s, str) for s in value['subjects']),
