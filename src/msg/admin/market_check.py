@@ -218,7 +218,7 @@ def inspect_clearing(app, tx):
             delivery=tx.one('SELECT d.state,o.escrow_policy FROM store_deliveries d '
                             'JOIN store_orders o ON o.id=d.order_id WHERE o.id=?',(oid,))
             require(delivery is not None and (delivery[0]=='claimed' or
-                    delivery==('prepared','managed-instant-v1')), 'settled_delivery_missing')
+                    delivery==('prepared','escrow-instant-v1')), 'settled_delivery_missing')
     for escrow,total,state,eid in tx.rows('SELECT escrow_account,total_minor,state,entitlement_id FROM money_purchases'):
         require(balances.get(escrow,0)==(total if state=='pending' else 0),'purchase_escrow_mismatch')
         require((state=='settled') == (eid is not None), 'purchase_entitlement_mismatch')
@@ -294,7 +294,7 @@ async def check_market_e2e(app, root, call, register):
             claimed.data['escrow_balance_minor']==0,'selftest_bounty_not_paid')
     listing=await checked('store.listing_create',{'name':'test-delivery','item_kind':'bundle',
         'price_minor':5_000_000,'currency_id':'primary','quantity':1,
-        'delivery_mode':'managed_instant','escrow_policy':'managed-instant-v1',
+        'delivery_mode':'managed_instant','escrow_policy':'escrow-instant-v1',
         'dispute_policy':'dispute-v1','terms':'Fixed text and file; immediate in-site delivery.'},bank_key,bank)
     async with app.metadata.transaction(write=False) as tx:
         files=await tx.resolve((await tx.path(bank))+'/files')
@@ -308,17 +308,20 @@ async def check_market_e2e(app, root, call, register):
         bank_key,bank,expected=((listing_id,listing.data['generation']),))
     quote=active.data['listing']
     args={'listing_id':listing_id,'listing_revision':quote['listing_revision'],'quantity':1,
-          'currency_id':'primary','total_price_minor':5_000_000}
+          'currency_id':'primary','total_price_minor':5_000_000,
+          'package_digest':package.data['package']['digest'],'auto_accept':True}
     # No seller request occurs after publishing. The signed buyer request alone
     # validates the immutable deposit, delivers, then releases the exact escrow.
-    bought=await checked('orders.buy',args,buyer_key,buyer,request_id='market-e2e-buy')
+    bought=await checked('orders.buy',args,buyer_key,buyer,request_id='market-e2e-buy',
+                         contract_version=2)
     require(bought.data['order']['state']=='settled','selftest_order_not_settled')
     delivery=await checked('delivery.get',{'order_id':bought.data['order']['id']},buyer_key,buyer)
     content=delivery.data['delivery']
     require(content['manifest']=={'text':'msg.lmm.best store selftest'} and
             content['payloads'][0]['data']==b64(b'delivery-ok\n') and
             content['package_digest']==package.data['package']['digest'],'selftest_delivery_mismatch')
-    repeated=await checked('orders.buy',args,buyer_key,buyer,request_id='market-e2e-buy')
+    repeated=await checked('orders.buy',args,buyer_key,buyer,request_id='market-e2e-buy',
+                           contract_version=2)
     require(repeated.replayed and repeated.data==bought.data,'selftest_market_replay_failed')
     buyer_balance=await checked('money.balance',{},buyer_key,buyer)
     bank_balance=await checked('money.balance',{},bank_key,bank)
