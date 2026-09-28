@@ -2,10 +2,10 @@
 from datetime import timedelta
 
 import pytest
+from test_service import NOW, call, register
 
 from msg.core.codec import wire
-from msg.workers.maintenance import run_maintenance
-from test_service import NOW, call, register
+from msg.workers.maintenance import TODO_DELIVERY_BATCH_SIZE, run_maintenance
 
 
 @pytest.mark.asyncio
@@ -83,3 +83,37 @@ async def test_only_current_pending_due_revision_can_be_delivered(installed):
         row = tx.one('SELECT body FROM messages WHERE resource=?', (rid,))
         assert row is not None and future in row[0] and past not in row[0]
         assert tx.one('SELECT COUNT(*) FROM messages WHERE resource=?', (archived_id,))[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_due_todo_sweep_is_bounded_and_rotates_through_backlog(installed, monkeypatch):
+    app, _ = installed
+    key, owner, _ = await register(app, 'due-backlog')
+    past = wire(NOW - timedelta(hours=1))
+    total = TODO_DELIVERY_BATCH_SIZE + 3
+    for index in range(total):
+        result = await call(app, 'identity.todo_put',
+            {'name': f'due-{index:03}', 'title': f'Due {index}', 'due_at': past},
+            key=key, subject=owner)
+        assert result.status == 'ok', wire(result)
+
+    reads = 0
+    original_read = app.contents.read_bytes
+
+    async def counted_read(content):
+        nonlocal reads
+        reads += 1
+        return await original_read(content)
+
+    monkeypatch.setattr(app.contents, 'read_bytes', counted_read)
+    first = await run_maintenance(app, 'deliver_due_todos', scheduled=True)
+    assert reads == TODO_DELIVERY_BATCH_SIZE
+    assert first == {'delivered_todo_reminders': TODO_DELIVERY_BATCH_SIZE}
+
+    reads = 0
+    second = await run_maintenance(app, 'deliver_due_todos', scheduled=True)
+    assert reads == TODO_DELIVERY_BATCH_SIZE
+    assert second == {'delivered_todo_reminders': total-TODO_DELIVERY_BATCH_SIZE}
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one("SELECT COUNT(*) FROM messages WHERE recipient=? AND event_id LIKE 'm_%'",
+                      (owner,))[0] == total

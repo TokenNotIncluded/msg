@@ -1,18 +1,20 @@
 """Retention and rebuilding apply deployment-wide, never personal storage quotas."""
 from __future__ import annotations
+
 import asyncio
+import hashlib
+import time
 from dataclasses import replace
 from datetime import timedelta
-import hashlib
-import os
-import time
 from pathlib import Path
 
-from msg.constants import ROOT_SPACE, ONLINE_CA
-from msg.core.codec import canonical, decode, digest, loads, wire, parse_time
+from msg.constants import ONLINE_CA, ROOT_SPACE
+from msg.core.codec import canonical, decode, digest, loads, parse_time, wire
 from msg.core.errors import Failure, require
-from msg.core.models import AuditEvent, Event, ResourceRef, Revision, Resource, TransferSession
+from msg.core.models import AuditEvent, Event, Resource, ResourceRef, Revision, TransferSession
 from msg.plugins.common import new_id
+
+TODO_DELIVERY_BATCH_SIZE = 64
 
 
 async def purge_revisions(app, tx, resource, *, actor, request_id, reason):
@@ -136,7 +138,18 @@ async def _deliver_due_todos(app,tx):
     """
     now=app.clock()
     delivered=0
-    for (raw,) in tx.execute("SELECT body FROM resources WHERE type='todo' AND state='active' ORDER BY id"):
+    # Reading a todo body may invoke the Git content store. Keep that work
+    # bounded while this write transaction holds the deployment-wide writer
+    # lock, and rotate the cursor so a large account cannot starve later todos.
+    cursor=tx.setting('todo_delivery_cursor','')
+    rows=tx.rows("SELECT id,body FROM resources WHERE type='todo' AND state='active' "
+        "AND id>? ORDER BY id LIMIT ?",(cursor,TODO_DELIVERY_BATCH_SIZE))
+    if len(rows)<TODO_DELIVERY_BATCH_SIZE:
+        rows+=tx.rows("SELECT id,body FROM resources WHERE type='todo' AND state='active' "
+            "AND id<=? ORDER BY id LIMIT ?",(cursor,TODO_DELIVERY_BATCH_SIZE-len(rows)))
+    if rows:
+        tx.set_setting('todo_delivery_cursor',rows[-1][0])
+    for _resource_id,raw in rows:
         resource=decode(Resource,loads(raw))
         if resource.revision is None or resource.mode&0o077:
             continue
