@@ -54,3 +54,26 @@ HTTP/SSH/bundle/LFS/read-only and completion-fence tests. The full four-shard ex
 node-ID/conformance/build and applicable Recovery safety gates remain required on
 the final combined tree. No local project execution, skipped test, weakened
 assertion, production credentials, real funds/outbound delivery or recovery promotion.
+
+
+## Implemented extraction and source audit
+
+NativeGitStore no longer owns any HTTP handler, Request/Response conversion,
+body spooler or Application property. It snapshots repository/blob paths and
+keeps its original physical store algorithms. GitHTTPAdapter explicitly composes
+that store and retains existing HTTP/LFS behavior. ContextVar identities used by
+registered operations remain singular; upload semaphores move with HTTP spooling.
+
+The original ReferenceGuard, hook program, bounded stdin relay and guarded Git
+command are unchanged in git_publication. SSH exposes same-object aliases and its
+original receive_pack entry. HTTP calls the same shared guard. The bundle worker
+algorithm, including current_attempt and transaction fencing, is untouched.
+
+HTTP helpers/base headers have one owner in http_common; routes and Git HTTP use
+it. transports.http and its outer passive/recovery boundary are unchanged. The
+assembly audits every moved/retained method, every existing registration and
+bundle worker body, all shared publication functions, helper functions/headers,
+and route functions. Only settings snapshots, explicit store attribute delegation
+and import/adapter selection are permitted differences. Source-only AST evidence
+is not a successful project test. Final source and patch are uploaded; one-shot
+tooling is removed from the submitted tree before focused/full validation.
