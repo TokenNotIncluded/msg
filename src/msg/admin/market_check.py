@@ -252,9 +252,7 @@ async def check_market_e2e(app, root, call, register):
     from msg.admin.money import _confirmed_money
     from msg.daemon import parser
     async with app.metadata.transaction(write=False) as tx:
-        default=inspect_clearing(app,tx)
-        require(default['total_supply_minor']==default['banks']==default['enabled_offers']==0,
-                'market_selftest_not_empty')
+        baseline=inspect_clearing(app,tx)
     bank_key,bank=await register('bank-test')
     buyer_key,buyer=await register('market-buyer')
 
@@ -329,6 +327,8 @@ async def check_market_e2e(app, root, call, register):
             'selftest_market_balance_mismatch')
     async with app.metadata.transaction(write=False) as tx:
         checked_state=inspect_clearing(app,tx)
-        require(checked_state['total_supply_minor']==20_000_000 and checked_state['banks']==1,
+        require(checked_state['total_supply_minor']==baseline['total_supply_minor']+20_000_000 and
+                checked_state['banks']==baseline['banks']+1 and
+                checked_state['enabled_offers']==baseline['enabled_offers'],
                 'selftest_market_supply_mismatch')
     return True
