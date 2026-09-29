@@ -11,19 +11,20 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Fix the verified PostgreSQL import without altering product CI
+      - name: Apply the reviewed content-only publication patch to its fixed parent
         run: |
           set -eu
-          git fetch origin 0f0e13d1fe7d152a9034b4028ae2e1e7e2d06966
-          git checkout --detach 0f0e13d1fe7d152a9034b4028ae2e1e7e2d06966
-          echo '18ecf03d6566b811894865d8ff17c23bb653a87958b5b3d779e64eb6ba8f1ab2  src/msg/storage/postgres.py' | sha256sum --check
-          sed -i 's/^from msg.core.errors import Failure$/from msg.core.errors import Failure, require/' src/msg/storage/postgres.py
-          grep -Fx 'from msg.core.errors import Failure, require' src/msg/storage/postgres.py
-          git diff --check
-          git add src/msg/storage/postgres.py
+          cp .ci/hosting-publish.patch "$RUNNER_TEMP/hosting-publish.patch"
+          echo 'ce7b1ff2e2a3a094c9587a8eac1ff2b034d0730dbdc1756a27d095a98791322e' "$RUNNER_TEMP/hosting-publish.patch" | sha256sum --check
+          git fetch origin eafea15af0b8ff26c0208d5c0fcc039b4d32fb56
+          git checkout --detach eafea15af0b8ff26c0208d5c0fcc039b4d32fb56
+          echo '83ebcf4a9e2db192697e6b73eeb0c143780e44161ce3078b2f78fd20f0a98742  src/msg/storage/git.py' | sha256sum --check
+          git apply --index --whitespace=error-all "$RUNNER_TEMP/hosting-publish.patch"
+          git diff --cached --check
+          git diff --cached --stat
           git config user.name 'msg maintenance CI'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix: import the PostgreSQL read-only role guard'
+          git commit -m 'fix: preserve explicitly configured read-only content group on publication'
           test -z "$(git status --porcelain)"
           git push origin HEAD:refs/heads/ci/hosting-161-source-00ba8f7
           git log -1 --format='%H %T %P'

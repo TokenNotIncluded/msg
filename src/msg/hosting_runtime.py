@@ -66,9 +66,10 @@ def _require_readonly_database(tx):
                    "AND c.relkind IN ('r','p','v','m','f') "
                    "AND has_table_privilege(c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
                    "LIMIT 1") is None, 'hosting_database_role_not_readonly')
+    # CASE keeps the planner from calling the sequence-only function on indexes.
     require(tx.one("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                   "WHERE n.nspname NOT LIKE 'pg_%' AND c.relkind='S' "
-                   "AND has_sequence_privilege(c.oid, 'USAGE,UPDATE') LIMIT 1") is None,
+                   "WHERE n.nspname NOT LIKE 'pg_%' AND CASE WHEN c.relkind='S' "
+                   "THEN has_sequence_privilege(c.oid, 'USAGE,UPDATE') ELSE FALSE END LIMIT 1") is None,
             'hosting_database_role_not_readonly')
     require(tx.one("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
                    "WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' "
