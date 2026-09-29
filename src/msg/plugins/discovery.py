@@ -229,7 +229,13 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
         else:
             meta['raw_url']=f'/_id/{rid}/revisions/{rev.id}/raw'
             meta['transfer_operation']='transfer.open'
-        meta['relations']=wire(rev.relations,compact=True)
+        if resource.type in {'collab_request', 'collab_offer', 'checkpoint'}:
+            from msg.plugins.collaboration import _visible_refs
+            permitted = set(await _visible_refs(app, ctx, request, tx,
+                                               [r.target.id for r in rev.relations]))
+            meta['relations'] = wire(tuple(r for r in rev.relations if r.target.id in permitted), compact=True)
+        else:
+            meta['relations']=wire(rev.relations,compact=True)
     if resource.type=='post' and (not fields or 'links' in fields):
         active=await tx.revision(ResourceRef(id=rid,revision=revision))
         meta['links']=await basic_links(app,ctx,request,tx,resource,active)

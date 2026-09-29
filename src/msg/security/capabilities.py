@@ -129,6 +129,8 @@ def install_capabilities(registry):
     # destination, owner, etc.), rather than inferring it from this directory.
     for key,spec in tuple(registry._types.items()):
         relations=frozenset({'reply_to','thread_root','quote','repost','attachment','template'}) if spec.name=='post' else frozenset()
+        if spec.name in {'collab_request', 'collab_offer', 'checkpoint'}:
+            relations = spec.relations
         registry._types[key]=replace(spec,operations=all_ops,relations=relations)
 
 
