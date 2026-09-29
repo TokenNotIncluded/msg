@@ -85,7 +85,7 @@ def parser():
     init.add_argument('--data-dir',type=Path,default=Path('/var/lib/msgd'))
     init.add_argument('--service-url',default='https://msg.lmm.best')
     sub.add_parser('serve',help='Serve JSON/Markdown, operations, GraphQL and MCP')
-    hosted=sub.add_parser('hosting',help='Serve user-published files on the separate configured origin')
+    hosted=sub.add_parser('hosting',help='Serve user-published files with the read-only hosting runtime')
     hosted.add_argument('--listen',default='127.0.0.1');hosted.add_argument('--port',type=int,default=8043)
     worker=sub.add_parser('worker',help='Run the global durable effects/retention queue')
     worker.add_argument('--once',action='store_true')
