@@ -107,7 +107,7 @@ class NativeGitStore:
         require(result.returncode==0,'git_operation_failed')
         return result.stdout
 
-    async def create(self,id):
+    async def create(self,id, *, public_export=True):
         path=self.path(id)
         self.root.mkdir(parents=True,exist_ok=True)
         require(not path.exists(),'repository_directory_exists')
@@ -124,7 +124,8 @@ class NativeGitStore:
                 result=await asyncio.to_thread(subprocess.run,['git','--git-dir',str(temporary),'config',key,value],
                     capture_output=True,env=self.env,timeout=15)
                 require(result.returncode==0,'git_initialization_failed')
-            durable_write(temporary/'git-daemon-export-ok',b'public resource\n',mode=0o644)
+            if public_export:
+                durable_write(temporary/'git-daemon-export-ok',b'public resource\n',mode=0o644)
             os.rename(temporary,path)
             fd=os.open(self.root,os.O_RDONLY|os.O_DIRECTORY)
             try:os.fsync(fd)
