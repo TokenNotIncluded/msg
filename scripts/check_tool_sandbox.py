@@ -6,8 +6,8 @@ no user input or credentials, and production errors keep their stable safe code.
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 import sys
+from pathlib import Path
 from tempfile import TemporaryDirectory, TemporaryFile
 from types import SimpleNamespace
 from unittest.mock import patch
