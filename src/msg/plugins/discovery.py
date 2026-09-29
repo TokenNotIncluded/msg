@@ -782,6 +782,12 @@ def install(app):
                        'properties':{**lexical_schema_v3['properties'],
                                      'suggest':BOOLEAN}}
 
+    lexical_schema_v5={**lexical_schema_v4,
+                       'properties':{**lexical_schema_v4['properties'],
+                           'revision':IDENTIFIER,
+                           'source_version':{'type':'integer','minimum':1,'maximum':2147483647}}}
+
+    @op('discovery.lexical_search',lexical_schema_v5,effect='read',version=5)
     @op('discovery.lexical_search',lexical_schema_v1,effect='read')
     @op('discovery.lexical_search',lexical_schema,effect='read',version=2)
     @op('discovery.lexical_search',lexical_schema_v3,effect='read',version=3)
@@ -801,7 +807,8 @@ def install(app):
             a={**saved['arguments'],'cursor':a['cursor']}
         # A cursor or sealed QueryRef carries arguments from an earlier call.
         # Keep those arguments inside the version selected for this call too.
-        require(not (request.contract_version<4 and 'suggest' in a) and
+        require(not (request.contract_version<5 and {'revision','source_version'}&a.keys()) and
+                not (request.contract_version<4 and 'suggest' in a) and
                 not (request.contract_version<3 and
                      {'source_kind','relation_type'}&a.keys()) and
                 not (request.contract_version<2 and 'facets' in a),
@@ -891,6 +898,11 @@ def install(app):
             # These predicates inspect only the current revision of an already
             # readable resource. Historical relations and source metadata must
             # not affect rank, facets or page positions.
+            if a.get('revision') and (revision is None or revision.id!=a['revision']):
+                continue
+            if 'source_version' in a and (revision is None or
+                                          revision.source_version!=a['source_version']):
+                continue
             if a.get('source_kind') and (revision is None or
                                          revision.source_kind!=a['source_kind']):
                 continue

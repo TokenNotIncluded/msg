@@ -74,6 +74,7 @@ SEARCH_V2_SEGMENTS={'scope':'s','terms':'t','mode':'m','field':'f','order':'o',
                     'facets':'fc'}
 SEARCH_V3_SEGMENTS={**SEARCH_V2_SEGMENTS,'source_kind':'sk','relation_type':'rt'}
 SEARCH_V4_SEGMENTS={**SEARCH_V3_SEGMENTS,'suggest':'sg'}
+SEARCH_V5_SEGMENTS={**SEARCH_V4_SEGMENTS,'revision':'rv','source_version':'sv'}
 GREP_V1_SEGMENTS={'scope':'s','pattern':'t','regex':'r','glob':'g',
                   'exclude_glob':'x','case_sensitive':'i','before':'b','after':'a',
                   'max_matches':'m','max_files':'f','files_with_matches':'w',
@@ -302,13 +303,18 @@ def compile_lexical_search(query):
             'owner','author','tag','state','created_after','created_before',
             'updated_after','updated_before','has_attachment','order','limit',
             'cursor','snippet','explain','fields','facets','source_kind',
-            'relation_type','suggest','depth','recursive'},
+            'relation_type','suggest','revision','source_version','depth','recursive'},
             'unknown_query_parameter')
     if 'cursor' in query:
         require(set(query)=={'cursor'},'cursor_query_mismatch')
         return {'cursor':query['cursor']}
     require(bool(query.get('scope')),'search_scope_required')
     args=dict(query)
+    if 'source_version' in args:
+        require(args['source_version'].isascii() and args['source_version'].isdecimal() and
+                len(args['source_version'])<=10 and 1<=int(args['source_version'])<=2147483647,
+                'invalid_search_source_version')
+        args['source_version']=int(args['source_version'])
     for name in ('limit','depth'):
         if name in args:
             require(args[name].isdecimal() and
@@ -331,7 +337,8 @@ def compile_lexical_search(query):
 
 def decode_search_v2_path(raw_path,version=b'2'):
     prefix=raw_path.split(b'/',3)[1]
-    segments=(SEARCH_V4_SEGMENTS if version==b'4' else
+    segments=(SEARCH_V5_SEGMENTS if version==b'5' else
+              SEARCH_V4_SEGMENTS if version==b'4' else
               SEARCH_V3_SEGMENTS if version==b'3' else SEARCH_V2_SEGMENTS)
     values,proof=decode_query_path(raw_path,prefix,segments,version)
     modes={'a':'all','n':'any'}
@@ -704,7 +711,8 @@ def create_app(service):
                                     'cursor_kind_mismatch')
                             if operation=='discovery.lexical_search':
                                 saved_args=query.get('arguments',{})
-                                contract_version=(4 if 'suggest' in saved_args else
+                                contract_version=(5 if {'revision','source_version'}&saved_args.keys() else
+                                    4 if 'suggest' in saved_args else
                                     3 if any(name in saved_args for name in
                                     ('source_kind','relation_type')) else
                                     2 if 'facets' in saved_args else 1)
@@ -812,14 +820,15 @@ def create_app(service):
             lexical_path_v2=raw_path.startswith((b'/_search/q/2/',b'/_s/q/2/'))
             lexical_path_v3=raw_path.startswith((b'/_search/q/3/',b'/_s/q/3/'))
             lexical_path_v4=raw_path.startswith((b'/_search/q/4/',b'/_s/q/4/'))
-            lexical_path=lexical_path_v2 or lexical_path_v3 or lexical_path_v4
+            lexical_path_v5=raw_path.startswith((b'/_search/q/5/',b'/_s/q/5/'))
+            lexical_path=lexical_path_v2 or lexical_path_v3 or lexical_path_v4 or lexical_path_v5
             if path in {'/_search','/_s'} or search_path or lexical_path or raw_path.startswith((
                     b'/_index/by-tag/',b'/_i/by-tag/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 if search_path or lexical_path:
                     require(not request.url.query,'unknown_query_parameter')
                     query,path_proof=(decode_search_v2_path(raw_path,
-                        b'4' if lexical_path_v4 else b'3' if lexical_path_v3 else b'2')
+                        b'5' if lexical_path_v5 else b'4' if lexical_path_v4 else b'3' if lexical_path_v3 else b'2')
                                       if lexical_path else
                                       decode_search_query_path(raw_path))
                 else:
@@ -832,7 +841,7 @@ def create_app(service):
                 lexical=lexical_path or (not is_index and
                     bool(set(query)&{'terms','exact','not_terms','scope','mode','field','order',
                                       'snippet','explain','has_attachment','facets',
-                                      'source_kind','relation_type','suggest'}))
+                                      'source_kind','relation_type','suggest','revision','source_version'}))
                 if lexical:
                     args=compile_lexical_search(query)
                     operation='discovery.lexical_search'
@@ -875,7 +884,9 @@ def create_app(service):
                 else:
                     packet=request_for(operation,args,service.settings.service_url,
                                        source='manual',
-                                       contract_version=(4 if lexical and (lexical_path_v4 or
+                                       contract_version=(5 if lexical and (lexical_path_v5 or
+                                           {'revision','source_version'}&args.keys()) else
+                                           4 if lexical and (lexical_path_v4 or
                                            'suggest' in args) else
                                            3 if lexical and (lexical_path_v3 or
                                            'source_kind' in args or 'relation_type' in args) else
@@ -969,18 +980,19 @@ def create_app(service):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 require(service.registry.operation('discovery.lexical_search').effect=='read',
                         'effect_mismatch')
-                document={'version':4,'operation':'discovery.lexical_search',
+                document={'version':5,'operation':'discovery.lexical_search',
                     'segments':SEARCH_V2_SEGMENTS,'segments_v3':SEARCH_V3_SEGMENTS,
-                    'segments_v4':SEARCH_V4_SEGMENTS,
+                    'segments_v4':SEARCH_V4_SEGMENTS,'segments_v5':SEARCH_V5_SEGMENTS,
                     'mode':{'all':'a','any':'n'},
                     'field':{'all':'a','body':'b','name':'n','metadata':'m'},
                     'order':{'relevance':'r','updated':'u','created':'c','name':'n'},
                     'facets':['type','tag'],
                     'contract_version':{'default':1,'with_facets':2,
-                                        'with_source_or_relation':3,'with_suggest':4},
+                                        'with_source_or_relation':3,'with_suggest':4,'with_revision_or_source_version':5},
                     'template':'/_search/q/2/s/{percent-encoded-scope}/t/{terms}/m/{mode}/f/{field}/n/{limit}',
                     'template_v3':'/_search/q/3/s/{percent-encoded-scope}/t/{terms}/sk/{source-kind}/rt/{relation-type}',
                     'template_v4':'/_search/q/4/s/{percent-encoded-scope}/t/{terms}/sg/1',
+                    'template_v5':'/_search/q/5/s/{percent-encoded-scope}/t/{terms}/rv/{revision}/sv/{source-version}',
                     'proof_suffix':'/p/{short-lived-signed-OperationRequest}'}
                 etag='"'+digest(document)[7:]+'"'
                 headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'private, no-cache'}
