@@ -73,7 +73,7 @@ jobs:
           python -m pytest tests/test_recovery_current_authority.py
           tests/test_task_a_recovery_checkpoint.py tests/test_backup_retirement_attestation.py
           tests/test_backup_retirement_cli.py tests/test_recovery_policy_v2.py
-          tests/test_recovery_authority_reconcile.py
+          tests/test_recovery_authority_reconcile.py tests/test_complete_recovery_proof.py
           --junitxml=artifacts/recovery-current.xml
       - uses: actions/upload-artifact@v4
         if: always()

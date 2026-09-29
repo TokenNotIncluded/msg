@@ -99,6 +99,13 @@ def parser():
     rotate=rs.add_parser('rotate');rotate.add_argument('--lost-key',action='store_true');rotate.add_argument('--resume',action='store_true')
     rb=rs.add_parser('backup');rb.add_argument('destination',type=Path)
     rr=rs.add_parser('recover');rr.add_argument('source',type=Path)
+    proof=rs.add_parser('recovery-proof',help='Physical-console complete-state recovery proof and promotion')
+    proof_sub=proof.add_subparsers(dest='proof_command',required=True)
+    proof_sign=proof_sub.add_parser('sign')
+    proof_sign.add_argument('source_backup_sha256');proof_sign.add_argument('sequence',type=int)
+    proof_sign.add_argument('destination',type=Path)
+    proof_promote=proof_sub.add_parser('promote')
+    proof_promote.add_argument('source',type=Path);proof_promote.add_argument('independent_trust',type=Path)
     retirement=rs.add_parser('backup-retirement',help='Physical-console attestation for listed backup sets')
     retirement_sub=retirement.add_subparsers(dest='retirement_command',required=True)
     retirement_sign=retirement_sub.add_parser('sign')
@@ -182,6 +189,9 @@ def main(argv=None):
                 admin.change_pin();result={'status':'pin_changed'}
             elif args.root_command=='rotate':result=admin.rotate(lost_key=args.lost_key,resume=args.resume)
             elif args.root_command=='backup':result=admin.backup(args.destination)
+            elif args.root_command=='recovery-proof':
+                result=(admin.sign_recovery_proof(args.source_backup_sha256,args.sequence,args.destination)
+                        if args.proof_command=='sign' else admin.promote_recovery(args.source,args.independent_trust))
             elif args.root_command=='backup-retirement':
                 result=(admin.sign_backup_retirement(args.source,args.destination)
                         if args.retirement_command=='sign' else admin.import_backup_retirement(args.source))

@@ -264,6 +264,53 @@ class RootAdmin:
         return asyncio.run(_revoke(app,certificate_id,Ed25519Signer.from_bytes(private),reason=reason,operator=operator))
 
 
+    def sign_recovery_proof(self,source_backup_sha256,sequence,destination):
+        require_local_console(self.config_dir)
+        from msg.admin.recovery_proof import open_for_proof, draft, seal
+        from msg.admin.backup_retirement import write_record
+        from msg.security.root_files import read_private
+        app=asyncio.run(open_for_proof(self.config_dir))
+        try:
+            body=asyncio.run(draft(app,public_key=app.certificates.root_public_key,
+                source_backup_sha256=source_backup_sha256,sequence=sequence))
+            fingerprint=digest(body)
+            print(canonical({'service':body['service'],'sequence':sequence,
+                'source_backup_sha256':source_backup_sha256,'state_digest':fingerprint,
+                'tables':len(body['metadata']['tables']),'expires_at':body['expires_at']}).decode())
+            require(input('Type SIGN COMPLETE RECOVERY '+fingerprint+': ')==
+                    'SIGN COMPLETE RECOVERY '+fingerprint,'approval_cancelled')
+            envelope=loads(read_private(root_envelope(self.config_dir)))
+            signer=Ed25519Signer.from_bytes(open_private_key(envelope,getpass.getpass('Root PIN/passphrase: ')))
+            packet=asyncio.run(seal(app,body,signer))
+            write_record(Path(destination),packet)
+            return {'status':'complete_recovery_state_signed','digest':fingerprint,
+                    'independent_pin_required':True,'path':str(destination)}
+        finally:
+            asyncio.run(app.close())
+
+    def promote_recovery(self,source,independent_trust):
+        operator=require_local_console(self.config_dir)
+        from msg.admin.recovery_proof import open_for_proof, verify_proof, promote, IndependentRecoveryPin
+        from msg.security.root_files import read_private
+        packet=loads(read_private(source,limit=64*1024*1024))
+        trust=loads(read_private(independent_trust,limit=65536))
+        require(type(trust) is dict and set(trust)=={
+            'service','public_key','digest','sequence','source_backup_sha256'},'recovery_independent_pin_required')
+        pin=IndependentRecoveryPin(**dict(trust,public_key=unb64(trust['public_key'],limit=32)))
+        app=asyncio.run(open_for_proof(self.config_dir))
+        try:
+            body=verify_proof(packet,pin,app.clock())
+            print(canonical({'service':pin.service,'state_digest':pin.digest,'sequence':pin.sequence,
+                'source_backup_sha256':pin.source_backup_sha256,'tables':len(body['metadata']['tables']),
+                'effect':'release verified complete recovery; restart all runtimes'}).decode())
+            require(input('Type PROMOTE COMPLETE RECOVERY '+pin.digest+': ')==
+                    'PROMOTE COMPLETE RECOVERY '+pin.digest,'approval_cancelled')
+            envelope=loads(read_private(root_envelope(self.config_dir)))
+            signer=Ed25519Signer.from_bytes(open_private_key(envelope,getpass.getpass('Root PIN/passphrase: ')))
+            return asyncio.run(promote(app,packet,pin=pin,signer=signer,operator=operator))
+        finally:
+            asyncio.run(app.close())
+
     def sign_backup_retirement(self,source,destination):
         """Root-sign an operator's statement that listed backup sets lost one old key."""
         require_local_console(self.config_dir)
