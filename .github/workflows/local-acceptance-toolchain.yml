@@ -44,6 +44,8 @@ jobs:
           cp -L /usr/lib/postgresql/16/bin/postgres bundle/bin/
           ldd /usr/lib/postgresql/16/bin/postgres | awk '/=> \/|^\// {for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' | sort -u | while read -r lib; do cp -L "$lib" bundle/lib/; done
           tar -C bundle -czf system-tools.tar.gz bin lib versions.txt
+          tar -C /usr/share/postgresql/16 -czf postgresql-share.tar.gz .
+          tar -C /usr/lib/postgresql/16 -czf postgresql-server-lib.tar.gz lib
           rm -rf bundle/bin bundle/lib bundle/versions.txt
       - uses: actions/upload-artifact@v7.0.1
         with:
@@ -52,4 +54,6 @@ jobs:
             bundle/python315.tar.gz
             bundle/wheelhouse/
             system-tools.tar.gz
+            postgresql-share.tar.gz
+            postgresql-server-lib.tar.gz
           if-no-files-found: error
