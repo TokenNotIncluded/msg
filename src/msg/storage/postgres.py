@@ -22,7 +22,7 @@ import psycopg
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
-from msg.core.errors import Failure
+from msg.core.errors import Failure, require
 from msg.core.query import QueryResult, SqlParameters
 from msg.storage.query import SessionQueryResult
 from msg.storage.session import RelationalSession
