@@ -1,0 +1,448 @@
+diff --git a/src/msg/composition.py b/src/msg/composition.py
+new file mode 100644
+--- /dev/null
++++ b/src/msg/composition.py
+@@ -0,0 +1,21 @@
++"""One trusted registration sequence for executable and metadata-only roles."""
++import importlib
++
++from msg.core.errors import require
++from msg.security.capabilities import install_capabilities
++
++
++PLUGIN_ORDER = ('identity', 'content', 'discussion', 'communication', 'discovery',
++                'achievements', 'recovery', 'sharing', 'money', 'offers', 'store',
++                'bounty', 'orders', 'delivery', 'transfer', 'extensions', 'system', 'batch')
++
++
++def install_contracts(target):
++    # Installers declare contracts; they neither initialize storage nor run jobs.
++    configured = set(target.settings.server.plugins)
++    require(configured <= set(PLUGIN_ORDER), 'unknown_plugin')
++    for plugin in PLUGIN_ORDER:
++        if plugin in configured:
++            importlib.import_module('msg.plugins.' + plugin).install(target)
++    install_capabilities(target.registry)
++    target.registry.freeze()
++diff --git a/src/msg/hosting_runtime.py b/src/msg/hosting_runtime.py
++new file mode 100644
++--- /dev/null
+++++ b/src/msg/hosting_runtime.py
++@@ -0,0 +1,138 @@
++"""Read-only hosting composition. Public trust and current metadata are sufficient.
++
++This is a process role, not a Python sandbox. Its database login and OS identity
++must independently deny writes and access to the writer's configuration/keys.
++"""
++from dataclasses import replace
++from datetime import UTC, datetime
++
++import psycopg
++
++from msg.composition import install_contracts
++from msg.constants import ROOT_SPACE, ROOT_SUBJECT
++from msg.core.codec import decode, loads, unb64
++from msg.core.errors import Failure, require
++from msg.core.models import Certificate, Scope
++from msg.core.registry import Registry
++from msg.security.authentication import AuthenticationService
++from msg.security.authorization import AuthorizationService
++from msg.security.capabilities import primary_ceiling, temporary_ceiling
++from msg.security.certificates import CertificateValidator
++from msg.security.quarantine import require_live_authority
++from msg.storage.git import GitContentStore
++from msg.storage.postgres import PostgresMetadataStore
++
++
++async def _not_executable(*args, **kwargs):
++    raise Failure('read_only_role')
++
++
++class HostingRegistry(Registry):
++    """Preserve signed contract metadata, discard every executable closure.
++
++    Manifests as well as the operation index must shed callbacks; otherwise a
++    manifest would retain a second path to business handlers and their context.
++    """
++    def add_operation(self, spec):
++        super().add_operation(replace(spec, handler=_not_executable,
++                                      requirements=_not_executable))
++
++    def add(self, manifest):
++        operations = tuple(replace(spec, handler=_not_executable, requirements=_not_executable)
++                           for spec in manifest.operations)
++        super().add(replace(manifest, operations=operations))
++
++
++def _require_readonly_database(tx):
++    """Reject a writer DSN, including privileges inherited through PUBLIC.
++
++    READ ONLY transactions remain necessary but are not a role security boundary:
++    a login can reset that transaction default. Check actual effective privileges.
++    """
++    flags = tx.one('SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls '
++                   'FROM pg_roles WHERE rolname=current_user')
++    require(flags is not None and not any(flags), 'hosting_database_role_not_readonly')
++    require(tx.one('SELECT 1 FROM pg_auth_members WHERE member='
++                   '(SELECT oid FROM pg_roles WHERE rolname=current_user) LIMIT 1') is None,
++            'hosting_database_role_not_readonly')
++    require(not any(tx.one("SELECT has_database_privilege(current_database(), 'CREATE'), "
++                           "has_database_privilege(current_database(), 'TEMPORARY')")),
++            'hosting_database_role_not_readonly')
++    require(tx.one("SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' "
++                   "AND nspname <> 'information_schema' AND has_schema_privilege(oid, 'CREATE') "
++                   "LIMIT 1") is None, 'hosting_database_role_not_readonly')
++    require(tx.one("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
++                   "WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' "
++                   "AND c.relkind IN ('r','p','v','m','f') "
++                   "AND has_table_privilege(c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
++                   "LIMIT 1") is None, 'hosting_database_role_not_readonly')
++    require(tx.one("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
++                   "WHERE n.nspname NOT LIKE 'pg_%' AND c.relkind='S' "
++                   "AND has_sequence_privilege(c.oid, 'USAGE,UPDATE') LIMIT 1") is None,
++            'hosting_database_role_not_readonly')
++    require(tx.one("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
++                   "WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' "
++                   "AND p.prosecdef AND has_function_privilege(p.oid, 'EXECUTE') LIMIT 1") is None,
++            'hosting_database_role_not_readonly')
++
++
++class HostingRuntime:
++    """Only contract discovery, signature verification, current ACLs and content reads."""
++    def __init__(self, settings, *, clock=None):
++        self.settings = settings
++        self.clock = clock or (lambda: datetime.now(UTC))
++        self.namespace_root = ROOT_SPACE
++        self.registry = HostingRegistry()
++        self.metadata = None
++        self.contents = None
++        self._loaded = False
++        install_contracts(self)
++
++    def primary_ceiling(self):
++        return primary_ceiling(self.registry, Scope(resource_id=ROOT_SPACE, descendants=True))
++
++    def temporary_ceiling(self):
++        return temporary_ceiling(self.registry, Scope(resource_id=ROOT_SPACE, descendants=True))
++
++    async def load(self):
++        require(self.settings.trust_file.is_file(), 'root_not_initialized')
++        trust = loads(self.settings.trust_file.read_bytes())
++        require(set(trust) == {'version', 'public_key', 'certificate'} and trust['version'] == 1,
++                'invalid_trust_anchor')
++        certificate = decode(Certificate, trust['certificate'])
++        public_key = unb64(trust['public_key'], limit=32)
++        self.metadata = PostgresMetadataStore(self.settings.server.postgres_dsn,
++                                              initialize=False, read_only=True)
++        self.contents = GitContentStore(self.settings.server.content_dir,
++                                        binary_dir=self.settings.server.blob_dir,
++                                        staging_dir=self.settings.server.staging_dir,
++                                        read_only=True)
++        self.certificates = CertificateValidator(self.registry, certificate, public_key,
++                                                self.settings.service_url, self.clock)
++        from msg.bootstrap import require_current_system_sources
++        try:
++            async with self.metadata.transaction(write=False) as tx:
++                _require_readonly_database(tx)
++                require(tx.rows('SELECT version FROM schema_version') == [(1,)],
++                        'hosting_installation_not_ready')
++                require_live_authority(tx)
++                await self.certificates.validate(certificate.resource_id, tx)
++                require((await tx.subject(ROOT_SUBJECT)).local_only, 'root_policy_corrupt')
++                require(tx.setting('active_root_certificate') == certificate.resource_id,
++                        'root_trust_restart_required')
++                await require_current_system_sources(tx, self.contents)
++        except psycopg.Error:
++            # Do not expose SQL, connection credentials or internal database paths.
++            raise Failure('hosting_installation_not_ready') from None
++        marker = self.settings.config_dir/'recovery-drill.json'
++        require(not marker.exists() and not marker.is_symlink(), 'recovery_quarantined')
++        self.authenticator = AuthenticationService(self.registry, self.certificates,
++            self.settings.service_url, self.clock, self.primary_ceiling, self.temporary_ceiling)
++        self.authorizer = AuthorizationService(self.registry, self.certificates)
++        self._loaded = True
++        return self
++
++    async def close(self):
++        self._loaded = False
++        if self.metadata is not None:
++            await self.metadata.close()
+diff --git a/src/msg/application.py b/src/msg/application.py
+--- a/src/msg/application.py
++++ b/src/msg/application.py
+@@ -6,9 +6,9 @@
+ from pathlib import Path
+ import hashlib
+ import hmac
+-import importlib
+ 
+ from msg.constants import ROOT_SPACE, ROOT_SUBJECT
++from msg.composition import install_contracts
+ from msg.core.codec import loads, decode, unb64, b64, canonical, wire
+ from msg.core.cursors import CursorCodec
+ from msg.core.errors import Failure, require
+@@ -18,7 +18,7 @@
+ from msg.core.registry import Registry
+ from msg.security.authentication import AuthenticationService
+ from msg.security.authorization import AuthorizationService
+-from msg.security.capabilities import install_capabilities, primary_ceiling, base_grants, temporary_ceiling
++from msg.security.capabilities import primary_ceiling, base_grants, temporary_ceiling
+ from msg.security.certificates import CertificateValidator
+ from msg.security.crypto import Ed25519Signer
+ from msg.security.quarantine import active as quarantine_active
+@@ -40,18 +40,7 @@
+         self.contents=None
+         self.executor=None
+         self._loaded=False
+-        # Plugins are installed code, never resources, posts, or configuration expressions.
+-        implemented=('identity','content','discussion','communication','discovery','achievements','recovery','sharing','money','offers','store','bounty','orders','delivery')
+-        configured=set(settings.server.plugins)
+-        require(configured<=set(implemented)|{'transfer','extensions','system','batch'},'unknown_plugin')
+-        for plugin in implemented:
+-            if plugin in configured:
+-                importlib.import_module('msg.plugins.'+plugin).install(self)
+-        for plugin in ('transfer','extensions','system','batch'):
+-            if plugin in configured:
+-                importlib.import_module('msg.plugins.'+plugin).install(self)
+-        install_capabilities(self.registry)
+-        self.registry.freeze()
++        install_contracts(self)
+ 
+     def primary_ceiling(self):
+         return primary_ceiling(self.registry,self.default_scope())
+diff --git a/src/msg/bootstrap.py b/src/msg/bootstrap.py
+--- a/src/msg/bootstrap.py
++++ b/src/msg/bootstrap.py
+@@ -170,6 +170,30 @@
+     require(not missing,'system_source_deleted_requires_migration',details={'paths':sorted(missing)})
+ 
+ 
++async def require_current_system_sources(tx, contents):
++    """Check an installed release without migrations, publication or repair."""
++    root = Path(system_source_root())
++    require(tx.one('SELECT COUNT(*) FROM system_sources')[0] == len(RULE_SPECS),
++            'hosting_release_not_ready')
++    for rule_id, rid, _, _, default_path, max_bytes in RULE_SPECS:
++        relative = SOURCE_PATH_OVERRIDES.get(rule_id, default_path)
++        raw = (root/relative).read_bytes()
++        header = SOURCE_HEADER.match(raw.decode('utf-8'))
++        require(header is not None and header.group(1) == rule_id, 'system_source_invalid_header')
++        version = int(header.group(2))
++        row = tx.one('SELECT source_path,rule_id,source_kind,source_version,source_digest,revision_id '
++                     'FROM system_sources WHERE resource_id=?', (rid,))
++        require(row is not None and row[:5] == ('docs/system/'+relative, rule_id, 'release',
++                                               version, digest(raw)), 'hosting_release_not_ready')
++        resource = await tx.resource(rid)
++        require(resource.revision == row[5], 'hosting_release_not_ready')
++        revision = await tx.revision(ResourceRef(id=rid, revision=resource.revision))
++        require(revision.source_kind == 'release' and revision.source_version == version and
++                revision.source_digest == digest(raw) and
++                await contents.read_bytes(revision.content, limit=max_bytes) == raw,
++                'hosting_release_not_ready')
++
++
+ def manifest():
+     return loads(files('msg.data').joinpath('bootstrap.json').read_bytes())
+ 
+diff --git a/src/msg/daemon.py b/src/msg/daemon.py
+--- a/src/msg/daemon.py
++++ b/src/msg/daemon.py
+@@ -29,6 +29,12 @@
+     from msg.application import Application
+     from msg.config import load_settings
+     return Application(load_settings(directory))
++
++
++def load_hosting(directory):
++    from msg.hosting_runtime import HostingRuntime
++    from msg.config import load_settings
++    return HostingRuntime(load_settings(directory))
+ 
+ 
+ async def worker_loop(app, *, once=False):
+@@ -208,7 +214,8 @@
+         if args.command=='ssh-session':
+             from msg.extensions.ssh import forced_session
+             return asyncio.run(forced_session(args.config_dir,args.credential))
+-        app=load_application(args.config_dir)
++        app=(load_hosting(args.config_dir) if args.command=='hosting'
++             else load_application(args.config_dir))
+         if args.command=='backup':
+             from msg.admin.backups import backup
+             async def save():
+@@ -230,8 +237,10 @@
+             @asynccontextmanager
+             async def lifespan(asgi):
+                 await app.load()
+-                yield
+-                await app.close()
++                try:
++                    yield
++                finally:
++                    await app.close()
+             asgi=hosting_app(app);asgi.router.lifespan_context=lifespan
+             uvicorn.run(asgi,host=args.listen,port=args.port,access_log=False,ws='none')
+         else:
+diff --git a/src/msg/extensions/hosting.py b/src/msg/extensions/hosting.py
+--- a/src/msg/extensions/hosting.py
++++ b/src/msg/extensions/hosting.py
+@@ -160,6 +160,8 @@
+         return None
+     site_path='/'+parts[0]+'/'+parts[1]
+     try:
++        marker=service.settings.config_dir/'recovery-drill.json'
++        require(not marker.exists() and not marker.is_symlink(),'recovery_quarantined')
+         async with service.metadata.transaction(write=False) as tx:
+             try:
+                 rid=await tx.resolve(site_path)
+diff --git a/src/msg/storage/postgres.py b/src/msg/storage/postgres.py
+--- a/src/msg/storage/postgres.py
++++ b/src/msg/storage/postgres.py
+@@ -540,7 +540,10 @@
+ class PostgresMetadataStore:
+     """One connection per transaction; no mutable process-local authority state."""
+ 
+-    def __init__(self, dsn: str, *, signal=None, initialize: bool = True):
++    def __init__(self, dsn: str, *, signal=None, initialize: bool = True,
++                 read_only: bool = False):
++        require(not read_only or (not initialize and signal is None), 'read_only_role')
++        self.read_only = read_only
+         self.dsn = dsn
+         self.signal = signal
+         self._current = contextvars.ContextVar('msg_pg_transaction_' + uuid.uuid4().hex, default=None)
+@@ -575,6 +578,7 @@
+ 
+     @asynccontextmanager
+     async def transaction(self, *, write):
++        require(not self.read_only or not write, 'read_only_role')
+         existing = self._current.get()
+         if existing is not None:
+             existing.check(write)
+@@ -651,6 +655,7 @@
+         The caller holds the store's write transaction while copying content trees.
+         Credentials travel via the child environment, never command arguments.
+         """
++        require(not self.read_only, 'read_only_role')
+         destination = Path(destination)
+         fields = conninfo_to_dict(self.dsn)
+         password = fields.pop('password', None)
+diff --git a/src/msg/storage/git.py b/src/msg/storage/git.py
+--- a/src/msg/storage/git.py
++++ b/src/msg/storage/git.py
+@@ -218,22 +218,36 @@
+ 
+ class GitContentStore:
+     def __init__(self,path: Path, *, binary_dir: Path | None = None,
+-                 staging_dir: Path | None = None):
++                 staging_dir: Path | None = None, read_only: bool = False):
++        self.read_only=read_only
+         self.path=Path(path)
+         self.repo=self.path/'private.git'
+         self.index=self.path/'index'
+         self.binary=Path(binary_dir) if binary_dir is not None else self.path/'binary'
+         self.staging=Path(staging_dir) if staging_dir is not None else self.path/'staging'
+-        for p in (self.path,self.index,self.binary,self.staging):
+-            p.mkdir(parents=True,exist_ok=True)
+-        if not self.repo.exists():
+-            subprocess.run(['git','init','--bare',str(self.repo)],check=True,capture_output=True)
++        if read_only:
++            require(all(p.is_dir() and not p.is_symlink()
++                        for p in (self.path,self.repo,self.index,self.binary)),
++                    'content_store_not_initialized')
++        else:
++            for p in (self.path,self.index,self.binary,self.staging):
++                p.mkdir(parents=True,exist_ok=True)
++            if not self.repo.exists():
++                subprocess.run(['git','init','--bare',str(self.repo)],check=True,capture_output=True)
+         self.env={"PATH":os.environ.get('PATH','/usr/bin:/bin'),"LANG":"C.UTF-8",
+                   "HOME":str(self.path),"GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":"/dev/null",
+                   "GIT_AUTHOR_NAME":"msg","GIT_AUTHOR_EMAIL":"msg@localhost",
+                   "GIT_COMMITTER_NAME":"msg","GIT_COMMITTER_EMAIL":"msg@localhost"}
++        if read_only:
++            # The dedicated reader does not own this administrator-selected repo.
++            # Trust only this exact path, never every Git directory on the host.
++            self.env.update(GIT_OPTIONAL_LOCKS='0', GIT_CONFIG_COUNT='1',
++                            GIT_CONFIG_KEY_0='safe.directory', GIT_CONFIG_VALUE_0=str(self.repo))
+ 
+     def _run(self,*args,input=None,stdin=None):
++        require(not self.read_only or (len(args)==3 and args[:2]==('rev-parse','--verify')
++                and args[2].startswith('refs/pins/') and input is None and stdin is None),
++                'read_only_role')
+         result=subprocess.run(['git','--git-dir',str(self.repo),'-c','core.fsync=all',
+                                '-c','core.logAllRefUpdates=false',*args],
+                               input=input,stdin=stdin,capture_output=True,env=self.env,timeout=120)
+@@ -253,6 +267,7 @@
+         return loads(path.read_bytes())
+ 
+     async def put(self,chunks,media_type,expected_digest=None):
++        require(not self.read_only,'read_only_role')
+         hasher=hashlib.sha256()
+         size=0
+         fd,name=tempfile.mkstemp(dir=self.staging)
+@@ -334,6 +349,7 @@
+         return b''.join([chunk async for chunk in self.read(blob)])
+ 
+     async def _update_pin_ref(self, *args):
++        require(not self.read_only,'read_only_role')
+         # Cancelling to_thread does not stop Git. Finish the mutation before the
+         # metadata transaction can compensate it or release its writer fence.
+         pending = asyncio.create_task(asyncio.to_thread(self._run, *args))
+@@ -354,6 +370,7 @@
+             raise
+ 
+     async def pin(self,blob,lease_id):
++        require(not self.read_only,'read_only_role')
+         entry=self._entry(blob)
+         name=hashlib.sha256(lease_id.encode()).hexdigest()
+         if entry['kind']=='git':
+@@ -362,6 +379,7 @@
+             durable_write(self.path/'pins'/name/self._key(blob),b'1\n')
+ 
+     async def unpin(self,blob,lease_id):
++        require(not self.read_only,'read_only_role')
+         entry=self._entry(blob)
+         name=hashlib.sha256(lease_id.encode()).hexdigest()
+         if entry['kind']=='git':
+@@ -381,6 +399,7 @@
+ 
+     async def commit_revision(self,topic_id,revision):
+         """Create and protect one resource revision before the PostgreSQL pointer commits."""
++        require(not self.read_only,'read_only_role')
+         entry=self._entry(revision.content)
+         def commit():
+             manifest=self._run('hash-object','-w','--stdin',input=canonical(revision))
+diff --git a/deploy/msgd-hosting.service b/deploy/msgd-hosting.service
+--- a/deploy/msgd-hosting.service
++++ b/deploy/msgd-hosting.service
+@@ -1,21 +1,24 @@
+ [Unit]
+-Description=msg.lmm.best separate-origin static hosting
++Description=msg.lmm.best read-only static hosting
+ After=network.target
+ 
+ [Service]
+ Type=simple
+-User=msgd
+-Group=msgd
+-WorkingDirectory=/var/lib/msgd
+-ExecStart=/opt/msgd/venv/bin/msgd hosting --listen 127.0.0.1 --port 8043
++User=msgd-hosting
++Group=msgd-hosting
++WorkingDirectory=/
++ExecStart=/opt/msgd/venv/bin/msgd --config-dir /etc/msgd-hosting hosting --listen 127.0.0.1 --port 8043
+ Restart=on-failure
+ UMask=0077
+ NoNewPrivileges=true
+ PrivateTmp=true
+ ProtectSystem=strict
+ ProtectHome=true
+-ReadWritePaths=/var/lib/msgd
+-InaccessiblePaths=/var/lib/msgd-root /etc/msgd/root
++ReadOnlyPaths=/etc/msgd-hosting /var/lib/msgd/git/content /var/lib/msgd/blobs/sha256
++InaccessiblePaths=/var/lib/msgd-root /etc/msgd /var/lib/msgd/service -/var/lib/msgd/transfers -/var/lib/msgd/git/repos
++CapabilityBoundingSet=
++RestrictSUIDSGID=true
++LockPersonality=true
+ 
+ [Install]
+ WantedBy=multi-user.target
