@@ -15,7 +15,7 @@ from msg.core.errors import require
 from msg.core.models import EffectJob, HandlerOutput
 from msg.market.targets import enqueue_notification, mail_enabled, save_target, validate_target
 from msg.plugins.common import new_id
-from msg.plugins.orders import _row, _subject
+from msg.market.order_records import read_order as _row, require_signed_subject as _subject
 from msg.plugins.schemas import IDENTIFIER, obj
 
 
@@ -33,7 +33,7 @@ async def verification_message(app, tx, ctx, request, order):
         **chosen, 'challenge_id':challenge_id, 'state':'pending'}})
     await tx.enqueue(EffectJob(id=new_id('job'),event_id=challenge_id,kind='market_email_verify',
         dedupe_key='market-verify:'+challenge_id,principal=ctx.principal,
-        operation=request.operation,arguments={'challenge_id':challenge_id,'token':token},
+        operation=request.operation,arguments={'contract_version':request.contract_version,'challenge_id':challenge_id,'token':token},
         state='pending',attempts=0,next_attempt_at=ctx.now,lease_until=None))
 
 

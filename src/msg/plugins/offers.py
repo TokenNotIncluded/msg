@@ -6,7 +6,8 @@ an offer edit nor a bank role can change the entitlement or bypass permission.
 from datetime import timedelta
 
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import canonical, digest, loads, parse_time, wire
+from msg.core.codec import canonical, digest, parse_time, wire
+from msg.market.compatibility import read_purchase as _purchase
 from msg.core.errors import Failure, require
 from msg.core.models import HandlerOutput
 from msg.plugins.common import new_id, registration
@@ -65,23 +66,21 @@ def validate_local_offer(app, *, resource_kind: str, entitlement_kind: str,
             'invalid_offer_duration')
 
 
+def _valid_catalog_offer(app, row):
+    """Apply current issuer bounds to old rows without rewriting signed history."""
+    try:
+        validate_local_offer(app, resource_kind=row[1], unit=row[2], price_minor=row[3],
+                             min_quantity=row[4], max_quantity=row[5],
+                             entitlement_kind=row[6], duration_seconds=row[7])
+    except Failure:
+        return False
+    return True
+
+
 def _public_offer(row):
     return dict(zip(('offer_id','resource_kind','unit','price_minor','min_quantity',
                      'max_quantity','entitlement_kind','duration_seconds','price_revision'),row)) | {
         'currency_id': CURRENCY_ID, 'provider_version': 1}
-
-
-def _purchase(tx, purchase_id, subject):
-    row = tx.one('''SELECT id,subject_id,request_id,offer_snapshot,quantity,total_minor,
-        escrow_account,state,created_at,expires_at,funding_transaction_id,
-        final_transaction_id,entitlement_id,reason FROM money_purchases WHERE id=? AND subject_id=?''',
-        (purchase_id,subject))
-    require(row is not None, 'purchase_not_found')
-    result = dict(zip(('id','subject_id','request_id','offer_snapshot','quantity','total_minor',
-        'escrow_account','state','created_at','expires_at','funding_transaction_id',
-        'final_transaction_id','entitlement_id','reason'),row))
-    result['offer_snapshot'] = loads(result['offer_snapshot'])
-    return result
 
 
 def _finalize(app, tx, purchase, now, request_id, *, cancel=False):
@@ -92,7 +91,10 @@ def _finalize(app, tx, purchase, now, request_id, *, cancel=False):
               else 'provider_unavailable' if not purchasable(app,snapshot['resource_kind'],snapshot['entitlement_kind'])
               or provider[2] != snapshot['provider_version'] else None)
     require(_balance(tx,purchase['escrow_account']) == purchase['total_minor'], 'escrow_balance_mismatch')
-    receipt = _post_transfer(tx,sender=purchase['escrow_account'],
+    from msg.market.ledger import post_escrow_release
+    receipt = post_escrow_release(tx,escrow_account=purchase['escrow_account'],
+        source_id=purchase['id'], account_kind='purchase_escrow',
+        buyer=purchase['subject_id'], seller=ROOT_SUBJECT,
         recipient=purchase['subject_id'] if reason else ROOT_SUBJECT,
         amount=purchase['total_minor'],actor=purchase['subject_id'],request_id=request_id,
         now=now,receipt_signer=app.receipt_signer,kind='refund' if reason else 'redeem',
@@ -108,14 +110,55 @@ def _finalize(app, tx, purchase, now, request_id, *, cancel=False):
 
 def install(app):
     op,finish = registration(app,'offers',('money',))
+    from msg.market.order_resources import operation_boundary
+    op = operation_boundary(app, op)
 
+    @op('money.offers',obj(),effect='read', version=2)
     @op('money.offers',obj(),effect='read')
     async def offers(ctx,request,tx):
         rows = tx.rows('''SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
             max_quantity,entitlement_kind,duration_seconds,price_revision
             FROM server_offers WHERE enabled=TRUE ORDER BY offer_id''')
-        return HandlerOutput(data={'currency_id':CURRENCY_ID,'offers':[
-            _public_offer(row) for row in rows if purchasable(app,row[1],row[6])]})
+        from msg.market.offer_resources import verify_projection
+        public = []
+        for row in rows:
+            if _valid_catalog_offer(app, row):
+                await verify_projection(app, tx, row)
+                public.append(_public_offer(row))
+        data = {'currency_id': CURRENCY_ID, 'offers': public}
+        if request.contract_version == 2:
+            from msg.market.compatibility import offer_listing
+            data['listings'] = [offer_listing(offer) for offer in public]
+        return HandlerOutput(data=data)
+
+    @op('money.redeem', obj({'offer_id': IDENTIFIER,
+        'quantity': {'type': 'integer', 'minimum': 1, 'maximum': MAX_MINOR},
+        'currency_id': {'const': CURRENCY_ID}, 'price_revision': IDENTIFIER,
+        'listing_revision': IDENTIFIER,
+        'offer_snapshot_digest': {'type': 'string', 'pattern': '^sha256:[a-f0-9]{64}$'},
+        'total_price_minor': {'type': 'integer', 'minimum': 1, 'maximum': MAX_MINOR},
+        'settlement_policy': {'const': 'deterministic-entitlement-v1'}},
+        ('offer_id', 'quantity', 'currency_id', 'price_revision', 'listing_revision',
+         'offer_snapshot_digest', 'total_price_minor', 'settlement_policy')),
+        signature=True, version=3, requirements=account_requirements)
+    async def redeem_order(ctx, request, tx):
+        owner, args = _owner(ctx), request.arguments
+        row = tx.one("""SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
+            max_quantity,entitlement_kind,duration_seconds,price_revision FROM server_offers
+            WHERE offer_id=? AND enabled=TRUE""", (args['offer_id'],))
+        require(row is not None and _valid_catalog_offer(app, row), 'offer_not_found')
+        from msg.market.offer_resources import verify_projection
+        require(await verify_projection(app, tx, row) is not None, 'offer_requires_import')
+        require(args['price_revision'] == row[8], 'offer_price_changed')
+        require(row[4] <= args['quantity'] <= row[5] and row[3] * args['quantity'] <= MAX_MINOR,
+                'invalid_offer_quantity')
+        require(extra_capacity(tx, owner, ctx.now) + args['quantity'] + app.settings.hosting_base_capacity_bytes
+                <= MAX_CAPACITY_BYTES, 'entitlement_capacity_exceeded')
+        require(ENTITLEMENT_FULFILLERS[row[6]][2] == 1, 'offer_provider_unavailable')
+        from msg.market.entitlement_orders import redeem as redeem_into_order
+        result = await redeem_into_order(app, tx, ctx, request, _public_offer(row),
+                                          ENTITLEMENT_FULFILLERS[row[6]][3])
+        return HandlerOutput(data=result)
 
     @op('money.redeem',obj({'offer_id':IDENTIFIER,'quantity':{'type':'integer','minimum':1,'maximum':MAX_MINOR},
         'currency_id':{'const':CURRENCY_ID},'price_revision':IDENTIFIER},
@@ -129,7 +172,9 @@ def install(app):
         row = tx.one('''SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
             max_quantity,entitlement_kind,duration_seconds,price_revision FROM server_offers
             WHERE offer_id=? AND enabled=TRUE''',(args['offer_id'],))
-        require(row is not None and purchasable(app,row[1],row[6]),'offer_not_found')
+        require(row is not None and _valid_catalog_offer(app, row),'offer_not_found')
+        from msg.market.offer_resources import verify_projection
+        await verify_projection(app, tx, row)
         require(args['price_revision'] == row[8],'offer_price_changed')
         require(row[4] <= args['quantity'] <= row[5] and row[3]*args['quantity'] <= MAX_MINOR,
                 'invalid_offer_quantity')
@@ -154,9 +199,15 @@ def install(app):
         return HandlerOutput(data={'purchase':_purchase(tx,purchase_id,owner),
                                    'funding':funding,'settlement':settlement})
 
+    @op('money.purchase_get',obj({'purchase_id':IDENTIFIER},('purchase_id',)),effect='read', version=2, requirements=account_requirements)
     @op('money.purchase_get',obj({'purchase_id':IDENTIFIER},('purchase_id',)),effect='read', requirements=account_requirements)
     async def get(ctx,request,tx):
-        return HandlerOutput(data={'purchase':_purchase(tx,request.arguments['purchase_id'],_owner(ctx))})
+        purchase = _purchase(tx,request.arguments['purchase_id'],_owner(ctx))
+        data = {'purchase': purchase}
+        if request.contract_version == 2:
+            from msg.market.compatibility import purchase_order
+            data['order'] = purchase_order(tx, purchase)
+        return HandlerOutput(data=data)
 
     @op('money.purchase_settle',obj({'purchase_id':IDENTIFIER},('purchase_id',)),signature=True, requirements=account_requirements)
     async def settle(ctx,request,tx):

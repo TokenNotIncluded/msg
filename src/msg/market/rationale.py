@@ -10,7 +10,7 @@ from msg.core.errors import Failure, require
 from msg.core.models import BlobRef, HandlerOutput, ResourceRef
 from msg.market.delivery import verify_blob
 from msg.plugins.common import check_access
-from msg.plugins.orders import _subject
+from msg.market.order_records import require_signed_subject as _subject
 from msg.plugins.schemas import IDENTIFIER, obj
 
 PINNED_REF = obj({'id': IDENTIFIER, 'revision': IDENTIFIER}, ('id', 'revision'))

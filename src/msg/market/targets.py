@@ -98,7 +98,7 @@ async def enqueue_notification(app, tx, ctx, request, order):
         return
     job = EffectJob(id=new_id('job'), event_id='delivery:'+order['id'], kind='market_mail',
         dedupe_key=dedupe, principal=principal,
-        operation='orders.buy', arguments={'order_id': order['id'], 'endpoint_id': chosen['endpoint_id']},
+        operation='orders.buy', arguments={'contract_version': locked['version'], 'order_id': order['id'], 'endpoint_id': chosen['endpoint_id']},
         state='pending', attempts=0, next_attempt_at=ctx.now, lease_until=None)
     await tx.enqueue(job)
     target = {**order['delivery_target'], 'email': {**chosen, 'state': 'queued'}}
@@ -106,8 +106,8 @@ async def enqueue_notification(app, tx, ctx, request, order):
 
 
 async def render_notification(app, tx, job):
-    from msg.plugins.delivery import _delivery
-    from msg.plugins.orders import _row
+    from msg.market.managed_delivery import read_delivery as _delivery
+    from msg.market.order_records import read_order as _row
     order = _row(tx, job.arguments['order_id'], job.principal.subject)
     require(order['buyer'] == job.principal.subject and job.principal.actor == order['buyer'],
             'delivery_recipient_mismatch')

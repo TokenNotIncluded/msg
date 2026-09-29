@@ -9,7 +9,7 @@ from msg.core.batching import packets
 from msg.core.events import event_id
 from msg.core.packet import result_wire
 from msg.core.execution_ports import ResultProjection, TransactionalEventNotifications
-from msg.core.errors import Failure,require
+from msg.core.errors import Failure,require,public_error_message
 from msg.core.models import ExecutionContext,HandlerOutput,OperationResult,OperationError,Event,AccessRequirement
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION,receipt_bytes
 
@@ -27,6 +27,8 @@ class OperationExecutor:
         self.response_hook=None
         self.recovery_drill_marker=None
         self.recovery_quarantined=False
+        from msg.security.quarantine import RuntimeGeneration
+        self.runtime_generation=RuntimeGeneration()
         require(max_request_bytes is None or (type(max_request_bytes) is int and max_request_bytes>0),
                 'invalid_request_limit')
         self.max_request_bytes=max_request_bytes
@@ -36,6 +38,10 @@ class OperationExecutor:
     def recovery_drill_active(self):
         marker=self.recovery_drill_marker
         return self.recovery_quarantined or (marker is not None and (marker.exists() or marker.is_symlink()))
+
+    async def require_current_runtime(self):
+        async with self.metadata.transaction(write=False) as session:
+            self.runtime_generation.require_current(session)
 
     async def execute(self,request, *, entry='network'):
         principal=None
@@ -56,8 +62,9 @@ class OperationExecutor:
             if spec.name=='batch.independent':
                 return await self._independent(request,spec,entry)
             async with self.metadata.transaction(write=spec.effect!='read') as session:
+                self.runtime_generation.require_current(session)
                 principal=await self.authenticator.authenticate(request,session,entry=entry)
-                if spec.name=='batch.atomic':
+                if spec.name in {'batch.atomic','file.batch'}:
                     # Validate the child set before an old cached parent result
                     # can bypass the handler's secret-delivery exclusion.
                     packets(self.registry,request,principal.subject,
@@ -79,6 +86,7 @@ class OperationExecutor:
                 else:
                     capacity_writes={'identity.register','identity.temporary','identity.custodial_create','content.topic_create',
                         'content.post_create','content.post_edit','content.file_put','content.attach',
+                        'file.create','file.copy','file.write','file.patch','file.mkdir',
                         'content.template_put','discussion.reply','discussion.quote','discussion.repost',
                         'transfer.part_put','git.create','git.push','git.receive','hosting.deploy','hosting.preview','keystore.put','achievement.start'}
                     if spec.name in capacity_writes:
@@ -91,7 +99,7 @@ class OperationExecutor:
                                 operation=f'{spec.name}@{spec.version}',check=check),),session)
                         require(current.generation==generation,'generation_conflict',
                                 details={'id':rid,'generation':current.generation,'revision':current.revision})
-                    audited=(spec.name in {'content.chmod','content.chgrp','content.chown','content.purge','content.move',
+                    audited=(spec.name in {'content.chmod','content.chgrp','content.chown','content.purge','content.move','file.move',
                         'identity.key_add','identity.key_revoke','identity.recover','identity.delegate','identity.delegation_revoke',
                         'identity.ssh_key_add','identity.ssh_key_revoke','identity.ssh_certificates','cert.publish','cert.request'}
                         or (spec.name.startswith('group.') and spec.effect!='read'))
@@ -140,7 +148,8 @@ class OperationExecutor:
         except Failure as exc:
             return OperationResult(request_id=request.request_id,operation=request.operation,status='error',
                 actor=principal.actor if principal else None,subject=principal.subject if principal else None,
-                error=OperationError(code=exc.code,retryable=exc.retryable,field_path=exc.field),
+                error=OperationError(code=exc.code,retryable=exc.retryable,field_path=exc.field,
+                                     message=public_error_message(exc.code)),
                 data=exc.details)
         except Exception:
             # Neither exception text/tracebacks nor caller-selected IDs are safe
@@ -148,7 +157,8 @@ class OperationExecutor:
             log.error('operation_failed')
             return OperationResult(request_id=request.request_id,operation=request.operation,status='error',
                 actor=principal.actor if principal else None,subject=principal.subject if principal else None,
-                error=OperationError(code='internal_error',retryable=False))
+                error=OperationError(code='internal_error',retryable=False,
+                                     message=public_error_message('internal_error')))
 
 
     async def _independent(self,request,spec,entry):
@@ -158,6 +168,7 @@ class OperationExecutor:
         No child is reported rolled back merely because its sibling failed.
         """
         async with self.metadata.transaction(write=True) as tx:
+            self.runtime_generation.require_current(tx)
             principal=await self.authenticator.authenticate(request,tx,entry=entry)
             await self.authorizer._ceiling(principal,f'{spec.name}@{spec.version}',principal.subject,tx)
             children=packets(self.registry,request,principal.subject,self.max_request_bytes)
@@ -176,6 +187,7 @@ class OperationExecutor:
             results.append(result_wire(result))
             resources.extend(result.resources)
         async with self.metadata.transaction(write=True) as tx:
+            self.runtime_generation.require_current(tx)
             current=await self.authenticator.authenticate(request,tx,entry=entry)
             await self.authorizer._ceiling(current,f'{spec.name}@{spec.version}',current.subject,tx)
             previous=await tx.request_result(principal.subject,request.request_id,request.payload_digest)

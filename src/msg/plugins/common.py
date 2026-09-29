@@ -1,6 +1,7 @@
 """Explicit resource use cases shared by content and extensions."""
 from __future__ import annotations
 import re
+import hashlib
 from dataclasses import replace
 from uuid import uuid4
 from msg.constants import *
@@ -24,6 +25,16 @@ async def resolve(session,value):
         return await session.resolve(value)
     require(isinstance(value,str) and bool(re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}',value)),'invalid_resource_id')
     return (await session.resource(value)).id
+
+
+async def resolve_read(session,value):
+    """Read-only migration lookup; authorization still uses the current object."""
+    try:
+        return await resolve(session,value)
+    except Failure as exc:
+        if exc.code!='not_found' or not isinstance(value,str) or not value.startswith('/'):
+            raise
+        return await session.resolve_migrated(value)
 
 
 async def check_access(app,context,request,session,rid,check):
@@ -61,6 +72,8 @@ async def protect_namespace(app,ctx,request,tx,parent,name):
 async def create_resource(app,ctx,request,tx, *, parent,type,name=None,body=None,media_type='text/markdown',
                           relations=(),mode=None,resource_id=None,author=None,content_signature=None,revision_id=None):
     parent=await tx.resource(parent)
+    require(type not in {'order', 'order_collection'} and parent.type != 'order_collection',
+            'order_controlled_resource')
     require(parent.state=='active','ancestor_inactive')
     require(app.registry.resource_type(parent.type,parent.type_version).container,'not_a_container')
     app.registry.resource_type(type,1)
@@ -110,6 +123,7 @@ async def create_resource(app,ctx,request,tx, *, parent,type,name=None,body=None
 async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/markdown', *, relations=(),author=None,
                           signature=None,revision_id=None,change_note=None,source_kind=None,
                           source_version=None,source_digest=None,content_created_at=None):
+    require(resource.type not in {'order', 'order_collection'}, 'order_controlled_resource')
     from msg.core.models import BlobRef
     # Internal operation labels (e.g. transfer.seal publishing) carry no client arguments.
     timestamp=(content_created_at if content_created_at is not None else
@@ -121,6 +135,18 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
     require(signature is None or revision_id is not None,'revision_id_required')
     if isinstance(body,BlobRef):
         blob=body
+        # A retained index/reference is not evidence the payload survived.
+        # Verify copies and reused blobs before publishing another Revision.
+        hasher=hashlib.sha256()
+        size=0
+        try:
+            async for chunk in app.contents.read(blob):
+                size+=len(chunk)
+                hasher.update(chunk)
+        except FileNotFoundError as exc:
+            raise Failure('content_missing') from exc
+        require(size==blob.size and 'sha256:'+hasher.hexdigest()==blob.digest,
+                'content_digest_mismatch')
     else:
         blob=await app.contents.put_bytes(body.encode('utf-8') if isinstance(body,str) else body,media_type)
     for relation in relations:
@@ -174,6 +200,8 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
         text=(await app.contents.read_bytes(blob)).decode('utf-8',errors='replace')
         tx.execute('INSERT INTO projections VALUES (?,?) ON CONFLICT(resource_id) DO UPDATE SET text=excluded.text',
                    (resource.id,text),write=True)
+    else:
+        tx.execute('DELETE FROM projections WHERE resource_id=?',(resource.id,),write=True)
     return updated
 
 
@@ -194,6 +222,29 @@ async def topic_policy(tx,resource):
     return tx.setting('policy:'+topic.id,{})
 
 
+def default_operation_rules(name):
+    """Compatibility defaults captured when constructing an operation."""
+    if name.startswith('identity.'):
+        rules=('identity','auth')
+    elif name.startswith('content.topic_') or name.startswith('discussion.'):
+        rules=('topics','read-write')
+    elif name.startswith('content.'):
+        rules=('read-write',)
+    elif name.startswith('file.'):
+        rules=('files','read-write','protocol')
+    elif name.startswith(('transfer.','keystore.','git.')):
+        rules=('files','protocol')
+    elif name.startswith(('cert.','group.')):
+        rules=('auth',)
+    elif name.startswith(('system.','tool.')):
+        rules=('security','protocol')
+    elif name.startswith('discovery.'):
+        rules=('read-write','protocol')
+    else:
+        rules=('protocol',)
+    return tuple('msg.'+rule for rule in rules)
+
+
 def registration(app,name,dependencies=()):
     from msg.core.models import OperationSpec,PluginManifest,ResourceRef
     from msg.plugins.schemas import OUTPUT
@@ -201,17 +252,20 @@ def registration(app,name,dependencies=()):
     output_ref=ResourceRef(id='schema:operation-result')
     if output_ref.id not in app.registry._schemas:
         app.registry.add_schema(output_ref,OUTPUT)
-    def operation(opname,schema, *, effect='transaction',requirements=no_requirements,signature=False,version=1):
+    def operation(opname,schema, *, effect='transaction',requirements=no_requirements,signature=False,version=1,requires_rules=None):
         def decorate(handler):
             ref=ResourceRef(id='schema:'+opname+':'+str(version))
             app.registry.add_schema(ref,schema)
             operations.append(OperationSpec(name=opname,version=version,input_schema=ref,output_schema=output_ref,
                 effect=effect,entries=frozenset({'network','worker'}),require_signature=signature,
-                requirements=requirements,handler=handler))
+                requirements=requirements,handler=handler,
+                requires_rules=default_operation_rules(opname) if requires_rules is None else tuple(requires_rules)))
             return handler
         return decorate
     def finish(resource_types=()):
+        from msg.plugins.features import feature_ids
         manifest=PluginManifest(name=name,version='1',dependencies=tuple(dependencies),
-            resource_types=tuple(resource_types),capabilities=(),operations=tuple(operations),migrations=())
+            resource_types=tuple(resource_types),capabilities=(),operations=tuple(operations),migrations=(),
+            feature_ids=feature_ids(name))
         app.registry.add(manifest)
     return operation,finish

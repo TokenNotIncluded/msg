@@ -5,7 +5,7 @@ from copy import deepcopy
 
 from referencing.exceptions import Unresolvable
 from msg.core.schema_policy import local_validator
-from msg.core.codec import digest,wire
+from msg.core.codec import decode,digest,wire
 from msg.core.errors import Failure,require
 
 
@@ -27,6 +27,8 @@ class Registry:
         self._types={}
         self._capabilities={}
         self._operations={}
+        self._templates={}
+        self._tools={}
         self._schemas={}
         self._validators={}
         self._plugins={}
@@ -50,6 +52,35 @@ class Registry:
         require(spec.entries and spec.entries<=frozenset({'local_admin','network','worker'}),'invalid_entries')
         self._insert(self._operations,spec,'operation')
 
+    def _insert_resource_spec(self, collection, spec, version, kind):
+        # Registration versions describe installed contracts; resource revisions
+        # remain immutable runtime facts and are never added to this registry.
+        require(not self._frozen, 'registry_frozen')
+        require(type(version) is int and version >= 1 and spec.resource.id
+                and '*' not in spec.resource.id, 'invalid_registry_name')
+        key=(spec.resource.id,version)
+        require(key not in collection, 'duplicate_'+kind)
+        collection[key]=decode(type(spec),wire(spec))
+
+    def add_template(self,spec,version=1):
+        from msg.core.template_dsl import _check
+        from msg.core.codec import loads
+        require(spec.renderer_version == 1, 'unknown_template_renderer')
+        names=[field.name for field in spec.fields]
+        require(len(names)==len(set(names)), 'duplicate_field')
+        for field in spec.fields:
+            require(field.type in {'str','text','int','bool','enum','ref','file'},
+                    'unknown_field_type')
+            require(not field.required or field.default_json is None,
+                    'required_field_has_default')
+            if field.default_json is not None:
+                _check(field,loads(field.default_json))
+        self._insert_resource_spec(self._templates,spec,version,'template')
+
+    def add_tool(self,spec,version=1):
+        require(bool(spec.executor_key), 'untrusted_tool_executor')
+        self._insert_resource_spec(self._tools,spec,version,'tool')
+
     def add_schema(self,ref,schema):
         require(not self._frozen and ref.id not in self._schemas,'schema_conflict')
         # Keep one owned snapshot for both validation and publication. Caller
@@ -60,6 +91,11 @@ class Registry:
         self._validators[ref.id]=validator
 
     def add(self,manifest):
+        from msg.plugins.features import validate_feature_claims
+        validate_feature_claims(manifest)
+        # No runtime migration executor is supported. Never accept executable
+        # declarations and silently pretend the release applied them.
+        require(manifest.migrations==(),'unsupported_plugin_migration')
         require(not self._frozen,'registry_frozen')
         require(manifest.name not in self._plugins,'duplicate_plugin')
         require(all(d in self._plugins for d in manifest.dependencies),'missing_plugin_dependency')
@@ -82,14 +118,39 @@ class Registry:
             self.add_operation(item)
         self._plugins[manifest.name]=manifest
 
+    def features(self,plugin_name):
+        """Resolve a plugin's defaults/checks from the sole bootstrap inventory."""
+        from msg.bootstrap import feature_manifest
+        require(plugin_name in self._plugins,'unknown_plugin')
+        claims=self._plugins[plugin_name].feature_ids
+        return tuple(deepcopy(row) for row in feature_manifest()
+                     if row['feature_id'] in claims)
+
     def freeze(self):
+        from msg.bootstrap import RULE_PATHS,SOURCE_RETIREMENTS,feature_manifest
+        feature_manifest()
         require('identity' in self._plugins,'identity_plugin_required')
         for spec in self._operations.values():
+            require(spec.requires_rules and len(set(spec.requires_rules))==len(spec.requires_rules)
+                    and all(rule_id in RULE_PATHS and rule_id not in SOURCE_RETIREMENTS
+                            for rule_id in spec.requires_rules),
+                    'dangling_requires_rules')
             require(spec.input_schema.id in self._schemas and spec.output_schema.id in self._schemas,'missing_schema')
+        operation_ids={f'{s.name}@{s.version}' for s in self._operations.values()}
+        for resource in self._types.values():
+            require(resource.content_schema is None or
+                    resource.content_schema.id in self._schemas,'missing_schema')
+            require(resource.operations<=operation_ids,'unknown_resource_operation')
         for cap in self._capabilities.values():
+            require(cap.constraints_schema is None or
+                    cap.constraints_schema.id in self._schemas,'missing_schema')
             require(cap.scope_types<=set(n for n,v in self._types),'unknown_scope_type')
-            require(all(op in {f'{s.name}@{s.version}' for s in self._operations.values()}
-                        for op in cap.operations),'unknown_capability_operation')
+            require(cap.operations<=operation_ids,'unknown_capability_operation')
+        for tool in self._tools.values():
+            operation=tool.operation if '@' in tool.operation else tool.operation+'@1'
+            require(operation in operation_ids,'unknown_tool_operation')
+            require(tool.input_schema.id in self._schemas and
+                    tool.output_schema.id in self._schemas,'missing_schema')
         self._frozen=True
 
     @property
@@ -110,6 +171,18 @@ class Registry:
 
     def resource_type(self,name,version=1):
         return self._get(self._types,name,version,'resource_type')
+
+    def template(self,resource_id,version=1):
+        return self._get(self._templates,resource_id,version,'template')
+
+    def tool(self,resource_id,version=1):
+        return self._get(self._tools,resource_id,version,'tool')
+
+    def templates(self):
+        return tuple(self._templates[k] for k in sorted(self._templates))
+
+    def tools(self):
+        return tuple(self._tools[k] for k in sorted(self._tools))
 
     def capabilities(self):
         return tuple(self._capabilities[k] for k in sorted(self._capabilities))
@@ -137,26 +210,7 @@ class Registry:
 
     def describe(self,spec):
         from msg.bootstrap import RULE_PATHS
-        name=spec.name
-        if name.startswith('identity.'):
-            rules=('identity','auth')
-        elif name.startswith('content.topic_') or name.startswith('discussion.'):
-            rules=('topics','read-write')
-        elif name.startswith('content.'):
-            rules=('read-write',)
-        elif name.startswith(('transfer.','keystore.','git.')):
-            rules=('files','protocol')
-        elif name.startswith(('cert.','group.')):
-            rules=('auth',)
-        elif name.startswith(('system.','tool.')):
-            rules=('security','protocol')
-        elif name.startswith('discovery.'):
-            rules=('read-write','protocol')
-        else:
-            rules=('protocol',)
-        rule_ids=tuple('msg.'+rule for rule in rules)
-        require(len(set(rule_ids))==len(rule_ids) and all(rid in RULE_PATHS for rid in rule_ids),
-                'dangling_requires_rules',name)
+        rule_ids=spec.requires_rules
         result={'name':spec.name,'version':spec.version,'effect':spec.effect,
                 'entries':sorted(spec.entries),'require_signature':spec.require_signature,
                 'input_schema':wire(spec.input_schema),'output_schema':wire(spec.output_schema),

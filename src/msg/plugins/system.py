@@ -68,7 +68,7 @@ def install(app):
         eid = event_id(request, ctx.principal.subject)
         job = EffectJob(id=new_id('job'), event_id=eid, kind='maintenance', dedupe_key='maintenance:'+eid,
             principal=ctx.principal, operation=request.operation,
-            arguments={'action':request.arguments['action'],'request_id':request.request_id},
+            arguments={'contract_version':request.contract_version,'action':request.arguments['action'],'request_id':request.request_id},
             state='pending', attempts=0, next_attempt_at=ctx.now, lease_until=None)
         await tx.enqueue(job)
         return HandlerOutput(data={'job_id':job.id,'state':'pending'})

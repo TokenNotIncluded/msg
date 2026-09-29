@@ -9,11 +9,10 @@ from dataclasses import replace
 from msg import __version__
 from msg.core.codec import canonical,digest,loads
 from msg.core.errors import Failure,require
-from msg.core.executor import result_wire
+from msg.core.codec import result_wire
 from msg.transports.packet import decode_packet,REQUEST_SCHEMA,RESULT_SCHEMA
 
-PROTOCOL_VERSION='2025-11-25'
-SUPPORTED_VERSIONS=frozenset({PROTOCOL_VERSION,'2025-06-18','2025-03-26'})
+from msg.transports.mcp_protocol import PROTOCOL_VERSION, SUPPORTED_VERSIONS
 
 
 class MCPServer:

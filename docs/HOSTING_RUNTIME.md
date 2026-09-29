@@ -40,7 +40,7 @@ New schema/authorization dependencies require review plus regression coverage be
 adding a table. Column/row data returned by public HTTP still uses current authority.
 
 Do not copy a possibly stale public trust file or recovery marker. Link the public
-`trust/root.json` to the installed public trust, keep its directory traversable, and
+`trust/root.crt` (or the legacy `trust/root.json`) to the installed public trust, keep its directory traversable, and
 set `hosting.recovery_marker` to the writer's real `recovery-drill.json` path. The
 hosting account must be able to stat the marker's parent without reading writer
 configuration or secrets. The sample marker is `/etc/msgd/recovery-drill.json`.
@@ -89,3 +89,18 @@ check new text/binary/index publication under umask 0077 and refusal to alter an
 existing private installation. Existing transport/CLI checks and full four-shard
 CI remain required. Evidence and outstanding checks: `HOSTING_RUNTIME_PROGRESS.md`.
 Green isolated CI is not a production deployment or completion of #80/#84.
+
+### Resource path migration table
+
+Moved website URLs use the same current website and published-file authorization
+before returning a `no-store` redirect. The read-only role also needs `SELECT` on
+`public.resource_path_aliases`. After the installation owner applies the metadata
+schema update, an existing deployment can add only that read privilege:
+
+```sql
+GRANT SELECT ON public.resource_path_aliases TO msgd_hosting;
+```
+
+The hosting process does not grant privileges or migrate tables. Missing access
+fails startup with `hosting_installation_stale`; it must not start serving with a
+partially upgraded role. The initial role template includes this grant.

@@ -21,6 +21,7 @@ from msg.security.rotation_journal import authorization, validate as validate_jo
 from msg.security.root_files import read_private, rotation_lock
 from msg.security.capabilities import grant_for
 from msg.storage.git import durable_write
+from msg.security.trust_files import trust_values, write_trust
 from msg.bootstrap import seed_resource
 
 
@@ -114,9 +115,8 @@ async def _complete(app, journal, *, pin):
         require(key_file.exists() and
                 digest(read_private(key_file)) == journal['previous_envelope_digest'],
                 'rotation_history_missing')
-    require(app.settings.trust_file.is_file() and not app.settings.trust_file.is_symlink(),
-            'rotation_trust_missing')
-    current_trust = loads(app.settings.trust_file.read_bytes())
+    current_trust = trust_values(app.settings.config_dir)
+    require(bool(current_trust),'rotation_trust_missing')
     # This method is called only after the local console has approved the exact
     # journal. It also handles the state where PostgreSQL committed but protected files did not.
     await app.open_storage()
@@ -130,7 +130,8 @@ async def _complete(app, journal, *, pin):
                 digest(old_key.verifier)==journal['statement']['old_fingerprint'],
                 'rotation_statement_mismatch')
         old_trust = {'version': 1, 'public_key': b64(old_key.verifier), 'certificate': wire(old)}
-        require(canonical(current_trust) in (canonical(old_trust), canonical(journal['new_trust'])),
+        require(all(canonical(value) in (canonical(old_trust), canonical(journal['new_trust']))
+                    for value in current_trust.values()),
                 'rotation_trust_changed')
         if journal['old_signature'] is not None:
             verify(old_key.verifier,canonical(proof),decode(Signature,journal['old_signature']),
@@ -186,7 +187,8 @@ async def _complete(app, journal, *, pin):
                 'rotation_history_missing')
         durable_write(history,read_private(key_file),mode=0o600)
     durable_write(key_file,canonical(journal['new_envelope']),mode=0o600)
-    durable_write(app.settings.trust_file,canonical(journal['new_trust']),mode=0o444)
+    write_trust(app.settings.config_dir,journal['new_trust'],writer=durable_write,
+                approved_values=(old_trust,journal['new_trust']))
     # Journal survives every earlier failure and is removed only after both
     # metadata and protected files have durable copies.
     pending.unlink(missing_ok=True)

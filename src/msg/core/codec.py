@@ -251,3 +251,11 @@ def record(**kwargs):
         cls.__post_init__ = validate_record
         return dataclasses.dataclass(**kwargs)(cls)
     return decorate
+
+
+def result_wire(result):
+    value=wire(result,compact=True)
+    for name in ('replayed','prefer_cli'):
+        if not value.get(name):
+            value.pop(name,None)
+    return value

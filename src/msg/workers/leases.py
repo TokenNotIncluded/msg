@@ -9,6 +9,7 @@ async def current_attempt(app, tx, job):
     A stale callback must not overwrite another attempt's status, even when no
     separate worker has swept the expired lease yet.
     """
+    app.runtime_generation.require_current(tx)
     current = await tx.job(job.id)
     if current.state != 'running' or current.attempts != job.attempts:
         return None

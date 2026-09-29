@@ -18,7 +18,7 @@ from test_batch import packet
 
 async def test_core_executor_runs_with_explicit_services_and_no_application():
     active = []
-    transaction = object()
+    transaction = SimpleNamespace(setting=lambda key, default=None: default)
     principal = Principal(actor='u_test', subject='u_test', credential_id='k_test',
         method='signature', certificates=(), ceiling=())
 

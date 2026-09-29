@@ -1,4 +1,4 @@
-"""New checkout contracts without changing published orders.buy@1/@2 semantics."""
+"""Versioned checkout, preserving published orders.buy@1/@2/@3 semantics."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -11,10 +11,10 @@ from msg.market.policy import contract, snapshot
 from msg.market.targets import (
     enqueue_notification, notification_view, save_target, target_for, validate_target,
 )
-from msg.plugins.money import CURRENCY_ID, MAX_MINOR, _post_transfer
-from msg.plugins.orders import _order_id, _row, _subject, _view, _viewer
+from msg.market.ledger import CURRENCY_ID, MAX_MINOR, post_transfer as _post_transfer
+from msg.market.order_records import new_order_id as _order_id, read_order as _row, require_signed_subject as _subject, legacy_order_view as _view, require_order_viewer as _viewer
 from msg.plugins.schemas import IDENTIFIER, obj
-from msg.plugins.store import _body, _listing, _package_row
+from msg.market.catalog import read_listing_body as _body, read_listing as _listing, read_package_record as _package_row
 
 HASH = {'type': 'string', 'pattern': '^sha256:[a-f0-9]{64}$'}
 ORDER = obj({'order_id': IDENTIFIER}, ('order_id',))
@@ -35,10 +35,15 @@ def view(tx, order, viewer):
     row = tx.one('SELECT digest FROM order_contracts WHERE order_id=?', (order['id'],))
     if row:
         result['order_digest'] = row[0]
-        result['contract_version'] = 3
         locked = contract(tx, order['id'])
+        result['contract_version'] = locked['version']
         result['delivery_mode'] = locked['listing']['delivery_mode']
         result['policy_digest'] = locked['policy']['policy_digest']
+        if locked['version'] == 5:
+            from msg.core.codec import loads
+            fact = tx.one('SELECT body FROM order_settlements WHERE order_id=?', (order['id'],))
+            result['settlement_policy'] = locked['settlement_policy']
+            result['entitlement_id'] = loads(fact[0])['entitlement_id'] if fact else None
         # Seller needs the *public encryption subkey*, not buyer's email.
         if locked['recipient_key']:
             result['recipient_key'] = locked['recipient_key']
@@ -46,7 +51,7 @@ def view(tx, order, viewer):
     return result
 
 
-async def create(app, tx, ctx, request):
+async def create(app, tx, ctx, request, *, version=3):
     buyer, args = _subject(ctx), request.arguments
     listing = await _listing(app, ctx, request, tx, args['listing_id'])
     body, revision = await _body(app, tx, listing)
@@ -60,6 +65,12 @@ async def create(app, tx, ctx, request):
     total = body['price_minor'] * args['quantity']
     require(0 < total <= MAX_MINOR, 'money_overflow')
     require(total == args['total_price_minor'], 'price_changed')
+    # Inventory is a query projection too: validate all Resource-backed orders
+    # for this immutable listing before using its quantity/state index.
+    from msg.market.order_resources import verify_source
+    for (existing_id,) in tx.rows("SELECT order_id FROM order_contracts WHERE "
+            "body::jsonb->>'listing_id'=? AND body::jsonb->>'resource_model'='1'", (listing.id,)):
+        await verify_source(app, tx, existing_id)
     sold = tx.one('''SELECT COALESCE(SUM(quantity),0) FROM store_orders
         WHERE listing_id=? AND state NOT IN ('cancelled','refunded')''', (listing.id,))[0]
     require(sold + args['quantity'] <= body['quantity'], 'quantity_unavailable')
@@ -82,6 +93,9 @@ async def create(app, tx, ctx, request):
         recipient_key = {'key_id': row[0], 'recipient': row[1], 'fingerprint': digest(row[2])}
     target = await target_for(app, tx, buyer, args.get('email'))
     order_id, now = _order_id(), wire(ctx.now)
+    if version == 4:
+        from msg.market.order_resources import begin_new
+        begin_new(tx, order_id)
     escrow = 'esc_' + order_id[4:]
     tx.execute("INSERT INTO ledger_accounts(id,kind,subject_id,source_id) VALUES (?,'order_escrow',NULL,?)",
                (escrow, order_id), write=True)
@@ -95,7 +109,7 @@ async def create(app, tx, ctx, request):
          package_digest,args['quantity'],body['price_minor'],total,CURRENCY_ID,escrow,
          body['escrow_policy'],body['dispute_policy'],digest(body['terms']),canonical(target).decode(),
          request.payload_digest,now), write=True)
-    locked = {'order_id': order_id, 'version': 3, 'buyer': buyer, 'seller': listing.owner,
+    locked = {'order_id': order_id, 'version': version, 'buyer': buyer, 'seller': listing.owner,
         'listing': body, 'listing_id': listing.id, 'escrow_subject': escrow,
         'listing_revision': listing.revision,
         'listing_digest': revision.content.digest, 'package_id': package_id,
@@ -104,6 +118,10 @@ async def create(app, tx, ctx, request):
         'terms_digest': digest(body['terms']), 'policy': policy,
         'recipient_key': recipient_key, 'handle_snapshot': target['handle_snapshot'],
         'buyer_principal': wire(ctx.principal), 'created_at': now}
+    if version == 4:
+        locked['resource_model'] = 1
+        locked['creation_request'] = wire(request)
+        locked['settlement_policy'] = {'id': 'explicit-buyer-acceptance', 'version': 1}
     tx.execute('INSERT INTO order_contracts(order_id,body,digest) VALUES (?,?,?)',
                (order_id,canonical(locked).decode(),digest(locked)), write=True)
     tx.execute('INSERT INTO order_deadlines(order_id,expires_at) VALUES (?,?)',
@@ -117,6 +135,8 @@ async def create(app, tx, ctx, request):
 async def fund(app, tx, ctx, request, order):
     require(order['state'] == 'created', 'order_not_fundable')
     locked = contract(tx, order['id'])
+    require(locked['version'] != 5 or (request.operation == 'money.redeem' and
+            request.contract_version == 3), 'entitlement_funding_contract_required')
     require(ctx.now < parse_time(order['created_at']) + timedelta(
         seconds=locked['policy']['policy']['funding_timeout_seconds']), 'payment_intent_expired')
     validate_target(tx, order)
@@ -134,7 +154,7 @@ async def fund(app, tx, ctx, request, order):
                      request_id=request.request_id, reason='signed_payment_intent')
     tx.execute('UPDATE order_deadlines SET expires_at=? WHERE order_id=?',
         (wire(ctx.now+timedelta(seconds=locked['policy']['policy']['delivery_timeout_seconds'])), order['id']), write=True)
-    if locked['listing']['delivery_mode'] == 'managed_instant':
+    if locked['version'] != 5 and locked['listing']['delivery_mode'] == 'managed_instant':
         from msg.market.delivery import automatic
         await automatic(app, tx, ctx, request, order)
     return receipt
@@ -149,9 +169,21 @@ def install(app, op):
         order = await create(app, tx, ctx, request)
         return HandlerOutput(data={'order': view(tx, order, order['buyer'])})
 
+    @op('orders.create', obj(INTENT, INTENT_REQUIRED), signature=True, version=2)
+    async def reserve_explicit(ctx, request, tx):
+        order = await create(app, tx, ctx, request, version=4)
+        return HandlerOutput(data={'order': view(tx, order, order['buyer'])})
+
     @op('orders.buy', obj(INTENT, INTENT_REQUIRED), signature=True, version=3)
     async def buy(ctx, request, tx):
         order = await create(app, tx, ctx, request)
+        receipt = await fund(app, tx, ctx, request, order)
+        return HandlerOutput(data={'order': view(tx, _row(tx, order['id'], order['buyer']), order['buyer']),
+                                   'payment': receipt})
+
+    @op('orders.buy', obj(INTENT, INTENT_REQUIRED), signature=True, version=4)
+    async def buy_explicit(ctx, request, tx):
+        order = await create(app, tx, ctx, request, version=4)
         receipt = await fund(app, tx, ctx, request, order)
         return HandlerOutput(data={'order': view(tx, _row(tx, order['id'], order['buyer']), order['buyer']),
                                    'payment': receipt})

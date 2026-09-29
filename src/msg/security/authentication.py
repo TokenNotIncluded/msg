@@ -10,16 +10,19 @@ from msg.core.errors import Failure,require
 from msg.core.models import Principal,SignatureProof,TokenProof
 from msg.core.requests import payload_fields,signing_bytes
 from msg.security.crypto import key_id,subject_id,verify
-from msg.security.quarantine import active as quarantine_active
+from msg.security.quarantine import RuntimeGeneration, active as quarantine_active
 from msg.security.token_delivery import recovery_verifier
 
 
 CUSTODIAL_SIGNED_WRITES=frozenset({
     'content.post_create','content.post_edit','content.file_put','content.attach',
+    'file.create','file.copy','file.write','file.patch',
     'discussion.reply','discussion.quote','discussion.repost','identity.token_rotate',
     'identity.custodial_upgrade_start','identity.custodial_upgrade_finish',
     'identity.custodial_rewrap_entry','identity.custodial_rewrap_revision',
     'identity.custodial_rewrap_ack',
+    'achievement.start','achievement.answer','achievement.finish',
+    'achievement.pin','achievement.unpin','achievement.reorder',
 })
 
 
@@ -27,8 +30,10 @@ class AuthenticationService:
     def __init__(self,registry,certificates,service,clock,primary_ceiling,temporary_ceiling):
         self.registry,self.certificates,self.service,self.clock=registry,certificates,service,clock
         self.primary_ceiling,self.temporary_ceiling=primary_ceiling,temporary_ceiling
+        self.runtime_generation=RuntimeGeneration()
 
     async def authenticate(self,request,session, *, entry):
+        self.runtime_generation.require_current(session)
         require(session.setting('active_root_certificate',self.certificates.root_certificate.resource_id)==
                 self.certificates.root_certificate.resource_id,'service_restart_required')
         spec=self.registry.operation(request.operation,request.contract_version)
@@ -127,7 +132,13 @@ class AuthenticationService:
                            request.arguments.get('direction')=='download')
             require(spec.name in CUSTODIAL_SIGNED_WRITES or download_only,
                     'custodial_operation_not_supported')
-        require(not spec.require_signature or method=='signature','signature_required')
+        # Achievement handlers sign explicit confirmations with the current
+        # vault key; ordinary token subjects still need a signature.
+        custodial_confirmation=(actor.kind=='custodial' and method=='token' and
+                                spec.name in {'achievement.finish','achievement.pin',
+                                              'achievement.unpin','achievement.reorder'})
+        require(not spec.require_signature or method=='signature' or custodial_confirmation,
+                'signature_required')
         valid=[]
         for cid in ids:
             cert=await self.certificates.validate(cid,session)

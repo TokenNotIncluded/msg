@@ -103,7 +103,7 @@ async def test_account_scoped_read_key_preserves_owner_projection(installed, ope
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('version', [1, 2, 3])
+@pytest.mark.parametrize('version', [1, 2, 3, 4])
 async def test_catalog_scope_alone_cannot_buy_in_any_published_version(installed, version):
     app, root = installed
     _, _, buyer_key, buyer, listing, package = await market(app, root)

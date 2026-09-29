@@ -9,7 +9,8 @@ from msg.core.errors import Failure
 
 
 @pytest.mark.asyncio
-async def test_source_move_preserves_public_resource_and_revision(installed,tmp_path):
+@pytest.mark.parametrize("container", [tuple, list])
+async def test_source_move_preserves_public_resource_and_revision(installed,tmp_path,container):
     app,_=installed
     source=tmp_path/'system'
     shutil.copytree(system_source_root(),source)
@@ -18,7 +19,7 @@ async def test_source_move_preserves_public_resource_and_revision(installed,tmp_
     moved.parent.mkdir()
     original.rename(moved)
     paths={'msg.identity':'rules/moved/identity.md'}
-    declaration={'msg.identity':('rules/identity.md','rules/moved/identity.md')}
+    declaration={'msg.identity':container(('rules/identity.md','rules/moved/identity.md'))}
     async with app.metadata.transaction(write=False) as tx:
         before=await tx.resource('r_rule_identity')
     with pytest.raises(Failure,match='system_source_migration_required'):

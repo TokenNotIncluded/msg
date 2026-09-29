@@ -86,6 +86,20 @@ async def test_git_reference_guard_real_commit_and_revoked_key(installed,tmp_pat
         assert (await tx.job(initial.id)).state=='done'
         assert (await tx.resource(rid)).generation==repo.data['generation']+1
         assert tx.one('SELECT COUNT(*) FROM audit')[0]>0
+    # A real Git ref transaction that loses stdin after prepare must abort
+    # every staged ref. This covers EOF, not host power loss or disk durability.
+    interrupted=await job()
+    before_refs,_=await store.refs(rid)
+    async with app.metadata.transaction(write=False) as tx:
+        before_generation=(await tx.resource(rid)).generation
+    commands=(f'start\ncreate refs/heads/second {commit}\n'
+              f'create refs/heads/third {commit}\nprepare\n').encode()
+    code,output,changed=await guarded_command(app,interrupted,
+        lambda _:['update-ref','--stdin'],input_data=commands,capture_output=True)
+    assert code==0 and b'prepare: ok' in output and not changed
+    assert (await store.refs(rid))[0]==before_refs
+    async with app.metadata.transaction(write=False) as tx:
+        assert (await tx.resource(rid)).generation==before_generation
     pending=await job()
     await call(app,'identity.ssh_key_revoke',{'key_id':ssh.key_id},key=key,subject=uid)
     denied=await guarded_command(app,pending,lambda _:['update-ref','refs/heads/other',commit,'0'*40])

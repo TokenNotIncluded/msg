@@ -194,7 +194,7 @@ def register(app, op):
         await check_access(app, ctx, request, tx, rid, 'write')
         id, eid = new_id('job'), event_id(request, ctx.principal.subject)
         job = EffectJob(id=id, event_id=eid, kind='git.receive', dedupe_key='git-receive:' + eid,
-            principal=ctx.principal, operation='git.receive', arguments={'id':rid, 'request_id':request.request_id},
+            principal=ctx.principal, operation='git.receive', arguments={'contract_version':request.contract_version,'id':rid, 'request_id':request.request_id},
             state='running', attempts=1, next_attempt_at=ctx.now, lease_until=ctx.now+timedelta(seconds=600))
         await tx.enqueue(job)
         return HandlerOutput(resources=(ResourceRef(id=rid),), data={'job_id':id})

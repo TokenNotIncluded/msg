@@ -109,28 +109,49 @@ class EffectWorker:
         self.lease_seconds = lease_seconds
 
     async def _claim(self):
+        from msg.extensions.tools import tool_concurrency
         async with self.app.metadata.transaction(write=True) as tx:
+            self.app.runtime_generation.require_current(tx)
             if quarantine_active(tx):
                 return None, False
             # Orphaned external work cannot be assumed not to have executed.
+            running = {}
             for (raw_id,) in tx.execute("SELECT id FROM jobs WHERE state='running' ORDER BY next_at,id"):
                 job = await tx.job(raw_id)
                 if job.lease_until is None or job.lease_until <= self.app.clock():
                     await tx.save_job(replace(job, state='uncertain', lease_until=None))
                     tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
                     return job, False
-            row = tx.one("SELECT id FROM jobs WHERE state='pending' AND next_at<=? ORDER BY next_at,id LIMIT 1",
-                         (wire(self.app.clock()),))
-            if row is None:
-                return None, False
-            job = await tx.job(row[0])
-            job = replace(job, state='running', attempts=job.attempts+1,
-                          lease_until=self.app.clock()+timedelta(seconds=self.lease_seconds))
-            await tx.save_job(job)
-            return job, True
+                if job.kind == 'tool':
+                    running[job.arguments['tool']['id']] = running.get(job.arguments['tool']['id'], 0) + 1
+            # Other workers may hold this tool's jobs; only the running rows seen
+            # under this write transaction are a shared fact, never a local lock.
+            limits = {}
+            for (raw_id,) in tx.execute("SELECT id FROM jobs WHERE state='pending' AND next_at<=? ORDER BY next_at,id",
+                                        (wire(self.app.clock()),)):
+                job = await tx.job(raw_id)
+                if job.kind == 'tool':
+                    ref = decode(ResourceRef, job.arguments['tool'])
+                    if (ref.id, ref.revision) not in limits:
+                        try:
+                            limits[ref.id, ref.revision] = await tool_concurrency(self.app, tx, ref)
+                        except Failure as exc:
+                            if exc.retryable:
+                                raise
+                            await tx.save_job(replace(job, state='failed', lease_until=None))
+                            tx.set_setting('job_status:' + job.id, {'code': exc.code})
+                            return job, False
+                    if running.get(ref.id, 0) >= limits[ref.id, ref.revision]:
+                        continue
+                job = replace(job, state='running', attempts=job.attempts+1,
+                              lease_until=self.app.clock()+timedelta(seconds=self.lease_seconds))
+                await tx.save_job(job)
+                return job, True
+            return None, False
 
     async def _finish(self, job, state, code, *, status=None):
         async with self.app.metadata.transaction(write=True) as tx:
+            self.app.runtime_generation.require_current(tx)
             current = await current_attempt(self.app, tx, job)
             if current is None:
                 return
@@ -140,6 +161,7 @@ class EffectWorker:
 
     async def _retry(self, job, retry_code, exhausted_code):
         async with self.app.metadata.transaction(write=True) as tx:
+            self.app.runtime_generation.require_current(tx)
             current = await current_attempt(self.app, tx, job)
             if current is None:
                 return
@@ -162,6 +184,7 @@ class EffectWorker:
         from msg.core.models import NetworkPolicy
         require(job.operation == 'tool.run', 'unknown_operation')
         async with self.app.metadata.transaction(write=False) as tx:
+            self.app.runtime_generation.require_current(tx)
             principal = await current_principal(self.app, job.principal, tx)
             context, request = worker_context(self.app, job, principal), effect_request(self.app, job, principal)
             ref = decode(ResourceRef, job.arguments['tool'])
@@ -211,6 +234,7 @@ class EffectWorker:
             blob = await self.app.contents.put(pieces(), result.media_type)
             await self.app.contents.pin(blob, 'job:'+job.id)
             async with self.app.metadata.transaction(write=True) as tx:
+                self.app.runtime_generation.require_current(tx)
                 current = await current_attempt(self.app, tx, job)
                 if current is None:
                     return
@@ -241,6 +265,7 @@ class EffectWorker:
         if job.arguments.get('order_notification'):
             from msg.market.delivery_notifications import project_notification
             async with self.app.metadata.transaction(write=False) as tx:
+                self.app.runtime_generation.require_current(tx)
                 principal = await current_principal(self.app, job.principal, tx)
                 projected = await project_notification(self.app, tx, job, principal)
             state = await self.mail_sender.send(projected)
@@ -248,6 +273,7 @@ class EffectWorker:
             await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
             return
         async with self.app.metadata.transaction(write=False) as tx:
+            self.app.runtime_generation.require_current(tx)
             await current_principal(self.app, job.principal, tx)
             subject = job.arguments['recipient_subject']
             row = tx.one('SELECT body FROM emails WHERE subject=?', (subject,))
@@ -269,6 +295,7 @@ class EffectWorker:
         from msg.market.email import render_verification
         require(mail_enabled(self.app), 'mail_disabled')
         async with self.app.metadata.transaction(write=False) as tx:
+            self.app.runtime_generation.require_current(tx)
             await current_principal(self.app,job.principal,tx)
             outgoing=await (render_verification(self.app,tx,job) if job.kind=='market_email_verify'
                             else render_notification(self.app,tx,job))
@@ -284,6 +311,7 @@ class EffectWorker:
         require(job.operation in {'communication.send','communication.webhook_subscribe'},
                 'invalid_webhook_event')
         async with self.app.metadata.transaction(write=False) as tx:
+            self.app.runtime_generation.require_current(tx)
             principal=await current_principal(self.app,job.principal,tx)
             recipient=job.arguments['recipient_subject']
             subject=await tx.subject(recipient)
@@ -347,6 +375,7 @@ class EffectWorker:
             await self._finish(job,'done' if state=='delivered' else 'failed',state)
 
     async def run_once(self):
+        await self.app.executor.require_current_runtime()
         if self.app.executor.recovery_drill_active():
             return False
         if 'orders' in self.app.settings.server.plugins:
@@ -362,6 +391,11 @@ class EffectWorker:
         if not execute:
             return True
         try:
+            # A queued effect must not outlive its installed operation contract.
+            # Legacy jobs predate version recording and used the v1 worker path.
+            version=job.arguments.get('contract_version',1)
+            require(type(version) is int and version>=1,'invalid_job_contract_version')
+            self.app.registry.operation(job.operation,version)
             if job.kind == 'tool':
                 self.app.settings.server.staging_dir.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix='effect-', dir=self.app.settings.server.staging_dir) as temp:
@@ -384,6 +418,7 @@ class EffectWorker:
                 # idempotent cleanup cannot change another resource's retention.
                 from msg.workers.maintenance import _collect
                 async with self.app.metadata.transaction(write=True) as tx:
+                    self.app.runtime_generation.require_current(tx)
                     resource=await tx.resource(job.arguments['id'])
                     require(resource.state=='purged','purge_not_committed')
                     await _collect(self.app,tx)

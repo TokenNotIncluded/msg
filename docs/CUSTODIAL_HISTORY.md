@@ -92,8 +92,8 @@ application without the isolated selftest namespace.
 `history_recoverable` covers **enumerated and client-verified revisions only**.
 `online_key_retired` describes online vault material only. `backup_retired` stays
 false unless a root-signed backup retirement record was imported at the physical
-console (`RootAdmin.sign_backup_retirement` / `RootAdmin.import_backup_retirement`,
-both behind `require_local_console`). The record binds the subject, both old key
+console (`msgd root backup-retirement sign SOURCE DESTINATION` followed by
+`msgd root backup-retirement import RECORD`, both behind `require_local_console`). The record binds the subject, both old key
 IDs, a non-empty list of named backup sets and a validity window of at most 400
 days; it is signed with purpose `custodial-backup-retirement-v1`. Every read
 re-verifies it against the active, unrevoked root credential, so an altered,
@@ -106,7 +106,11 @@ does not prove that no other copy exists and it does not claim that production
 backups were destroyed. No network operation writes, accepts or forwards it; a
 `backup_retirement` value inside the network-writable migration body is ignored.
 Neither a boolean supplied by a network caller nor a green test run can establish
-that old backups lost a key. There is no `msg-admin` CLI wiring yet. Restore/
+that old backups lost a key. Input JSON must be a single-link regular file owned
+by the local operator, mode 0600, at most 1 MiB; symlinks and special files are
+rejected. Signing publishes a complete 0600 record without replacing an existing
+destination. Both commands require a digest-bound interactive confirmation;
+signing additionally unlocks Root with a non-echoed PIN prompt. Restore/
 revocation replay and real operator acceptance are tracked separately in issues
 #69 and #70.
 

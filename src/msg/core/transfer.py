@@ -128,6 +128,16 @@ class TransferService:
     async def status(self,context,transfer_id,cursor=None,limit=50):
         async with self.metadata.transaction(write=False) as tx:
             transfer=await self._session(context,tx,transfer_id,'transfer.status',allow_cancelled=True)
+            require(type(limit) is int and 1<=limit<=500,'invalid_limit')
+            if cursor is not None:
+                # A continuation is a byte offset, not an arbitrary Python integer.
+                # Check the spelling and bound before either SQL projection uses it;
+                # terminal sessions must not silently accept malformed cursors.
+                require(isinstance(cursor,str) and
+                        re.fullmatch(r'[0-9]{1,19}',cursor) is not None,'invalid_cursor')
+                offset=int(cursor)
+                require(offset<2**63 and
+                        (transfer.expected_size is None or offset<=transfer.expected_size),'invalid_cursor')
             if transfer.direction=='download' or transfer.state=='sealed':
                 return Page(items=())
             if transfer.expected_size is None:

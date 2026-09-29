@@ -23,6 +23,7 @@ from msg.security.crypto import Ed25519Signer,seal_private_key,open_private_key
 from msg.security.certificates import sign_certificate,csr_body,verify_csr
 from msg.security.capabilities import grant_for
 from msg.storage.git import durable_write
+from msg.security.trust_files import trust_file, write_trust, reserved_plugins_directory
 from msg.bootstrap import bootstrap,seed_resource
 from msg.plugins.common import new_id
 from msg.plugins.identity import certificate_resource
@@ -48,6 +49,7 @@ async def _provision(app,pin):
     root=Ed25519Signer.generate()
     envelope=seal_private_key(root.private_bytes(),pin)
     settings.config_dir.mkdir(parents=True,exist_ok=True)
+    reserved_plugins_directory(settings.config_dir,create=True)
     durable_write(marker,b'1\n',mode=0o600)
     protected.mkdir(mode=0o700,parents=True,exist_ok=True)
     os.chmod(protected,0o700)
@@ -95,8 +97,8 @@ async def _provision(app,pin):
         tx.set_setting('active_root_certificate',root_certificate.resource_id)
         tx.set_setting('online_ca_request',csr.resource_id)
         tx.set_setting('receipt_public_key',{'key_id':receipt.key_id,'public_key':b64(receipt.public_key)})
-    durable_write(settings.trust_file,canonical({'version':1,'public_key':b64(root.public_key),
-                                               'certificate':wire(root_certificate)}),mode=0o444)
+    write_trust(settings.config_dir,{'version':1,'public_key':b64(root.public_key),
+                'certificate':wire(root_certificate)},writer=durable_write)
     marker.unlink()
     await app.load()
     return csr.resource_id,root
@@ -262,29 +264,78 @@ class RootAdmin:
         return asyncio.run(_revoke(app,certificate_id,Ed25519Signer.from_bytes(private),reason=reason,operator=operator))
 
 
+    def sign_recovery_proof(self,source_backup_sha256,sequence,destination):
+        require_local_console(self.config_dir)
+        from msg.admin.recovery_proof import open_for_proof, draft, seal
+        from msg.admin.backup_retirement import write_record
+        from msg.security.root_files import read_private
+        app=asyncio.run(open_for_proof(self.config_dir))
+        try:
+            body=asyncio.run(draft(app,public_key=app.certificates.root_public_key,
+                source_backup_sha256=source_backup_sha256,sequence=sequence))
+            fingerprint=digest(body)
+            print(canonical({'service':body['service'],'sequence':sequence,
+                'source_backup_sha256':source_backup_sha256,'state_digest':fingerprint,
+                'tables':len(body['metadata']['tables']),'expires_at':body['expires_at']}).decode())
+            require(input('Type SIGN COMPLETE RECOVERY '+fingerprint+': ')==
+                    'SIGN COMPLETE RECOVERY '+fingerprint,'approval_cancelled')
+            envelope=loads(read_private(root_envelope(self.config_dir)))
+            signer=Ed25519Signer.from_bytes(open_private_key(envelope,getpass.getpass('Root PIN/passphrase: ')))
+            packet=asyncio.run(seal(app,body,signer))
+            write_record(Path(destination),packet)
+            return {'status':'complete_recovery_state_signed','digest':fingerprint,
+                    'independent_pin_required':True,'path':str(destination)}
+        finally:
+            asyncio.run(app.close())
+
+    def promote_recovery(self,source,independent_trust):
+        operator=require_local_console(self.config_dir)
+        from msg.admin.recovery_proof import open_for_proof, verify_proof, promote, IndependentRecoveryPin
+        from msg.security.root_files import read_private
+        packet=loads(read_private(source,limit=64*1024*1024))
+        trust=loads(read_private(independent_trust,limit=65536))
+        require(type(trust) is dict and set(trust)=={
+            'service','public_key','digest','sequence','source_backup_sha256'},'recovery_independent_pin_required')
+        pin=IndependentRecoveryPin(**dict(trust,public_key=unb64(trust['public_key'],limit=32)))
+        app=asyncio.run(open_for_proof(self.config_dir))
+        try:
+            body=verify_proof(packet,pin,app.clock())
+            print(canonical({'service':pin.service,'state_digest':pin.digest,'sequence':pin.sequence,
+                'source_backup_sha256':pin.source_backup_sha256,'tables':len(body['metadata']['tables']),
+                'effect':'release verified complete recovery; restart all runtimes'}).decode())
+            require(input('Type PROMOTE COMPLETE RECOVERY '+pin.digest+': ')==
+                    'PROMOTE COMPLETE RECOVERY '+pin.digest,'approval_cancelled')
+            envelope=loads(read_private(root_envelope(self.config_dir)))
+            signer=Ed25519Signer.from_bytes(open_private_key(envelope,getpass.getpass('Root PIN/passphrase: ')))
+            return asyncio.run(promote(app,packet,pin=pin,signer=signer,operator=operator))
+        finally:
+            asyncio.run(app.close())
+
     def sign_backup_retirement(self,source,destination):
         """Root-sign an operator's statement that listed backup sets lost one old key."""
         require_local_console(self.config_dir)
-        from msg.admin.backup_retirement import unsigned_statement
+        from msg.admin.backup_retirement import read_statement, unsigned_statement, write_record
         from msg.security.backup_retirement import sign_record
         target=Path(destination)
         require(not target.exists() and not target.is_symlink(),'backup_retirement_destination_exists')
-        body=unsigned_statement(loads(Path(source).read_bytes()))
+        body=unsigned_statement(read_statement(source))
         print(canonical({'statement':body,'digest':digest(body),
                          'claim':'listed_backup_sets_only'}).decode())
         require(input('Type ATTEST BACKUP RETIREMENT '+digest(body)+': ')==
                 'ATTEST BACKUP RETIREMENT '+digest(body),'approval_cancelled')
-        private=open_private_key(loads(root_envelope(self.config_dir).read_bytes()),getpass.getpass('Root PIN/passphrase: '))
+        from msg.security.root_files import read_private
+        envelope=loads(read_private(root_envelope(self.config_dir)))
+        private=open_private_key(envelope,getpass.getpass('Root PIN/passphrase: '))
         record=sign_record(body,Ed25519Signer.from_bytes(private))
-        durable_write(target,canonical(record),mode=0o600)
+        write_record(target,record)
         return {'status':'backup_retirement_signed','path':str(target),'digest':digest(record)}
 
     def import_backup_retirement(self,source):
         """Only this console path persists a record; reads re-verify it every time."""
         operator=require_local_console(self.config_dir)
-        from msg.admin.backup_retirement import import_record
+        from msg.admin.backup_retirement import import_record, read_statement
         app=self._app()
-        record=loads(Path(source).read_bytes())
+        record=read_statement(source)
         print(canonical({'record':record,'digest':digest(record)}).decode())
         require(input('Type IMPORT BACKUP RETIREMENT '+digest(record)+': ')==
                 'IMPORT BACKUP RETIREMENT '+digest(record),'approval_cancelled')
@@ -304,7 +355,7 @@ class RootAdmin:
         target=Path(destination)
         require(not target.exists() and not target.is_symlink(),'backup_destination_exists')
         envelope=loads(root_envelope(self.config_dir).read_bytes())
-        trust=loads((self.config_dir/'trust'/'root.json').read_bytes())
+        trust=loads(trust_file(self.config_dir).read_bytes())
         require(input('Type BACKUP ROOT to continue: ')=='BACKUP ROOT','approval_cancelled')
         private=open_private_key(envelope,getpass.getpass('Root PIN/passphrase: '))
         require(b64(Ed25519Signer.from_bytes(private).public_key)==trust['public_key'],'root_key_mismatch')
@@ -318,7 +369,7 @@ class RootAdmin:
         require(not target.exists(),'root_material_already_present')
         backup=loads(Path(source).read_bytes())
         require(set(backup)=={'format','envelope','trust'} and backup['format']=='msg-root-backup-v1','invalid_root_backup')
-        current=loads((self.config_dir/'trust'/'root.json').read_bytes())
+        current=loads(trust_file(self.config_dir).read_bytes())
         require(canonical(current)==canonical(backup['trust']),'trust_anchor_mismatch')
         print(canonical({'fingerprint':digest(unb64(current['public_key'])),'action':'recover_missing_encrypted_root_key'}).decode())
         require(input('Type RECOVER ROOT to continue: ')=='RECOVER ROOT','approval_cancelled')

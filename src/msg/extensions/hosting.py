@@ -12,7 +12,7 @@ from msg.core.codec import canonical,decode,loads,wire,digest
 from msg.core.errors import Failure,require
 from msg.core.models import HandlerOutput,ResourceRef
 from msg.core.requests import request_for
-from msg.plugins.common import check_access,create_resource,revise_resource,resolve,output_for,assert_generation,new_id
+from msg.plugins.common import check_access,create_resource,revise_resource,resolve,resolve_read,output_for,assert_generation,new_id
 from msg.plugins.schemas import obj,STRING,IDENTIFIER,REF
 
 MAX_HOSTING_ENTRIES=128
@@ -163,8 +163,9 @@ async def serve_hosted(service,request):
         async with service.metadata.transaction(write=False) as tx:
             from msg.security.quarantine import require_live_authority
             require_live_authority(tx)
+            service.runtime_generation.require_current(tx)
             try:
-                rid=await tx.resolve(site_path)
+                rid=await resolve_read(tx,site_path)
             except Failure as exc:
                 if exc.code!='not_found':raise
                 rid=None
@@ -226,6 +227,13 @@ async def serve_hosted(service,request):
             ref=decode(ResourceRef,item)
             await check_access(service,context,packet,tx,ref.id,'read')
             blob=(await tx.revision(ref)).content
+            canonical_site=await tx.path(rid)
+            if canonical_site!=site_path:
+                # Keep the original file/revision/preview suffix. All current
+                # website and leaf authority has passed before exposing a path.
+                suffix=request.url.path[len(site_path):]
+                return Response(status_code=308,headers={**HOSTED_HEADERS,
+                    'Location':quote(canonical_site+suffix,safe='/@&')})
         etag='"'+blob.digest+'"'
         headers={**HOSTED_HEADERS,'ETag':etag,'Accept-Ranges':'bytes'}
         media=blob.media_type.split(';',1)[0].strip().lower()
@@ -249,6 +257,8 @@ def hosting_app(service):
     async def dispatch(request):
         try:
             service.require_ready()
+            async with service.metadata.transaction(write=False) as tx:
+                service.runtime_generation.require_current(tx)
         except Failure as exc:
             return hosted_error(exc.code)
         expected=urlsplit(service.settings.service_url)

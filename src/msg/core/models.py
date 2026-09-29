@@ -261,6 +261,8 @@ class OperationError:
     retryable: bool
     field_path: str | None = None
     retry_after_seconds: int | None = None
+    # Omit absent historical messages to preserve canonical receipt bytes.
+    message: str | None = field(default=None, metadata={'omit_if_none': True})
 
 
 class OperationFailure(Exception):
@@ -354,6 +356,9 @@ class OperationSpec:
         [ExecutionContext, OperationRequest, MetadataSession],
         Awaitable[HandlerOutput]
     ]
+    requires_rules: tuple[str, ...] = ('msg.protocol',)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TransportLimits:
     max_request_bytes: int
@@ -471,6 +476,7 @@ class PluginManifest:
     capabilities: tuple[CapabilitySpec, ...]
     operations: tuple[OperationSpec, ...]
     migrations: tuple[str, ...]
+    feature_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -480,6 +486,7 @@ class BootstrapManifest:
     resources: tuple[JsonMap, ...]  # 经固定 seed schema 校验
     organizations: tuple[JsonMap, ...]
     templates: tuple[BlobRef, ...]
+    features: tuple[JsonMap, ...] = ()
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

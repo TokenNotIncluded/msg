@@ -86,7 +86,10 @@ async def test_tui_real_pg_read_and_revocation_no_business_effect(installed, tmp
                            ('resources', 'revisions', 'messages', 'events', 'reactions'))
         await ui.home()
         await ui.read(rid)
+        output.seek(0)
+        output.truncate(0)
         await ui.search('/main', 'TUI public')
+        assert 'TUI public text' in output.getvalue()
         await ui.thread(rid)
         async with app.metadata.transaction(write=False) as tx:
             after = tuple(tx.one(f'SELECT COUNT(*) FROM {table}')[0] for table in

@@ -9,12 +9,13 @@ from msg.core.models import Event, Signature
 from msg.core.requests import signing_bytes
 from msg.market.policy import contract, delivery_snapshot
 from msg.plugins.common import new_id
-from msg.plugins.money import CURRENCY_ID, _balance, _post_transfer
+from msg.market.ledger import CURRENCY_ID, balance as _balance
+# Preserve the failure-injection seam while using the shared protected release.
+from msg.market.ledger import post_escrow_release as _post_transfer
+from msg.market.ledger import _ESCROW_WRITE  # Compatibility identity; only ledger uses it.
 from msg.security.crypto import verify
 
-# Not a credential, account or public capability. Only trusted in-process market
-# code can reach this token; ordinary signed money.transfer never receives it.
-_ESCROW_WRITE = object()
+
 TRANSITIONS = {
     'created': {'funded', 'cancelled'},
     'funded': {'delivered', 'refunded', 'disputed'},
@@ -34,18 +35,24 @@ def _post_escrow_transfer(tx, *, order, recipient, amount, actor, request_id, no
     Legacy signed decisions and versioned arbitration keep their distinct
     journals, signatures and request IDs, but share this account boundary.
     """
-    account = tx.one('SELECT kind,subject_id,source_id FROM ledger_accounts WHERE id=?',
-                     (order['escrow_subject'],))
-    require(account == ('order_escrow', None, order['id']), 'escrow_account_mismatch')
-    require(recipient in {order['buyer'], order['seller']}, 'escrow_recipient_mismatch')
-    return _post_transfer(tx, sender=order['escrow_subject'], recipient=recipient,
-        amount=amount, actor=actor, request_id=request_id, now=now,
-        receipt_signer=receipt_signer, reference=reference, kind=kind,
-        escrow_authority=_ESCROW_WRITE)
+    return _post_transfer(tx, escrow_account=order['escrow_subject'],
+        source_id=order['id'], account_kind='order_escrow', buyer=order['buyer'],
+        seller=order['seller'], recipient=recipient, amount=amount, actor=actor,
+        request_id=request_id, now=now, receipt_signer=receipt_signer,
+        reference=reference, kind=kind)
 
 
 async def transition(tx, order, state, *, now, actor, request_id, reason):
-    require(state in TRANSITIONS.get(order['state'], ()), 'order_transition_invalid')
+    from msg.market.order_resources import _active
+    raw = tx.one('SELECT body FROM order_contracts WHERE order_id=?', (order['id'],))
+    if raw and loads(raw[0]).get('resource_model') == 1:
+        require(order['id'] in _active(tx), 'order_resource_write_forbidden')
+    if order['state'] == 'funded' and state == 'settled':
+        locked = contract(tx, order['id'])
+        require(locked['version'] == 5 and reason == 'deterministic_entitlement',
+                'order_transition_invalid')
+    else:
+        require(state in TRANSITIONS.get(order['state'], ()), 'order_transition_invalid')
     changed = tx.execute('UPDATE store_orders SET state=? WHERE id=? AND state=?',
                          (state, order['id'], order['state']), write=True)
     require(changed.rowcount == 1, 'order_transition_conflict')
@@ -62,13 +69,15 @@ async def transition(tx, order, state, *, now, actor, request_id, reason):
 
 
 async def settle(app, tx, order, *, now, actor, request_id, reason,
-                 refund_minor=0, decision=None):
+                 refund_minor=0, decision=None, fulfill=None):
     """Validate authority *before* appending either leg of a balanced settlement.
 
     Caller owns the transaction. Any failure rolls back both legs, the decision
     consumption, transitions, receipts, events and request result together.
     """
-    contract(tx, order['id'])
+    locked = contract(tx, order['id'])
+    require(not (locked['version'] == 4 and reason == 'managed_instant_verified'),
+            'escrow_release_forbidden')
     require(tx.one('SELECT 1 FROM order_escrow_decisions WHERE order_id=?', (order['id'],)) is None,
             'order_already_settled')
     total = order['total_price_minor']
@@ -81,7 +90,11 @@ async def settle(app, tx, order, *, now, actor, request_id, reason,
                 body['decision_id'] == (decision['id'] if decision else None),
                 'order_already_settled')
         return body['receipts']
-    if decision is not None:
+    if locked['version'] == 5:
+        require(decision is None and refund_minor == 0 and order['state'] == 'funded' and
+                actor == order['buyer'] and reason == 'deterministic_entitlement' and callable(fulfill),
+                'escrow_release_forbidden')
+    elif decision is not None:
         from msg.market.arbitration import validate_decision
         await validate_decision(app, tx, order, decision, now)
         require(refund_minor == decision['refund_minor'], 'decision_amount_mismatch')
@@ -89,6 +102,8 @@ async def settle(app, tx, order, *, now, actor, request_id, reason,
         require(reason in OBJECTIVE_REFUNDS and order['state'] in {'funded', 'delivered'},
                 'escrow_release_forbidden')
     else:
+        if locked['version'] == 4:
+            require(reason == 'buyer_acceptance' and actor == order['buyer'], 'escrow_release_forbidden')
         require(refund_minor == 0 and order['state'] == 'accepted' and
                 reason in {'buyer_acceptance', 'managed_instant_verified'},
                 'escrow_release_forbidden')
@@ -104,6 +119,9 @@ async def settle(app, tx, order, *, now, actor, request_id, reason,
                 request_id=f'{order["id"]}:{suffix}', now=now,
                 receipt_signer=app.receipt_signer, reference=f'order_{suffix}:{order["id"]}',
                 kind=kind))
+    entitlement_id = None
+    if locked['version'] == 5:
+        entitlement_id = fulfill(receipts[0]['body']['transaction_id'])
     final = 'refunded' if refund_minor == total else 'settled'
     await transition(tx, order, final, now=now, actor=actor, request_id=request_id, reason=reason)
     refs = order['receipt_refs'] + [r['body']['transaction_id'] for r in receipts]
@@ -116,6 +134,8 @@ async def settle(app, tx, order, *, now, actor, request_id, reason,
                  'order_facts': {name: order[name] for name in ('payment_transaction_id',
                      'payment_intent_digest', 'funded_at', 'delivered_at')},
                  'delivery_snapshot': delivery_snapshot(tx, order['id'])}
+    if locked['version'] == 5:
+        statement['entitlement_id'] = entitlement_id
     tx.execute('INSERT INTO order_settlements(order_id,decision_id,body) VALUES (?,?,?)',
         (order['id'], statement['decision_id'], canonical(statement).decode()), write=True)
     if decision:
@@ -132,31 +152,35 @@ async def resolve_due(app, *, limit=100):
     services/manual ciphertext refund; subjective complaints and expired panels
     remain held. This function has no external side effect.
     """
-    from msg.plugins.orders import _row
+    from msg.market.order_records import read_order as _row
     now = app.clock()
     changed = []
     async with app.metadata.transaction(write=True) as tx:
+        app.runtime_generation.require_current(tx)
         rows = tx.rows('''SELECT o.id,o.buyer FROM store_orders o
             JOIN order_deadlines d ON d.order_id=o.id
             WHERE o.state IN ('created','funded') AND d.expires_at<=?
             ORDER BY d.expires_at,o.id LIMIT ?''', (wire(now),limit))
         for order_id, buyer in rows:
-            order = _row(tx, order_id, buyer)
-            terms = contract(tx, order_id)
-            policy = terms['policy']['policy']
-            origin, seconds = ((order['created_at'], policy['funding_timeout_seconds'])
-                if order['state'] == 'created' else
-                (order['funded_at'], policy['delivery_timeout_seconds']))
-            if now < parse_time(origin) + timedelta(seconds=seconds):
-                continue
-            if order['state'] == 'created':
-                await transition(tx, order, 'cancelled', now=now, actor=buyer,
-                                 request_id='timeout:'+order_id, reason='funding_timeout')
-            else:
-                await settle(app, tx, order, now=now, actor=buyer,
-                    request_id='timeout:'+order_id, reason='delivery_timeout',
-                    refund_minor=order['total_price_minor'])
-            changed.append(order_id)
+            from msg.market.order_resources import internal_mutation
+            async with internal_mutation(app, tx, order_id, now=now, actor=buyer,
+                                         request_id='timeout:' + order_id):
+                order = _row(tx, order_id, buyer)
+                terms = contract(tx, order_id)
+                policy = terms['policy']['policy']
+                origin, seconds = ((order['created_at'], policy['funding_timeout_seconds'])
+                    if order['state'] == 'created' else
+                    (order['funded_at'], policy['delivery_timeout_seconds']))
+                if now < parse_time(origin) + timedelta(seconds=seconds):
+                    continue
+                if order['state'] == 'created':
+                    await transition(tx, order, 'cancelled', now=now, actor=buyer,
+                                     request_id='timeout:'+order_id, reason='funding_timeout')
+                else:
+                    await settle(app, tx, order, now=now, actor=buyer,
+                        request_id='timeout:'+order_id, reason='delivery_timeout',
+                        refund_minor=order['total_price_minor'])
+                changed.append(order_id)
     return changed
 
 
@@ -200,8 +224,8 @@ class EscrowEngine:
 
     async def settle(self, ctx, request, tx, *, reason, order_id=None):
         # Import handlers' read-only projections, never their write entry points.
-        from msg.plugins.delivery import _delivery, _verified_delivery
-        from msg.plugins.orders import _row, _subject
+        from msg.market.managed_delivery import read_delivery as _delivery, verify_managed_delivery as _verified_delivery
+        from msg.market.order_records import read_order as _row, require_signed_subject as _subject
         buyer=_subject(ctx)
         require(order_id is None or reason == 'checkout_accept', 'escrow_decision_mismatch')
         order=_row(tx,order_id or request.arguments['order_id'],buyer)

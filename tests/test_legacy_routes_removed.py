@@ -113,6 +113,9 @@ async def test_public_views_require_read_effects(installed, monkeypatch):
         ('/latest/post', 'discovery.list'),
         ('/main', 'discovery.get'),
         ('/_id/missing/raw', 'discovery.raw'),
+        ('/missing/raw', 'discovery.raw'),
+        ('/_id/missing/json', 'discovery.get'),
+        ('/missing.md', 'discovery.get'),
         ('/@missing/repo.git/info/refs?service=git-upload-pack', 'git.refs'),
     )
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),

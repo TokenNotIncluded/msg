@@ -26,7 +26,7 @@ Refs #64, #65, #68, #69, #70, #84, #85；接续 #112，不关闭现场验收项�
 在线清除、身份切换、历史恢复和备份退役依然分别报告。没有独立备份材料时
 `backup_retired` 和 `server_key_retired` 不变为 true。
 
-## #69：独立精确检查点下的 deny-only 重放
+## #69：独立精确检查点下的部分当前权限协调
 
 `TrustedCheckpointPin` 必须由受信任的本机调用方通过独立认证渠道取得：服务、公开验签钥、
 完整检查点摘要、单调序号四项均必填。不能从待恢复数据库、其备份、可一起回滚的审计链或待验证 packet
@@ -39,7 +39,7 @@ Refs #64, #65, #68, #69, #70, #84, #85；接续 #112，不关闭现场验收项�
 同序号内容变化会被精确 pin 拒绝；跨水位的已重放前缀不一致会拒绝。
 
 支持 credential、certificate、ShareGrant v1/v2、ShareLink 撤销，普通 Membership 与 TopicMembership 移除，
-IdentityKey/EncryptionSubkey 退役，以及指定账号在线 vault 销毁。只收缩现存权限：不新增身份、授权、
+IdentityKey/EncryptionSubkey 退役，以及指定账号在线 vault 销毁。 `topic_ban.apply` 同时将旧快照里的话题成员降为 member/removed，与正常禁言一致；后续 `topic_ban.lift` 不恢复旧成员资格或 admin 角色。显式 lift 会解除封禁，因此不能把整份日志称为只收缩权限；它不新增身份、授权、
 密钥、财务交易、外发 job 或任何历史正文；证书的原始签署 body 不改。
 `g_public` 是虚拟成员关系，不能通过修改一条 Membership 假装移除，明确拒绝该事实。
 
@@ -49,7 +49,7 @@ IdentityKey/EncryptionSubkey 退役，以及指定账号在线 vault 销毁。�
 公开本机 `replay()` 先调用现有实际 OS 控制台检查；`_replay` 与 `_provision` 一样只是内部用例，
 不注册为 HTTP、SSH、MCP 或公共 CLI 操作。
 
-**边界：这不是 #69 完成或生产提升。** 现有模块仅重放列出的 deny-only 事实。
+**边界：这不是 #69 完成或生产提升。** 现有模块仅重放列出的部分权限事实；显式 `topic_ban.lift` 保留原有解禁语义。
 完整 ACL/TopicBan/授权策略快照协调、独立日志的现场来源与当前性证明、完整不变量验收和受控 promotion
 仍未完成。数据库收据只是一致性防线，不是抗数据库整体回滚的信任根。
 隔离标记始终保留，`promotion=blocked`、`backup_retired=false`；没有把 quarantine 当作“已重放全部当前事实”。
@@ -130,3 +130,74 @@ Application/MetadataStore，不做 DDL、迁移、计数器推进、目录修复
 最终远端 head 必须另外完成现有完整四分片、精确 JUnit node-ID gate、conformance 及 wheel/sdist。
 最终 source SHA、CI run 与实际数量在 PR/issue 的验收评论中记录；未得到最终结果前不声明成功。
 没有部署、生产迁移/恢复、生产 Root/PIN/私钥访问、真实资金或真实邮件/Webhook 外发。
+
+## Typed policy ceiling checkpoint v2 (partial, not promotion)
+
+`msg-revocation-checkpoint-v2` preserves the v1 contract and uses a separate
+`recovery-checkpoint-v2` signature purpose. Its exact independently supplied pin
+is still required. It adds typed `value` payloads:
+
+- `resource.acl.restrict`: `owner`, `group`, `mode`. Owner and group must match
+  the restored resource; the mode becomes its intersection with the supplied mask.
+  Repeated or broader masks never restore removed permission bits. Current resource
+  generation advances when changed; historical Revision bodies remain untouched.
+- `topic.policy.restrict`: `membership_policy`. Existing and supplied policies
+  intersect: open accepts the supplied restriction, closed remains closed, and
+  incompatible approval/invite ceilings become closed. It never reopens a topic.
+- `topic_ban.set`: explicit `expires_at` (UTC or null), bound by the signed fact.
+  The target must be a topic; the existing ban/member-removal replay path is used.
+  Active bans combine conservatively: permanent dominates finite; otherwise the
+  later expiry wins. A shorter expiry never lifts a previously active ban; only
+  an explicit `topic_ban.lift` fact lifts it.
+
+The packet must state `coverage.complete=false` and an exact sorted list of the
+fact domains it contains (`resource_acl`, `topic_policy`, `topic_ban`,
+`revocations`, `certificates`, `resource_authority`). Missing/mismatched coverage or a claim of complete recovery is
+rejected. The packaged schema is `recovery-policy-checkpoint.schema.json`.
+All facts, receipt, authorization epoch and audit commit together. Existing v1
+prefixes can continue into v2; rollback to v1 after a v2 receipt is refused.
+
+This is conservative restriction, not reconstruction of all current authority.
+Full derived-authority reconstruction after owner/group/parent changes, complete
+external log provenance/currentness, exhaustive inventory and controlled promotion
+remain unfinished. Certificates are still revoked through existing facts; their
+signed body is never rewritten to manufacture current grants. Neither coverage
+metadata nor an isolated test establishes external freshness or backup destruction.
+
+### Current certificate fingerprint and staged ownership/parent reconciliation
+
+Two additional typed v2 facts advance reconciliation while `complete=false` and
+persistent quarantine remain mandatory:
+
+- `certificate.current` binds a subject/certificate ID to `value.body_digest`,
+  the canonical digest of its entire currently expected signed Certificate, or
+  null if that certificate has no current authority. A restored body that differs
+  is revoked as a whole; matching already-revoked certificates remain revoked.
+  Grants, constraints, issuance bounds, validity, key and chain/source bindings
+  are all covered by the digest. The original signed body is preserved, never
+  rewritten to invent narrower grants. Missing facts do not mean a complete
+  certificate inventory or authorize untouched certificates.
+- `resource.authority.reconcile` carries exact `previous` and `current`
+  `{owner,group,parent}` maps. The subject binds the previous owner. Current owner
+  and group must exist; parent must exist and remain acyclic. The actual snapshot
+  must match the previous or already-applied current state. A contiguous sequence
+  for one resource is verified and collapsed to its final state, allowing old,
+  intermediate and already-applied snapshots to converge without transiently
+  restoring older ownership. Interleaved ACL/policy facts must bind the exact
+  owner/group state at their signed sequence position; replay applies only their
+  restrictions to the actual old/intermediate/final resource. Unrelated or
+  temporally mismatched bindings, gaps or unexpected states abort the replay.
+
+Ownership/parent changes stage metadata only inside the quarantined instance;
+resource mode (including CERTGATE/SETGID/STICKY) is preserved and historical
+Revision bytes remain unchanged. The receipt names `authority_rebuild_required`
+resources and `derived_authority_inventory_incomplete`. Existing certificates
+and new/old scope-derived permissions are not declared valid or rebuilt by this
+operation: ordinary reads/writes and effect workers remain blocked before and
+after it. There is no promotion path. A full current authority inventory and its
+independently current provenance are still required before any future promotion
+implementation could safely release these staged changes.
+
+新生成 replay 收据统一称为 partial authority/policy reconciliation，阻断原因是
+`supported_fact_inventory_incomplete`。旧签署检查点的格式、purpose、字节和 lift 行为不变；
+lift 解禁后仍全实例隔离，且不恢复已移除的成员资格或 admin 角色。

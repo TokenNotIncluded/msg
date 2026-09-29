@@ -54,7 +54,7 @@ def _db_refs(connection):
     return {'contents':contents, 'revisions':revisions}
 
 
-def _verify_storage(directory, refs, *, settings=None):
+def _verify_storage(directory, refs, *, settings=None, repair_git_layout=True):
     """Verify archived bytes, Git objects and the SQL-referenced content index."""
     content=(settings.server.content_dir if settings is not None else directory/'content')
     blobs=(settings.server.blob_dir if settings is not None else directory/'blobs')
@@ -99,7 +99,10 @@ def _verify_storage(directory, refs, *, settings=None):
         # ZIP stores files only. An empty bare repository still needs these
         # structural directories; recreating them changes no Git object/ref.
         for name in ('objects/info','objects/pack','refs/heads','refs/tags'):
-            (repository/name).mkdir(parents=True,exist_ok=True)
+            if repair_git_layout:
+                (repository/name).mkdir(parents=True,exist_ok=True)
+            else:
+                require((repository/name).is_dir(), 'backup_git_layout_missing')
         process=subprocess.run(['git','--git-dir',str(repository),'fsck','--full','--no-reflogs'],
                                capture_output=True,check=False)
         require(process.returncode==0, 'backup_git_repository_invalid')
@@ -332,8 +335,9 @@ def restore(source,config_dir,data_dir,*,postgres_dsn='service=msgd'):
         shutil.move(str(directory/'service'),settings.service_keys)
         os.chmod(settings.service_keys,0o700)
         settings.trust_file.parent.mkdir(parents=True,exist_ok=True)
-        shutil.move(str(directory/'root-public.json'),settings.trust_file)
-        os.chmod(settings.trust_file,0o444)
+        from msg.security.trust_files import write_trust
+        write_trust(settings.config_dir,loads((directory/'root-public.json').read_bytes()),
+                    writer=durable_write)
         _relink_lfs(data_dir,settings)
         _verify_storage(data_dir,manifest['references'],settings=settings)
     return {'status':'restored','root_admin_material':'restore_separate_encrypted_root_backup_locally',

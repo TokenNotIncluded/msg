@@ -1,5 +1,6 @@
 """ACL-filtered reads and rebuildable discovery projections."""
 from __future__ import annotations
+from collections.abc import Mapping
 import difflib
 import fnmatch
 import re
@@ -11,12 +12,52 @@ from msg.core.codec import canonical,wire,decode,loads,digest,b64
 from msg.core.errors import Failure,require
 from msg.core.models import Resource,ResourceRef,Revision,HandlerOutput,Credential
 from msg.core.tags import normalize_tag
+from msg.core.search_query import search_query_version, spelling_distance
 from msg.core.read_query import (ReadBudget,MAX_READ_DEPTH,NESTED_FIELDS,ROOT_FIELDS,
     expansion_schema,read_query_version)
 from msg.core.requests import request_for
 from msg.core.template_dsl import render_values
 from msg.plugins.common import *
 from msg.plugins.schemas import *
+
+
+def original_casefold_span(text, folded_start, folded_end):
+    """Translate a nonempty casefold match back to whole original characters."""
+    offset = 0
+    start = None
+    for index, char in enumerate(text):
+        offset += len(char.casefold())
+        if start is None and offset > folded_start:
+            start = index
+        if offset >= folded_end:
+            return start, index + 1
+    raise ValueError('casefold match outside source')
+
+
+async def normalize_search_scope(app,ctx,request,tx,scope_spec):
+    if isinstance(scope_spec,Mapping):
+        kind=next(iter(scope_spec))
+        supplied=([ref['id'] for ref in scope_spec['resource_refs']] if kind=='resource_refs'
+                  else [scope_spec[kind]])
+    else:
+        kind=None
+        supplied=[scope_spec]
+    scopes=[]
+    scope_resources=[]
+    for supplied_scope in supplied:
+        scope=await resolve(tx,supplied_scope)
+        scope_resource=await tx.resource(scope)
+        require(kind not in {'subject','org'} or
+                scope_resource.type==('user' if kind=='subject' else 'organization'),
+                'invalid_search_scope')
+        await check_access(app,ctx,request,tx,scope,'list')
+        if scope not in scopes:
+            scopes.append(scope)
+            scope_resources.append(scope_resource)
+    scopes.sort()
+    normalized=({'resource_refs':[{'id':rid} for rid in scopes]} if kind=='resource_refs' else
+                {kind:scopes[0]} if kind else scopes[0])
+    return normalized,scopes,scope_resources
 
 
 async def visible(app,ctx,request,tx,rid):
@@ -216,7 +257,13 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
         else:
             meta['raw_url']=f'/_id/{rid}/revisions/{rev.id}/raw'
             meta['transfer_operation']='transfer.open'
-        meta['relations']=wire(rev.relations,compact=True)
+        if resource.type in {'collab_request', 'collab_offer', 'checkpoint', 'collab_proposal'}:
+            from msg.plugins.collaboration import _visible_refs
+            permitted = set(await _visible_refs(app, ctx, request, tx,
+                                               [r.target.id for r in rev.relations]))
+            meta['relations'] = wire(tuple(r for r in rev.relations if r.target.id in permitted), compact=True)
+        else:
+            meta['relations']=wire(rev.relations,compact=True)
     if resource.type=='post' and (not fields or 'links' in fields):
         active=await tx.revision(ResourceRef(id=rid,revision=revision))
         meta['links']=await basic_links(app,ctx,request,tx,resource,active)
@@ -318,7 +365,7 @@ def install(app):
         'view':{'enum':['json','meta','history']},'known_digest':STRING,'cursor':STRING,'limit':{'type':'integer','minimum':1,'maximum':200}},('id',)),effect='read')
     async def get(ctx,request,tx):
         a=request.arguments
-        rid=await resolve(tx,a['id'])
+        rid=await resolve_read(tx,a['id'])
         resource=await tx.resource(rid)
         if a.get('view') in {'meta','history'}:
             await check_access(app,ctx,request,tx,rid,'read')
@@ -458,34 +505,23 @@ def install(app):
             position,snapshot=app.cursors.decode_page(a['cursor'],request.operation,
                                                        query_args,principal,ctx.now)
         else:
-            position=app.cursors.decode(a['cursor'],'page',query_hash) if a.get('cursor') else (['\uffff','\uffff'] if descending else ['', ''])
+            position=app.cursors.decode(a['cursor'],'page',query_hash) if a.get('cursor') else None
             snapshot=ctx.now
-        filters=['r.state=?']
-        parameters=[a.get('state','active')]
+        from msg.plugins.read_predicates import read_predicates
+        filters,parameters=await read_predicates(app,tx,a,parent)
         if stable:
             filters.append('r.created_at<=?');parameters.append(wire(snapshot))
-        if parent:
-            filters.append('r.parent=?'); parameters.append(parent)
-        if a.get('type'):
-            app.registry.resource_type(a['type'],1)
-            filters.append('r.type=?'); parameters.append(a['type'])
-        if a.get('author'):
-            filters.append('r.owner=?'); parameters.append(await resolve(tx,a['author']))
-        if a.get('query'):
-            text=a['query'].replace('\\','\\\\').replace('%','\\%').replace('_','\\_')
-            filters.append("(r.name LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM projections p WHERE p.resource_id=r.id AND p.text LIKE ? ESCAPE '\\'))")
-            parameters.extend(['%'+text+'%','%'+text+'%'])
-        if a.get('tag'):
-            filters.append('EXISTS (SELECT 1 FROM resource_tags rt WHERE rt.resource_id=r.id AND rt.tag=?)')
-            parameters.append(a['tag'])
         values=[]
         last_position=position
         more=False
         scanned=0
         while len(values)<=limit:
             require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
-            sql=f"SELECT r.body,{column},r.id FROM resources r WHERE {' AND '.join(filters)} AND ({column},r.id){comparison}(?,?) ORDER BY {column} {ordering},r.id {ordering} LIMIT 128"
-            rows=tx.rows(sql,(*parameters,*last_position))
+            # No text value is a universal endpoint under database collations.
+            # Seek only from an actual cursor or the last scanned resource.
+            seek=f" AND ({column},r.id){comparison}(?,?)" if last_position is not None else ''
+            sql=f"SELECT r.body,{column},r.id FROM resources r WHERE {' AND '.join(filters)}{seek} ORDER BY {column} {ordering},r.id {ordering} LIMIT 128"
+            rows=tx.rows(sql,(*parameters,*(last_position if last_position is not None else ())))
             if not rows:
                 break
             for raw,order,rid in rows:
@@ -769,6 +805,23 @@ def install(app):
                        'properties':{**lexical_schema_v3['properties'],
                                      'suggest':BOOLEAN}}
 
+    lexical_schema_v5={**lexical_schema_v4,
+                       'properties':{**lexical_schema_v4['properties'],
+                           'field':{'enum':['all','name','title','body','metadata']},
+                           'scope':{'oneOf':[IDENTIFIER,
+                               obj({'subject':IDENTIFIER},('subject',)),
+                               obj({'org':IDENTIFIER},('org',)),
+                               obj({'resource_refs':{'type':'array','minItems':1,'maxItems':32,
+                                   'uniqueItems':True,'items':obj({'id':IDENTIFIER},('id',))}},
+                                   ('resource_refs',))]},
+                           'revision':IDENTIFIER,'relation_to':IDENTIFIER,'relation_from':IDENTIFIER,
+                           'has_replies':BOOLEAN,'has_references':BOOLEAN,
+                           'spell':BOOLEAN,
+                           'relation_type':{'enum':['reply_to','thread_root','quote','repost',
+                               'attachment','template','reference','state','target','content']},
+                           'source_version':{'type':'integer','minimum':1,'maximum':2147483647}}}
+
+    @op('discovery.lexical_search',lexical_schema_v5,effect='read',version=5)
     @op('discovery.lexical_search',lexical_schema_v1,effect='read')
     @op('discovery.lexical_search',lexical_schema,effect='read',version=2)
     @op('discovery.lexical_search',lexical_schema_v3,effect='read',version=3)
@@ -788,15 +841,14 @@ def install(app):
             a={**saved['arguments'],'cursor':a['cursor']}
         # A cursor or sealed QueryRef carries arguments from an earlier call.
         # Keep those arguments inside the version selected for this call too.
-        require(not (request.contract_version<4 and 'suggest' in a) and
+        require(not (request.contract_version<5 and search_query_version(a)==5) and
+                not (request.contract_version<4 and 'suggest' in a) and
                 not (request.contract_version<3 and
                      {'source_kind','relation_type'}&a.keys()) and
                 not (request.contract_version<2 and 'facets' in a),
                 'cursor_query_mismatch')
         require(a.get('scope') is not None,'search_scope_required')
-        scope=await resolve(tx,a['scope'])
-        await check_access(app,ctx,request,tx,scope,'list')
-        a['scope']=scope
+        a['scope'],scopes,scope_resources=await normalize_search_scope(app,ctx,request,tx,a['scope'])
         if a.get('tag'):
             a['tag']=normalize_tag(a['tag'])
         for field in ('terms','exact','not_terms'):
@@ -808,7 +860,7 @@ def install(app):
                 'search_query_required')
         limit=a.get('limit',50)
         selected=a.get('fields',('id','path','type','name','revision','author','created_at'))
-        require(set(selected)<=set(('id','path','type','name','revision','author',
+        require(set(selected)<=set(('id','path','type','name','title','revision','author',
                                     'owner','created_at','modified_at','score','rank_reason','snippet','links')),
                 'unknown_projection_field')
         require(limit*(len(selected)+2)<=1200,'query_cost_exceeded')
@@ -822,7 +874,6 @@ def install(app):
             position,snapshot=[],ctx.now
         cutoff={key:parse_time(a[key]) for key in ('created_after','created_before',
             'updated_after','updated_before') if key in a}
-        scope_resource=await tx.resource(scope)
         owner=await resolve(tx,a['owner']) if a.get('owner') else None
         author=await resolve(tx,a['author']) if a.get('author') else None
         results=[]
@@ -830,21 +881,33 @@ def install(app):
         # Suggestion counts describe *matched readable resources*, not raw
         # indexed terms. Rebuild on every page so revoked grants disappear.
         suggestions={}
+        spelling_words={}
+        if a.get('spell'):
+            require(1<=len(terms)<=4 and all(2<=len(term)<=32 for term in terms),
+                    'query_cost_exceeded')
         suggest_prefix=terms[-1] if a.get('suggest') and terms else ''
         if a.get('suggest'):
             require(2<=len(suggest_prefix)<=32,'query_cost_exceeded')
         scanned=0
+        relation_scanned=0
+        endpoint_visibility={}
+        async def endpoint_visible(rid):
+            if rid not in endpoint_visibility:
+                endpoint_visibility[rid]=await visible(app,ctx,request,tx,rid)
+            return endpoint_visibility[rid]
         # Restrict the SQL candidate set before applying the work budget. A
         # global LIMIT lets unrelated (or unreadable) rows starve a small scope.
-        owner_scope=scope_resource.type in {'user','organization'}
-        candidates=tx.execute('''WITH RECURSIVE subtree(id,depth) AS (
-                SELECT id,0 FROM resources WHERE id=?
-                UNION ALL
+        owner_scopes=[r.id for r in scope_resources if r.type in {'user','organization'}]
+        scope_params=','.join('?' for _ in scopes)
+        owner_params=','.join('?' for _ in owner_scopes) or 'NULL'
+        candidates=tx.execute(f'''WITH RECURSIVE subtree(id,depth) AS (
+                SELECT id,0 FROM resources WHERE id IN ({scope_params})
+                UNION
                 SELECT r.id,s.depth+1 FROM resources r JOIN subtree s ON r.parent=s.id
                 WHERE s.depth<5
             ) SELECT body FROM resources WHERE created_at<=? AND
-                (id IN (SELECT id FROM subtree) OR (? AND (owner=? OR grp=?)))
-            ORDER BY id''',(scope,wire(snapshot),owner_scope,scope,scope))
+                (id IN (SELECT id FROM subtree) OR owner IN ({owner_params}) OR grp IN ({owner_params}))
+            ORDER BY id''',(*scopes,wire(snapshot),*owner_scopes,*owner_scopes))
         for (raw,) in candidates:
             require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
             resource=decode(Resource,loads(raw))
@@ -852,11 +915,13 @@ def install(app):
                 continue
             chain=await tx.ancestors(resource.id)
             ancestors=[item.id for item in chain]
-            scoped_owner=(scope_resource.type in {'user','organization'} and
-                          (resource.owner==scope or resource.group==scope))
-            if resource.id!=scope and scope not in ancestors and not scoped_owner:
+            scoped_owner=resource.owner in owner_scopes or resource.group in owner_scopes
+            distances=[len(ancestors)-ancestors.index(scope) for scope in scopes if scope in ancestors]
+            if resource.id in scopes or scoped_owner:
+                distances.append(0)
+            if not distances:
                 continue
-            distance=len(ancestors)-ancestors.index(scope) if scope in ancestors else 0
+            distance=min(distances)
             if distance>a.get('depth',5) or (not a.get('recursive',True) and distance>1):
                 continue
             if a.get('type') and resource.type!=a['type']:
@@ -878,18 +943,69 @@ def install(app):
             # These predicates inspect only the current revision of an already
             # readable resource. Historical relations and source metadata must
             # not affect rank, facets or page positions.
+            if a.get('revision') and (revision is None or revision.id!=a['revision']):
+                continue
+            if 'source_version' in a and (revision is None or
+                                          revision.source_version!=a['source_version']):
+                continue
             if a.get('source_kind') and (revision is None or
                                          revision.source_kind!=a['source_kind']):
                 continue
-            if a.get('relation_type') and (revision is None or not any(
+            if request.contract_version>=5:
+                outgoing=[]
+                if {'relation_to','relation_type','has_attachment'}&a.keys():
+                    for relation in revision.relations if revision else ():
+                        relation_scanned+=1
+                        require(relation_scanned<=4096 and time.monotonic()<ctx.deadline_monotonic,
+                                'query_cost_exceeded')
+                        if await endpoint_visible(relation.target.id):
+                            outgoing.append(relation)
+                incoming=[]
+                if {'relation_from','has_replies','has_references'}&a.keys():
+                    rows=tx.rows('''SELECT rel.source_id,rel.type FROM relations rel
+                        JOIN resources r ON r.id=rel.source_id AND r.revision=rel.revision_id
+                        WHERE rel.target_id=? AND r.state='active' AND r.created_at<=?
+                        ORDER BY rel.source_id,rel.type LIMIT 2049''',(resource.id,wire(snapshot)))
+                    for source,kind in rows:
+                        relation_scanned+=1
+                        require(relation_scanned<=4096 and len(rows)<=2048 and
+                                time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+                        if await endpoint_visible(source):
+                            incoming.append((source,kind))
+                kind=a.get('relation_type')
+                if a.get('relation_to') and not any(rel.target.id==a['relation_to'] and
+                        (kind is None or rel.type==kind) for rel in outgoing):
+                    continue
+                if a.get('relation_from') and not any(source==a['relation_from'] and
+                        (kind is None or relkind==kind) for source,relkind in incoming):
+                    continue
+                if kind and not a.get('relation_from') and not any(rel.type==kind for rel in outgoing):
+                    continue
+                if 'has_replies' in a and any(kind=='reply_to' for _,kind in incoming)!=a['has_replies']:
+                    continue
+                if 'has_references' in a and bool(incoming)!=a['has_references']:
+                    continue
+                if 'has_attachment' in a and any(rel.type=='attachment' for rel in outgoing)!=a['has_attachment']:
+                    continue
+            elif a.get('relation_type') and (revision is None or not any(
                     relation.type==a['relation_type'] for relation in revision.relations)):
                 continue
             if author and (revision is None or revision.author!=author):
                 continue
-            if a.get('has_attachment') is not None and bool(revision and any(
+            if request.contract_version<5 and a.get('has_attachment') is not None and bool(revision and any(
                     relation.type=='attachment' for relation in revision.relations))!=a['has_attachment']:
                 continue
             name=resource.name
+            if a.get('spell'):
+                # Explicit spelling hints use the current readable name corpus
+                # before lexical matching. They never rewrite this query.
+                require(len(name)<=256,'query_cost_exceeded')
+                words={word.casefold() for word in re.findall(r'[\w-]+',name)
+                       if 2<=len(word)<=32}
+                for word in words:
+                    if len(word)<=32:
+                        spelling_words[word]=spelling_words.get(word,0)+1
+                require(len(spelling_words)<=512,'query_cost_exceeded')
             body=''
             if a.get('field','all') in {'all','body'} and revision and revision.content.media_type.startswith('text/'):
                 require(revision.content.size<=65536,'query_cost_exceeded')
@@ -897,7 +1013,8 @@ def install(app):
             meta=f'{resource.type} {resource.owner} {resource.group}'
             selected_text={'name':name,'body':body,'metadata':meta}
             field=a.get('field','all')
-            active=selected_text if field=='all' else {field:selected_text[field]}
+            active=(selected_text if field=='all' else {'title':name} if field=='title' else
+                    {field:selected_text[field]})
             lowered={key:value.casefold() for key,value in active.items()}
             whole=' '.join(lowered.values())
             if terms and not (all(term in whole for term in terms) if a.get('mode','all')=='all'
@@ -907,7 +1024,7 @@ def install(app):
                 continue
             if any(term in whole for term in excluded):
                 continue
-            score=sum((5 if key=='name' else 1)*sum(value.count(term) for term in terms)
+            score=sum((5 if key in {'name','title'} else 1)*sum(value.count(term) for term in terms)
                       for key,value in lowered.items())+(3 if exact else 0)
             order=a.get('order','relevance')
             if order=='relevance':
@@ -924,16 +1041,19 @@ def install(app):
                   'revision':resource.revision,'author':revision.author if revision else None,
                   'owner':resource.owner,'created_at':wire(resource.created_at),
                   'modified_at':wire(resource.modified_at),'score':score}
+            if 'title' in selected:
+                item['title']=name
             if a.get('snippet'):
                 for key,value in active.items():
                     low=lowered[key]
                     needle=exact if exact and exact in low else next((term for term in terms if term in low),'')
                     if needle:
-                        start=low.index(needle)
+                        folded_start=low.index(needle)
+                        start,end=original_casefold_span(value,folded_start,folded_start+len(needle))
                         left=max(0,start-40)
-                        right=min(len(value),start+len(needle)+40)
+                        right=min(len(value),end+40)
                         item['snippet']={'field':key,'text':value[left:right],
-                                         'range':[start-left,start-left+len(needle)]}
+                                         'range':[start-left,end-left]}
                         break
             if a.get('explain')=='compact':
                 item['rank_reason']={'matched_fields':[key for key,value in lowered.items()
@@ -978,6 +1098,21 @@ def install(app):
             data['suggestions']=[{'value':word,'count':count}
                                  for word,count in sorted(suggestions.items(),
                                      key=lambda pair:(-pair[1],pair[0]))[:10]]
+        if a.get('spell'):
+            hints=[]
+            for term in dict.fromkeys(terms):
+                maximum=1 if len(term)<=4 else 2
+                matches=[]
+                if term not in spelling_words:
+                    for word,count in spelling_words.items():
+                        require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+                        distance=spelling_distance(term,word,maximum)
+                        if distance<=maximum:
+                            matches.append((distance,-count,word))
+                hints.append({'term':term,'suggestions':[
+                    {'value':word,'distance':distance,'count':-negative_count}
+                    for distance,negative_count,word in sorted(matches)[:5]]})
+            data['spelling']={'source':'name','terms':hints}
         if len(following)>limit:
             cursor=app.cursors.encode_page(request.operation,normalized,page[-1][0],snapshot,
                 principal,ctx.now+timedelta(minutes=15))
@@ -1250,7 +1385,7 @@ def install(app):
     @op('discovery.raw',obj({'id':IDENTIFIER,'revision':IDENTIFIER,'offset':INTEGER,'length':INTEGER},('id',)),effect='read')
     async def raw(ctx,request,tx):
         a=request.arguments
-        rid=await resolve(tx,a['id'])
+        rid=await resolve_read(tx,a['id'])
         await check_access(app,ctx,request,tx,rid,'read')
         resource=await tx.resource(rid)
         require(resource.state!='purged','resource_purged')

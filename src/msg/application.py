@@ -18,7 +18,7 @@ from msg.security.capabilities import primary_ceiling, base_grants, temporary_ce
 from msg.plugins import install_registry
 from msg.security.certificates import CertificateValidator
 from msg.security.crypto import Ed25519Signer
-from msg.security.quarantine import active as quarantine_active
+from msg.security.quarantine import RuntimeGeneration, active as quarantine_active
 from msg.security.token_delivery import TokenDelivery, recovery_verifier
 from msg.storage.git import GitContentStore
 
@@ -39,6 +39,7 @@ class Application:
         self.executor=None
         self.token_delivery=None
         self._loaded=False
+        self.runtime_generation=None
         install_registry(self, settings.server.plugins)
 
     def primary_ceiling(self):
@@ -72,11 +73,17 @@ class Application:
 
     async def load(self):
         require(self.settings.trust_file.is_file(),'root_not_initialized')
+        # Pin before reading runtime files, then recheck with validated authority.
+        await self.open_storage()
+        async with self.metadata.transaction(write=False) as tx:
+            if self.runtime_generation is None:
+                self.runtime_generation=RuntimeGeneration.capture(tx)
+            else:
+                self.runtime_generation.require_current(tx)
         trust=loads(self.settings.trust_file.read_bytes())
         require(set(trust)=={'version','public_key','certificate'} and trust['version']==1,'invalid_trust_anchor')
         root_certificate=decode(Certificate,trust['certificate'])
         root_public=unb64(trust['public_key'],limit=32)
-        await self.open_storage()
         keys=self.settings.service_keys
         required=('online.key','receipt.key','tokens.key')
         require(all((keys/name).is_file() for name in required),'service_keys_missing')
@@ -91,6 +98,8 @@ class Application:
             recovery_window=lambda: self.settings.credential_delivery_recovery_window)
         self.certificates=CertificateValidator(self.registry,root_certificate,root_public,self.settings.service_url,self.clock)
         async with self.metadata.transaction(write=False) as tx:
+            self.runtime_generation.require_current(tx)
+            self.token_delivery.runtime_generation=self.runtime_generation
             quarantined=quarantine_active(tx)
             await self.certificates.validate(root_certificate.resource_id,tx)
             root=await tx.subject(ROOT_SUBJECT)
@@ -104,13 +113,17 @@ class Application:
             async with self.metadata.transaction(write=True) as tx:
                 # Recheck under the writer lock; loading a restore must not
                 # mutate release resources before recovery has been accepted.
+                self.runtime_generation.require_current(tx)
                 if not quarantine_active(tx):
-                    await sync_system_sources(tx,self.contents,self.clock(),namespace_root=self.namespace_root)
+                    await sync_system_sources(tx,self.contents,self.clock(),namespace_root=self.namespace_root,
+                                              registry=self.registry)
                 else:
                     quarantined=True
         self.authenticator=AuthenticationService(self.registry,self.certificates,self.settings.service_url,self.clock,
             self.primary_ceiling,self.temporary_ceiling)
         self.authorizer=AuthorizationService(self.registry,self.certificates)
+        self.authenticator.runtime_generation=self.runtime_generation
+        self.authorizer.runtime_generation=self.runtime_generation
         self.executor=self.new_executor(self.authenticator)
         self.executor.recovery_drill_marker=marker
         self.executor.recovery_quarantined=quarantined
@@ -125,6 +138,7 @@ class Application:
             max_request_bytes=self.settings.server.limits.max_request_bytes,
             result_projection=self._result_projection,
             event_notifications=self._event_notifications)
+        executor.runtime_generation=self.runtime_generation
         executor.response_hook=self.token_delivery.release
         executor.recovery_drill_marker=self.settings.config_dir/'recovery-drill.json'
         if self.executor is not None:
@@ -137,8 +151,12 @@ class Application:
                                      revision=resource.revision,fields=fields)
 
     async def _event_notifications(self, session, event):
+        if 'communication' not in self.settings.server.plugins:
+            return
         from msg.plugins.communication import enqueue_domain_webhooks
         await enqueue_domain_webhooks(self,session,event)
+        from msg.plugins.watches import enqueue
+        await enqueue(self,session,event)
 
     async def online_issuer(self,tx):
         issuer=tx.setting('online_ca_certificate')

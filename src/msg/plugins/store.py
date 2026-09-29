@@ -17,36 +17,6 @@ MAX_REFS = 32
 MAX_MANIFEST_BYTES = 65536
 
 
-def _subject(ctx):
-    subject = ctx.principal.subject
-    require(subject is not None and ctx.principal.actor == subject and
-            ctx.principal.method == 'signature', 'signature_required')
-    return subject
-
-
-async def _listing(app, ctx, request, tx, value, *, seller=False):
-    try:
-        rid = await resolve(tx, value)
-        resource = await tx.resource(rid)
-        require(resource.type == 'listing' and resource.parent == 't_store', 'listing_not_found')
-        await check_access(app, ctx, request, tx, rid, 'read')
-        if seller:
-            require(resource.owner == _subject(ctx), 'listing_not_found')
-        return resource
-    except Failure as exc:
-        if exc.code in {'not_found', 'permission_denied', 'credential_ceiling',
-                        'certificate_gate', 'ancestor_inactive'}:
-            raise Failure('listing_not_found') from None
-        raise
-
-
-async def _body(app, tx, resource, revision=None):
-    rev = await tx.revision(ResourceRef(id=resource.id, revision=revision))
-    body = loads(await app.contents.read_bytes(rev.content))
-    # Listings deposited before the sale/bounty split were all sale listings.
-    return {'mode': 'sale', **body}, rev
-
-
 def _public(resource, body):
     # A package identifier is not a capability; package payloads are seller-only.
     return {'listing_id': resource.id, 'listing_revision': resource.revision,
@@ -74,17 +44,18 @@ def _validate(body, now):
         require(body['package_ref'] is not None, 'package_required')
 
 
-async def _package_row(tx, package_id):
-    return tx.one('''SELECT id,listing_id,listing_revision,seller,revision,kind,manifest,
-        payload_refs,digest,total_size,delivery_mode,deposited_at FROM store_packages WHERE id=?''',
-        (package_id,))
-
-
 def _package_public(row):
     return dict(zip(('id', 'listing_id', 'listing_revision', 'seller', 'revision',
                      'kind', 'manifest', 'payload_refs', 'digest', 'total_size',
                      'delivery_mode', 'deposited_at'),
                     (*row[:6], loads(row[6]), loads(row[7]), *row[8:])))
+
+
+# Compatibility imports; shared implementation has one market owner.
+from msg.market.catalog import read_listing as _listing
+from msg.market.catalog import read_listing_body as _body
+from msg.market.catalog import read_package_record as _package_row
+from msg.market.order_records import require_signed_subject as _subject
 
 
 def install(app):
@@ -164,7 +135,7 @@ def install(app):
         result = _public(resource, body)
         if body['mode'] == 'bounty':
             from msg.plugins.bounty import projection
-            live = projection(tx,resource.id,ctx.now)
+            live = await projection(app,tx,resource.id,ctx.now)
             result['current_state'] = live['state']
             result['pause_reason'] = live['pause_reason']
             result['current_budget_minor'] = live['budget_minor']
@@ -177,6 +148,22 @@ def install(app):
         result['terms_revision'] = rev.id
         return HandlerOutput(resources=(ResourceRef(id=resource.id, revision=rev.id),),
                              data={'listing':result})
+
+    @op('store.listing_get', obj({'id': IDENTIFIER, 'revision': IDENTIFIER,
+        'source': {'enum': ['resource', 'server_offer']}}, ('id',)), effect='read', version=2)
+    async def listing_get_compatible(ctx, request, tx):
+        if request.arguments.get('source', 'resource') == 'resource':
+            return await listing_get(ctx, request, tx)
+        from msg.plugins.offers import _public_offer, _valid_catalog_offer
+        from msg.market.compatibility import offer_listing
+        row = tx.one("""SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
+            max_quantity,entitlement_kind,duration_seconds,price_revision
+            FROM server_offers WHERE offer_id=? AND enabled=TRUE""", (request.arguments['id'],))
+        require(row is not None and _valid_catalog_offer(app, row), 'listing_not_found')
+        from msg.market.offer_resources import verify_projection
+        await verify_projection(app, tx, row)
+        require(request.arguments.get('revision', row[8]) == row[8], 'listing_not_found')
+        return HandlerOutput(data={'listing': offer_listing(_public_offer(row))})
 
     @op('store.package_deposit', obj({'listing_id':IDENTIFIER,
         'listing_revision':IDENTIFIER,

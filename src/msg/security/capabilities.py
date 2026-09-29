@@ -33,7 +33,7 @@ BASE_FAMILIES = {
         'identity.recovery_envelope_list','identity.recovery_custodians',
         'achievement.start', 'achievement.answer', 'achievement.finish',
         'achievement.pin','achievement.unpin','achievement.reorder'),
-    'resource.basic': ('content.',),
+    'resource.basic': ('content.', 'file.'),
     'sharing.basic': ('sharing.',),
     'discussion.basic': ('discussion.',),
     'communication.basic': ('communication.',),
@@ -43,7 +43,7 @@ BASE_FAMILIES = {
     'orders.basic': ('orders.',),
     'delivery.basic': ('delivery.',),
     'discovery.basic': ('discovery.', 'cert.get', 'job.get', 'achievement.list'),
-    'transfer.basic': ('transfer.',),
+    'transfer.basic': ('transfer.', 'query.'),
     'group.basic': ('group.',),
     'cert.request': ('cert.request', 'cert.cancel'),
     'git.basic': ('git.',),
@@ -73,6 +73,7 @@ TEMPORARY_OPERATIONS = frozenset({
     'keystore.get',
     'batch.independent','batch.atomic','job.get',
     'achievement.start','achievement.answer','achievement.finish','achievement.list',
+    'achievement.pin','achievement.unpin','achievement.reorder',
 })
 
 
@@ -129,6 +130,8 @@ def install_capabilities(registry):
     # destination, owner, etc.), rather than inferring it from this directory.
     for key,spec in tuple(registry._types.items()):
         relations=frozenset({'reply_to','thread_root','quote','repost','attachment','template'}) if spec.name=='post' else frozenset()
+        if spec.name in {'collab_request', 'collab_offer', 'checkpoint', 'collab_proposal'}:
+            relations = spec.relations
         registry._types[key]=replace(spec,operations=all_ops,relations=relations)
 
 

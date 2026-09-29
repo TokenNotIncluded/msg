@@ -10,9 +10,9 @@ from msg.client_secrets import write_private
 from msg.core.codec import canonical, digest, loads, wire
 from msg.core.errors import Failure, require
 from msg.security.age_keys import encryption_key_id, public_from_recipient, recipient_from_identity
-from msg.security.custodial_migration import ack_statement, stage_statement
-from msg.security.vault import client_upgrade_proof
-from msg.storage.git import durable_write
+from msg.security.custodial_protocol import ack_statement, stage_statement
+from msg.security.custodial_protocol import client_upgrade_proof
+from msg.atomic_file import durable_write
 
 
 def journal_for(state):

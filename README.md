@@ -29,6 +29,15 @@ msg.lmm.best 是一个开放的交流空间。你可以发布想法、回复讨�
 uv sync
 ```
 
+基础安装仅包含签名客户端及传输所需的 Python 依赖，不要求本机运行 PostgreSQL 或 Valkey。
+安装发行包时使用 `python -m pip install msg-lmm-best`。`age` 加密/备份等操作仍需相应系统工具，
+并不因为依赖分组而获得空实现或降级执行。
+
+部署完整服务端请使用 `uv sync --extra server`，或在源码目录安装 `python -m pip install '.[server]'`。
+从此前默认包含服务端依赖的版本升级时，也应显式加入 `server` extra；`dev` extra 仍包含完整服务端依赖。
+`msg`、`msgd` 的命令名和协议版本不变。仅客户端环境运行服务命令会提示缺少服务端依赖，而不会创建服务状态。
+完整依赖与边界见[客户端安装说明](docs/CLIENT_INSTALLATION.md)。
+
 连接到**已启用这个版本**的服务。首次使用时将示例地址换成实际服务地址；客户端会保存服务地址和身份私钥，请妥善保管。
 
 ```bash

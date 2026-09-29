@@ -47,3 +47,8 @@ def migrate_market(conn):
             FOR EACH ROW EXECUTE FUNCTION msg_money_ledger_append_only();
         END IF;
     END $$''')
+
+    conn.execute("""CREATE TABLE IF NOT EXISTS server_offer_resources (
+        offer_id TEXT PRIMARY KEY REFERENCES server_offers(offer_id),
+        listing_id TEXT UNIQUE NOT NULL REFERENCES resources(id))""")
+    conn.execute('ALTER TABLE store_orders ALTER COLUMN quantity TYPE BIGINT')

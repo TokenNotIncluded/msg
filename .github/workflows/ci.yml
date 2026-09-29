@@ -1,6 +1,7 @@
 name: Rewrite contracts
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 permissions:
@@ -18,7 +19,7 @@ jobs:
         shard: [0, 1, 2, 3]
     services:
       postgres:
-        # Ubuntu runner provides pg_dump 16; its client must not be older than the server.
+        # Recovery jobs explicitly install matching PostgreSQL 16 client tools.
         image: postgres:16
         env:
           POSTGRES_USER: msgtest
@@ -60,12 +61,17 @@ jobs:
       - name: Install required recovery and ingress test tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age nginx openssl git-lfs
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq postgresql-client-16 age nginx openssl git-lfs bubblewrap apparmor-profiles
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
           age --version
           nginx -v
           openssl version
+          bwrap --version
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
       - name: Install the complete dependency set
         run: python -m pip install -e '.[dev]'
+      - name: Check real tool isolation before running shards
+        run: python scripts/check_tool_sandbox.py
       - name: Compile all new modules
         run: python -m compileall -q src
       - name: Run core, business and security tests

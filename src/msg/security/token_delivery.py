@@ -37,6 +37,8 @@ class TokenDelivery:
         self._token_secret=token_secret
         self.clock=clock
         self.recovery_window=recovery_window
+        from msg.security.quarantine import RuntimeGeneration
+        self.runtime_generation=RuntimeGeneration()
 
     def issued_token(self,request,subject):
         # Nonces are high-entropy claims, not random tokens persisted in results.
@@ -73,6 +75,7 @@ class TokenDelivery:
                 'credential_delivery_upgrade_required')
         token=self.issued_token(request,result.subject)
         async with self.metadata.transaction(write=True) as tx:
+            self.runtime_generation.require_current(tx)
             credential=await tx.credential(result.data['credential_id'])
             require(credential.revoked_at is None and credential.expires_at>self.clock(),'credential_expired')
             require(hmac.compare_digest(credential.verifier,hashlib.sha256(token).digest()),'invalid_token_result')

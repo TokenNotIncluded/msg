@@ -65,13 +65,16 @@ class ReadOnlyStore:
             return await callback(session)
 
 
-def feature_results(features, observations, field):
+def feature_results(features, observations, field, *, enabled_plugins=None):
     """Link manifest entries to checks actually run; never synthesize a pass."""
+    from msg.plugins.features import FEATURE_SOURCES
     result={}
     for feature in features:
         feature_id=feature['feature_id']
         name=feature[field]
-        if not feature['enabled_by_default']:
+        if (not feature['enabled_by_default'] or
+                (enabled_plugins is not None and
+                 FEATURE_SOURCES[feature_id][0] not in enabled_plugins)):
             result[feature_id]={'status':'disabled','check':name}
         elif name is None:
             result[feature_id]={'status':'skip','check':None}
@@ -222,7 +225,27 @@ async def _doctor(config_dir,clock):
                 allow_overdraft=settings.money.allow_overdraft)
     except (Failure,ValueError,KeyError,OSError) as exc:
         failed('configuration',getattr(exc,'code','invalid_configuration'))
-        return {'ok':False,'root_id':ROOT_SUBJECT,'checks':checks}
+        from msg.admin.config_check import configuration_doctor
+        return {'ok':False,'root_id':ROOT_SUBJECT,'checks':checks,
+                'configuration_fields':configuration_doctor(checks)}
+    # This read-only phase checks installed contracts; real behavior belongs to
+    # the separate isolated selftest vectors below.
+    for feature,owner,operations in (
+        ('content_editing','file',('file.create','file.patch','file.read')),
+        ('private_dm','communication',('communication.dm_request','communication.dm_accept',
+                                       'communication.dm_send','communication.dm_list')),
+        ('transfer','transfer',('transfer.open','transfer.part_put','transfer.part_get',
+                                'transfer.status','transfer.seal'))):
+        if owner not in app.registry._plugins:
+            checks[feature]={'ok':True,'status':'disabled'}
+            continue
+        try:
+            for name in operations:
+                operation=app.registry.operation(name)
+                app.registry.schema(operation.input_schema)
+                app.registry.schema(operation.output_schema)
+            success(feature,scope='registered_contracts',operations=list(operations))
+        except Failure as exc:failed(feature,exc.code)
     if sys.version_info[:2]>=(3,15):success('python',version='.'.join(map(str,sys.version_info[:3])))
     else:failed('python','python_315_required',actual='.'.join(map(str,sys.version_info[:3])))
     missing=[name for name in ('cryptography','starlette','uvicorn','httpx','jsonschema','aiohttp','dns','graphql','psycopg','valkey') if find_spec(name) is None]
@@ -230,8 +253,13 @@ async def _doctor(config_dir,clock):
     else:failed('dependencies','dependency_unavailable',missing=missing)
     if shutil.which('git'):success('git')
     else:failed('git','git_missing')
-    if not shutil.which('bwrap'):
-        warnings.append({'code':'tool_isolation_unavailable','effect':'network_tool_jobs_fail_closed'})
+    if 'extensions' in settings.server.plugins:
+        from msg.admin.tool_check import inspect_tool_sandbox
+        try:success('tool_sandbox',**await inspect_tool_sandbox(app))
+        except (Failure,OSError) as exc:
+            failed('tool_sandbox',getattr(exc,'code','tool_isolation_failed'))
+    else:
+        checks['tool_sandbox']={'ok':True,'status':'disabled'}
     try:
         trust=loads(settings.trust_file.read_bytes())
         root=decode(Certificate,trust['certificate'])
@@ -253,8 +281,10 @@ async def _doctor(config_dir,clock):
             else:
                 checks['market']={'ok':True,'status':'disabled'}
             try:
-                from msg.admin.market_check import inspect_clearing
-                success('market_clearing',**inspect_clearing(app,tx))
+                from msg.admin.market_check import inspect_bounty_contracts, inspect_clearing
+                clearing = inspect_clearing(app,tx)
+                await inspect_bounty_contracts(app,tx)
+                success('market_clearing',**clearing)
             except (Failure,OSError,ValueError,KeyError,psycopg.Error) as exc:
                 failed('market_clearing',getattr(exc,'code','market_inspection_failed'))
             try:
@@ -270,6 +300,14 @@ async def _doctor(config_dir,clock):
                 success('credential_delivery',recovery_window_seconds=settings.credential_delivery_recovery_window,
                         release='once',secret_url=False,versions=SECRET_DELIVERY_MIN_VERSION)
             except Failure as exc:failed('credential_delivery',exc.code)
+            if 'achievements' in settings.server.plugins:
+                try:
+                    from msg.admin.honor_check import inspect_honors
+                    success('honors', **await inspect_honors(app,tx))
+                except (Failure,OSError,ValueError,KeyError,psycopg.Error) as exc:
+                    failed('honors',getattr(exc,'code','honor_inspection_failed'))
+            else:
+                checks['honors']={'ok':True,'status':'disabled'}
             if 'communication' in settings.server.plugins:
                 try:
                     spec=app.registry.operation('communication.following')
@@ -279,8 +317,19 @@ async def _doctor(config_dir,clock):
                     require({'subject','resource'}<=columns,'following_schema_missing')
                     success('following',default='empty',read_only=True,max_page_size=100)
                 except Failure as exc:failed('following',exc.code)
+                try:
+                    for kind in ('request','offer','checkpoint','proposal'):
+                        require(app.registry.operation('communication.'+kind+'_create').effect=='transaction',
+                                'collaboration_contract_invalid')
+                        require(app.registry.operation('communication.'+kind+'_get').effect=='read' and
+                                app.registry.operation('communication.'+kind+'_list').effect=='read',
+                                'collaboration_contract_invalid')
+                    success('collaboration',default='empty',storage='resource_revision',
+                            kinds=['request','offer','checkpoint','proposal'])
+                except Failure as exc:failed('collaboration',exc.code)
             else:
                 checks['following']={'ok':True,'status':'disabled'}
+                checks['collaboration']={'ok':True,'status':'disabled'}
             try:
                 await validator.validate(root.resource_id,tx)
                 require((await tx.subject(ROOT_SUBJECT)).local_only,'root_policy_corrupt')
@@ -373,10 +422,13 @@ async def _doctor(config_dir,clock):
             continue
         try:success(name,**inspect_feature(app))
         except Failure as exc:failed(name,exc.code)
-    features=feature_results(feature_manifest(),checks,'doctor_check')
+    from msg.admin.config_check import configuration_doctor
+    features=feature_results(feature_manifest(),checks,'doctor_check',
+                             enabled_plugins=tuple(app.registry._plugins))
     return {'ok':all(c['ok'] for c in checks.values()) and
             all(row['status']!='fail' for row in features.values()),
-            'root_id':ROOT_SUBJECT,'checks':checks,'features':features,'warnings':warnings}
+            'root_id':ROOT_SUBJECT,'checks':checks,'features':features,'warnings':warnings,
+            'configuration_fields':configuration_doctor(checks)}
 
 
 async def _selftest_ca_chain(app,root,call,register,now):
@@ -581,7 +633,11 @@ async def selftest():
     from msg.security.capabilities import grant_for
     from msg.bootstrap import feature_manifest
     from msg.admin import recovery_replay
-    checks={}
+    from msg.admin.config_check import configuration_selftest
+    configuration_fields=configuration_selftest()
+    tool_sandbox_details={'code':'not_run'}
+    checks={'configuration_loading':all(row['status']=='pass'
+                                       for row in configuration_fields.values())}
     try:
         inspect_recovery_checkpoint()
         checks['recovery_checkpoint_replay']=recovery_replay.selftest()['status']=='passed'
@@ -633,6 +689,13 @@ async def selftest():
                 require(result.status=='ok','selftest_csr_failed')
                 return await _approve_csr(app,result.data['csr_id'],root,expected_digest=result.data['request_digest'],operator='isolated-selftest')
             alice,ua=await register('alice');bob,ub=await register('bob')
+            from msg.admin.tool_check import check_tool_sandbox
+            try:
+                tool_sandbox_details=await check_tool_sandbox(app,call,approve,alice,ua)
+                checks['tool_sandbox']=True
+            except (Failure,OSError) as exc:
+                tool_sandbox_details={'code':getattr(exc,'code','tool_isolation_failed')}
+                checks['tool_sandbox']=False
             post=await call('content.post_create',{'parent':test_path+'/tmp','body':'retained source bytes\r\n'},alice,ua,request_id='same-write')
             require(post.status=='ok',post.error.code if post.error else 'selftest_post_failed')
             # Following reads only existing watches; use a separate fixture so
@@ -654,6 +717,31 @@ async def selftest():
                 watched.status=='ok' and shown.status=='ok' and
                 [item['id'] for item in shown.data['items']]==[followed_id] and
                 hidden.status=='ok' and redacted.status=='ok' and not redacted.data['items'])
+            work = await call('communication.request_create',
+                {'title':'Isolated task','description':'Validate work records','requirements':'Explicit claim'},alice,ua)
+            offer = await call('communication.offer_create',
+                {'description':'Review','scope':'Selftest','availability':'Now'},alice,ua)
+            checkpoint = await call('communication.checkpoint_create',
+                {'summary':'Selftest progress','resource_refs':[]},alice,ua)
+            proposal_target = await call('content.post_create',
+                {'parent':test_path+'/tmp','body':'before proposal'},alice,ua)
+            proposal_source = await call('content.post_create',
+                {'parent':test_path+'/tmp','body':'after proposal'},alice,ua)
+            require(all(item.status=='ok' for item in
+                (work,offer,checkpoint,proposal_target,proposal_source)), 'selftest_collaboration_create_failed')
+            proposal = await call('communication.proposal_create',
+                {'target':proposal_target.resources[0].id,
+                 'base_revision':proposal_target.resources[0].revision,
+                 'content_ref':wire(proposal_source.resources[0]),'message':'Apply selftest text'},alice,ua)
+            require(proposal.status=='ok','selftest_proposal_create_failed')
+            accepted = await call('communication.proposal_accept',
+                {'id':proposal.data['id'],'proposal_revision':proposal.resources[0].revision,
+                 'base_revision':proposal_target.resources[0].revision},alice,ua,
+                expected=((proposal.data['id'],proposal.data['generation']),
+                          (proposal_target.resources[0].id,proposal_target.data['generation'])))
+            restored = await call('discovery.get',{'id':proposal_target.resources[0].id},alice,ua)
+            checks['collaboration']=(accepted.status=='ok' and restored.status=='ok' and
+                                     restored.data['content']=='after proposal')
             # OnlineIssuer exercises only the independent temporary Test Root
             # created above. No production trust material or signer is opened.
             async with app.metadata.transaction(write=False) as tx:
@@ -729,6 +817,8 @@ async def selftest():
             checks['root_network_rejected']=rejected.error is not None and rejected.error.code=='local_only'
             all_versions=await call('discovery.get',{'id':post.resources[0].id,'view':'meta'})
             checks['stable_id_read']=all_versions.status=='ok'
+            from msg.admin.honor_check import check_honors
+            checks['honor_ceremony_display']=await check_honors(app,call,register)
             checks.update(await _selftest_ca_chain(app,root,call,register,now))
             from msg.admin.upgrade_check import check_upgrade_recovery
             checks['identity_upgrade_recovery']=await check_upgrade_recovery(app,now)
@@ -737,9 +827,17 @@ async def selftest():
             from msg.admin.custodial_check import check_custodial_history
             checks['custodial_history_recovery']=await check_custodial_history(app,now)
             from msg.admin.market_check import check_market, check_market_e2e
-            checks['market_lifecycle']=await check_market(app,root,call,register,now)
             checks['market_e2e']=await check_market_e2e(app,root,call,register)
+            checks['market_lifecycle']=await check_market(app,root,call,register,now)
+            from msg.admin.git_check import check_git
+            checks['git_push_read_cas']=await check_git(app,call,register)
             checks.update(await _selftest_search_hosting(app,call,register,test_path))
+            from msg.admin.dm_check import check_private_dm
+            checks['private_dm']=await check_private_dm(app,now)
+            from msg.admin.content_edit_check import check_content_editing
+            checks['content_editing']=await check_content_editing(app,call,register,test_path)
+            from msg.admin.transfer_check import check_transfer
+            checks['transfer_state_machine']=await check_transfer(app,call,register)
         except Failure as exc:
             checks['failure']={'code':exc.code}
         finally:
@@ -747,4 +845,5 @@ async def selftest():
     features=feature_results(feature_manifest(),checks,'selftest_case')
     return {'ok':bool(checks) and all(value is True for value in checks.values()) and
             all(row['status']!='fail' for row in features.values()),
-            'checks':checks,'features':features,'cleaned_up':not folder.exists()}
+            'checks':checks,'features':features,'cleaned_up':not folder.exists(),
+            'configuration_fields':configuration_fields,'tool_sandbox':tool_sandbox_details}

@@ -20,8 +20,8 @@ from msg.core.requests import request_for
 from msg.security.crypto import Ed25519Signer, subject_id, key_id
 from msg.security.age_keys import (generate_age_key,recipient_from_identity,
     public_from_recipient,encryption_key_id)
-from msg.security.vault import client_upgrade_proof
-from msg.storage.git import durable_write
+from msg.security.custodial_protocol import client_upgrade_proof
+from msg.atomic_file import durable_write
 from msg.client_tokens import read_journal, remove_journal, token_operation
 from msg.transports.client import HTTPTransport, GraphQLTransport, MCPHTTPTransport
 
@@ -572,6 +572,7 @@ class MsgClient:
         return result
 
     async def upload(self, path, *, transfer_id=None, part_bytes=65536, media_type='application/octet-stream',target=None):
+        require(type(part_bytes) is int and part_bytes>0,'invalid_part_bytes')
         path=Path(path)
         size, hashed=await asyncio.to_thread(hash_file,path)
         journal=self.state.directory/('upload-'+digest((str(path.resolve()),hashed))[7:39]+'.json')
@@ -619,6 +620,7 @@ class MsgClient:
         return result
 
     async def download(self, resource, path, *, transfer_id=None, part_bytes=65536):
+        require(type(part_bytes) is int and part_bytes>0,'invalid_part_bytes')
         ref=resource if isinstance(resource,ResourceRef) else ResourceRef(id=resource)
         path=Path(path)
         journal=self.state.directory/('download-'+digest((wire(ref),str(path.resolve())))[7:39]+'.json')

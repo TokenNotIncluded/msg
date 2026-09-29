@@ -33,8 +33,28 @@ def _webhook_subscription_key(subject,resource_id):
     return 'webhook_subscription:'+subject+':'+resource_id
 
 
+def _domain_delivery_exists(tx,event_id,recipient,resource_id,category):
+    # New keys use the unique index directly. Older installations also include
+    # scope_id, so match that event's literal prefix when checking legacy jobs.
+    # Punctuation ranges are not prefix ranges under linguistic DB collations.
+    key=f'{event_id}:{recipient}:{resource_id}:{category}:webhook'
+    exact=tx.one("SELECT body FROM jobs WHERE kind='webhook' AND dedupe=?",(key,))
+    prefix=event_id.replace('!','!!').replace('%','!%').replace('_','!_')+':%'
+    rows=(exact,) if exact is not None else tx.rows(
+        "SELECT body FROM jobs WHERE kind='webhook' AND dedupe LIKE ? ESCAPE '!'",(prefix,))
+    for (raw,) in rows:
+        job=decode(EffectJob,loads(raw))
+        if (job.event_id==event_id and job.operation=='communication.webhook_subscribe' and
+                job.arguments.get('recipient_subject')==recipient and
+                job.arguments.get('resource_id')==resource_id and
+                job.arguments.get('category')==category):
+            return True
+    return False
+
+
 async def enqueue_domain_webhooks(app,tx,event):
     """Project an explicit owner's Event subscription inside the Event transaction."""
+    from msg.workers.effects import current_principal, effect_request, worker_context
     category=WEBHOOK_DOMAIN_EVENTS.get(event.type)
     if category is None:
         return
@@ -55,14 +75,31 @@ async def enqueue_domain_webhooks(app,tx,event):
             # that can be retargeted by an event emitted from another account.
             if principal.subject!=owner or principal.actor!=owner or principal.method!='signature':
                 continue
-            require_webhook_capacity(tx)
-            await tx.enqueue(EffectJob(id=new_id('job'),event_id=event.id,kind='webhook',
-                dedupe_key=f'{event.id}:{owner}:{scope.id}:{ref.id}:{category}:webhook',
-                principal=principal,operation='communication.webhook_subscribe',
+            # A resource subscription wins over its parent only if its captured
+            # authority is still valid. Once queued, that exact subscription and
+            # endpoint generation remain pinned; revocation never selects a new one.
+            dedupe_key=f'{event.id}:{owner}:{ref.id}:{category}:webhook'
+            if _domain_delivery_exists(tx,event.id,owner,ref.id,category):
+                continue
+            job=EffectJob(id=new_id('job'),event_id=event.id,kind='webhook',
+                dedupe_key=dedupe_key,principal=principal,operation='communication.webhook_subscribe',
                 arguments={'recipient_subject':owner,'resource_id':ref.id,'scope_id':scope.id,
                            'category':category,'endpoint_generation':endpoint[1],
                            'subscription_generation':subscription['generation']},
-                state='pending',attempts=0,next_attempt_at=event.time,lease_until=None))
+                state='pending',attempts=0,next_attempt_at=event.time,lease_until=None)
+            try:
+                current=await current_principal(app,principal,tx)
+                require(resource.state=='active' and scope.state=='active','webhook_scope_changed')
+                require(await app.authorizer.has(current,'webhook.domain',
+                    'communication.webhook_subscribe@1',scope.id,tx),'capability_required')
+                context=worker_context(app,job,current)
+                request=effect_request(app,job,current)
+                await check_access(app,context,request,tx,scope.id,'read')
+                await check_access(app,context,request,tx,resource.id,'read')
+            except Failure:
+                continue
+            require_webhook_capacity(tx)
+            await tx.enqueue(job)
 
 
 def sync_seen_context(subject,sequence,expires_at):
@@ -243,6 +280,7 @@ def install(app):
     async def presence_get(ctx,request,tx):
         subject=await resolve(tx,request.arguments['subject_id'])
         await tx.subject(subject)
+        await check_access(app,ctx,request,tx,subject,'read')
         row=tx.one('SELECT expires_at,body FROM presence WHERE subject=?',(subject,))
         if row is None or parse_time(row[0])<=ctx.now:
             return HandlerOutput(data={'subject_id':subject,'state':'unknown'})
@@ -378,7 +416,7 @@ def install(app):
             require(row[1]!='rejected','dm_rejected')
             return HandlerOutput(resources=(ResourceRef(id=row[0]),),
                                  data={'conversation_id':row[0],'state':row[1],'participant_pair':[first,second]})
-        topic=await create_resource(app,ctx,request,tx,parent=ROOT_SPACE,type='topic',
+        topic=await create_resource(app,ctx,request,tx,parent=app.namespace_root,type='topic',
                                     name='dm-'+new_id('c'),mode=0o700)
         tx.set_setting('policy:'+topic.id,{'post_mode':'0600','editable':True})
         tx.execute('''INSERT INTO dm_conversations
@@ -494,7 +532,7 @@ def install(app):
                 require_webhook_capacity(tx)
                 await tx.enqueue(EffectJob(id=new_id('job'),event_id=eid,kind='webhook',
                     dedupe_key=f'{eid}:{recipient}:webhook',principal=ctx.principal,
-                    operation=request.operation,arguments={'recipient_subject':recipient,
+                    operation=request.operation,arguments={'contract_version':request.contract_version,'recipient_subject':recipient,
                         'message_id':record['id'],'endpoint_generation':row[1]},
                     state='pending',attempts=0,next_attempt_at=ctx.now,lease_until=None))
         # Notification is an external projection; it never includes private body content.
@@ -505,20 +543,26 @@ def install(app):
                 if email.verified_at and 'communication.send' in email.enabled_events:
                     await tx.enqueue(EffectJob(id=new_id('job'),event_id=eid,kind='mail',
                         dedupe_key=f'{eid}:{recipient}:mail',principal=ctx.principal,operation=request.operation,
-                        arguments={'recipient':email.address,'recipient_subject':recipient,'subject':'New msg reference',
+                        arguments={'contract_version':request.contract_version,'recipient':email.address,'recipient_subject':recipient,'subject':'New msg reference',
                             'text':app.settings.service_url+'/_id/'+ref.id},state='pending',attempts=0,
                         next_attempt_at=ctx.now,lease_until=None))
         return HandlerOutput(resources=(ref,),data={'message_id':record['id'],'recipient':recipient})
 
     async def watch(ctx,request,tx):
+        require(ctx.principal.subject is not None,'authentication_required')
         rid=await resolve(tx,request.arguments['id'])
-        await check_access(app,ctx,request,tx,rid,'read')
+        if request.operation=='communication.watch':
+            await check_access(app,ctx,request,tx,rid,'read')
+        await app.authorizer.require_base(ctx.principal,operation_id(request),ctx.principal.subject,tx)
         await app.authorizer._ceiling(ctx.principal,operation_id(request),rid,tx)
+        from msg.plugins.watches import legacy
+        await legacy(app,ctx,request,tx,rid,request.operation=='communication.watch')
         if request.operation=='communication.watch':
             tx.execute('INSERT OR IGNORE INTO watches VALUES (?,?)',(ctx.principal.subject,rid),write=True)
         else:
             tx.execute('DELETE FROM watches WHERE subject=? AND resource=?',(ctx.principal.subject,rid),write=True)
-        return HandlerOutput(resources=(ResourceRef(id=rid),),data={'watching':request.operation=='communication.watch'})
+        return HandlerOutput(resources=(ResourceRef(id=rid),) if request.operation=='communication.watch' else (),
+                             data={'watching':request.operation=='communication.watch'})
     for name in ('communication.watch','communication.unwatch'):
         op(name,obj({'id':IDENTIFIER},('id',)))(watch)
 
@@ -847,7 +891,15 @@ def install(app):
                                    'next_requires_auth':True})
     from msg.plugins.collaboration import install as install_collaboration
     install_collaboration(app, op)
+    from msg.plugins.collaboration_resources import install as install_records, resource_types
+    install_records(app, op)
     from msg.plugins.following import install as install_following
     install_following(app, op)
-    finish((ResourceTypeSpec(name='claim',version=1,container=False,content_schema=None,
-                             operations=frozenset(),relations=frozenset()),))
+    from msg.plugins.watches import install as install_watches
+    install_watches(app, op)
+    from msg.plugins.receipts import install as install_receipts
+    install_receipts(app, op)
+    finish((ResourceTypeSpec(name='watch',version=1,container=False,content_schema=None,
+                             operations=frozenset(),relations=frozenset()),
+            ResourceTypeSpec(name='claim',version=1,container=False,content_schema=None,
+                             operations=frozenset(),relations=frozenset()), *resource_types(app)))

@@ -2,7 +2,7 @@
 from __future__ import annotations
 from collections.abc import Mapping
 import re
-from msg.core.codec import decode, loads, canonical, wire
+from msg.core.codec import decode, loads, canonical, wire, result_wire
 from msg.core.errors import require
 from msg.core.models import OperationRequest, OperationResult
 from msg.core.schemas import obj, IDENTIFIER, STRING, BYTES, REF, SIGNATURE
@@ -61,11 +61,3 @@ def decode_result(value):
     # Compact results omit anonymous actor/subject; these required domain fields
     # are restored explicitly, not inferred from a transport connection.
     return decode(OperationResult,dict({'actor':None,'subject':None},**value))
-
-
-def result_wire(result):
-    value=wire(result,compact=True)
-    for name in ('replayed','prefer_cli'):
-        if not value.get(name):
-            value.pop(name,None)
-    return value

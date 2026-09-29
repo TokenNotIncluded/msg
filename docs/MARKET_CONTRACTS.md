@@ -14,8 +14,16 @@ optional `auto_accept` under `escrow-instant-v1`; `delivery.claim@1` remains
 its separate signed acknowledgement. Its schema, receipts and decision journal
 are preserved rather than reinterpreted by the new arbitration flow.
 
-New clients select `orders.buy@3`, or use `orders.create@1` followed by
-`orders.fund@1`. The latter signs the returned `order_digest`, exact total and
+New CLI checkouts select `orders.buy@4`, or use `orders.create@2` followed by
+`orders.fund@1`. These pin contract version 4 and the immutable
+`explicit-buyer-acceptance` policy version 1: managed delivery leaves payment in
+escrow until the current buyer signs `delivery.accept@2` with the exact delivery
+digest. Reading a delivery cannot settle it. Explicit CLI `--contract-version`
+still selects historical behavior; existing credentials must authorize the new
+operation version before using it.
+
+Published `orders.buy@3` and `orders.create@1` retain automatic managed settlement.
+The reservation flow uses `orders.fund@1`, which signs the returned `order_digest`, exact total and
 currency. Read `orders.contract` or `orders.get` as the buyer or seller. The
 existing CLI's schema-driven invocation supports these operations; obtain each
 schema from discovery rather than constructing URLs containing credentials.
@@ -205,7 +213,7 @@ immutable decision journals are retained. Both execution paths share the same
 internal OrderEscrow account check; neither path can settle the other's order.
 Existing `delivery.claim@1` remains an acknowledgement, not another payment.
 
-Version-3 contract reads and execution recheck every immutable checkout column
+Version-3 and version-4 contract reads and execution recheck every immutable checkout column
 against its pinned contract. Funding references must identify the corresponding
 buyer-to-escrow ledger entry. Settlement facts bind funding, receipt references,
 settlement time and prepared-delivery identity/content, while allowing subsequent

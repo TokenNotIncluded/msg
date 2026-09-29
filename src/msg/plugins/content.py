@@ -6,7 +6,7 @@ from hashlib import sha256
 from msg.constants import ROOT_SPACE,ROOT_SUBJECT
 from msg.core.codec import canonical,decode,loads,wire,unb64,digest,parse_time
 from msg.core.errors import Failure,require
-from msg.core.models import HandlerOutput,ResourceRef,Relation,EffectJob,BlobRef,Event
+from msg.core.models import HandlerOutput,ResourceRef,Relation,EffectJob,BlobRef,Event,TemplateSpec
 from msg.core.tags import normalize_tags
 from msg.core.text_patch import (PATCH_LIMIT,PATCH_CONTEXT_LIMIT,PATCH_CANDIDATE_LIMIT,
     PATCH_SCHEMA,apply_text_patch,apply_patch,validate_patch)
@@ -85,7 +85,16 @@ async def template_content(app,ctx,request,tx,parent,template,values):
     rev=await tx.revision(ref)
     source=(await app.contents.read_bytes(rev.content)).decode('utf-8')
     parsed=parse_template(source)
-    normalized=normalize_values(parsed,values or {})
+    # Installed defaults have a frozen field contract. User-owned templates and
+    # later revisions remain resource data, parsed under the same finite DSL.
+    try:
+        registered=app.registry.template(rid,parsed.version)
+    except Failure as exc:
+        if exc.code!='unknown_template':
+            raise
+        registered=None
+    fields=registered if registered is not None and registered.digest==rev.content.digest else parsed
+    normalized=normalize_values(fields,values or {})
     content={'template_id':rid,'template_version':parsed.version,'template_digest':rev.content.digest,'values':normalized}
     return canonical(content),'application/json',content,Relation(type='template',target=ref)
 
@@ -152,6 +161,7 @@ async def removable(app,ctx,request,tx,resource):
 
 
 async def require_unmanaged_personal(tx,resource):
+    require(resource.type not in {'order', 'order_collection'}, 'order_controlled_resource')
     chain=(*await tx.ancestors(resource.id),resource)
     require(not any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes','todos'}
                     for parent,child in zip(chain,chain[1:])),
@@ -177,11 +187,9 @@ async def ensure_public_repositories(tx,resource, *, mode=None,parent=None):
         require(p.mode&1 and all(a.mode&1 for a in await tx.ancestors(parent)),'repo_public_read_required')
 
 
-async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
-    """Prepare an authorized edit without publishing any content or SQL reference."""
-    resource=await tx.resource(await resolve(tx,args['id']))
-    if post_only:
-        require(resource.type=='post','not_editable')
+async def editable_resource(app,ctx,request,tx,identifier):
+    """One authority and lifecycle boundary for body replacement and patch."""
+    resource=await tx.resource(await resolve(tx,identifier))
     require(resource.type in {'post','file'} and resource.state=='active','not_editable')
     chain=(*await tx.ancestors(resource.id),resource)
     require(not any(item.id=='t_last_will' for item in chain),'legacy_directive_only')
@@ -191,6 +199,14 @@ async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
     await check_access(app,ctx,request,tx,resource.id,'write')
     await assert_generation(request,resource)
     require((await topic_policy(tx,resource)).get('editable',True),'content_frozen')
+    return resource
+
+
+async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
+    """Prepare an authorized edit without publishing any content or SQL reference."""
+    resource=await editable_resource(app,ctx,request,tx,args['id'])
+    if post_only:
+        require(resource.type=='post','not_editable')
     current=await tx.revision(ResourceRef(id=resource.id,revision=resource.revision))
     media=current.content.media_type
     require(media in {'text/plain','text/markdown'},'text_patch_required')
@@ -237,6 +253,13 @@ async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
 
 
 def install(app):
+    from msg.bootstrap import manifest
+    for name,source in manifest()['templates'].items():
+        parsed=parse_template(source)
+        require(name==parsed.name,'template_name_mismatch')
+        app.registry.add_template(TemplateSpec(resource=ResourceRef(id='tpl_'+name),
+            digest='sha256:'+sha256(source.encode()).hexdigest(),fields=parsed.fields,
+            renderer_version=1),version=parsed.version)
     op,finish=registration(app,'content',('identity',))
     post_fields={'parent':IDENTIFIER,'name':STRING,'body':STRING,'template':{'anyOf':[STRING,obj({'id':IDENTIFIER,'version':INTEGER},('id',))]},
                  'values':{'type':'object'},'source':REF,'content_created_at':STRING,'resource_id':IDENTIFIER,'revision_id':IDENTIFIER,'content_signature':SIGNATURE}
@@ -659,7 +682,7 @@ def install(app):
         await assert_generation(request,resource)
         await removable(app,ctx,request,tx,resource)
         require(resource.state!='purged','resource_purged')
-        state='archived' if request.operation=='content.archive' else 'active'
+        state='archived' if request.operation in {'content.archive','file.delete'} else 'active'
         if state=='active' and resource.type=='website':
             from msg.plugins.hosting_capacity import manifest_size,require_capacity
             await require_capacity(app,tx,resource,await manifest_size(app,tx,resource),ctx.now)
@@ -684,6 +707,7 @@ def install(app):
         require(await direct_ancestor(tx,resource.id) is None,'dm_controlled_resource')
         target=await resolve(tx,request.arguments['parent'])
         require(target!='t_store','store_controlled_resource')
+        require((await tx.resource(target)).type != 'order_collection', 'order_controlled_resource')
         await check_access(app,ctx,request,tx,target,'create')
         parent=await tx.resource(target)
         require(app.registry.resource_type(parent.type,1).container,'not_a_container')
@@ -772,7 +796,7 @@ def install(app):
         tx.execute('DELETE FROM projections WHERE resource_id=?',(resource.id,),write=True)
         from msg.plugins.communication import event_id
         job=EffectJob(id=new_id('job'),event_id=event_id(request,ctx.principal.subject),kind='gc.resource',dedupe_key='purge:'+ctx.principal.subject+':'+request.request_id,
-            principal=ctx.principal,operation=request.operation,arguments={'id':resource.id,'revisions':wire(revisions)},
+            principal=ctx.principal,operation=request.operation,arguments={'contract_version':request.contract_version,'id':resource.id,'revisions':wire(revisions)},
             state='pending',attempts=0,next_attempt_at=ctx.now,lease_until=None)
         await tx.enqueue(job)
         return output_for(updated,state='purged',physical_cleanup=job.id,backup_scope='backups_require_separate_retention')

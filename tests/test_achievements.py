@@ -134,3 +134,111 @@ async def test_total_ttl_and_replayed_nonce(installed):
         'statement': FINAL_STATEMENT,
     }, key=key, subject=subject)
     assert expired.data['reason'] == 'ceremony_expired'
+
+
+@pytest.mark.asyncio
+async def test_expired_round_can_restart_without_submitting_old_answer(installed):
+    app, _ = installed
+    key, subject, _ = await register(app, 'achievement-round-restart')
+    started = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    assert started.status == 'ok', wire(started)
+    app.executor.clock = lambda: NOW + timedelta(seconds=59)
+    live = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    assert live.status == 'error' and live.error.code == 'achievement_ceremony_active'
+
+    # At the inclusive round deadline no answer can succeed. Restart must not
+    # require a doomed answer or waiting for the longer ceremony deadline.
+    app.executor.clock = lambda: NOW + timedelta(seconds=60)
+    restarted = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    assert restarted.status == 'ok', wire(restarted)
+    assert restarted.data['round'] == 1
+    assert restarted.data['challenge_id'] != started.data['challenge_id']
+    assert restarted.data['nonce'] != started.data['nonce']
+    stale = await advance(app, key, subject, started.data)
+    assert stale.status == 'error' and stale.error.code == 'achievement_ceremony_not_found'
+    advanced = await advance(app, key, subject, restarted.data)
+    assert advanced.status == 'ok' and advanced.data['round'] == 2
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM achievement_grants WHERE subject=?', (subject,))[0] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('retired', [False, True])
+async def test_custodial_ceremony_signs_final_request_and_labels_source(installed, retired):
+    import os
+    from msg.core.codec import b64, canonical, decode, unb64
+    from msg.core.models import Signature
+    from msg.security.crypto import verify
+
+    app, _ = installed
+    created = await call(app, 'identity.custodial_create', {
+        'handle': 'achievement-custodial', 'nonce': b64(os.urandom(32)),
+        'recovery_secret': b64(os.urandom(32)),
+    }, contract_version=2)
+    assert created.status == 'ok', wire(created)
+    subject = created.data['subject_id']
+    token = (created.data['credential_id'], unb64(created.data['token']))
+    challenge = await call(app, 'achievement.start', {}, subject=subject, token=token)
+    assert challenge.status == 'ok', wire(challenge)
+    for _ in range(4):
+        data = challenge.data
+        challenge = await call(app, 'achievement.answer', {
+            'challenge_id': data['challenge_id'], 'round': data['round'],
+            'question_digest': data['question_digest'], 'nonce': data['nonce'],
+            'answer': answer_for(data),
+        }, subject=subject, token=token)
+        assert challenge.status == 'ok', wire(challenge)
+    data = challenge.data
+    args = {name: data[name] for name in ('challenge_id', 'question_digest', 'nonce', 'ceremony_digest')}
+    args['statement'] = FINAL_STATEMENT
+    if retired:
+        async with app.metadata.transaction(write=True) as tx:
+            tx.execute("UPDATE custodial_vault SET status='decrypt_only', signing_nonce=NULL, signing_ciphertext=NULL WHERE subject=?", (subject,), write=True)
+    finished = await call(app, 'achievement.finish', args, subject=subject, token=token)
+    if retired:
+        assert finished.status == 'error' and finished.error.code == 'custodial_vault_unavailable'
+        async with app.metadata.transaction(write=False) as tx:
+            assert tx.one('SELECT COUNT(*) FROM achievement_grants WHERE subject=?', (subject,))[0] == 0
+        return
+    assert finished.status == 'ok', wire(finished)
+    assert finished.data['signature_source'] == 'custodial'
+    grant = finished.data['grant']
+    assert grant['auth_method'] == 'token'
+    assert grant['metadata'] == {'protocol_passed': True, 'signature_source': 'custodial'}
+    async with app.metadata.transaction(write=False) as tx:
+        state = loads(tx.one('SELECT body FROM achievement_ceremonies WHERE id=?', (data['challenge_id'],))[0])
+        credential = await tx.credential(state['final_signature']['key_id'])
+        verify(credential.verifier, canonical(state['final_confirmation']),
+               decode(Signature, state['final_signature']), purpose='achievement-confirmation')
+        assert state['final_confirmation']['ceremony_digest'] == data['ceremony_digest']
+        audit = [loads(row[0]) for row in tx.rows('SELECT body FROM audit')]
+    issued = [row for row in audit if row['event']['type'] == 'achievement.auto.issue']
+    assert len(issued) == 1
+    assert issued[0]['event']['data']['signature_source'] == 'custodial'
+    assert issued[0]['event']['data']['auth_method'] == 'token'
+    repeat = await call(app, 'achievement.start', {}, subject=subject, token=token)
+    assert repeat.status == 'error' and repeat.error.code == 'achievement_already_granted'
+    private = await call(app, 'discovery.get', {'id': '/private'}, subject=subject, token=token)
+    assert private.status == 'error'
+
+
+@pytest.mark.asyncio
+async def test_non_custodial_token_cannot_finish_ceremony(installed):
+    from msg.core.codec import unb64
+    from test_service import temporary_v3_args
+    app, _ = installed
+    args, rid, _, _ = temporary_v3_args()
+    created = await call(app, 'identity.temporary', args, rid=rid, contract_version=3)
+    assert created.status == 'ok', wire(created)
+    subject = created.data['subject_id']
+    token = (created.data['credential_id'], unb64(created.data['token']))
+    started = await call(app, 'achievement.start', {}, subject=subject, token=token)
+    assert started.status == 'ok', wire(started)
+    denied = await call(app, 'achievement.finish', {
+        'challenge_id': started.data['challenge_id'],
+        'question_digest': started.data['question_digest'], 'nonce': started.data['nonce'],
+        'ceremony_digest': 'sha256:' + '0' * 64, 'statement': FINAL_STATEMENT,
+    }, subject=subject, token=token)
+    assert denied.status == 'error' and denied.error.code == 'signature_required'
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM achievement_grants WHERE subject=?', (subject,))[0] == 0

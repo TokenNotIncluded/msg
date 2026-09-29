@@ -16,6 +16,7 @@ from msg.constants import ROOT_SUBJECT
 from msg.core.codec import canonical, decode, digest, parse_time, wire
 from msg.core.errors import Failure, require
 from msg.core.models import Signature
+from msg.security.certificates import certificate_body
 from msg.security.crypto import key_id, verify
 
 DOMAIN = 'msg-custodial-backup-retirement-v1'
@@ -65,18 +66,25 @@ def sign_record(body, signer):
     return {'statement': body, 'signature': wire(signer.sign(canonical(body), purpose=PURPOSE))}
 
 
-async def root_verifier(tx):
-    """The key of the active, unrevoked root certificate; rotation retires old records."""
+async def root_verifier(tx, *, now):
+    """Recheck the current self-signed Root and its credential, not just historical validity."""
     try:
         certificate_id = tx.setting('active_root_certificate')
         certificate = await tx.certificate(certificate_id)
         credential = await tx.credential(certificate.key_id)
-        require(certificate.subject_id == ROOT_SUBJECT and
+        require(certificate.resource_id == certificate_id and
+                certificate.subject_id == certificate.issuer_id == ROOT_SUBJECT and
+                certificate.parent_certificate_id is None and certificate.kind == 'ca' and
+                certificate.issuance is not None and
+                certificate.not_before <= now < certificate.expires_at and
                 not await tx.certificate_revoked(certificate_id) and
                 credential.subject_id == ROOT_SUBJECT and credential.kind == 'signing_key' and
-                credential.revoked_at is None and
+                credential.revoked_at is None and credential.not_before <= now and
+                (credential.expires_at is None or now < credential.expires_at) and
                 key_id(credential.verifier) == credential.id == certificate.key_id,
                 'backup_retirement_root_unavailable')
+        verify(credential.verifier, canonical(certificate_body(certificate)),
+               certificate.signature, purpose='certificate')
     except (Failure, KeyError, TypeError, ValueError) as exc:
         raise Failure('backup_retirement_root_unavailable') from exc
     return credential.verifier
@@ -100,8 +108,9 @@ def check(record, verifier, subject_id, details, *, now):
         attested, not_after = parse_time(body['attested_at']), parse_time(body['not_after'])
         signature = decode(Signature, record['signature'])
         verify(verifier, canonical(body), signature, purpose=PURPOSE)
-        require(attested < not_after <= attested + MAX_VALIDITY, 'backup_retirement_invalid')
-    except (Failure, KeyError, TypeError, ValueError) as exc:
+        # Subtract instead of adding to an untrusted date near datetime.max.
+        require(timedelta(0) < not_after - attested <= MAX_VALIDITY, 'backup_retirement_invalid')
+    except (Failure, KeyError, TypeError, ValueError, OverflowError) as exc:
         raise Failure('backup_retirement_invalid') from exc
     require(isinstance(details, dict) and body['subject_id'] == subject_id and
             body['old_identity_key_id'] == details.get('old_identity_key_id') and
@@ -130,6 +139,6 @@ async def verified(tx, subject_id, details, *, now):
     if now is None:
         return 'clock_unavailable', None
     try:
-        return 'verified', check(record, await root_verifier(tx), subject_id, details, now=now)
+        return 'verified', check(record, await root_verifier(tx, now=now), subject_id, details, now=now)
     except Failure as exc:
         return ('expired' if exc.code == 'backup_retirement_expired' else 'invalid'), None

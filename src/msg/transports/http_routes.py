@@ -12,6 +12,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
+from msg.transports.http_common import BASE_HEADERS, body_bytes, json_response, error_status
 
 from msg.core.codec import canonical, decode, digest, loads, wire
 from msg.core.errors import Failure, require
@@ -19,7 +20,9 @@ from msg.core.executor import result_wire
 from msg.core.models import BlobRef,SignatureProof
 from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
+from msg.plugins.common import resolve_read
 from msg.core.read_query import read_query_version
+from msg.core.search_query import search_query_version, SEARCH_V5_RELATIONS
 from msg.transports.read_tree_path import decode_read_tree_path
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, gunzip, path_packet, require_url_safe_packet
@@ -27,8 +30,6 @@ from msg.transports.url_safety import require_matching_host, require_safe_reques
 from msg.transports.dictionary import (READ_QUERY_V1_SEGMENTS,READ_QUERY_V2_SEGMENTS,READ_QUERY_V1_SORT,
     READ_QUERY_V1_FIELDS,SEARCH_QUERY_V1_SEGMENTS)
 
-BASE_HEADERS={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
-              'Content-Security-Policy':"default-src 'none'; sandbox",'Cache-Control':'no-store'}
 HOME_LOGO=files('msg.data').joinpath('logo.svg').read_text(encoding='utf-8')
 HOME_FAVICON=files('msg.data').joinpath('favicon.png').read_bytes()
 HOME_HTML=('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -75,6 +76,8 @@ SEARCH_V2_SEGMENTS={'scope':'s','terms':'t','mode':'m','field':'f','order':'o',
                     'facets':'fc'}
 SEARCH_V3_SEGMENTS={**SEARCH_V2_SEGMENTS,'source_kind':'sk','relation_type':'rt'}
 SEARCH_V4_SEGMENTS={**SEARCH_V3_SEGMENTS,'suggest':'sg'}
+SEARCH_V5_SEGMENTS={**SEARCH_V4_SEGMENTS,'revision':'rv','source_version':'sv',
+                    'relation_to':'to','relation_from':'fr','has_replies':'hr','has_references':'hf','spell':'sp'}
 GREP_V1_SEGMENTS={'scope':'s','pattern':'t','regex':'r','glob':'g',
                   'exclude_glob':'x','case_sensitive':'i','before':'b','after':'a',
                   'max_matches':'m','max_files':'f','files_with_matches':'w',
@@ -303,20 +306,29 @@ def compile_lexical_search(query):
             'owner','author','tag','state','created_after','created_before',
             'updated_after','updated_before','has_attachment','order','limit',
             'cursor','snippet','explain','fields','facets','source_kind',
-            'relation_type','suggest','depth','recursive'},
+            'relation_type','suggest','revision','source_version','relation_to','relation_from',
+            'has_replies','has_references','spell','depth','recursive'},
             'unknown_query_parameter')
     if 'cursor' in query:
         require(set(query)=={'cursor'},'cursor_query_mismatch')
         return {'cursor':query['cursor']}
     require(bool(query.get('scope')),'search_scope_required')
     args=dict(query)
+    if args.get('scope','').startswith('{'):
+        require(len(args['scope'].encode('utf-8'))<=8192,'query_cost_exceeded')
+        args['scope']=loads(args['scope'])
+    if 'source_version' in args:
+        require(args['source_version'].isascii() and args['source_version'].isdecimal() and
+                len(args['source_version'])<=10 and 1<=int(args['source_version'])<=2147483647,
+                'invalid_search_source_version')
+        args['source_version']=int(args['source_version'])
     for name in ('limit','depth'):
         if name in args:
             require(args[name].isdecimal() and
                     (0<=int(args[name])<=5 if name=='depth' else 1<=int(args[name])<=100),
                     'query_cost_exceeded')
             args[name]=int(args[name])
-    for name in ('snippet','has_attachment','recursive','suggest'):
+    for name in ('snippet','has_attachment','recursive','suggest','has_replies','has_references','spell'):
         if name in args:
             require(args[name] in {'0','1'},'invalid_search_flag')
             args[name]=args[name]=='1'
@@ -332,11 +344,15 @@ def compile_lexical_search(query):
 
 def decode_search_v2_path(raw_path,version=b'2'):
     prefix=raw_path.split(b'/',3)[1]
-    segments=(SEARCH_V4_SEGMENTS if version==b'4' else
+    segments=(SEARCH_V5_SEGMENTS if version==b'5' else
+              SEARCH_V4_SEGMENTS if version==b'4' else
               SEARCH_V3_SEGMENTS if version==b'3' else SEARCH_V2_SEGMENTS)
     values,proof=decode_query_path(raw_path,prefix,segments,version)
     modes={'a':'all','n':'any'}
-    fields={'a':'all','b':'body','n':'name','m':'metadata'}
+    require(version==b'5' or (not values.get('scope','').startswith('{') and
+            'title' not in values.get('fields','').split(',') and
+            values.get('relation_type') not in SEARCH_V5_RELATIONS), 'invalid_search_scope')
+    fields={'a':'all','b':'body','n':'name','m':'metadata',**({'t':'title'} if version==b'5' else {})}
     order={'r':'relevance','u':'updated','c':'created','n':'name'}
     if 'mode' in values:
         require(values['mode'] in modes,'invalid_search_mode')
@@ -372,41 +388,6 @@ def path_read_proof(encoded,operation,args,service,limit):
     require(packet.expires_at is not None and 0<(packet.expires_at-service.clock()).total_seconds()<=60,
             'path_proof_expiry')
     return packet
-
-
-def json_response(value,status=200,headers=None):
-    return Response(canonical(value),status_code=status,media_type='application/json',headers={**BASE_HEADERS,**(headers or {})})
-
-
-def error_status(code):
-    if code=='range_not_satisfiable':return 416
-    if code in {'not_found','resource_purged','revision_not_found','csr_not_found',
-                'certificate_not_found','listing_not_found','package_not_found',
-                'bounty_not_found','order_not_found','delivery_not_found',
-                'offer_not_found'}: return 404
-    if code in {'authentication_required','invalid_token','invalid_signature','credential_revoked','credential_expired','request_expired'}: return 401
-    if code in {'permission_denied','local_only','credential_ceiling','certificate_gate','tool_certificate_required','forbidden_origin','forbidden_host','passive_client_forbidden','query_ref_principal_mismatch','cursor_principal_mismatch'}: return 403
-    if code in {'generation_conflict','revision_conflict','idempotency_conflict','chunk_conflict','constraint_conflict'}: return 409
-    if code in {'request_too_large','path_too_large','response_too_large','use_transfer','part_too_large'}: return 413
-    if code in {'method_not_allowed','effect_mismatch'}: return 405
-    if code=='secure_channel_required': return 400
-    if code in {'server_busy','issuer_not_ready','dependency_unavailable','service_restart_required','writes_paused'}: return 503
-    if code=='storage_capacity_exceeded': return 507
-    if code=='internal_error': return 500
-    return 400
-
-
-async def body_bytes(request,limit):
-    length=request.headers.get('content-length')
-    if length is not None:
-        require(length.isdecimal() and int(length)<=limit,'request_too_large')
-    body=bytearray()
-    async for data in request.stream():
-        require(len(body)+len(data)<=limit,'request_too_large')
-        body.extend(data)
-    encoding=request.headers.get('content-encoding','identity')
-    require(encoding in {'identity','gzip'},'unknown_encoding')
-    return gunzip(bytes(body),limit) if encoding=='gzip' else bytes(body)
 
 
 def describe_resource(data):
@@ -496,26 +477,26 @@ def create_app(service):
             native=re.fullmatch(r'(/[@&][^/]+/[^/]+\.git)/(.*)',path)
             if native:
                 require(service.registry.operation('git.refs').effect=='read','effect_mismatch')
-                from msg.extensions.repositories import NativeGitStore
+                from msg.transports.git_http import GitHTTPAdapter
                 if native.group(2).startswith('info/lfs/'):
                     require(service.registry.operation('git.lfs_read').effect=='read' and
                             service.registry.operation('git.lfs_read_batch').effect=='read',
                             'effect_mismatch')
-                    return await NativeGitStore(service).http_lfs(request,native.group(1),
+                    return await GitHTTPAdapter(service).http_lfs(request,native.group(1),
                                                                   native.group(2)[9:])
-                return await NativeGitStore(service).http(request,native.group(1),native.group(2))
+                return await GitHTTPAdapter(service).http(request,native.group(1),native.group(2))
             # git-lfs derives <remote>.git/info/lfs even when the advertised
             # push URL is /-/git/<id>; both spellings remain inside /-/.
             lfs_write=re.fullmatch(r'/-/git/([A-Za-z0-9_-]{1,128})(?:\.git)?/info/lfs/(objects(?:/batch|/[0-9a-f]{64}/[0-9]+))',path)
             if lfs_write:
                 require(raw_path==path.encode('ascii'),'not_found')
-                from msg.extensions.repositories import NativeGitStore
-                return await NativeGitStore(service).http_lfs(request,*lfs_write.groups(),write=True)
+                from msg.transports.git_http import GitHTTPAdapter
+                return await GitHTTPAdapter(service).http_lfs(request,*lfs_write.groups(),write=True)
             git_push=re.fullmatch(r'/-/git/([A-Za-z0-9_-]{1,128})/(info/refs|git-receive-pack)',path)
             if git_push:
                 require(raw_path==path.encode('ascii'),'not_found')
-                from msg.extensions.repositories import NativeGitStore
-                return await NativeGitStore(service).http_push(request,*git_push.groups())
+                from msg.transports.git_http import GitHTTPAdapter
+                return await GitHTTPAdapter(service).http_push(request,*git_push.groups())
             if path.startswith(('/!','/~','/run/j/','/run/gz/')) or path=='/mcp':
                 raise Failure('not_found')
             if request.method=='OPTIONS':
@@ -740,10 +721,7 @@ def create_app(service):
                                     'cursor_kind_mismatch')
                             if operation=='discovery.lexical_search':
                                 saved_args=query.get('arguments',{})
-                                contract_version=(4 if 'suggest' in saved_args else
-                                    3 if any(name in saved_args for name in
-                                    ('source_kind','relation_type')) else
-                                    2 if 'facets' in saved_args else 1)
+                                contract_version=search_query_version(saved_args)
                             elif operation=='discovery.read_query':
                                 contract_version=read_query_version(query.get('arguments',{}))
                     except Failure as exc:
@@ -848,14 +826,15 @@ def create_app(service):
             lexical_path_v2=raw_path.startswith((b'/_search/q/2/',b'/_s/q/2/'))
             lexical_path_v3=raw_path.startswith((b'/_search/q/3/',b'/_s/q/3/'))
             lexical_path_v4=raw_path.startswith((b'/_search/q/4/',b'/_s/q/4/'))
-            lexical_path=lexical_path_v2 or lexical_path_v3 or lexical_path_v4
+            lexical_path_v5=raw_path.startswith((b'/_search/q/5/',b'/_s/q/5/'))
+            lexical_path=lexical_path_v2 or lexical_path_v3 or lexical_path_v4 or lexical_path_v5
             if path in {'/_search','/_s'} or search_path or lexical_path or raw_path.startswith((
                     b'/_index/by-tag/',b'/_i/by-tag/')):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 if search_path or lexical_path:
                     require(not request.url.query,'unknown_query_parameter')
                     query,path_proof=(decode_search_v2_path(raw_path,
-                        b'4' if lexical_path_v4 else b'3' if lexical_path_v3 else b'2')
+                        b'5' if lexical_path_v5 else b'4' if lexical_path_v4 else b'3' if lexical_path_v3 else b'2')
                                       if lexical_path else
                                       decode_search_query_path(raw_path))
                 else:
@@ -868,7 +847,8 @@ def create_app(service):
                 lexical=lexical_path or (not is_index and
                     bool(set(query)&{'terms','exact','not_terms','scope','mode','field','order',
                                       'snippet','explain','has_attachment','facets',
-                                      'source_kind','relation_type','suggest'}))
+                                      'source_kind','relation_type','suggest','revision','source_version',
+                                      'relation_to','relation_from','has_replies','has_references','spell'}))
                 if lexical:
                     args=compile_lexical_search(query)
                     operation='discovery.lexical_search'
@@ -911,11 +891,9 @@ def create_app(service):
                 else:
                     packet=request_for(operation,args,service.settings.service_url,
                                        source='manual',
-                                       contract_version=(4 if lexical and (lexical_path_v4 or
-                                           'suggest' in args) else
-                                           3 if lexical and (lexical_path_v3 or
-                                           'source_kind' in args or 'relation_type' in args) else
-                                           2 if lexical and 'facets' in args else 1))
+                                       contract_version=(max(search_query_version(args),
+                                           5 if lexical_path_v5 else 4 if lexical_path_v4 else
+                                           3 if lexical_path_v3 else 1) if lexical else 1))
                 result=await service.executor.execute(packet,entry='network')
                 if result.error:
                     return json_response(result_wire(result),error_status(result.error.code))
@@ -1005,18 +983,26 @@ def create_app(service):
                 require(request.method in {'GET','HEAD'},'method_not_allowed')
                 require(service.registry.operation('discovery.lexical_search').effect=='read',
                         'effect_mismatch')
-                document={'version':4,'operation':'discovery.lexical_search',
+                document={'version':5,'operation':'discovery.lexical_search',
                     'segments':SEARCH_V2_SEGMENTS,'segments_v3':SEARCH_V3_SEGMENTS,
-                    'segments_v4':SEARCH_V4_SEGMENTS,
+                    'segments_v4':SEARCH_V4_SEGMENTS,'segments_v5':SEARCH_V5_SEGMENTS,
                     'mode':{'all':'a','any':'n'},
                     'field':{'all':'a','body':'b','name':'n','metadata':'m'},
+                    'field_v5':{'all':'a','body':'b','name':'n','metadata':'m','title':'t'},
+                    'title_semantics':'Resource display name (alias of name)',
+                    'scope_v5':'path or JSON object: subject, org, or resource_refs (up to 32 id refs)',
+                    'spell_v5':{'enabled_by':'spell=true', 'source':'currently readable resource names',
+                        'algorithm':'Levenshtein; distance 1 for terms up to 4 characters, otherwise 2',
+                        'max_terms':4,'term_length':[2,32],'max_dictionary_words':512,
+                        'max_suggestions_per_term':5,'rewrites_query':False},
                     'order':{'relevance':'r','updated':'u','created':'c','name':'n'},
                     'facets':['type','tag'],
                     'contract_version':{'default':1,'with_facets':2,
-                                        'with_source_or_relation':3,'with_suggest':4},
+                                        'with_source_or_relation':3,'with_suggest':4,'with_revision_or_source_version':5},
                     'template':'/_search/q/2/s/{percent-encoded-scope}/t/{terms}/m/{mode}/f/{field}/n/{limit}',
                     'template_v3':'/_search/q/3/s/{percent-encoded-scope}/t/{terms}/sk/{source-kind}/rt/{relation-type}',
                     'template_v4':'/_search/q/4/s/{percent-encoded-scope}/t/{terms}/sg/1',
+                    'template_v5':'/_search/q/5/s/{percent-encoded-scope}/t/{terms}/rv/{revision}/sv/{source-version}',
                     'proof_suffix':'/p/{short-lived-signed-OperationRequest}'}
                 etag='"'+digest(document)[7:]+'"'
                 headers={**BASE_HEADERS,'ETag':etag,'Cache-Control':'private, no-cache'}
@@ -1347,7 +1333,7 @@ def create_app(service):
                         return Response(status_code=304,headers=headers)
                     return Response(b'' if request.method=='HEAD' else payload,
                                     media_type='application/json',headers=headers)
-                if name in {'handoffs','leases'}:
+                if name in {'handoffs','leases','requests','offers','checkpoints','proposals','watches'}:
                     require(request.method in {'GET','HEAD'},'method_not_allowed')
                     require(raw_path.decode('utf-8')==request.url.path and b'%' not in raw_path,
                             'not_found')
@@ -1356,7 +1342,7 @@ def create_app(service):
                     if not listing:
                         require(re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}(?:/json)?',tail)
                                 is not None,'not_found')
-                    singular='handoff' if name=='handoffs' else 'lease'
+                    singular='watch' if name=='watches' else name[:-1]
                     operation='communication.'+singular+('_list' if listing else '_get')
                     pairs=request.query_params.multi_items()
                     require(len(pairs)==len({key for key,_ in pairs}),
@@ -1389,6 +1375,59 @@ def create_app(service):
                     require(result.subject==subject_id,'permission_denied')
                     value=wire(result.data)
                     value['path']='/@'+handle+'/'+name+('/'+args['id'] if not listing else '')
+                    etag='"'+digest(value)[7:]+'"'
+                    headers={**BASE_HEADERS,'ETag':etag,
+                             'Cache-Control':'private, no-cache'}
+                    if request.headers.get('if-none-match')==etag:
+                        return Response(status_code=304,headers=headers)
+                    payload=canonical(value)
+                    require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                    return Response(b'' if request.method=='HEAD' else payload,
+                                    media_type='application/json',headers=headers)
+                if name=='receipts':
+                    require(request.method in {'GET','HEAD'},'method_not_allowed')
+                    require(raw_path.decode('utf-8')==request.url.path and b'%' not in raw_path,
+                            'not_found')
+                    tail=(remainder or '').strip('/')
+                    listing=tail in {'','json'}
+                    if not listing:
+                        require(re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}(?:/json)?',tail)
+                                is not None,'not_found')
+                    operation='communication.receipt_'+('list' if listing else 'get')
+                    pairs=request.query_params.multi_items()
+                    require(len(pairs)==len({key for key,_ in pairs}),
+                            'duplicate_query_parameter')
+                    query=dict(pairs)
+                    require(not query or listing,'unknown_query_parameter')
+                    require(set(query)<={'limit','cursor'},'unknown_query_parameter')
+                    args={} if listing else {'request_id':tail.removesuffix('/json')}
+                    if 'limit' in query:
+                        require(query['limit'].isdecimal(),'invalid_limit')
+                        args['limit']=int(query['limit'])
+                    if 'cursor' in query: args['cursor']=query['cursor']
+                    async with service.metadata.transaction(write=False) as tx:
+                        subject_id=await tx.resolve('/@'+handle)
+                        require((await tx.resource(subject_id)).type=='user','not_found')
+                    require(service.registry.operation(operation).effect=='read',
+                            'effect_mismatch')
+                    header=request.headers.get('x-msg-request')
+                    if header:
+                        packet=path_packet(header,'j',limits.max_request_bytes)
+                        require(packet.operation==operation and
+                                canonical(packet.arguments)==canonical(args),
+                                'representation_mismatch')
+                    else:
+                        packet=request_for(operation,args,service.settings.service_url,
+                                           source='manual')
+                    result=await service.executor.execute(packet,entry='network')
+                    # Another subject's lookup must not reveal whether its own
+                    # request_id exists; the path subject is the only reader.
+                    require(result.subject is None or result.subject==subject_id,
+                            'permission_denied')
+                    if result.error:
+                        return json_response(result_wire(result),error_status(result.error.code))
+                    value=wire(result.data)
+                    value['path']='/@'+handle+'/receipts'+('/'+args['request_id'] if not listing else '')
                     etag='"'+digest(value)[7:]+'"'
                     headers={**BASE_HEADERS,'ETag':etag,
                              'Cache-Control':'private, no-cache'}
@@ -1485,8 +1524,25 @@ def create_app(service):
                     path='/@'+handle+'/'+SUBJECT_RESOURCE_ALIASES[name]+(remainder or '')
             stable=parse_stable_view(path,raw_path)
             resource_path,view,revision=stable if stable is not None else parse_view(path)
+            # A public representation must be read-only before even resolving
+            # its old/migrated alias. Missing targets cannot bypass this gate.
+            initial_operation='discovery.raw' if view=='raw' else 'discovery.get'
+            require(service.registry.operation(initial_operation).effect=='read','effect_mismatch')
             redirect_target=None
-            if view=='markdown' and revision is None and not resource_path.endswith('.md'):
+            redirect_resource_id=None
+            legacy_target=None
+            if path.startswith('/_legacy/'):
+                from msg.transports.legacy_content_http import resolve_legacy_read
+                async with service.metadata.transaction(write=False) as tx:
+                    legacy_target=await resolve_legacy_read(tx,path,raw_path)
+            if legacy_target is not None:
+                resource_path='/_id/'+legacy_target.resource_id
+                view=legacy_target.view
+                revision=None
+                stable=(resource_path,view,None)
+                redirect_resource_id=legacy_target.resource_id
+                redirect_target=legacy_target.canonical_path
+            if redirect_target is None and view=='markdown' and revision is None and not resource_path.endswith('.md'):
                 # Old Post links omitted .md. Resolve the candidate only to find
                 # the stable resource; disclose its canonical path after the
                 # normal discovery.get authorization check succeeds.
@@ -1498,14 +1554,30 @@ def create_app(service):
                             raise
                         candidate=resource_path+'.md'
                         try:
-                            rid=await tx.resolve(candidate)
+                            rid=await resolve_read(tx,candidate)
                         except Failure as candidate_error:
                             if candidate_error.code!='not_found':
                                 raise
                         else:
                             if (await tx.resource(rid)).type=='post':
+                                redirect_resource_id=rid
                                 redirect_target=await tx.path(rid)
                                 resource_path=redirect_target
+            if redirect_target is None and stable is None:
+                async with service.metadata.transaction(write=False) as tx:
+                    try:
+                        await tx.resolve(resource_path)
+                    except Failure as exc:
+                        if exc.code!='not_found':
+                            raise
+                        rid=await tx.resolve_migrated(resource_path)
+                        canonical_path=await tx.path(rid)
+                        suffix=('/revisions/'+revision if revision else '')
+                        if view!='markdown':
+                            suffix+='/'+view
+                        redirect_resource_id=rid
+                        redirect_target=canonical_path+suffix
+                        resource_path='/_id/'+rid
             op='discovery.raw' if view=='raw' else 'discovery.get'
             require(service.registry.operation(op).effect=='read','effect_mismatch')
             args={'id':resource_path}
@@ -1518,7 +1590,7 @@ def create_app(service):
                 # Resolve both aliases to the same stable resource before comparing.
                 async with service.metadata.transaction(write=False) as tx:
                     header_id=packet.arguments.get('id')
-                    rid=await tx.resolve(header_id) if isinstance(header_id,str) and header_id.startswith('/') else header_id
+                    rid=await resolve_read(tx,header_id) if isinstance(header_id,str) and header_id.startswith('/') else header_id
                     require(rid==await tx.resolve(resource_path),'resource_mismatch')
                 require(packet.arguments.get('revision')==revision,'revision_mismatch')
                 require(packet.arguments.get('view')==args.get('view'),'representation_mismatch')
@@ -1528,8 +1600,27 @@ def create_app(service):
             if result.error:
                 return json_response(result_wire(result),error_status(result.error.code))
             if redirect_target is not None:
-                return Response(status_code=308,headers={**BASE_HEADERS,
-                    'Location':quote(redirect_target,safe='/')})
+                # A signed old-path packet may resolve a newly occupying object
+                # between routing and execution. Its successful authorization
+                # must not disclose the previous target's canonical name.
+                authorized_id=(result.resources[0].id if result.resources else
+                    result.data.get('id',result.data.get('metadata',{}).get('id')))
+                require(authorized_id==redirect_resource_id,'resource_mismatch')
+                if legacy_target is not None:
+                    async with service.metadata.transaction(write=False) as tx:
+                        current_legacy=await resolve_legacy_read(tx,path,raw_path)
+                    require(current_legacy is not None and
+                            current_legacy.resource_id==authorized_id and
+                            current_legacy.view==legacy_target.view,'resource_mismatch')
+                    legacy_target=current_legacy
+                    redirect_target=current_legacy.canonical_path
+                headers={**BASE_HEADERS,'Location':quote(redirect_target,safe='/@&')}
+                if legacy_target is not None:
+                    headers['X-Msg-Legacy-Source']=legacy_target.source_sha256
+                    headers['X-Msg-Legacy-Signature']='unverified-historical-claim'
+                    if legacy_target.provenance_path is not None:
+                        headers['Link']='<'+quote(legacy_target.provenance_path,safe='/')+'>; rel="describedby"'
+                return Response(status_code=308,headers=headers)
             value=wire(result.data)
             if ssh_projection:
                 value={'id':value['id'],'keys':[key for key in value.get('keys',())

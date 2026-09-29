@@ -81,8 +81,24 @@ def _claim_count(tx, listing_id, claimant=None):
                       (listing_id, claimant))[0])
 
 
-def projection(tx, listing_id, now):
+async def validate_contract(app, tx, row):
+    """Mutable accounting state cannot change a publisher's immutable terms."""
+    from msg.market.catalog import read_listing_body
+    resource = await tx.resource(row['listing_id'])
+    body, _ = await read_listing_body(app, tx, resource)
+    require(resource.type == 'listing' and resource.owner == row['publisher'] and
+            body.get('mode') == 'bounty' and body.get('currency_id') == CURRENCY_ID and
+            all(body.get(name) == row[name] for name in (
+                'reward_minor', 'max_claims', 'claim_limit_per_subject',
+                'verifier_id', 'verifier_version', 'eligibility', 'expires_at')),
+            'bounty_contract_mismatch')
+    # Budget and state intentionally differ after funding, claims or pause.
+    # Their validity is checked against the append-only ledger separately.
+
+
+async def projection(app, tx, listing_id, now):
     row = _row(tx, listing_id)
+    await validate_contract(app, tx, row)
     return _public(row, _balance(tx,row['escrow_subject']), _claim_count(tx,listing_id), now)
 
 
@@ -175,7 +191,7 @@ def install(app):
     async def get(ctx, request, tx):
         row = _row(tx, request.arguments['listing_id'])
         await check_access(app, ctx, request, tx, row['listing_id'], 'read')
-        return HandlerOutput(data={'bounty': projection(tx,row['listing_id'],ctx.now)})
+        return HandlerOutput(data={'bounty': await projection(app,tx,row['listing_id'],ctx.now)})
 
     @op('bounty.top_up', obj({'listing_id': IDENTIFIER, 'amount_minor': amount},
         ('listing_id', 'amount_minor')), signature=True, requirements=account_requirements)
@@ -184,6 +200,7 @@ def install(app):
         row = _row(tx, request.arguments['listing_id'])
         require(row['publisher'] == publisher, 'bounty_not_found')
         await check_access(app, ctx, request, tx, row['listing_id'], 'write')
+        await validate_contract(app, tx, row)
         require(row['state'] != 'closed', 'bounty_closed')
         require(row['expires_at'] is None or parse_time(row['expires_at']) > ctx.now,
                 'bounty_expired')
@@ -212,6 +229,7 @@ def install(app):
         row = _row(tx, request.arguments['listing_id'])
         await check_access(app, ctx, request, tx, row['listing_id'], 'read')
         _ready(tx, row, ctx.now, claimant)
+        await validate_contract(app, tx, row)
         key = tx.one('''SELECT key_id FROM identity_keys WHERE subject=? AND
             is_primary=1 AND retired_at IS NULL''', (claimant,))
         require(key is not None and key[0] == ctx.principal.credential_id,
@@ -236,6 +254,7 @@ def install(app):
         row = _row(tx, request.arguments['listing_id'])
         require(row['publisher'] == publisher, 'bounty_not_found')
         await check_access(app, ctx, request, tx, row['listing_id'], 'write')
+        await validate_contract(app, tx, row)
         require(row['state'] != 'closed', 'bounty_closed')
         remaining = _balance(tx, row['escrow_subject'])
         refund = None
@@ -261,6 +280,7 @@ def install(app):
         listing = _row(tx, row[0])
         await check_access(app, ctx, request, tx, listing['listing_id'], 'read')
         _ready(tx, listing, ctx.now, claimant)
+        await validate_contract(app, tx, listing)
         require(row[6] is None, 'bounty_challenge_consumed')
         require(parse_time(row[3]) > ctx.now, 'bounty_challenge_expired')
         require(row[4] == VERIFIER_VERSION, 'bounty_verifier_unsupported')
@@ -327,23 +347,25 @@ def install(app):
         row = _row(tx,request.arguments['listing_id'])
         require(row['publisher'] == _subject(ctx),'bounty_not_found')
         await check_access(app,ctx,request,tx,row['listing_id'],'write')
+        await validate_contract(app, tx, row)
         require(row['state'] != 'closed','bounty_closed')
         tx.execute("UPDATE bounty_listings SET state='paused',pause_reason='publisher_paused' WHERE listing_id=?",
                    (row['listing_id'],),write=True)
-        return HandlerOutput(data={'bounty':projection(tx,row['listing_id'],ctx.now)})
+        return HandlerOutput(data={'bounty':await projection(app,tx,row['listing_id'],ctx.now)})
 
     @op('bounty.resume', obj({'listing_id':IDENTIFIER},('listing_id',)), signature=True, requirements=account_requirements)
     async def resume(ctx,request,tx):
         row = _row(tx,request.arguments['listing_id'])
         require(row['publisher'] == _subject(ctx),'bounty_not_found')
         await check_access(app,ctx,request,tx,row['listing_id'],'write')
+        await validate_contract(app, tx, row)
         require(row['state'] != 'closed','bounty_closed')
         require(row['expires_at'] is None or parse_time(row['expires_at']) > ctx.now,'bounty_expired')
         require(_claim_count(tx,row['listing_id']) < row['max_claims'],'bounty_claims_exhausted')
         require(_balance(tx,row['escrow_subject']) >= row['reward_minor'],'bounty_out_of_budget')
         tx.execute("UPDATE bounty_listings SET state='active',pause_reason=NULL WHERE listing_id=?",
                    (row['listing_id'],),write=True)
-        return HandlerOutput(data={'bounty':projection(tx,row['listing_id'],ctx.now)})
+        return HandlerOutput(data={'bounty':await projection(app,tx,row['listing_id'],ctx.now)})
 
     @op('bounty.claims',obj({'listing_id':IDENTIFIER,'cursor':IDENTIFIER,
         'limit':{'type':'integer','minimum':1,'maximum':100}},('listing_id',)),effect='read', requirements=account_requirements)
@@ -352,6 +374,7 @@ def install(app):
         subject = _owner(ctx)
         row = _row(tx,request.arguments['listing_id'])
         await check_access(app,ctx,request,tx,row['listing_id'],'read')
+        await validate_contract(app, tx, row)
         args = request.arguments
         limit = args.get('limit',50)
         rows = tx.rows('''SELECT id,claimant,challenge_id,proof_digest,status,reward_minor,

@@ -34,6 +34,16 @@ class PassiveGetBoundary:
 
     async def __call__(self, scope, receive, send):
         executor = getattr(self.service, 'executor', None)
+        if scope['type'] == 'http' and executor is not None:
+            try:
+                await executor.require_current_runtime()
+            except Failure as exc:
+                if exc.code != 'recovery_runtime_stale':
+                    raise
+                response = JSONResponse({'error': {'code': exc.code, 'retryable': False}},
+                                        status_code=503, headers=BASE_HEADERS)
+                await response(scope, receive, send)
+                return
         if scope['type'] == 'http' and executor is not None and executor.recovery_drill_active():
             # Public ACLs in an old snapshot can also have been revoked. Do not
             # serve business content before authority replay and local promotion.

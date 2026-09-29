@@ -1,6 +1,7 @@
 """msgd: local installation, serving, workers, diagnostics and restricted SSH."""
 from __future__ import annotations
 import argparse
+import importlib.util
 import asyncio
 from datetime import UTC,datetime
 import json
@@ -84,7 +85,7 @@ def parser():
     init.add_argument('--data-dir',type=Path,default=Path('/var/lib/msgd'))
     init.add_argument('--service-url',default='https://msg.lmm.best')
     sub.add_parser('serve',help='Serve JSON/Markdown, operations, GraphQL and MCP')
-    hosted=sub.add_parser('hosting',help='Serve user-published files on the separate configured origin')
+    hosted=sub.add_parser('hosting',help='Serve user-published files with the read-only hosting runtime')
     hosted.add_argument('--listen',default='127.0.0.1');hosted.add_argument('--port',type=int,default=8043)
     worker=sub.add_parser('worker',help='Run the global durable effects/retention queue')
     worker.add_argument('--once',action='store_true')
@@ -98,6 +99,18 @@ def parser():
     rotate=rs.add_parser('rotate');rotate.add_argument('--lost-key',action='store_true');rotate.add_argument('--resume',action='store_true')
     rb=rs.add_parser('backup');rb.add_argument('destination',type=Path)
     rr=rs.add_parser('recover');rr.add_argument('source',type=Path)
+    proof=rs.add_parser('recovery-proof',help='Physical-console complete-state recovery proof and promotion')
+    proof_sub=proof.add_subparsers(dest='proof_command',required=True)
+    proof_sign=proof_sub.add_parser('sign')
+    proof_sign.add_argument('source_backup_sha256');proof_sign.add_argument('sequence',type=int)
+    proof_sign.add_argument('destination',type=Path)
+    proof_promote=proof_sub.add_parser('promote')
+    proof_promote.add_argument('source',type=Path);proof_promote.add_argument('independent_trust',type=Path)
+    retirement=rs.add_parser('backup-retirement',help='Physical-console attestation for listed backup sets')
+    retirement_sub=retirement.add_subparsers(dest='retirement_command',required=True)
+    retirement_sign=retirement_sub.add_parser('sign')
+    retirement_sign.add_argument('source',type=Path);retirement_sign.add_argument('destination',type=Path)
+    retirement_sub.add_parser('import').add_argument('source',type=Path)
     money=sub.add_parser('money',help='Physical-console central bank administration')
     ms=money.add_subparsers(dest='money_command',required=True)
     ms.add_parser('mint').add_argument('amount')
@@ -121,6 +134,9 @@ def parser():
     offer_set.add_argument('--max-quantity',type=int,required=True)
     offer_set.add_argument('--duration-seconds',type=int)
     ops.add_parser('disable').add_argument('offer_id')
+    offer_import=ops.add_parser('import',help='Explicitly adopt one legacy offer as a signed Listing')
+    offer_import.add_argument('offer_id')
+    offer_import.add_argument('--dry-run',action='store_true')
     market=sub.add_parser('market',help='Physical-console arbitration configuration')
     market_sub=market.add_subparsers(dest='market_command',required=True)
     market_sub.add_parser('grant').add_argument('subject_id')
@@ -139,6 +155,11 @@ def parser():
 
 def main(argv=None):
     args=parser().parse_args(argv)
+    server_modules=('starlette','uvicorn','psycopg','valkey','aiohttp','dns','graphql')
+    if any(importlib.util.find_spec(name) is None for name in server_modules):
+        print(canonical({'status':'error','error':{'code':'server_dependencies_required',
+            'hint':"Install msg-lmm-best[server] before running server commands."}}).decode(),file=sys.stderr)
+        return 2
     try:
         if args.command in {'doctor','selftest'}:
             from msg.admin.diagnostics import doctor,selftest
@@ -168,6 +189,12 @@ def main(argv=None):
                 admin.change_pin();result={'status':'pin_changed'}
             elif args.root_command=='rotate':result=admin.rotate(lost_key=args.lost_key,resume=args.resume)
             elif args.root_command=='backup':result=admin.backup(args.destination)
+            elif args.root_command=='recovery-proof':
+                result=(admin.sign_recovery_proof(args.source_backup_sha256,args.sequence,args.destination)
+                        if args.proof_command=='sign' else admin.promote_recovery(args.source,args.independent_trust))
+            elif args.root_command=='backup-retirement':
+                result=(admin.sign_backup_retirement(args.source,args.destination)
+                        if args.retirement_command=='sign' else admin.import_backup_retirement(args.source))
             else:result=admin.recover(args.source)
             emit(result);return 0
         if args.command=='market':
@@ -186,7 +213,8 @@ def main(argv=None):
                          'duration_seconds':args.duration_seconds}
                         if args.offer_command=='set' else None)
                 emit(MoneyAdmin(args.config_dir).execute_offer(
-                    args.offer_command,offer_id=args.offer_id,fields=fields))
+                    args.offer_command,offer_id=args.offer_id,fields=fields,
+                    **({'dry_run': args.dry_run} if args.offer_command == 'import' else {})))
                 return 0
             if args.money_command=='bank':
                 action='bank_'+args.bank_command

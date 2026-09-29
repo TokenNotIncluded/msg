@@ -26,9 +26,19 @@ class BubblewrapRunner:
         for path in ('/usr', '/bin', '/lib', '/lib64'):
             if Path(path).exists():
                 command += ['--ro-bind', path, path]
-        prefix = str(Path(sys.prefix).resolve())
-        if not prefix.startswith('/usr') and prefix not in {'/','/etc','/home','/mnt'}:
-            command += ['--ro-bind', prefix, prefix]
+        # A virtualenv may symlink its executable into a separate managed
+        # Python installation (for example uv). It needs that interpreter and
+        # stdlib tree as well as the virtualenv's installed dependencies.
+        for prefix in dict.fromkeys(str(Path(p).resolve()) for p in (sys.prefix, sys.base_prefix)):
+            if not Path(prefix).is_relative_to('/usr') and prefix not in {'/','/etc','/home','/mnt'}:
+                command += ['--ro-bind', prefix, prefix]
+        # Preserve a managed interpreter's alias path used by the venv's
+        # symlink, without exposing the rest of the user's installation tree.
+        base_executable = Path(getattr(sys, '_base_executable', sys.executable))
+        interpreter_alias = base_executable.parent.parent
+        if (interpreter_alias != interpreter_alias.resolve() and
+                interpreter_alias.resolve() == Path(sys.base_prefix).resolve()):
+            command += ['--ro-bind', str(interpreter_alias.resolve()), str(interpreter_alias)]
         command += ['--dir','/etc']
         for path in ('/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ssl/certs'):
             if Path(path).exists():

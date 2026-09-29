@@ -19,6 +19,7 @@ CURL_INPUT=obj({'url':{'type':'string','minLength':1,'maxLength':8192},
     'headers':{'type':'object','maxProperties':30,'additionalProperties':{'type':'string','maxLength':4096}},
     'body':BYTES,'body_ref':REF},('url',))
 TOOL_OUTPUT={'type':'object'}
+MAX_TOOL_CONCURRENCY=32
 
 
 def descriptor(name):
@@ -49,15 +50,32 @@ async def resolve_tool_for_invoke(tx,value):
     return await resolve(tx,value)
 
 
+def declared_concurrency(value):
+    # Published revisions predate this field; absence is the tightest limit.
+    limit=value.get('concurrency',1)
+    require(type(limit) is int and 1<=limit<=MAX_TOOL_CONCURRENCY,'invalid_tool_concurrency')
+    return limit
+
+
+async def tool_concurrency(app,tx,ref):
+    rev=await tx.revision(ref)
+    return declared_concurrency(loads(await app.contents.read_bytes(rev.content,limit=65536)))
+
+
 async def read_tool(app,tx,rid,revision=None):
     resource=await tx.resource(rid)
     require(resource.type=='tool' and resource.parent==TOOLS_SPACE,'not_a_tool')
     rev=await tx.revision(ResourceRef(id=rid,revision=revision))
     value=loads(await app.contents.read_bytes(rev.content,limit=65536))
-    require(value['executor_key'] in {'dns','curl'} and value['tool_id']==rid,'untrusted_tool_executor')
-    return ToolSpec(resource=ResourceRef(id=rid,revision=rev.id),operation='tool.run',
-        input_schema=decode(ResourceRef,value['input_schema']),output_schema=decode(ResourceRef,value['output_schema']),
-        executor_key=value['executor_key'],network=decode(NetworkPolicy,value['network']))
+    declared_concurrency(value)
+    registered=app.registry.tool(rid,value['version'])
+    require(value['tool_id']==rid and value['executor_key']==registered.executor_key,
+            'untrusted_tool_executor')
+    require(decode(ResourceRef,value['input_schema'])==registered.input_schema and
+            decode(ResourceRef,value['output_schema'])==registered.output_schema,
+            'tool_schema_mismatch')
+    return replace(registered,resource=ResourceRef(id=rid,revision=rev.id),
+        network=decode(NetworkPolicy,value['network']))
 
 
 async def tool_policies(app,principal,tool,args,tx):
@@ -109,6 +127,11 @@ def register(app,op):
     for name,schema in (('dns',DNS_INPUT),('curl',CURL_INPUT)):
         app.registry.add_schema(ResourceRef(id='schema:tool.'+name+':input'),schema)
         app.registry.add_schema(ResourceRef(id='schema:tool.'+name+':output'),TOOL_OUTPUT)
+        value=descriptor(name)
+        app.registry.add_tool(ToolSpec(resource=ResourceRef(id=value['tool_id']),
+            operation=value['operation'],input_schema=decode(ResourceRef,value['input_schema']),
+            output_schema=decode(ResourceRef,value['output_schema']),executor_key=value['executor_key'],
+            network=decode(NetworkPolicy,value['network'])),version=value['version'])
 
     @op('tool.run',obj({'id':IDENTIFIER,'revision':IDENTIFIER,'arguments':{'type':'object'}},('id','arguments')),effect='external')
     async def invoke(ctx,request,tx):
@@ -126,7 +149,7 @@ def register(app,op):
         require(not ('body' in args and 'body_ref' in args),'ambiguous_request_body')
         eid=event_id(request,ctx.principal.subject)
         job=EffectJob(id=new_id('job'),event_id=eid,kind='tool',dedupe_key='tool:'+eid,principal=ctx.principal,
-            operation=request.operation,arguments={'tool':wire(tool.resource),'input':wire(args),
+            operation=request.operation,arguments={'contract_version':request.contract_version,'tool':wire(tool.resource),'input':wire(args),
                 'policies':wire(policies),'request_id':request.request_id},state='pending',attempts=0,
                 next_attempt_at=ctx.now,lease_until=None)
         await tx.enqueue(job)
