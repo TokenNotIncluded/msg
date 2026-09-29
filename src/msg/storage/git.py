@@ -197,6 +197,16 @@ class LFSObjectStore:
         return removed,bytes_removed
 
 
+def _file_matches(path,size,expected):
+    hasher=hashlib.sha256()
+    count=0
+    with open(path,'rb') as stream:
+        while chunk:=stream.read(1024*1024):
+            count+=len(chunk)
+            hasher.update(chunk)
+    return count==size and 'sha256:'+hasher.hexdigest()==expected
+
+
 class GitContentStore:
     def __init__(self,path: Path, *, binary_dir: Path | None = None,
                  staging_dir: Path | None = None, group_read: bool = False):
@@ -284,7 +294,14 @@ class GitContentStore:
                 entry={'kind':'git','oid':oid,'size':size}
             else:
                 destination=self.binary/self._key(ref)
-                if not destination.exists():
+                # An existing path is not evidence its bytes still match the
+                # digest. Keep its inode (LFS links share it) only if intact.
+                try:
+                    intact=await asyncio.to_thread(_file_matches,destination,size,hashed)
+                except FileNotFoundError:
+                    intact=None
+                require(intact is not False,'content_digest_mismatch')
+                if intact is None:
                     if self.group_read:
                         # Rename retains the staging GID, so explicitly use the
                         # prepared destination group. Staging itself stays private.
