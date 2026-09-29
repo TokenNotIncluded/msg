@@ -1,0 +1,55 @@
+name: Python 3.15 quality scout
+on:
+  push:
+    branches: [work/py315-ruff-scout-20260929]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Collect source history without executing project code
+        run: |
+          mkdir -p evidence
+          git fetch origin main:refs/heads/review-main
+          for pr in 176 180 181 182 183 184; do
+            git fetch origin refs/pull/$pr/head:refs/heads/review-$pr
+          done
+          git show-ref > evidence/refs.txt
+          git bundle create evidence/source.bundle --all
+          python - <<'PY'
+          import json, pathlib, urllib.request
+          versions = {}
+          for name in ('ruff', 'uv', 'uv-build'):
+              with urllib.request.urlopen('https://pypi.org/pypi/' + name + '/json', timeout=30) as response:
+                  data = json.load(response)
+              versions[name] = {'version': data['info']['version'], 'requires_python': data['info']['requires_python']}
+          pathlib.Path('evidence/tool-versions.json').write_text(json.dumps(versions, indent=2))
+          print(json.dumps(versions, indent=2))
+          PY
+      - name: Collect strict lint and formatting diagnostics only
+        run: |
+          python -m pip install ruff
+          ruff --version | tee evidence/ruff-version.txt
+          git switch --detach review-176
+          set +e
+          ruff check --target-version py315 --select E4,E7,E9,F,I,UP,B,ASYNC,C4,ICN,PIE,PGH,RSE,T10,TID,YTT,RUF100 --output-format json src tests conformance scripts conftest.py > evidence/ruff.json 2> evidence/ruff.stderr
+          echo $? > evidence/ruff.exit
+          ruff format --check src tests conformance scripts conftest.py > evidence/format.txt 2> evidence/format.stderr
+          echo $? > evidence/format.exit
+          exit 0
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python315-quality-scout
+          path: evidence/
+          if-no-files-found: error
