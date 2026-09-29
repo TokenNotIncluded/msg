@@ -59,12 +59,13 @@ jobs:
               'head':os.environ['HEAD_SHA'], 'checkout':git('rev-parse','HEAD'),
               'tree':git('rev-parse','HEAD^{tree}'), 'python':platform.python_version(),
               'run_id':os.environ['GITHUB_RUN_ID'], 'attempt':os.environ['GITHUB_RUN_ATTEMPT']},indent=2))
-          shutil.copyfile('tests/test_hosting_runtime.py','artifacts/test_hosting_runtime.py')
+          for source in Path('tests').glob('test_hosting*.py'):
+              shutil.copyfile(source,Path('artifacts')/source.name)
           PY
       - name: Exercise isolated hosting and retain established web regressions
         run: >-
-          python -m pytest tests/test_hosting_runtime.py tests/test_hosting_same_origin.py
-          tests/test_cli_hosting.py --junitxml=artifacts/hosting.xml
+          python -m pytest tests/test_hosting*.py tests/test_cli_hosting.py
+          --junitxml=artifacts/hosting.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
