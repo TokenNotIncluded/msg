@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import time
 
 from msg.core.codec import canonical, loads, parse_time, wire
 from msg.core.errors import Failure, require
@@ -203,27 +204,37 @@ def install(app, op):
     async def lease_list(ctx, request, tx):
         holder = await _self(app, ctx, request, tx)
         limit = request.arguments.get('limit', 50)
-        rows = tx.rows('SELECT id,target,status,expires_at,body FROM collaboration_leases '
-                       'WHERE holder=? AND id>? ORDER BY id',
-                       (holder, request.arguments.get('after', '')))
+        position = request.arguments.get('after', '')
         records = []
         more = False
-        for _, target, status, expires, raw in rows:
-            try:
-                await _safe_ref(app, ctx, request, tx, target)
-            except Failure as exc:
-                if exc.code in {'permission_denied', 'credential_ceiling', 'certificate_gate',
-                                'delegation_scope', 'ancestor_inactive', 'not_found',
-                                'collaboration_ref_forbidden'}:
-                    continue
-                raise
-            record = loads(raw)
-            record['effective_status'] = ('expired' if status == 'active' and
-                                          parse_time(expires) <= ctx.now else status)
-            if len(records) == limit:
-                more = True
+        scanned = 0
+        while not more:
+            require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+            rows = tx.rows('SELECT id,target,status,expires_at,body FROM collaboration_leases '
+                           'WHERE holder=? AND id>? ORDER BY id LIMIT 128',
+                           (holder, position))
+            for lease_id, target, status, expires, raw in rows:
+                scanned += 1
+                require(scanned <= 4096 and time.monotonic() < ctx.deadline_monotonic,
+                        'query_cost_exceeded')
+                position = lease_id
+                try:
+                    await _safe_ref(app, ctx, request, tx, target)
+                except Failure as exc:
+                    if exc.code in {'permission_denied', 'credential_ceiling', 'certificate_gate',
+                                    'delegation_scope', 'ancestor_inactive', 'not_found',
+                                    'collaboration_ref_forbidden'}:
+                        continue
+                    raise
+                if len(records) == limit:
+                    more = True
+                    break
+                record = loads(raw)
+                record['effective_status'] = ('expired' if status == 'active' and
+                                              parse_time(expires) <= ctx.now else status)
+                records.append(record)
+            if len(rows) < 128:
                 break
-            records.append(record)
         return HandlerOutput(data={'items': records,
                                    'next_after': records[-1]['id'] if more else None})
 

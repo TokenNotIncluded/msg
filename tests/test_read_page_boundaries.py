@@ -61,4 +61,4 @@ async def test_all_sorts_page_over_actual_database_order(installed, monkeypatch,
                 empty = await call(app, operation, {**initial, 'query': 'absent-page-needle'},
                                    key=key, subject=subject, contract_version=version)
                 assert empty.status == 'ok', wire(empty)
-                assert empty.data['items'] == [] and not empty.data.get('next')
+                assert wire(empty.data)['items'] == [] and not empty.data.get('next')
