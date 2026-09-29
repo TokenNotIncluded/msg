@@ -1,0 +1,118 @@
+name: Prepare Python 3.15 quality changes
+on:
+  push:
+    branches: [work/py315-ruff-scout-20260929]
+    paths:
+      - .github/quality-prepare.py
+      - .github/workflows/quality-prepare.yml
+permissions:
+  contents: read
+concurrency:
+  group: prepare-python315-quality
+  cancel-in-progress: true
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install pinned source maintenance tools
+        run: python -m pip install ruff==0.16.9 uv==0.12.20
+      - name: Prepare source only; never import or execute the project
+        run: |
+          cp .github/quality-prepare.py "$RUNNER_TEMP/quality-prepare.py"
+          python "$RUNNER_TEMP/quality-prepare.py"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prepared-python315-quality
+          path: ${{ runner.temp }}/quality-evidence/
+          if-no-files-found: error
+  objects:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: prepared-python315-quality
+          path: evidence
+      - name: Publish Git objects only, without executing source or updating any ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python - <<'PY'
+          import concurrent.futures, json, os, pathlib, subprocess, time, urllib.error, urllib.request
+          evidence = pathlib.Path('evidence').resolve()
+          source = json.loads((evidence / 'source.json').read_text())
+          subprocess.run(['git', 'init', '-q', 'objects'], check=True)
+          os.chdir('objects')
+          subprocess.run(['git', 'fetch', '-q', str(evidence / 'source.bundle'), 'HEAD'], check=True)
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          head = git('rev-parse', 'FETCH_HEAD').decode().strip()
+          tree = git('rev-parse', head + '^{tree}').decode().strip()
+          assert tree == source['tree'] and head == source['commit']
+          base = source['parents'][0]
+          prefix = 'https://api.github.com/repos/' + os.environ['REPOSITORY'] + '/git/'
+          def post(path, value):
+              data = json.dumps(value).encode()
+              for attempt in range(6):
+                  request = urllib.request.Request(prefix + path, data=data, method='POST', headers={
+                      'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                      'Accept': 'application/vnd.github+json',
+                      'Content-Type': 'application/json', 'X-GitHub-Api-Version': '2022-11-28'})
+                  try:
+                      with urllib.request.urlopen(request, timeout=90) as response:
+                          return json.load(response)
+                  except urllib.error.HTTPError as exc:
+                      if exc.code not in (429, 502, 503, 504) or attempt == 5:
+                          raise
+                      time.sleep(min(60, 2 ** attempt))
+          raw = git('diff', '--raw', '--no-renames', '--no-abbrev', '-z', base, head).split(b'\0')
+          entries = []
+          for i in range(0, len(raw) - 1, 2):
+              meta, path = raw[i].decode().split(), raw[i + 1].decode()
+              mode, oid, status = meta[1], meta[3], meta[4]
+              assert not pathlib.PurePosixPath(path).is_absolute() and '..' not in pathlib.PurePosixPath(path).parts
+              assert not path.startswith(('.git/', '.github/quality-', '.github/workflows/quality-'))
+              if status == 'D':
+                  entries.append({'path': path, 'mode': meta[0][1:], 'type': 'blob', 'sha': None})
+              else:
+                  assert mode == '100644', (path, mode)
+                  entries.append({'path': path, 'mode': mode, 'type': 'blob', 'sha': oid})
+          def blob(entry):
+              if entry['sha'] is not None:
+                  content = git('cat-file', 'blob', entry['sha']).decode('utf-8')
+                  assert len(content.encode()) < 2_000_000
+                  result = post('blobs', {'content': content, 'encoding': 'utf-8'})
+                  assert result['sha'] == entry['sha']
+              return entry
+          with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+              entries = list(pool.map(blob, entries))
+          created = post('trees', {'base_tree': git('rev-parse', base + '^{tree}').decode().strip(), 'tree': entries})
+          assert created['sha'] == tree
+          commit = post('commits', {'message': 'quality: integrate reviewed fixes and pin Python 3.15 toolchain',
+              'tree': tree, 'parents': source['parents']})
+          source['publication_commit'] = commit['sha']
+          source['publication_url'] = commit['html_url']
+          source['published_paths'] = len(entries)
+          (evidence / 'publication.json').write_text(json.dumps(source, indent=2) + '\n')
+          print(json.dumps(source, indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python315-quality-publication
+          path: evidence/publication.json
+          if-no-files-found: error
