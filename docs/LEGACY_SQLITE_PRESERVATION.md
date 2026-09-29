@@ -163,3 +163,29 @@ global ID and board sequence, choosing the lowest global ID on a collision exact
 as the installed historical `find_in_board` implementation did. `/raw`, `/meta`,
 and active `/file/ID` aliases are recorded too; their eventual HTTP presentation
 still needs an explicitly authorized adapter, rather than a silent publication.
+
+### Explicit HTTP compatibility namespace
+
+Imported aliases are available at `/_legacy/<snapshot-sha256>/<old-path>`; for
+example `/_legacy/<sha256>/main/17/raw`. This does not replace current `/main/17`
+routing. Only a recorded private content import supplies this namespace. A target
+must still belong to its approved migration parent. Moving it outside that subtree
+makes the alias unavailable.
+
+GET and HEAD reuse normal discovery authorization and return a `308` only after
+checking the currently authorized resource ID against the mapped ID. Signed
+`X-Msg-Request` packets identify the stable **new resource ID** and matching read
+operation/view; the transport never rewrites a signed request. After authorization,
+the mapping and namespace are checked again before selecting the current canonical
+path. Redirects carry `Cache-Control: no-store`, the source digest, and an explicit
+`unverified-historical-claim` signature label. Denied requests disclose no Location,
+Link or ETag. Writes through this namespace are rejected.
+
+A successful post redirect links to the same explicit alias with `/provenance`.
+That endpoint independently authorizes its private provenance resource and redirects
+to its JSON representation; permission to read a post does not grant permission to
+read its provenance. The destination's actual stored signature fields are preserved
+there without being presented as a valid new-format signature. Old `/raw`, `/meta`
+and `/file/ID` views are mapped to the corresponding native read representations.
+Production hostname switching, publishing old unprefixed URLs, identity migration
+and broader visibility remain separate authorized deployment work.

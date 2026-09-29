@@ -1473,7 +1473,19 @@ def create_app(service):
             resource_path,view,revision=stable if stable is not None else parse_view(path)
             redirect_target=None
             redirect_resource_id=None
-            if view=='markdown' and revision is None and not resource_path.endswith('.md'):
+            legacy_target=None
+            if path.startswith('/_legacy/'):
+                from msg.transports.legacy_content_http import resolve_legacy_read
+                async with service.metadata.transaction(write=False) as tx:
+                    legacy_target=await resolve_legacy_read(tx,path,raw_path)
+            if legacy_target is not None:
+                resource_path='/_id/'+legacy_target.resource_id
+                view=legacy_target.view
+                revision=None
+                stable=(resource_path,view,None)
+                redirect_resource_id=legacy_target.resource_id
+                redirect_target=legacy_target.canonical_path
+            if redirect_target is None and view=='markdown' and revision is None and not resource_path.endswith('.md'):
                 # Old Post links omitted .md. Resolve the candidate only to find
                 # the stable resource; disclose its canonical path after the
                 # normal discovery.get authorization check succeeds.
@@ -1537,8 +1549,21 @@ def create_app(service):
                 authorized_id=(result.resources[0].id if result.resources else
                     result.data.get('id',result.data.get('metadata',{}).get('id')))
                 require(authorized_id==redirect_resource_id,'resource_mismatch')
-                return Response(status_code=308,headers={**BASE_HEADERS,
-                    'Location':quote(redirect_target,safe='/@&')})
+                if legacy_target is not None:
+                    async with service.metadata.transaction(write=False) as tx:
+                        current_legacy=await resolve_legacy_read(tx,path,raw_path)
+                    require(current_legacy is not None and
+                            current_legacy.resource_id==authorized_id and
+                            current_legacy.view==legacy_target.view,'resource_mismatch')
+                    legacy_target=current_legacy
+                    redirect_target=current_legacy.canonical_path
+                headers={**BASE_HEADERS,'Location':quote(redirect_target,safe='/@&')}
+                if legacy_target is not None:
+                    headers['X-Msg-Legacy-Source']=legacy_target.source_sha256
+                    headers['X-Msg-Legacy-Signature']='unverified-historical-claim'
+                    if legacy_target.provenance_path is not None:
+                        headers['Link']='<'+quote(legacy_target.provenance_path,safe='/')+'>; rel="describedby"'
+                return Response(status_code=308,headers=headers)
             value=wire(result.data)
             if ssh_projection:
                 value={'id':value['id'],'keys':[key for key in value.get('keys',())
