@@ -249,3 +249,14 @@ async def test_subsequent_complete_recovery_does_not_resume_historical_receipt(c
     marker.write_bytes(canonical(gate))
     marker.chmod(0o600)
     assert (await promote(app, packet, pin=pin, signer=root, operator='isolated-fixture'))['status'] == 'recovery_promoted'
+
+
+def test_schema_vocabulary_preserves_nullability_across_pg_catalog_versions():
+    from msg.admin.recovery_state import shape
+    pg16 = {'tables': {'sample': [['owner', 'text', True, '', None]]},
+            'constraints': [], 'indexes': [], 'triggers': [], 'functions': [], 'sequences': []}
+    pg18 = deepcopy(pg16)
+    pg18['constraints'] = [['sample', 'sample_owner_not_null', 'n', 'NOT NULL owner', True]]
+    assert shape(pg16) == shape(pg18)
+    pg18['tables']['sample'][0][2] = False
+    assert shape(pg16) != shape(pg18)

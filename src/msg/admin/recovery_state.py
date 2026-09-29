@@ -49,7 +49,10 @@ def catalogue(tx):
 def shape(catalog):
     """Stable allowed object/column vocabulary, independent of PG deparser whitespace."""
     return {'tables': {table: [column[:4] for column in columns] for table, columns in catalog['tables'].items()},
-            'constraints': [row[:3] for row in catalog['constraints']],
+            # PG18 additionally catalogs NOT NULL as contype=n. attnotnull above
+            # already pins each column; keep fixed vocabulary portable to PG16.
+            # Full signed catalogue still includes every constraint definition.
+            'constraints': [row[:3] for row in catalog['constraints'] if row[2] != 'n'],
             'indexes': [row[:2] for row in catalog['indexes']],
             'triggers': [row[:2] for row in catalog['triggers']],
             'functions': [row[:2] for row in catalog['functions']],

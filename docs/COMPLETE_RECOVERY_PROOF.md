@@ -8,7 +8,7 @@ is never written to a proof, receipt, log, or command argument.
 ## What this path proves
 
 The current authoritative instance signs a separate, versioned
-`complete-recovery-state-v1` statement. It commits to all 85 supported metadata
+`complete-recovery-state-v1` statement. It commits to all 86 supported metadata
 tables, exact columns and schema definitions, typed row counts/digests (including
 duplicates), sequence positions, storage references, actual content/Git/LFS trees,
 trust document, normalized configuration policy, and random service-key digests.
@@ -21,6 +21,12 @@ revocations, policies, scope/ownership, task/nonce/ledger/settlement data,
 authorization epoch and the full audit chain are included. Usable certificate
 chains, current Root/online/receipt keys, resource ancestry and ledger/market
 invariants are checked again before approval.
+
+The fixed packaged schema vocabulary includes the current market migration
+(`server_offer_resources` and bigint order quantities). PostgreSQL 18 duplicates
+NOT NULL column flags as named constraints; vocabulary comparison normalizes
+those redundant entries for PostgreSQL 16 compatibility, while exact column
+nullability and every signed catalogue definition remain bound.
 
 The fixed packaged schema vocabulary rejects unknown schemas, relations, columns,
 indexes, triggers and functions. Row-level security, policies, rewrite rules and
