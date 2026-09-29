@@ -27,6 +27,16 @@ async def resolve(session,value):
     return (await session.resource(value)).id
 
 
+async def resolve_read(session,value):
+    """Read-only migration lookup; authorization still uses the current object."""
+    try:
+        return await resolve(session,value)
+    except Failure as exc:
+        if exc.code!='not_found' or not isinstance(value,str) or not value.startswith('/'):
+            raise
+        return await session.resolve_migrated(value)
+
+
 async def check_access(app,context,request,session,rid,check):
     return await app.authorizer.require(context,request,(AccessRequirement(resource_id=rid,
         operation=operation_id(request),check=check),),session)

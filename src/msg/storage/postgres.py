@@ -42,6 +42,11 @@ CREATE INDEX IF NOT EXISTS resources_parent ON resources(parent,id);
 CREATE INDEX IF NOT EXISTS resources_time ON resources(created_at,id);
 CREATE INDEX IF NOT EXISTS resources_owner ON resources(owner,id);
 CREATE INDEX IF NOT EXISTS resources_type_state ON resources(type,state,id);
+CREATE TABLE IF NOT EXISTS resource_path_aliases (
+ parent_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+ name TEXT NOT NULL,
+ resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+ PRIMARY KEY(parent_id,name));
 CREATE TABLE IF NOT EXISTS resource_tags (
  resource_id TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
  tag TEXT NOT NULL, PRIMARY KEY(tag,resource_id));

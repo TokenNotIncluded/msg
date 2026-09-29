@@ -97,6 +97,27 @@ class RelationalSession(ABC):
             rid = row[0]
         return rid
 
+    async def resolve_migrated(self, path):
+        """Read-only old names in stable parent namespaces; never used by writes.
+
+        Current children shadow old names, including a recreated directory.
+        A renamed parent does not require copying aliases for every descendant.
+        Resolution identifies a target only: callers must authorize it currently.
+        """
+        require(isinstance(path,str) and path.startswith('/'), 'invalid_path')
+        parts=path.rstrip('/').split('/')[1:]
+        require(len(parts)<=256 and all(p and p not in {'.','..'} and
+                '\\' not in p and '\x00' not in p for p in parts), 'invalid_path')
+        rid=await self.resolve('/')
+        for part in parts:
+            row=self.one('SELECT id FROM resources WHERE parent=? AND name=?',(rid,part))
+            if row is None:
+                row=self.one('SELECT resource_id FROM resource_path_aliases WHERE parent_id=? AND name=?',
+                             (rid,part))
+            require(row is not None,'not_found')
+            rid=row[0]
+        return (await self.resource(rid)).id
+
     async def path(self, id):
         segments, seen = [], set()
         r = await self.resource(id)
@@ -163,6 +184,10 @@ class RelationalSession(ABC):
             require(all(a.id != resource.id for a in await self.ancestors(parent.id)), "parent_cycle")
         if any(getattr(resource,k)!=getattr(old,k) for k in ('parent','owner','group','mode','state')):
             self.set_setting('authorization_epoch',self.setting('authorization_epoch',0)+1)
+        if old.parent is not None and (old.parent,old.name)!=(resource.parent,resource.name):
+            self.execute('INSERT INTO resource_path_aliases (parent_id,name,resource_id) VALUES (?,?,?) '
+                         'ON CONFLICT(parent_id,name) DO UPDATE SET resource_id=excluded.resource_id',
+                         (old.parent,old.name,old.id),write=True)
         data = wire(resource)
         changed = self.execute("""UPDATE resources SET name=?,parent=?,owner=?,grp=?,mode=?,
             generation=?,revision=?,state=?,modified_at=?,body=? WHERE id=? AND generation=?""",

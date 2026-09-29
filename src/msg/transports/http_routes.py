@@ -20,6 +20,7 @@ from msg.core.executor import result_wire
 from msg.core.models import BlobRef,SignatureProof
 from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
+from msg.plugins.common import resolve_read
 from msg.core.read_query import read_query_version
 from msg.core.search_query import search_query_version, SEARCH_V5_RELATIONS
 from msg.transports.read_tree_path import decode_read_tree_path
@@ -1471,6 +1472,7 @@ def create_app(service):
             stable=parse_stable_view(path,raw_path)
             resource_path,view,revision=stable if stable is not None else parse_view(path)
             redirect_target=None
+            redirect_resource_id=None
             if view=='markdown' and revision is None and not resource_path.endswith('.md'):
                 # Old Post links omitted .md. Resolve the candidate only to find
                 # the stable resource; disclose its canonical path after the
@@ -1483,14 +1485,30 @@ def create_app(service):
                             raise
                         candidate=resource_path+'.md'
                         try:
-                            rid=await tx.resolve(candidate)
+                            rid=await resolve_read(tx,candidate)
                         except Failure as candidate_error:
                             if candidate_error.code!='not_found':
                                 raise
                         else:
                             if (await tx.resource(rid)).type=='post':
+                                redirect_resource_id=rid
                                 redirect_target=await tx.path(rid)
                                 resource_path=redirect_target
+            if redirect_target is None and stable is None:
+                async with service.metadata.transaction(write=False) as tx:
+                    try:
+                        await tx.resolve(resource_path)
+                    except Failure as exc:
+                        if exc.code!='not_found':
+                            raise
+                        rid=await tx.resolve_migrated(resource_path)
+                        canonical_path=await tx.path(rid)
+                        suffix=('/revisions/'+revision if revision else '')
+                        if view!='markdown':
+                            suffix+='/'+view
+                        redirect_resource_id=rid
+                        redirect_target=canonical_path+suffix
+                        resource_path='/_id/'+rid
             op='discovery.raw' if view=='raw' else 'discovery.get'
             require(service.registry.operation(op).effect=='read','effect_mismatch')
             args={'id':resource_path}
@@ -1503,7 +1521,7 @@ def create_app(service):
                 # Resolve both aliases to the same stable resource before comparing.
                 async with service.metadata.transaction(write=False) as tx:
                     header_id=packet.arguments.get('id')
-                    rid=await tx.resolve(header_id) if isinstance(header_id,str) and header_id.startswith('/') else header_id
+                    rid=await resolve_read(tx,header_id) if isinstance(header_id,str) and header_id.startswith('/') else header_id
                     require(rid==await tx.resolve(resource_path),'resource_mismatch')
                 require(packet.arguments.get('revision')==revision,'revision_mismatch')
                 require(packet.arguments.get('view')==args.get('view'),'representation_mismatch')
@@ -1513,6 +1531,12 @@ def create_app(service):
             if result.error:
                 return json_response(result_wire(result),error_status(result.error.code))
             if redirect_target is not None:
+                # A signed old-path packet may resolve a newly occupying object
+                # between routing and execution. Its successful authorization
+                # must not disclose the previous target's canonical name.
+                authorized_id=(result.resources[0].id if result.resources else
+                    result.data.get('id',result.data.get('metadata',{}).get('id')))
+                require(authorized_id==redirect_resource_id,'resource_mismatch')
                 return Response(status_code=308,headers={**BASE_HEADERS,
                     'Location':quote(redirect_target,safe='/')})
             value=wire(result.data)

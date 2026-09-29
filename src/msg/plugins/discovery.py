@@ -365,7 +365,7 @@ def install(app):
         'view':{'enum':['json','meta','history']},'known_digest':STRING,'cursor':STRING,'limit':{'type':'integer','minimum':1,'maximum':200}},('id',)),effect='read')
     async def get(ctx,request,tx):
         a=request.arguments
-        rid=await resolve(tx,a['id'])
+        rid=await resolve_read(tx,a['id'])
         resource=await tx.resource(rid)
         if a.get('view') in {'meta','history'}:
             await check_access(app,ctx,request,tx,rid,'read')
@@ -1396,7 +1396,7 @@ def install(app):
     @op('discovery.raw',obj({'id':IDENTIFIER,'revision':IDENTIFIER,'offset':INTEGER,'length':INTEGER},('id',)),effect='read')
     async def raw(ctx,request,tx):
         a=request.arguments
-        rid=await resolve(tx,a['id'])
+        rid=await resolve_read(tx,a['id'])
         await check_access(app,ctx,request,tx,rid,'read')
         resource=await tx.resource(rid)
         require(resource.state!='purged','resource_purged')
