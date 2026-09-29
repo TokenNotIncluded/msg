@@ -39,6 +39,14 @@ from msg.transports.http_common import (
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, path_packet, require_url_safe_packet
 from msg.transports.read_tree_path import decode_read_tree_path
+from msg.transports.subject_views import (
+    CERTIFICATE_COLLECTION_VIEWS,
+    SUBJECT_COLLABORATION_VIEWS,
+    SUBJECT_KEY_ALIASES as SUBJECT_KEY_ALIASES,
+    SUBJECT_OPERATION_ALIASES as SUBJECT_OPERATION_ALIASES,
+    SUBJECT_RESOURCE_ALIASES as SUBJECT_RESOURCE_ALIASES,
+    subject_view_operation,
+)
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
 
 HOME_LOGO = files('msg.data').joinpath('logo.svg').read_text(encoding='utf-8')
@@ -69,34 +77,6 @@ HOME_HEADERS = {
     **BASE_HEADERS,
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'; sandbox",
-}
-SUBJECT_RESOURCE_ALIASES = {
-    'cert': 'certificates',
-    'certificates': 'certificates',
-    'ks': 'keystore',
-    'keystore': 'keystore',
-    'ssh': 'keys',
-    'ssh-keys': 'keys',
-}
-SUBJECT_KEY_ALIASES = {
-    'pk': ('identity.identity_key_get', 'pk'),
-    'pubkey': ('identity.identity_key_get', 'pk'),
-    'k': ('identity.identity_key_list', 'k'),
-    'keys': ('identity.identity_key_list', 'k'),
-    'ek': ('identity.encryption_key_get', 'ek'),
-    'encryption-key': ('identity.encryption_key_get', 'ek'),
-    'e': ('identity.encryption_key_list', 'e'),
-    'encryption-keys': ('identity.encryption_key_list', 'e'),
-}
-SUBJECT_OPERATION_ALIASES = {
-    'ach': 'achievement.list',
-    'achievements': 'achievement.list',
-    'in': 'communication.inbox',
-    'inbox': 'communication.inbox',
-    'out': 'communication.outbox',
-    'outbox': 'communication.outbox',
-    'dm': 'communication.dm_list',
-    'following': 'communication.following',
 }
 SEARCH_V2_SEGMENTS = {
     'scope': 's',
@@ -218,6 +198,11 @@ def classify_route(path, method, registry):
         return operation_route(registry.operation('git.lfs_read_batch'))
     if re.fullmatch(r'/[@&][^/]+/[^/]+\.git/(?:info/refs|git-upload-pack|HEAD)', path):
         return operation_route(registry.operation('git.refs'))
+    if path.startswith(('/@', '/&')):
+        operation = subject_view_operation(path)
+        if operation is None:
+            operation = 'discovery.raw' if parse_view(path)[1] == 'raw' else 'discovery.get'
+        return operation_route(registry.operation(operation))
     return RouteSpec('read', RouteEffect.PURE_READ)
 
 
@@ -732,13 +717,12 @@ def create_app(service):
                 and 'x-method-override' not in request.headers,
                 'method_not_allowed',
             )
-            receipt_alias = re.fullmatch(r'/@[^/]+/receipts(?:/(.*))?', request.url.path)
-            if receipt_alias and request.method in {'GET', 'HEAD'}:
-                # Hosting probes this namespace before the ordinary router. Reject
-                # changed receipt effects before that probe can query a subject.
-                tail = (receipt_alias.group(1) or '').strip('/')
-                operation = 'communication.receipt_' + ('list' if tail in {'', 'json'} else 'get')
-                require(service.registry.operation(operation).effect == 'read', 'effect_mismatch')
+            subject_route = None
+            if request.url.path.startswith(('/@', '/&')) and request.method in {'GET', 'HEAD'}:
+                # Hosting probes this namespace before the ordinary router.
+                # Fence the selected operation before any business query.
+                subject_route = classify_route(request.url.path, request.method, service.registry)
+                require(subject_route.effect == RouteEffect.PURE_READ, 'effect_mismatch')
             if request.url.path.startswith(('/@', '/&')):
                 from msg.extensions.hosting import serve_hosted
 
@@ -1927,15 +1911,7 @@ def create_app(service):
                         ),
                         'not_found',
                     )
-                    operation = (
-                        'orders.list'
-                        if listing
-                        else 'orders.payment'
-                        if len(parts) == 2 and parts[1] == '_payment'
-                        else 'delivery.get'
-                        if len(parts) == 2
-                        else 'orders.get'
-                    )
+                    operation = subject_route.name
                     pairs = request.query_params.multi_items()
                     require(
                         len(pairs) == len({key for key, _ in pairs}), 'duplicate_query_parameter'
@@ -1988,7 +1964,7 @@ def create_app(service):
                 if name in {'bal', 'balance', 'ledger'}:
                     require(remainder in {None, '/', '/json'}, 'not_found')
                     require(b'%' not in raw_path, 'not_found')
-                    operation = 'money.ledger' if name == 'ledger' else 'money.balance'
+                    operation = subject_route.name
                     pairs = request.query_params.multi_items()
                     require(
                         len(pairs) == len({key for key, _ in pairs}), 'duplicate_query_parameter'
@@ -2036,15 +2012,7 @@ def create_app(service):
                         media_type='application/json',
                         headers=headers,
                     )
-                if name in {
-                    'handoffs',
-                    'leases',
-                    'requests',
-                    'offers',
-                    'checkpoints',
-                    'proposals',
-                    'watches',
-                }:
+                if name in SUBJECT_COLLABORATION_VIEWS:
                     require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
                     require(
                         raw_path.decode('utf-8') == request.url.path and b'%' not in raw_path,
@@ -2057,8 +2025,7 @@ def create_app(service):
                             re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}(?:/json)?', tail) is not None,
                             'not_found',
                         )
-                    singular = 'watch' if name == 'watches' else name[:-1]
-                    operation = 'communication.' + singular + ('_list' if listing else '_get')
+                    operation = subject_route.name
                     pairs = request.query_params.multi_items()
                     require(
                         len(pairs) == len({key for key, _ in pairs}), 'duplicate_query_parameter'
@@ -2122,7 +2089,7 @@ def create_app(service):
                             re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}(?:/json)?', tail) is not None,
                             'not_found',
                         )
-                    operation = 'communication.receipt_' + ('list' if listing else 'get')
+                    operation = subject_route.name
                     pairs = request.query_params.multi_items()
                     require(
                         len(pairs) == len({key for key, _ in pairs}), 'duplicate_query_parameter'
@@ -2180,13 +2147,10 @@ def create_app(service):
                         media_type='application/json',
                         headers=headers,
                     )
-                certificate_detail = name in {'cert', 'certificates'} and remainder not in {
-                    None,
-                    '/',
-                    '/json',
-                    '/meta',
-                    '/history',
-                }
+                certificate_detail = (
+                    name in {'cert', 'certificates'}
+                    and remainder not in CERTIFICATE_COLLECTION_VIEWS
+                )
                 if (
                     name in SUBJECT_KEY_ALIASES
                     or name in SUBJECT_OPERATION_ALIASES
@@ -2204,16 +2168,15 @@ def create_app(service):
                     async with service.metadata.transaction(write=False) as tx:
                         subject_id = await tx.resolve('/@' + handle)
                         require((await tx.resource(subject_id)).type == 'user', 'not_found')
+                    operation = subject_route.name
                     if certificate_detail:
                         tail = remainder.strip('/')
                         require(
                             re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}(?:/json)?', tail) is not None,
                             'not_found',
                         )
-                        operation = 'cert.get'
                         args = {'id': tail.removesuffix('/json')}
                     elif key_alias:
-                        operation, _canonical = SUBJECT_KEY_ALIASES[name]
                         tail = (remainder or '').strip('/')
                         if tail == 'json':
                             tail = ''
@@ -2223,12 +2186,10 @@ def create_app(service):
                                 'not_found',
                             )
                             key_id = tail.removesuffix('/json')
-                            operation = operation.replace('_list', '_get')
                         args = {'subject_id': subject_id}
                         if tail:
                             args['key_id'] = key_id
                     else:
-                        operation = SUBJECT_OPERATION_ALIASES[name]
                         args = {'subject_id': subject_id} if operation == 'achievement.list' else {}
                     if operation in {
                         'communication.inbox',

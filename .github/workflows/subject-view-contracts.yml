@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - src/msg/transports/http_routes.py
+      - src/msg/transports/subject_views.py
       - tests/test_subject_view_effect_order.py
       - .github/workflows/subject-view-contracts.yml
   workflow_dispatch:
@@ -60,7 +61,7 @@ jobs:
           PY
       - name: Require subject read boundaries and permanent aliases
         run: |
-          python -m pytest tests/test_subject_view_effect_order.py tests/test_subject_read_aliases.py tests/test_receipt_effect_order.py tests/test_http_effect_order.py --junitxml=artifacts/subject-views.xml
+          python -m pytest tests/test_subject_view_effect_order.py tests/test_subject_read_aliases.py tests/test_receipt_effect_order.py tests/test_http_effect_order.py tests/test_route_effect_matrix.py tests/test_hosting_read_permissions.py --junitxml=artifacts/subject-views.xml
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:

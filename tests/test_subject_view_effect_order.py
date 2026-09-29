@@ -59,6 +59,23 @@ VIEWS = (
     ('outbox', 'communication.outbox'),
     ('dm', 'communication.dm_list'),
     ('following', 'communication.following'),
+    ('receipts', 'communication.receipt_list'),
+    ('receipts/json', 'communication.receipt_list'),
+    ('receipts/request0', 'communication.receipt_get'),
+    ('receipts/request0/json', 'communication.receipt_get'),
+    ('cert', 'discovery.get'),
+    ('certificates/json', 'discovery.get'),
+    ('cert/history', 'discovery.get'),
+    ('ssh', 'discovery.get'),
+    ('ssh-keys/json', 'discovery.get'),
+    ('ssh/key0/json', 'discovery.get'),
+    ('ssh-keys/key0', 'discovery.get'),
+    ('ks', 'discovery.get'),
+    ('keystore/json', 'discovery.get'),
+    ('ks/item0/raw', 'discovery.raw'),
+    ('keystore/item0/meta', 'discovery.get'),
+    ('ordinary-resource/json', 'discovery.get'),
+    ('ordinary-resource/raw', 'discovery.raw'),
 )
 
 
@@ -94,6 +111,38 @@ async def test_subject_views_reject_effects_before_any_business_probe(
                             else:
                                 assert response.content == b''
                     assert runtime.await_count == len(VIEWS) * 2
+                probe.assert_not_called()
+
+
+@pytest.mark.parametrize('effect', ['transaction', 'external'])
+@pytest.mark.parametrize('method', ['GET', 'HEAD'])
+async def test_organization_views_reject_effects_before_hosting(
+    installed, monkeypatch, effect, method
+):
+    app, _ = installed
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        async with readonly_evidence(app, monkeypatch):
+            with monkeypatch.context() as patch:
+                for operation in ('discovery.get', 'discovery.raw'):
+                    key = (operation, 1)
+                    patch.setitem(
+                        app.registry._operations,
+                        key,
+                        replace(app.registry._operations[key], effect=effect),
+                    )
+                probe = AsyncMock(side_effect=AssertionError('effect gate probed hosting'))
+                patch.setattr(hosting, 'serve_hosted', probe)
+                async with runtime_check_only(app, patch) as runtime:
+                    for path in ('/&root/site', '/&missing/site/json', '/&missing/site/raw'):
+                        response = await http.request(method, path)
+                        assert response.status_code == 405, (path, response.text)
+                        if method == 'GET':
+                            assert response.json()['error']['code'] == 'effect_mismatch'
+                        else:
+                            assert response.content == b''
+                    assert runtime.await_count == 3
                 probe.assert_not_called()
 
 
