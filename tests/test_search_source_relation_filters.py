@@ -31,6 +31,7 @@ async def test_v3_query_string_path_and_sealed_ref_share_filters(installed, vers
     if version==5:
         descriptor_args['revision']=reply.resources[0].revision
         descriptor_args['relation_to']=root.resources[0].id
+        descriptor_args['scope']={'resource_refs':[{'id':reply.resources[0].id}]}
     descriptor=canonical({'version':1,'kind':'search','arguments':descriptor_args})
     opened=await call(app,'transfer.open',{'direction':'upload','size':len(descriptor),
         'digest':digest(descriptor),'media_type':'application/vnd.msg.read-query+json'},
@@ -254,3 +255,92 @@ async def test_v5_directional_relations_and_presence_recheck_both_endpoints(inst
     assert public_reply.status == 'ok', wire(public_reply)
     assert await find({'relation_to': root_id}) == []
     assert await find({'relation_to': root_id}, signed=True) == [reply_id]
+
+
+@pytest.mark.asyncio
+async def test_v5_title_is_explicit_resource_display_name_alias(installed):
+    app, _ = installed
+    key, subject, _ = await register(app, 'title-search-owner')
+    created = await call(app, 'content.post_create', {
+        'parent': '/main', 'name': 'NeedleTitle', 'body': 'unrelated content'}, key=key, subject=subject)
+    assert created.status == 'ok', wire(created)
+    args = {'scope': '/main', 'terms': 'needletitle', 'field': 'title',
+            'fields': ['id', 'title', 'snippet'], 'snippet': True}
+    found = await call(app, 'discovery.lexical_search', args, contract_version=5)
+    assert found.status == 'ok', wire(found)
+    assert wire(found.data['items']) == [{'id': created.resources[0].id, 'title': 'NeedleTitle.md',
+        'snippet': {'field': 'title', 'text': 'NeedleTitle.md', 'range': [0, 11]}}]
+    old = await call(app, 'discovery.lexical_search', args, contract_version=4)
+    assert old.status == 'error'
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url=app.settings.service_url) as http:
+        query = await http.get('/_search', params={**args, 'fields': 'id,title,snippet', 'snippet': '1'})
+        path = await http.get('/_s/q/5/s/%2Fmain/t/needletitle/f/t/fi/id,title,snippet/x/1')
+        assert query.status_code == path.status_code == 200, (query.text, path.text)
+        assert query.content == path.content
+        old_path = await http.get('/_s/q/4/s/%2Fmain/t/needletitle/f/t')
+        assert old_path.status_code >= 400
+
+
+@pytest.mark.asyncio
+async def test_v5_typed_scopes_union_resources_and_subject_with_current_access(installed):
+    from urllib.parse import quote
+    app, _ = installed
+    key, subject, _ = await register(app, 'scope-search-owner')
+    posts = []
+    for name in ('scope-one', 'scope-two', 'scope-outside'):
+        post = await call(app, 'content.post_create', {'parent': '/main', 'name': name, 'body': 'scopev5needle'},
+                          key=key, subject=subject)
+        assert post.status == 'ok', wire(post)
+        posts.append(post)
+    ids = [post.resources[0].id for post in posts]
+    scope = {'resource_refs': [{'id': rid} for rid in ids[:2]]}
+    args = {'scope': scope, 'terms': 'scopev5needle', 'limit': 1, 'order': 'name'}
+    result = await call(app, 'discovery.lexical_search', args, contract_version=5)
+    assert result.status == 'ok', wire(result)
+    assert [item['id'] for item in result.data['items']] == [ids[0]]
+    continued = await call(app, 'discovery.lexical_search', {'cursor': result.data['cursor']}, contract_version=5)
+    assert continued.status == 'ok' and [item['id'] for item in continued.data['items']] == [ids[1]]
+    owned = await call(app, 'discovery.lexical_search', {**args, 'scope': {'subject': subject}, 'limit': 10},
+                       key=key, subject=subject, contract_version=5)
+    assert owned.status == 'ok' and {item['id'] for item in owned.data['items']} == set(ids), wire(owned)
+    bad_type = await call(app, 'discovery.lexical_search', {**args, 'scope': {'org': subject}}, contract_version=5)
+    assert bad_type.status == 'error' and bad_type.error.code == 'invalid_search_scope'
+    group = await call(app, 'group.create', {'name': 'typed-search-group'}, key=key, subject=subject)
+    assert group.status == 'ok', wire(group)
+    group_id = group.resources[0].id
+    grouped = await call(app, 'content.chgrp', {'id': ids[0], 'group': group_id},
+        key=key, subject=subject, expected=((ids[0], posts[0].data['generation']),))
+    assert grouped.status == 'ok', wire(grouped)
+    group_search = await call(app, 'discovery.lexical_search',
+        {**args, 'scope': {'org': group_id}, 'limit': 10}, key=key, subject=subject, contract_version=5)
+    assert group_search.status == 'ok' and [item['id'] for item in group_search.data['items']] == [ids[0]], wire(group_search)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url=app.settings.service_url) as http:
+        query = await http.get('/_search', params={'scope': canonical(scope).decode(), 'terms': 'scopev5needle'})
+        path = await http.get('/_s/q/5/s/' + quote(canonical(scope).decode(), safe=',') + '/t/scopev5needle')
+        assert query.status_code == path.status_code == 200, (query.text, path.text)
+        assert query.content == path.content
+    descriptor=canonical({'version':1,'kind':'search','arguments':args})
+    opened=await call(app,'transfer.open',{'direction':'upload','size':len(descriptor),
+        'digest':digest(descriptor),'media_type':'application/vnd.msg.read-query+json'},
+        key=key,subject=subject)
+    tid=opened.data['transfer_id']
+    await call(app,'transfer.part_put',{'transfer_id':tid,'offset':0,
+        'data':b64(descriptor),'digest':digest(descriptor)},key=key,subject=subject)
+    await call(app,'transfer.seal',{'transfer_id':tid,'final_size':len(descriptor),
+        'final_digest':digest(descriptor)},key=key,subject=subject)
+    sealed=await call(app,'transfer.query_seal',{'transfer_id':tid},key=key,subject=subject)
+    assert sealed.status=='ok',wire(sealed)
+    first=await call(app,'transfer.query_get',{'query_ref':sealed.data['query_ref']},key=key,subject=subject)
+    assert first.status=='ok' and first.data['cursor'],wire(first)
+    second=await call(app,'transfer.query_get',{'query_ref':sealed.data['query_ref'],
+        'cursor':first.data['cursor']},key=key,subject=subject)
+    assert second.status=='ok' and [item['id'] for item in second.data['items']]==[ids[1]],wire(second)
+    changed = await call(app, 'content.chmod', {'id': ids[1], 'mode': '0600'}, key=key, subject=subject,
+                         expected=((ids[1], posts[1].data['generation']),))
+    assert changed.status == 'ok', wire(changed)
+    revoked = await call(app, 'discovery.lexical_search', {'cursor': result.data['cursor']}, contract_version=5)
+    assert revoked.status == 'error'
+    old = await call(app, 'discovery.lexical_search', args, contract_version=4)
+    assert old.status == 'error'

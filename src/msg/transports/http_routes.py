@@ -21,6 +21,7 @@ from msg.core.models import BlobRef,SignatureProof
 from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
 from msg.core.read_query import read_query_version
+from msg.core.search_query import search_query_version
 from msg.transports.read_tree_path import decode_read_tree_path
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, gunzip, path_packet, require_url_safe_packet
@@ -312,6 +313,9 @@ def compile_lexical_search(query):
         return {'cursor':query['cursor']}
     require(bool(query.get('scope')),'search_scope_required')
     args=dict(query)
+    if args.get('scope','').startswith('{'):
+        require(len(args['scope'].encode('utf-8'))<=8192,'query_cost_exceeded')
+        args['scope']=loads(args['scope'])
     if 'source_version' in args:
         require(args['source_version'].isascii() and args['source_version'].isdecimal() and
                 len(args['source_version'])<=10 and 1<=int(args['source_version'])<=2147483647,
@@ -344,7 +348,9 @@ def decode_search_v2_path(raw_path,version=b'2'):
               SEARCH_V3_SEGMENTS if version==b'3' else SEARCH_V2_SEGMENTS)
     values,proof=decode_query_path(raw_path,prefix,segments,version)
     modes={'a':'all','n':'any'}
-    fields={'a':'all','b':'body','n':'name','m':'metadata'}
+    require(version==b'5' or (not values.get('scope','').startswith('{') and
+            'title' not in values.get('fields','').split(',')), 'invalid_search_scope')
+    fields={'a':'all','b':'body','n':'name','m':'metadata',**({'t':'title'} if version==b'5' else {})}
     order={'r':'relevance','u':'updated','c':'created','n':'name'}
     if 'mode' in values:
         require(values['mode'] in modes,'invalid_search_mode')
@@ -713,11 +719,7 @@ def create_app(service):
                                     'cursor_kind_mismatch')
                             if operation=='discovery.lexical_search':
                                 saved_args=query.get('arguments',{})
-                                contract_version=(5 if {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&saved_args.keys() else
-                                    4 if 'suggest' in saved_args else
-                                    3 if any(name in saved_args for name in
-                                    ('source_kind','relation_type')) else
-                                    2 if 'facets' in saved_args else 1)
+                                contract_version=search_query_version(saved_args)
                             elif operation=='discovery.read_query':
                                 contract_version=read_query_version(query.get('arguments',{}))
                     except Failure as exc:
@@ -887,13 +889,9 @@ def create_app(service):
                 else:
                     packet=request_for(operation,args,service.settings.service_url,
                                        source='manual',
-                                       contract_version=(5 if lexical and (lexical_path_v5 or
-                                           {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&args.keys()) else
-                                           4 if lexical and (lexical_path_v4 or
-                                           'suggest' in args) else
-                                           3 if lexical and (lexical_path_v3 or
-                                           'source_kind' in args or 'relation_type' in args) else
-                                           2 if lexical and 'facets' in args else 1))
+                                       contract_version=(max(search_query_version(args),
+                                           5 if lexical_path_v5 else 4 if lexical_path_v4 else
+                                           3 if lexical_path_v3 else 1) if lexical else 1))
                 result=await service.executor.execute(packet,entry='network')
                 if result.error:
                     return json_response(result_wire(result),error_status(result.error.code))
@@ -988,6 +986,9 @@ def create_app(service):
                     'segments_v4':SEARCH_V4_SEGMENTS,'segments_v5':SEARCH_V5_SEGMENTS,
                     'mode':{'all':'a','any':'n'},
                     'field':{'all':'a','body':'b','name':'n','metadata':'m'},
+                    'field_v5':{'all':'a','body':'b','name':'n','metadata':'m','title':'t'},
+                    'title_semantics':'Resource display name (alias of name)',
+                    'scope_v5':'path or JSON object: subject, org, or resource_refs (up to 32 id refs)',
                     'order':{'relevance':'r','updated':'u','created':'c','name':'n'},
                     'facets':['type','tag'],
                     'contract_version':{'default':1,'with_facets':2,

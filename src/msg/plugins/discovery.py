@@ -1,5 +1,6 @@
 """ACL-filtered reads and rebuildable discovery projections."""
 from __future__ import annotations
+from collections.abc import Mapping
 import difflib
 import fnmatch
 import re
@@ -11,6 +12,7 @@ from msg.core.codec import canonical,wire,decode,loads,digest,b64
 from msg.core.errors import Failure,require
 from msg.core.models import Resource,ResourceRef,Revision,HandlerOutput,Credential
 from msg.core.tags import normalize_tag
+from msg.core.search_query import search_query_version
 from msg.core.read_query import (ReadBudget,MAX_READ_DEPTH,NESTED_FIELDS,ROOT_FIELDS,
     expansion_schema,read_query_version)
 from msg.core.requests import request_for
@@ -30,6 +32,32 @@ def original_casefold_span(text, folded_start, folded_end):
         if offset >= folded_end:
             return start, index + 1
     raise ValueError('casefold match outside source')
+
+
+async def normalize_search_scope(app,ctx,request,tx,scope_spec):
+    if isinstance(scope_spec,Mapping):
+        kind=next(iter(scope_spec))
+        supplied=([ref['id'] for ref in scope_spec['resource_refs']] if kind=='resource_refs'
+                  else [scope_spec[kind]])
+    else:
+        kind=None
+        supplied=[scope_spec]
+    scopes=[]
+    scope_resources=[]
+    for supplied_scope in supplied:
+        scope=await resolve(tx,supplied_scope)
+        scope_resource=await tx.resource(scope)
+        require(kind not in {'subject','org'} or
+                scope_resource.type==('user' if kind=='subject' else 'organization'),
+                'invalid_search_scope')
+        await check_access(app,ctx,request,tx,scope,'list')
+        if scope not in scopes:
+            scopes.append(scope)
+            scope_resources.append(scope_resource)
+    scopes.sort()
+    normalized=({'resource_refs':[{'id':rid} for rid in scopes]} if kind=='resource_refs' else
+                {kind:scopes[0]} if kind else scopes[0])
+    return normalized,scopes,scope_resources
 
 
 async def visible(app,ctx,request,tx,rid):
@@ -790,6 +818,13 @@ def install(app):
 
     lexical_schema_v5={**lexical_schema_v4,
                        'properties':{**lexical_schema_v4['properties'],
+                           'field':{'enum':['all','name','title','body','metadata']},
+                           'scope':{'oneOf':[IDENTIFIER,
+                               obj({'subject':IDENTIFIER},('subject',)),
+                               obj({'org':IDENTIFIER},('org',)),
+                               obj({'resource_refs':{'type':'array','minItems':1,'maxItems':32,
+                                   'uniqueItems':True,'items':obj({'id':IDENTIFIER},('id',))}},
+                                   ('resource_refs',))]},
                            'revision':IDENTIFIER,'relation_to':IDENTIFIER,'relation_from':IDENTIFIER,
                            'has_replies':BOOLEAN,'has_references':BOOLEAN,
                            'source_version':{'type':'integer','minimum':1,'maximum':2147483647}}}
@@ -814,16 +849,14 @@ def install(app):
             a={**saved['arguments'],'cursor':a['cursor']}
         # A cursor or sealed QueryRef carries arguments from an earlier call.
         # Keep those arguments inside the version selected for this call too.
-        require(not (request.contract_version<5 and {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&a.keys()) and
+        require(not (request.contract_version<5 and search_query_version(a)==5) and
                 not (request.contract_version<4 and 'suggest' in a) and
                 not (request.contract_version<3 and
                      {'source_kind','relation_type'}&a.keys()) and
                 not (request.contract_version<2 and 'facets' in a),
                 'cursor_query_mismatch')
         require(a.get('scope') is not None,'search_scope_required')
-        scope=await resolve(tx,a['scope'])
-        await check_access(app,ctx,request,tx,scope,'list')
-        a['scope']=scope
+        a['scope'],scopes,scope_resources=await normalize_search_scope(app,ctx,request,tx,a['scope'])
         if a.get('tag'):
             a['tag']=normalize_tag(a['tag'])
         for field in ('terms','exact','not_terms'):
@@ -835,7 +868,7 @@ def install(app):
                 'search_query_required')
         limit=a.get('limit',50)
         selected=a.get('fields',('id','path','type','name','revision','author','created_at'))
-        require(set(selected)<=set(('id','path','type','name','revision','author',
+        require(set(selected)<=set(('id','path','type','name','title','revision','author',
                                     'owner','created_at','modified_at','score','rank_reason','snippet','links')),
                 'unknown_projection_field')
         require(limit*(len(selected)+2)<=1200,'query_cost_exceeded')
@@ -849,7 +882,6 @@ def install(app):
             position,snapshot=[],ctx.now
         cutoff={key:parse_time(a[key]) for key in ('created_after','created_before',
             'updated_after','updated_before') if key in a}
-        scope_resource=await tx.resource(scope)
         owner=await resolve(tx,a['owner']) if a.get('owner') else None
         author=await resolve(tx,a['author']) if a.get('author') else None
         results=[]
@@ -869,15 +901,17 @@ def install(app):
             return endpoint_visibility[rid]
         # Restrict the SQL candidate set before applying the work budget. A
         # global LIMIT lets unrelated (or unreadable) rows starve a small scope.
-        owner_scope=scope_resource.type in {'user','organization'}
-        candidates=tx.execute('''WITH RECURSIVE subtree(id,depth) AS (
-                SELECT id,0 FROM resources WHERE id=?
-                UNION ALL
+        owner_scopes=[r.id for r in scope_resources if r.type in {'user','organization'}]
+        scope_params=','.join('?' for _ in scopes)
+        owner_params=','.join('?' for _ in owner_scopes) or 'NULL'
+        candidates=tx.execute(f'''WITH RECURSIVE subtree(id,depth) AS (
+                SELECT id,0 FROM resources WHERE id IN ({scope_params})
+                UNION
                 SELECT r.id,s.depth+1 FROM resources r JOIN subtree s ON r.parent=s.id
                 WHERE s.depth<5
             ) SELECT body FROM resources WHERE created_at<=? AND
-                (id IN (SELECT id FROM subtree) OR (? AND (owner=? OR grp=?)))
-            ORDER BY id''',(scope,wire(snapshot),owner_scope,scope,scope))
+                (id IN (SELECT id FROM subtree) OR owner IN ({owner_params}) OR grp IN ({owner_params}))
+            ORDER BY id''',(*scopes,wire(snapshot),*owner_scopes,*owner_scopes))
         for (raw,) in candidates:
             require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
             resource=decode(Resource,loads(raw))
@@ -885,11 +919,13 @@ def install(app):
                 continue
             chain=await tx.ancestors(resource.id)
             ancestors=[item.id for item in chain]
-            scoped_owner=(scope_resource.type in {'user','organization'} and
-                          (resource.owner==scope or resource.group==scope))
-            if resource.id!=scope and scope not in ancestors and not scoped_owner:
+            scoped_owner=resource.owner in owner_scopes or resource.group in owner_scopes
+            distances=[len(ancestors)-ancestors.index(scope) for scope in scopes if scope in ancestors]
+            if resource.id in scopes or scoped_owner:
+                distances.append(0)
+            if not distances:
                 continue
-            distance=len(ancestors)-ancestors.index(scope) if scope in ancestors else 0
+            distance=min(distances)
             if distance>a.get('depth',5) or (not a.get('recursive',True) and distance>1):
                 continue
             if a.get('type') and resource.type!=a['type']:
@@ -971,7 +1007,8 @@ def install(app):
             meta=f'{resource.type} {resource.owner} {resource.group}'
             selected_text={'name':name,'body':body,'metadata':meta}
             field=a.get('field','all')
-            active=selected_text if field=='all' else {field:selected_text[field]}
+            active=(selected_text if field=='all' else {'title':name} if field=='title' else
+                    {field:selected_text[field]})
             lowered={key:value.casefold() for key,value in active.items()}
             whole=' '.join(lowered.values())
             if terms and not (all(term in whole for term in terms) if a.get('mode','all')=='all'
@@ -981,7 +1018,7 @@ def install(app):
                 continue
             if any(term in whole for term in excluded):
                 continue
-            score=sum((5 if key=='name' else 1)*sum(value.count(term) for term in terms)
+            score=sum((5 if key in {'name','title'} else 1)*sum(value.count(term) for term in terms)
                       for key,value in lowered.items())+(3 if exact else 0)
             order=a.get('order','relevance')
             if order=='relevance':
@@ -998,6 +1035,8 @@ def install(app):
                   'revision':resource.revision,'author':revision.author if revision else None,
                   'owner':resource.owner,'created_at':wire(resource.created_at),
                   'modified_at':wire(resource.modified_at),'score':score}
+            if 'title' in selected:
+                item['title']=name
             if a.get('snippet'):
                 for key,value in active.items():
                     low=lowered[key]

@@ -9,6 +9,7 @@ from msg.core.errors import Failure,require
 from msg.core.models import ResourceRef,HandlerOutput
 from msg.core.tags import normalize_tag
 from msg.core.read_query import read_query_version
+from msg.core.search_query import search_query_version
 from msg.core.transfer import TransferService
 from msg.plugins.common import registration,resolve,create_resource,check_access
 from msg.plugins.schemas import obj,INTEGER,STRING,IDENTIFIER,BYTES,REF
@@ -43,11 +44,7 @@ async def sealed_read_query(app,ctx,request,tx,transfer):
     require(args.get('parent' if kind=='read' else 'scope') is not None and
             'cursor' not in args,'invalid_query_ref')
     operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
-    contract_version=(read_query_version(args) if kind=='read' else
-        5 if kind=='search' and {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&args.keys() else
-        4 if kind=='search' and 'suggest' in args else
-        3 if kind=='search' and any(name in args for name in
-        ('source_kind','relation_type')) else 2 if kind=='search' and 'facets' in args else 1)
+    contract_version=read_query_version(args) if kind=='read' else search_query_version(args)
     try:
         app.registry.validate(app.registry.operation(operation,contract_version).input_schema,args)
     except Failure as exc:
@@ -195,17 +192,16 @@ def install(app):
                 'query_ref_digest_mismatch')
         require(query.get('query_kind')==kind,'query_ref_digest_mismatch')
         operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
-        contract_version=(read_query_version(args) if kind=='read' else
-            5 if kind=='search' and {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&args.keys() else
-            4 if kind=='search' and 'suggest' in args else
-            3 if kind=='search' and any(name in args for name in
-            ('source_kind','relation_type')) else 2 if kind=='search' and 'facets' in args else 1)
+        contract_version=read_query_version(args) if kind=='read' else search_query_version(args)
         principal=query_ref_principal(ctx.principal)
         normalized=dict(args)
         if kind=='read' and contract_version==3:
             normalized['query_version']=3
         scope_field='parent' if kind=='read' else 'scope'
-        if normalized.get(scope_field):
+        if kind=='search':
+            from msg.plugins.discovery import normalize_search_scope
+            normalized['scope'],_,_=await normalize_search_scope(app,ctx,request,tx,normalized['scope'])
+        elif normalized.get(scope_field):
             normalized[scope_field]=await resolve(tx,normalized[scope_field])
         if normalized.get('tag'):
             normalized['tag']=normalize_tag(normalized['tag'])
