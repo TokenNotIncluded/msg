@@ -64,9 +64,9 @@ async def test_each_round_rejects_context_and_can_restart(installed, number, fau
     assert failed.data['reason'] == reason
     async with app.metadata.transaction(write=False) as tx:
         state = loads(
-            tx.one('SELECT body FROM achievement_ceremonies WHERE id=?', (challenge['challenge_id'],))[
-                0
-            ]
+            tx.one(
+                'SELECT body FROM achievement_ceremonies WHERE id=?', (challenge['challenge_id'],)
+            )[0]
         )
         assert state['status'] == 'failed'
         assert 'nonce_digest' not in state and 'expected_digest' not in state
@@ -75,6 +75,34 @@ async def test_each_round_rejects_context_and_can_restart(installed, number, fau
     assert restarted.status == 'ok' and restarted.data['round'] == 1, wire(restarted)
     assert restarted.data['challenge_id'] != challenge['challenge_id']
     assert restarted.data['nonce'] != challenge['nonce']
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('number', range(1, 6))
+async def test_wrong_answer_in_any_round_ends_ceremony(installed, number):
+    app, _ = installed
+    key, subject, _ = await register(app, 'honor-wrong-answer')
+    challenge = await challenge_at(app, key, subject, number)
+    if number == 5:
+        failed = await call(
+            app,
+            'achievement.finish',
+            {**confirmation(challenge), 'statement': 'n'},
+            key=key,
+            subject=subject,
+        )
+    else:
+        failed = await advance(app, key, subject, challenge, answer='n')
+    assert failed.status == 'ok' and failed.data['status'] == 'failed', wire(failed)
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM achievement_grants WHERE subject=?', (subject,))[0] == 0
+    if number == 5:
+        continued = await call(
+            app, 'achievement.finish', confirmation(challenge), key=key, subject=subject
+        )
+    else:
+        continued = await advance(app, key, subject, challenge)
+    assert continued.status == 'error' and continued.error.code == 'ceremony_inactive'
 
 
 @pytest.mark.asyncio
@@ -103,7 +131,10 @@ async def test_concurrent_finish_issues_one_grant_and_replays_only_committed_req
     args = confirmation(challenge)
     request_ids = ('honor-finish-a', 'honor-finish-b')
     results = await asyncio.gather(
-        *(call(app, 'achievement.finish', args, key=key, subject=subject, rid=rid) for rid in request_ids)
+        *(
+            call(app, 'achievement.finish', args, key=key, subject=subject, rid=rid)
+            for rid in request_ids
+        )
     )
     assert sorted(result.status for result in results) == ['error', 'ok']
     winning = next(index for index, result in enumerate(results) if result.status == 'ok')

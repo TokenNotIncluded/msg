@@ -58,3 +58,36 @@ async def test_deferred_claim_commit_failure_preserves_all_rows_and_retry(instal
     )
     assert replay.status == 'ok' and replay.replayed and replay.data == paid.data
     assert await business_snapshot(app) == committed
+
+
+@pytest.mark.asyncio
+async def test_subject_limit_rejects_fresh_challenge_while_budget_remains(installed):
+    app, root = installed
+    _, (key, buyer), created = await fixture(app, root, max_claims=2)
+    listing = created.data['bounty']['listing_id']
+    args = await proof(app, (key, buyer), listing)
+    paid = await call(app, 'bounty.claim', args, key=key, subject=buyer)
+    assert paid.status == 'ok', wire(paid)
+    assert paid.data['escrow_balance_minor'] == 10
+    before = await business_snapshot(app)
+    denied = await call(app, 'bounty.challenge', {'listing_id': listing}, key=key, subject=buyer)
+    assert denied.status == 'error' and denied.error.code == 'bounty_subject_limit'
+    assert await business_snapshot(app) == before
+
+
+@pytest.mark.asyncio
+async def test_unsupported_challenge_verifier_cannot_consume_budget_or_nonce(installed):
+    app, root = installed
+    _, (key, buyer), created = await fixture(app, root)
+    listing = created.data['bounty']['listing_id']
+    args = await proof(app, (key, buyer), listing)
+    async with app.metadata.transaction(write=True) as tx:
+        tx.execute(
+            'UPDATE bounty_challenges SET verifier_version=2 WHERE id=?',
+            (args['challenge_id'],),
+            write=True,
+        )
+    before = await business_snapshot(app)
+    denied = await call(app, 'bounty.claim', args, key=key, subject=buyer)
+    assert denied.status == 'error' and denied.error.code == 'bounty_verifier_unsupported'
+    assert await business_snapshot(app) == before
