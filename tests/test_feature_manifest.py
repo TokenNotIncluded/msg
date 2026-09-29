@@ -14,7 +14,7 @@ def test_feature_inventory_has_unique_real_samples_and_explicit_checks():
             'content','git_content'} <= {row['feature_id'] for row in rows}
     assert all(set(row)=={'feature_id','enabled_by_default','default_config',
                          'sample_resource','doctor_check','selftest_case'} for row in rows)
-    assert next(row for row in rows if row['feature_id']=='git_content')['selftest_case'] is None
+    assert next(row for row in rows if row['feature_id']=='git_content')['selftest_case']=='git_push_read_cas'
     mapped={row['feature_id']:(row['doctor_check'],row['selftest_case']) for row in rows}
     assert {key:mapped[key] for key in ('bootstrap','postgres','root_trust','online_ca',
                                        'authorization','audit','content','git_content')} == {
@@ -25,7 +25,7 @@ def test_feature_inventory_has_unique_real_samples_and_explicit_checks():
         'authorization':('authority_snapshot','certgate'),
         'audit':('audit','online_delegation'),
         'content':('content_layout','idempotency'),
-        'git_content':('git',None),
+        'git_content':('git','git_push_read_cas'),
     }
     assert {key:mapped[key] for key in ('recovery','search','hosting')} == {
         'recovery':('recovery_checkpoint','recovery_checkpoint_replay'),
@@ -78,7 +78,7 @@ def test_feature_results_do_not_invent_success():
     assert doctor_result['valkey_signal']['status']=='disabled'
     selftest_result=feature_results(rows,{'isolated_namespace':True},'selftest_case')
     assert selftest_result['bootstrap']['status']=='pass'
-    assert selftest_result['git_content']=={'status':'skip','check':None}
+    assert selftest_result['git_content']=={'status':'fail','check':'git_push_read_cas','reason':'check_missing'}
     assert selftest_result['postgres']['status']=='fail'
 
 
@@ -99,10 +99,11 @@ async def test_doctor_feature_results_are_grounded_in_read_only_checks(installed
 @pytest.mark.asyncio
 async def test_selftest_feature_results_are_grounded_in_isolated_operations():
     result=await selftest()
-    assert result['ok'] and result['cleaned_up'],result
+    assert result['ok'] and result['cleaned_up'],result['checks'].get('failure',result)
     for feature_id in ('bootstrap','postgres','root_trust','online_ca','authorization',
                        'audit','content','identity_upgrade','recovery','search','hosting'):
         row=result['features'][feature_id]
         assert row['status']=='pass',result
         assert result['checks'][row['check']] is True
-    assert result['features']['git_content']['status']=='skip'
+    assert result['features']['git_content']=={'status':'pass','check':'git_push_read_cas'}
+    assert result['checks']['git_push_read_cas'] is True

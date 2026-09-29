@@ -22,7 +22,7 @@ FEATURE_SOURCES = {
     'authorization': ('identity', 'authority_snapshot', 'certgate'),
     'audit': ('system', 'audit', 'online_delegation'),
     'content': ('content', 'content_layout', 'idempotency'),
-    'git_content': ('content', 'git', None),
+    'git_content': ('content', 'git', 'git_push_read_cas'),
     'valkey_signal': ('system', 'valkey', None),
     'recovery': ('recovery', 'recovery_checkpoint', 'recovery_checkpoint_replay'),
     'search': ('discovery', 'lexical_search', 'lexical_search_access'),

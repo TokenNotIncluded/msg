@@ -56,7 +56,7 @@
     {"feature_id":"authorization","enabled_by_default":true,"default_config":{},"sample_resource":"t_certified","doctor_check":"authority_snapshot","selftest_case":"certgate"},
     {"feature_id":"audit","enabled_by_default":true,"default_config":{},"sample_resource":"r_root","doctor_check":"audit","selftest_case":"online_delegation"},
     {"feature_id":"content","enabled_by_default":true,"default_config":{},"sample_resource":"t_main","doctor_check":"content_layout","selftest_case":"idempotency"},
-    {"feature_id":"git_content","enabled_by_default":true,"default_config":{},"sample_resource":"t_main","doctor_check":"git","selftest_case":null},
+    {"feature_id":"git_content","enabled_by_default":true,"default_config":{},"sample_resource":"t_main","doctor_check":"git","selftest_case":"git_push_read_cas"},
     {"feature_id":"valkey_signal","enabled_by_default":false,"default_config":{"optional":true},"sample_resource":null,"doctor_check":"valkey","selftest_case":null},
     {"feature_id":"recovery","enabled_by_default":true,"default_config":{"verification":"partial"},"sample_resource":"t_private","doctor_check":"recovery_checkpoint","selftest_case":"recovery_checkpoint_replay"},
     {"feature_id":"search","enabled_by_default":true,"default_config":{"verification":"partial"},"sample_resource":"t_index","doctor_check":"lexical_search","selftest_case":"lexical_search_access"},

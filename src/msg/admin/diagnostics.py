@@ -788,6 +788,8 @@ async def selftest():
             from msg.admin.market_check import check_market, check_market_e2e
             checks['market_e2e']=await check_market_e2e(app,root,call,register)
             checks['market_lifecycle']=await check_market(app,root,call,register,now)
+            from msg.admin.git_check import check_git
+            checks['git_push_read_cas']=await check_git(app,call,register)
             checks.update(await _selftest_search_hosting(app,call,register,test_path))
         except Failure as exc:
             checks['failure']={'code':exc.code}
