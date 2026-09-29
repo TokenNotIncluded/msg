@@ -65,7 +65,7 @@ jobs:
       - name: Install isolated prerequisites
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age git-lfs
+          sudo apt-get install -y -qq age git-lfs acl
           python -m pip install -e '.[dev]'
       - name: Verify read-only role and existing hosting contracts
         run: >-

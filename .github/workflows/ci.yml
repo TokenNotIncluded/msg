@@ -60,7 +60,7 @@ jobs:
       - name: Install required recovery and ingress test tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age nginx openssl git-lfs
+          sudo apt-get install -y -qq age nginx openssl git-lfs acl
           age --version
           nginx -v
           openssl version
