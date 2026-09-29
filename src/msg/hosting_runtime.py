@@ -43,10 +43,21 @@ class _ContractRegistry(Registry):
 
 async def require_prepared_sources(tx):
     """The installer owns publication; this role only compares its release inputs."""
-    from msg.bootstrap import RULE_SPECS, SOURCE_PATH_OVERRIDES, SOURCE_HEADER, system_source_root
+    from msg.bootstrap import (RULE_SPECS, SOURCE_PATH_OVERRIDES, SOURCE_HEADER,
+                               SOURCE_RETIREMENTS, system_source_root)
     root = system_source_root()
     expected = set()
     for rule_id, rid, _, _, default_path, _ in RULE_SPECS:
+        pin = SOURCE_RETIREMENTS.get(rule_id)
+        if pin is not None:
+            # A retired release has no source file; compare its pinned history.
+            row = tx.one('''SELECT source_path,rule_id,source_kind,source_version,source_digest
+                FROM system_sources WHERE resource_id=?''', (rid,))
+            require(row == ('docs/system/' + pin['source_path'], rule_id, 'release_retired',
+                            pin['version'], pin['digest']) and
+                    (await tx.resource(rid)).state == 'archived', 'hosting_installation_stale')
+            expected.add(rid)
+            continue
         path = SOURCE_PATH_OVERRIDES.get(rule_id, default_path)
         raw = root.joinpath(path).read_bytes()
         header = SOURCE_HEADER.match(raw.decode('utf-8'))

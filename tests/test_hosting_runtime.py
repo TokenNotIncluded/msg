@@ -213,6 +213,31 @@ async def test_hosting_missing_or_stale_installation_fails_without_repair(instal
         await reader.close()
 
 
+@pytest.mark.parametrize('synced', [True, False])
+async def test_hosting_compares_declared_rule_retirement(installed, reader_settings, tmp_path,
+                                                         monkeypatch, synced):
+    import msg.bootstrap as bootstrap
+    from msg.bootstrap import sync_system_sources
+    from test_system_rule_retirement import retirement
+    app, _ = installed
+    source, declaration = await retirement(app, tmp_path)
+    if synced:
+        async with app.metadata.transaction(write=True) as tx:
+            await sync_system_sources(tx, app.contents, NOW, source_root=source,
+                                      retirements=declaration, registry=app.registry)
+    monkeypatch.setattr(bootstrap, 'SOURCE_RETIREMENTS', declaration)
+    monkeypatch.setattr(bootstrap, 'system_source_root', lambda: source)
+    reader = runtime_class()(reader_settings, clock=lambda: NOW)
+    try:
+        if synced:
+            await reader.load()
+        else:
+            with pytest.raises(Failure, match='hosting_installation_stale'):
+                await reader.load()
+    finally:
+        await reader.close()
+
+
 async def test_hosting_private_preview_head_range_revocation_and_zero_effects(installed, reader_settings):
     app, _ = installed
     key, subject, certificate, site, preview = await website(app)
