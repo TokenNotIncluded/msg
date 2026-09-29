@@ -1,0 +1,80 @@
+name: Architecture boundaries
+on:
+  push:
+    branches: ['fix/architecture-boundaries-*']
+  pull_request:
+    paths:
+      - 'src/msg/core/**'
+      - 'src/msg/workers/**'
+      - 'tests/test_tool_runner_contract.py'
+      - '.github/workflows/architecture-boundaries.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: architecture-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  runner-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      valkey:
+        image: valkey/valkey:9.0.6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+      MSG_TEST_VALKEY_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+          cache: pip
+      - name: Record exact tested source
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          pathlib.Path('artifacts/source.json').write_text(json.dumps({
+              'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
+              'event': os.environ['GITHUB_EVENT_NAME'], 'run_id': os.environ['GITHUB_RUN_ID'],
+          }, indent=2) + '\n')
+          PY
+      - name: Install isolated test prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age git-lfs
+          python -m pip install -e '.[dev]'
+      - name: Check runner ownership, real worker publication and safety fences
+        run: >-
+          python -m pytest tests/test_tool_runner_contract.py tests/test_tools.py
+          tests/test_effect_completion_fencing.py
+          --junitxml=artifacts/runner-contract.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: architecture-boundaries
+          path: artifacts/

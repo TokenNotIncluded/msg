@@ -6,6 +6,7 @@ from msg.security.sealed_box import generate_key,encrypt,decrypt
 from msg.extensions.hosting import hosting_app
 from msg.extensions.repositories import NativeGitStore
 from test_service import register,call
+from test_hosting_runtime import reader_settings, runtime_class
 
 
 def test_public_key_encryption_recipient_and_tamper_checks():
@@ -44,7 +45,7 @@ async def test_keystore_stores_only_ciphertext_and_has_common_acl(installed):
 
 
 @pytest.mark.asyncio
-async def test_hosting_publish_is_explicit_versioned_on_service_origin(installed):
+async def test_hosting_publish_is_explicit_versioned_on_service_origin(installed,reader_settings):
     app,_=installed
     key,uid,_=await register(app,'site-owner')
     private_file=await call(app,'content.file_put',{'parent':'/@site-owner/files','name':'index.html',
@@ -56,19 +57,24 @@ async def test_hosting_publish_is_explicit_versioned_on_service_origin(installed
         'entries':[{'path':'index.html','source':wire(private_file.resources[0])}]},key=key,subject=uid,
         expected=((site.resources[0].id,site.data['generation']),))
     assert published.status=='ok',wire(published)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosting_app(app)),base_url=app.settings.service_url) as http:
-        result=await http.get('/@site-owner/w/')
-        assert result.status_code==200 and result.content==b'<h1>Published explicitly</h1>'
-        assert 'set-cookie' not in result.headers
-        assert 'sandbox' in result.headers['content-security-policy']
-        assert 'allow-same-origin' not in result.headers['content-security-policy']
-        head=await http.head('/@site-owner/w/')
-        assert head.headers['content-security-policy']==result.headers['content-security-policy']
-        cached=await http.get('/@site-owner/w/',headers={'If-None-Match':result.headers['etag']})
-        assert cached.status_code==304
-        assert cached.headers['content-security-policy']==result.headers['content-security-policy']
-        denied=await http.get('/@site-owner/w/../../root',headers={'Host':'pages.example.test'})
-        assert denied.status_code==403
+    reader=runtime_class()(reader_settings,clock=app.clock)
+    await reader.load()
+    try:
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosting_app(reader)),base_url=app.settings.service_url) as http:
+            result=await http.get('/@site-owner/w/')
+            assert result.status_code==200 and result.content==b'<h1>Published explicitly</h1>'
+            assert 'set-cookie' not in result.headers
+            assert 'sandbox' in result.headers['content-security-policy']
+            assert 'allow-same-origin' not in result.headers['content-security-policy']
+            head=await http.head('/@site-owner/w/')
+            assert head.headers['content-security-policy']==result.headers['content-security-policy']
+            cached=await http.get('/@site-owner/w/',headers={'If-None-Match':result.headers['etag']})
+            assert cached.status_code==304
+            assert cached.headers['content-security-policy']==result.headers['content-security-policy']
+            denied=await http.get('/@site-owner/w/../../root',headers={'Host':'pages.example.test'})
+            assert denied.status_code==403
+    finally:
+        await reader.close()
     source=await call(app,'discovery.get',{'id':private_file.resources[0].id})
     assert source.error.code=='permission_denied'
     traversal=await call(app,'hosting.deploy',{'id':site.resources[0].id,

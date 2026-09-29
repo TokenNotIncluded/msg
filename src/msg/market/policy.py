@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from msg.core.codec import canonical, digest, loads
 from msg.core.errors import require
+from msg.core.query import QuerySession
 
 DEFAULT_POLICY = {
     'id': 'dispute-v1', 'version': 1,
@@ -44,7 +45,7 @@ def validate(policy):
     return policy
 
 
-def load_policy(tx, policy_id):
+def load_policy(tx: QuerySession, policy_id: str):
     row = tx.one('SELECT body,digest FROM arbitration_policies WHERE id=?', (policy_id,))
     if row:
         policy = loads(row[0])

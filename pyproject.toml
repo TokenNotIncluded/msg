@@ -10,14 +10,15 @@ readme = "README.md"
 requires-python = ">=3.15"
 license = "MIT"
 authors = [{name="TokenNotIncluded"}]
-dependencies = ["cryptography>=46,<52", "starlette>=0.50,<2", "uvicorn>=0.38,<1", "httpx>=0.28,<1", "jsonschema>=4.25,<5", "referencing>=0.36,<1", "aiohttp>=3.13,<4", "dnspython>=2.8,<3", "graphql-core>=3.2.7,<3.3", "psycopg[binary]>=3.3,<4", "valkey>=6.1,<7"]
+dependencies = ["cryptography>=46,<52", "httpx>=0.28,<1", "jsonschema>=4.25,<5", "referencing>=0.36,<1"]
 
 [project.scripts]
 msg = "msg.cli:main"
 msgd = "msg.daemon:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.4", "pytest-asyncio>=1.1", "pytest-cov>=6", "ruff>=0.14", "build>=1.2", "tiktoken>=0.12"]
+server = ["starlette>=0.50,<2", "uvicorn>=0.38,<1", "aiohttp>=3.13,<4", "dnspython>=2.8,<3", "graphql-core>=3.2.7,<3.3", "psycopg[binary]>=3.3,<4", "valkey>=6.1,<7"]
+dev = ["msg-lmm-best[server]", "pytest>=8.4", "pytest-asyncio>=1.1", "pytest-cov>=6", "ruff>=0.14", "build>=1.2", "tiktoken>=0.12"]
 
 [tool.uv.build-backend]
 module-name = "msg"

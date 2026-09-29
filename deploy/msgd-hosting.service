@@ -1,21 +1,28 @@
 [Unit]
-Description=msg.lmm.best separate-origin static hosting
+Description=msg.lmm.best read-only hosted-content process
 After=network.target
 
 [Service]
 Type=simple
-User=msgd
-Group=msgd
-WorkingDirectory=/var/lib/msgd
-ExecStart=/opt/msgd/venv/bin/msgd hosting --listen 127.0.0.1 --port 8043
+User=msgd-hosting
+Group=msgd-hosting
+SupplementaryGroups=msgd-content-read
+WorkingDirectory=/
+ExecStart=/opt/msgd/venv/bin/msgd --config-dir /etc/msgd-hosting hosting --listen 127.0.0.1 --port 8043
+Environment=PGSERVICEFILE=/etc/msgd-hosting/pg_service.conf
+Environment=PGPASSFILE=/etc/msgd-hosting/pgpass
 Restart=on-failure
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/msgd
-InaccessiblePaths=/var/lib/msgd-root /etc/msgd/root
+ReadOnlyPaths=/etc/msgd-hosting /var/lib/msgd/git/content /var/lib/msgd/blobs/sha256
+InaccessiblePaths=/var/lib/msgd-root -/etc/msgd/root /var/lib/msgd/service -/var/lib/msgd/service-keys /var/lib/msgd/git/repos /var/lib/msgd/transfers -/etc/msgd/msgd.toml -/etc/msgd/server.toml -/etc/msgd/mail.toml
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+LimitCORE=0
 
 [Install]
 WantedBy=multi-user.target
