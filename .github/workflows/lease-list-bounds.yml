@@ -1,0 +1,71 @@
+name: Bounded collaboration lease reads
+on:
+  push:
+    branches: [fix/lease-list-bounds-20260929]
+  pull_request:
+    paths:
+      - '.github/workflows/lease-list-bounds.yml'
+      - 'src/msg/plugins/collaboration.py'
+      - 'tests/test_lease_list_bounds.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: lease-list-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest -d postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Record exact source
+        run: |
+          mkdir -p artifacts
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          Path('artifacts/source.json').write_text(json.dumps({
+              'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
+              'run_id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT']}, indent=2) + '\n')
+          PY
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+          cache: pip
+      - name: Install real dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq age
+          python -m pip install -e '.[dev]'
+      - name: Require bounded reads and existing collaboration contracts
+        run: >-
+          python -m pytest -q
+          tests/test_lease_list_bounds.py tests/test_collaboration_current_visibility.py
+          tests/test_collaboration_surfaces.py tests/test_collaboration_resources.py
+          tests/test_collaboration_resource_surfaces.py
+          --junitxml=artifacts/lease-list-regressions.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lease-list-evidence
+          path: artifacts/
+          if-no-files-found: error
