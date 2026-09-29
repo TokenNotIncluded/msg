@@ -17,26 +17,7 @@ from pathlib import Path
 from msg.core.codec import canonical, digest, loads
 from msg.core.errors import Failure, require
 from msg.core.models import BlobRef
-
-
-def durable_write(path: Path, data: bytes, mode: int = 0o600):
-    path.parent.mkdir(parents=True,exist_ok=True)
-    fd,temporary=tempfile.mkstemp(prefix='.pending-',dir=path.parent)
-    try:
-        os.fchmod(fd,mode)
-        with os.fdopen(fd,'wb') as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary,path)
-        directory=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+from msg.atomic_file import durable_write
 
 
 class LFSObjectStore:

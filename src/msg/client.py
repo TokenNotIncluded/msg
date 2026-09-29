@@ -20,8 +20,8 @@ from msg.core.requests import request_for
 from msg.security.crypto import Ed25519Signer, subject_id, key_id
 from msg.security.age_keys import (generate_age_key,recipient_from_identity,
     public_from_recipient,encryption_key_id)
-from msg.security.vault import client_upgrade_proof
-from msg.storage.git import durable_write
+from msg.security.custodial_protocol import client_upgrade_proof
+from msg.atomic_file import durable_write
 from msg.client_tokens import read_journal, remove_journal, token_operation
 from msg.transports.client import HTTPTransport, GraphQLTransport, MCPHTTPTransport
 

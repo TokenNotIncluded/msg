@@ -10,7 +10,7 @@ from pathlib import Path
 from msg.client import ClientState,MsgClient
 from msg.core.codec import canonical,loads,wire
 from msg.core.errors import Failure,require
-from msg.core.executor import result_wire
+from msg.core.codec import result_wire
 from msg.core.models import ResourceRef,OperationResult
 from msg.transports.client import TRANSPORTS
 

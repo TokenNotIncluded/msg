@@ -1,6 +1,7 @@
 """msgd: local installation, serving, workers, diagnostics and restricted SSH."""
 from __future__ import annotations
 import argparse
+import importlib.util
 import asyncio
 from datetime import UTC,datetime
 import json
@@ -139,6 +140,11 @@ def parser():
 
 def main(argv=None):
     args=parser().parse_args(argv)
+    server_modules=('starlette','uvicorn','psycopg','valkey','aiohttp','dns','graphql')
+    if any(importlib.util.find_spec(name) is None for name in server_modules):
+        print(canonical({'status':'error','error':{'code':'server_dependencies_required',
+            'hint':"Install msg-lmm-best[server] before running server commands."}}).decode(),file=sys.stderr)
+        return 2
     try:
         if args.command in {'doctor','selftest'}:
             from msg.admin.diagnostics import doctor,selftest

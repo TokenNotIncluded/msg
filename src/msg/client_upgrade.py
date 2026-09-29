@@ -8,7 +8,7 @@ from uuid import uuid4
 from msg.core.codec import b64, canonical, loads, wire
 from msg.core.errors import Failure, require
 from msg.security.crypto import Ed25519Signer
-from msg.storage.git import durable_write
+from msg.atomic_file import durable_write
 
 
 @contextmanager

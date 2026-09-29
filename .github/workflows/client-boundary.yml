@@ -1,0 +1,72 @@
+name: Client boundary
+on:
+  push:
+    branches: ['fix/client-boundary-*']
+  pull_request:
+    paths:
+      - 'src/msg/**'
+      - 'pyproject.toml'
+      - 'tests/test_client_boundary.py'
+      - 'scripts/check_client_install.py'
+      - '.github/workflows/client-boundary.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: client-boundary-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  installed-client:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+          cache: pip
+      - name: Record tested source
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          pathlib.Path('artifacts/source.json').write_text(json.dumps({
+              'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
+              'run_id': os.environ['GITHUB_RUN_ID'], 'event': os.environ['GITHUB_EVENT_NAME'],
+          }, indent=2) + '\n')
+          PY
+      - name: Install full development dependencies
+        run: python -m pip install -e '.[dev]'
+      - name: Verify helper ownership, exact proof context and fail-closed assembly
+        run: python -m pytest tests/test_client_boundary.py --junitxml=artifacts/client-boundary.xml
+      - name: Build the distributable wheel and source archive
+        if: always()
+        run: |
+          python -m build
+          python scripts/check_package_artifacts.py dist
+      - name: Install a clean client-only wheel outside the checkout
+        if: always()
+        run: |
+          python -m venv "$RUNNER_TEMP/msg-client-only"
+          client_python="$RUNNER_TEMP/msg-client-only/bin/python"
+          "$client_python" -m pip install dist/*.whl
+          "$client_python" -m pip check
+          mkdir -p "$RUNNER_TEMP/msg-client-outside"
+          cd "$RUNNER_TEMP/msg-client-outside"
+          "$RUNNER_TEMP/msg-client-only/bin/msg" --help > "$GITHUB_WORKSPACE/artifacts/client-help.txt"
+          "$RUNNER_TEMP/msg-client-only/bin/msgd" --help > "$GITHUB_WORKSPACE/artifacts/daemon-help.txt"
+          "$client_python" -I "$GITHUB_WORKSPACE/scripts/check_client_install.py" --minimal-install \
+              > "$GITHUB_WORKSPACE/artifacts/client-install.json"
+          "$client_python" -m pip list --format=json > "$GITHUB_WORKSPACE/artifacts/client-packages.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: client-boundary
+          path: |
+            artifacts/
+            dist/
