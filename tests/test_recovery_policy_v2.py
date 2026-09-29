@@ -181,3 +181,17 @@ async def test_v2_ban_never_shortens_an_active_restriction(policy_target, existi
         expected = None if existing_days is None else max(previous, desired)
         assert tx.one('SELECT expires_at FROM topic_bans WHERE topic=?', (topic.id,)) == (expected,)
         assert active(tx)
+
+
+@pytest.mark.parametrize('special', [0o4000, 0o2000, 0o1000, 0o7000])
+async def test_acl_restriction_preserves_existing_special_security_bits(policy_target, special):
+    from dataclasses import replace
+    app, resource = policy_target
+    async with app.metadata.transaction(write=True) as tx:
+        resource = replace(resource, mode=special | 0o777, generation=resource.generation + 1)
+        await tx.replace(resource, resource.generation - 1)
+    body, signed, pin = packet_for(resource, mode=0o400)
+    await replay(app, body, signed, pin)
+    async with app.metadata.transaction(write=False) as tx:
+        assert (await tx.resource(resource.id)).mode == special | 0o400
+        assert active(tx)

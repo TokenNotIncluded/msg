@@ -36,7 +36,7 @@ async def apply(tx, fact):
     if kind == 'resource.acl.restrict':
         require(resource.owner == value['owner'] and resource.group == value['group'],
                 'recovery_policy_authority_change_unsupported')
-        mode = resource.mode & value['mode']
+        mode = (resource.mode & 0o7000) | (resource.mode & value['mode'])
         if resource.mode == mode:
             return False
         await tx.replace(replace(resource, mode=mode, generation=resource.generation + 1,
