@@ -179,3 +179,11 @@ async def test_inflight_read_from_previous_identity_is_not_displayed():
     assert ui._last_read is None
     assert 'NEVER DISPLAY' not in ui.stdout.getvalue()
     assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize('text', [7, {'nested': 'text'}, ['text'], None])
+def test_malformed_snippet_text_does_not_crash_or_display(text):
+    output = StringIO()
+    ui = TerminalUI(Client([]), stdout=output)
+    ui._show_items([{'id': 'r_item', 'snippet': {'text': text}}])
+    assert output.getvalue().strip() == '1. r_item  r_item'

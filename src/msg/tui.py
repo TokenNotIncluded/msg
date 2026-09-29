@@ -166,7 +166,7 @@ class TerminalUI:
             name = item.get('title') or item.get('name') or item.get('path') or item.get('source') or rid
             self._write(f'{index}. {name}  {rid}')
             snippet = item.get('snippet')
-            if isinstance(snippet, dict) and snippet.get('text'):
+            if isinstance(snippet, Mapping) and isinstance(snippet.get('text'), str) and snippet['text']:
                 self._write('   ' + snippet['text'])
 
     async def _show_page(self, operation, arguments, title):
