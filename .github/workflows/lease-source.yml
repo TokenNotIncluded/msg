@@ -1,0 +1,96 @@
+name: Prepare reviewed bounded lease source
+on:
+  push:
+    branches: [work/read-pagination-publisher-20260929]
+    paths: ['.github/workflows/lease-source.yml']
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: de3cd872b71e062d6141916b11ea0bdfa28adca6
+          persist-credentials: false
+      - name: Publish the exact reviewed source blob without updating any branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, subprocess, urllib.request
+          from pathlib import Path
+          base = 'de3cd872b71e062d6141916b11ea0bdfa28adca6'
+          path = 'src/msg/plugins/collaboration.py'
+          assert os.environ['GITHUB_REPOSITORY'] == 'TokenNotIncluded/msg.lmm.best'
+          assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == base
+          raw = Path(path).read_bytes()
+          assert hashlib.sha256(raw).hexdigest() == '47fc4a4e2dd4779dc601284f11a36e06dab0e046c4a52772587d1ad7944b8b0a'
+          text = raw.decode()
+          start = text.index("        rows = tx.rows('SELECT id,target,status,expires_at,body FROM collaboration_leases '")
+          end = text.index("        return HandlerOutput(data={'items': records,", text.index('    async def lease_list'))
+          new = '''        position = request.arguments.get('after', '')
+                  records = []
+                  more = False
+                  scanned = 0
+                  while not more:
+                      require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+                      rows = tx.rows('SELECT id,target,status,expires_at,body FROM collaboration_leases '
+                                     'WHERE holder=? AND id>? ORDER BY id LIMIT 128',
+                                     (holder, position))
+                      for lease_id, target, status, expires, raw in rows:
+                          scanned += 1
+                          require(scanned <= 4096 and time.monotonic() < ctx.deadline_monotonic,
+                                  'query_cost_exceeded')
+                          position = lease_id
+                          try:
+                              await _safe_ref(app, ctx, request, tx, target)
+                          except Failure as exc:
+                              if exc.code in {'permission_denied', 'credential_ceiling', 'certificate_gate',
+                                              'delegation_scope', 'ancestor_inactive', 'not_found',
+                                              'collaboration_ref_forbidden'}:
+                                  continue
+                              raise
+                          if len(records) == limit:
+                              more = True
+                              break
+                          record = loads(raw)
+                          record['effective_status'] = ('expired' if status == 'active' and
+                                                        parse_time(expires) <= ctx.now else status)
+                          records.append(record)
+                      if len(rows) < 128:
+                          break
+          '''
+          # The literal's continuation lines have ten extra indentation spaces.
+          lines = new.splitlines(True)
+          new = lines[0] + ''.join(line[10:] if line.startswith('          ') else line for line in lines[1:])
+          result = (text[:start] + new + text[end:]).replace(
+              'from datetime import timedelta\n', 'from datetime import timedelta\nimport time\n').encode()
+          expected = 'ac4247f5629403942506a80c895e4018db4ec56d3a2e279a11a6fedbbef3b74d'
+          expected_blob = 'f978dc61c866d1c48fab2e3a87979b67d7a8273e'
+          assert hashlib.sha256(result).hexdigest() == expected
+          assert hashlib.sha1(b'blob ' + str(len(result)).encode() + b'\0' + result).hexdigest() == expected_blob
+          request = urllib.request.Request(
+              'https://api.github.com/repos/TokenNotIncluded/msg.lmm.best/git/blobs',
+              data=json.dumps({'encoding': 'base64', 'content': base64.b64encode(result).decode()}).encode(),
+              headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                       'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'}, method='POST')
+          with urllib.request.urlopen(request, timeout=30) as response:
+              published = json.load(response)
+          assert published['sha'] == expected_blob
+          Path('evidence').mkdir()
+          Path('evidence/collaboration.py').write_bytes(result)
+          Path('evidence/source.json').write_text(json.dumps({
+              'base': base, 'path': path, 'new_blob': expected_blob, 'sha256': expected,
+              'run_id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'project_executed': False, 'branch_updated': False}, indent=2) + '\n')
+          print('Published reviewed source blob:', expected_blob)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-lease-source
+          path: evidence/
+          if-no-files-found: error
