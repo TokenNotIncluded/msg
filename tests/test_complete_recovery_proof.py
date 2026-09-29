@@ -211,3 +211,20 @@ async def test_configuration_policy_drift_cannot_bypass_full_database_proof(comp
         await promote(app, packet, pin=pin, signer=root, operator='isolated-fixture')
     async with app.metadata.transaction(write=False) as tx:
         assert active(tx)
+
+
+async def test_resume_requires_committed_generation_fence(complete_state, monkeypatch):
+    import os
+    app, root, packet, pin = complete_state
+    with monkeypatch.context() as patch:
+        def fail_sync(fd):
+            raise OSError('fixture interrupted finalization')
+        patch.setattr(os, 'fsync', fail_sync)
+        with pytest.raises(Failure, match='recovery_promotion_finish_required'):
+            await promote(app, packet, pin=pin, signer=root, operator='isolated-fixture')
+    async with app.metadata.transaction(write=True) as tx:
+        tx.execute("DELETE FROM settings WHERE key='recovery_runtime_generation'", write=True)
+    with pytest.raises(Failure, match='recovery_promotion_receipt_mismatch'):
+        await promote(app, packet, pin=pin, signer=root, operator='isolated-fixture')
+    async with app.metadata.transaction(write=False) as tx:
+        assert active(tx)

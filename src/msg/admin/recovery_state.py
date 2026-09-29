@@ -97,6 +97,9 @@ def _runtime_row(row, controls):
 
 
 def snapshot(tx, *, controls=None, resume=None):
+    if resume is not None:
+        require(tx.setting('recovery_runtime_generation') == resume['generation'],
+                'recovery_promotion_receipt_mismatch')
     catalog = known_catalogue(tx)
     result = {'catalogue': catalog, 'tables': {}, 'sequences': {}}
     # The application writer lock plus these relation locks serialize every DB
