@@ -134,3 +134,29 @@ async def test_total_ttl_and_replayed_nonce(installed):
         'statement': FINAL_STATEMENT,
     }, key=key, subject=subject)
     assert expired.data['reason'] == 'ceremony_expired'
+
+
+@pytest.mark.asyncio
+async def test_expired_round_can_restart_without_submitting_old_answer(installed):
+    app, _ = installed
+    key, subject, _ = await register(app, 'achievement-round-restart')
+    started = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    assert started.status == 'ok', wire(started)
+    app.executor.clock = lambda: NOW + timedelta(seconds=59)
+    live = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    assert live.status == 'error' and live.error.code == 'achievement_ceremony_active'
+
+    # At the inclusive round deadline no answer can succeed. Restart must not
+    # require a doomed answer or waiting for the longer ceremony deadline.
+    app.executor.clock = lambda: NOW + timedelta(seconds=60)
+    restarted = await call(app, 'achievement.start', {}, key=key, subject=subject)
+    assert restarted.status == 'ok', wire(restarted)
+    assert restarted.data['round'] == 1
+    assert restarted.data['challenge_id'] != started.data['challenge_id']
+    assert restarted.data['nonce'] != started.data['nonce']
+    stale = await advance(app, key, subject, started.data)
+    assert stale.status == 'error' and stale.error.code == 'achievement_ceremony_not_found'
+    advanced = await advance(app, key, subject, restarted.data)
+    assert advanced.status == 'ok' and advanced.data['round'] == 2
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM achievement_grants WHERE subject=?', (subject,))[0] == 0

@@ -214,7 +214,10 @@ def install(app):
         # expired attempts may be replaced; a live challenge is not superseded.
         for (raw,) in tx.execute("SELECT body FROM achievement_ceremonies WHERE subject=? AND state='active'",
                                  (subject,)):
-            require(ctx.now >= parse_time(loads(raw)['expires_at']), 'achievement_ceremony_active')
+            previous = loads(raw)
+            require(ctx.now >= min(parse_time(previous['expires_at']),
+                                   parse_time(previous['round_expires_at'])),
+                    'achievement_ceremony_active')
         tx.execute('DELETE FROM achievement_ceremonies WHERE subject=?', (subject,), write=True)
         state = {'id': new_id('achc'), 'subject_id': subject, 'achievement_id': I_AM_NOT_HUMAN.id,
                  'spec_version': I_AM_NOT_HUMAN.version, 'status': 'active', 'round': 1,
