@@ -86,10 +86,16 @@ class Registry:
         require('identity' in self._plugins,'identity_plugin_required')
         for spec in self._operations.values():
             require(spec.input_schema.id in self._schemas and spec.output_schema.id in self._schemas,'missing_schema')
+        operation_ids={f'{s.name}@{s.version}' for s in self._operations.values()}
+        for resource in self._types.values():
+            require(resource.content_schema is None or
+                    resource.content_schema.id in self._schemas,'missing_schema')
+            require(resource.operations<=operation_ids,'unknown_resource_operation')
         for cap in self._capabilities.values():
+            require(cap.constraints_schema is None or
+                    cap.constraints_schema.id in self._schemas,'missing_schema')
             require(cap.scope_types<=set(n for n,v in self._types),'unknown_scope_type')
-            require(all(op in {f'{s.name}@{s.version}' for s in self._operations.values()}
-                        for op in cap.operations),'unknown_capability_operation')
+            require(cap.operations<=operation_ids,'unknown_capability_operation')
         self._frozen=True
 
     @property
