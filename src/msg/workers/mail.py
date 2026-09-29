@@ -1,12 +1,15 @@
 """Optional TLS SMTP projection. SMTP acknowledgement is not exactly-once delivery."""
+
 from __future__ import annotations
+
 import asyncio
-from email.message import EmailMessage
 import smtplib
 import ssl
+from email.message import EmailMessage
+
 from msg.core.codec import loads
-from msg.core.errors import Failure, require
 from msg.core.email_address import validate_address
+from msg.core.errors import Failure, require
 
 
 class SmtpSender:
@@ -27,7 +30,7 @@ class SmtpSender:
         message['To'] = recipient
         message['Subject'] = job.arguments['subject']
         # A stable Message-ID is useful for tracing; not a remote dedup guarantee.
-        message['Message-ID'] = '<'+job.id+'@msgd.local>'
+        message['Message-ID'] = '<' + job.id + '@msgd.local>'
         message.set_content(job.arguments['text'])
         sending = False
         connection = None

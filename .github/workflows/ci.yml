@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
     services:
       postgres:
         # Recovery jobs explicitly install matching PostgreSQL 16 client tools.
@@ -69,13 +69,17 @@ jobs:
           bwrap --version
           sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
       - name: Install the complete dependency set
-        run: python -m pip install -e '.[dev]'
+        run: |
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          uv pip check
       - name: Check real tool isolation before running shards
         run: python scripts/check_tool_sandbox.py
       - name: Compile all new modules
-        run: python -m compileall -q src
+        run: python -W error -m compileall -q src
       - name: Run core, business and security tests
-        run: python scripts/ci_shards.py run ${{ matrix.shard }} 4
+        run: python scripts/ci_shards.py run ${{ matrix.shard }} 8
       - name: Require every transport and actual tokenizer
         if: matrix.shard == 0
         env:
@@ -86,7 +90,7 @@ jobs:
         run: |
           python -m build
           python scripts/check_package_artifacts.py dist
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: rewrite-verification-${{ matrix.shard }}
@@ -100,12 +104,12 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8.0.1
         with:
           pattern: rewrite-verification-*
           merge-multiple: true
       - name: Require complete disjoint test evidence
-        run: python scripts/ci_shards.py check 4
+        run: python scripts/ci_shards.py check 8
       - name: Require all tests, conformance and build jobs to succeed
         env:
           SHARD_RESULT: ${{ needs.shards.result }}

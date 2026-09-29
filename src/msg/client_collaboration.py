@@ -38,8 +38,12 @@ def add_commands(commands):
         listing = actions.add_parser('list')
         listing.add_argument('--limit', type=int)
         listing.add_argument('--after')
-        transitions = {'request': ('claim', 'fulfill', 'cancel'), 'offer': ('withdraw',),
-                       'checkpoint': (), 'proposal': ('accept', 'reject', 'withdraw')}[kind]
+        transitions = {
+            'request': ('claim', 'fulfill', 'cancel'),
+            'offer': ('withdraw',),
+            'checkpoint': (),
+            'proposal': ('accept', 'reject', 'withdraw'),
+        }[kind]
         for action in transitions:
             child = actions.add_parser(action)
             child.add_argument('id')
@@ -58,8 +62,11 @@ async def run_command(client, args):
     if kind == 'watch':
         if action == 'create':
             from msg.core.errors import require
+
             require(bool(args.target) != bool(args.query_ref), 'watch_target_required')
-            require(bool(args.query_ref) == bool(args.query_revision), 'watch_query_revision_required')
+            require(
+                bool(args.query_ref) == bool(args.query_revision), 'watch_query_revision_required'
+            )
             params = {'event_types': args.event, 'delivery': args.delivery}
             if args.query_ref:
                 params['query_ref'] = {'id': args.query_ref, 'revision': args.query_revision}
@@ -84,8 +91,11 @@ async def run_command(client, args):
         else:
             params['resource_refs'] = args.ref
     elif action == 'list':
-        params = {name: getattr(args, name) for name in ('limit', 'after')
-                  if getattr(args, name) is not None}
+        params = {
+            name: getattr(args, name)
+            for name in ('limit', 'after')
+            if getattr(args, name) is not None
+        }
     else:
         params = {'id': args.id}
         if action != 'get':

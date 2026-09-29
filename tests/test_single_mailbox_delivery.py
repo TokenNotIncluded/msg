@@ -3,10 +3,11 @@
 SMTP uses the real stdlib send_message parser and serializer with only sendmail
 replaced by a recorder. No socket, SMTP server or external address is contacted.
 """
+
+import smtplib
 from datetime import UTC, datetime
 from email import policy
 from types import SimpleNamespace
-import smtplib
 
 import pytest
 
@@ -16,20 +17,32 @@ from msg.core.models import EmailSettings
 from msg.market.delivery_targets import email_binding, validate_address
 from msg.workers import mail
 
-
 AMBIGUOUS = (
-    'alias,buyer@example.test', 'buyer@example.test,alias',
-    ',buyer@example.test', 'buyer@example.test,',
-    'buyer@example.test;', 'group:buyer@example.test;',
-    '<buyer@example.test>', 'buyer(comment)@example.test',
-    'buyer@example.test(comment)', 'buyer@exam(comment)ple.test',
-    '"buyer"@example.test', 'buyer..alias@example.test',
-    'buyer@example..test', 'buyer@example.test\x7f',
+    'alias,buyer@example.test',
+    'buyer@example.test,alias',
+    ',buyer@example.test',
+    'buyer@example.test,',
+    'buyer@example.test;',
+    'group:buyer@example.test;',
+    '<buyer@example.test>',
+    'buyer(comment)@example.test',
+    'buyer@example.test(comment)',
+    'buyer@exam(comment)ple.test',
+    '"buyer"@example.test',
+    'buyer..alias@example.test',
+    'buyer@example..test',
+    'buyer@example.test\x7f',
 )
 VALID = (
-    'buyer@example.test', 'Buyer+tag@Example.TEST', 'first.last@example.test',
-    'a_b-c@example.test', "o'hara@example.test", 'buyer@xn--bcher-kva.test',
-    'buyer@例子.测试', '用户@example.test', '"a,b"@example.test',
+    'buyer@example.test',
+    'Buyer+tag@Example.TEST',
+    'first.last@example.test',
+    'a_b-c@example.test',
+    "o'hara@example.test",
+    'buyer@xn--bcher-kva.test',
+    'buyer@例子.测试',
+    '用户@example.test',
+    '"a,b"@example.test',
 )
 
 
@@ -37,8 +50,11 @@ VALID = (
 def test_market_rejects_non_exact_single_mailbox_without_leaking_it(address):
     with pytest.raises(Failure) as caught:
         validate_address(address)
-    assert caught.value.as_dict() == {'code': 'invalid_email', 'retryable': False,
-                                           'message': 'Enter one valid email address.'}
+    assert caught.value.as_dict() == {
+        'code': 'invalid_email',
+        'retryable': False,
+        'message': 'Enter one valid email address.',
+    }
     assert address not in str(caught.value)
 
 
@@ -48,8 +64,10 @@ def test_market_rejects_controls_and_whitespace(codepoint):
         validate_address('buyer' + chr(codepoint) + '@example.test')
 
 
-@pytest.mark.parametrize('address', [None, 1, [], {}, '', 'buyer', '@example.test',
-                                   'buyer@localhost', 'x' * 243 + '@example.test'])
+@pytest.mark.parametrize(
+    'address',
+    [None, 1, [], {}, '', 'buyer', '@example.test', 'buyer@localhost', 'x' * 243 + '@example.test'],
+)
 def test_market_rejects_non_addresses(address):
     with pytest.raises(Failure, match='invalid_email'):
         validate_address(address)
@@ -65,8 +83,9 @@ def test_valid_mailbox_bytes_are_not_rewritten(address):
 
 @pytest.mark.parametrize('address', AMBIGUOUS)
 def test_legacy_verified_row_cannot_authorize_an_ambiguous_recipient(address):
-    email = EmailSettings(subject_id='u_buyer', address=address,
-                          verified_at=datetime(2026, 1, 1, tzinfo=UTC))
+    email = EmailSettings(
+        subject_id='u_buyer', address=address, verified_at=datetime(2026, 1, 1, tzinfo=UTC)
+    )
     tx = SimpleNamespace(one=lambda *_: (3, canonical(email)))
     with pytest.raises(Failure, match='invalid_email'):
         email_binding(tx, 'u_buyer', address)
@@ -74,8 +93,9 @@ def test_legacy_verified_row_cannot_authorize_an_ambiguous_recipient(address):
 
 @pytest.fixture
 def smtp(monkeypatch):
-    seen = SimpleNamespace(connections=0, envelopes=[], messages=[], closed=0,
-                           fail_after_data=False, refused={})
+    seen = SimpleNamespace(
+        connections=0, envelopes=[], messages=[], closed=0, fail_after_data=False, refused={}
+    )
     real_smtp = smtplib.SMTP
 
     class RecordingSMTP(real_smtp):
@@ -92,8 +112,9 @@ def smtp(monkeypatch):
         def starttls(self, *, context=None):
             return 220, b'test'
 
-        def send_message(self, msg, from_addr=None, to_addrs=None,
-                         mail_options=(), rcpt_options=()):
+        def send_message(
+            self, msg, from_addr=None, to_addrs=None, mail_options=(), rcpt_options=()
+        ):
             seen.envelopes.append(to_addrs)
             return super().send_message(msg, from_addr, to_addrs, mail_options, rcpt_options)
 
@@ -112,16 +133,29 @@ def smtp(monkeypatch):
 
 
 def sender(tls='starttls'):
-    return mail.SmtpSender(SimpleNamespace(enabled=True, host='smtp.invalid', port=587,
-        tls=tls, sender='msg@example.test', credential_file=None))
+    return mail.SmtpSender(
+        SimpleNamespace(
+            enabled=True,
+            host='smtp.invalid',
+            port=587,
+            tls=tls,
+            sender='msg@example.test',
+            credential_file=None,
+        )
+    )
 
 
 def job(recipient, verification=False):
-    return SimpleNamespace(id='job_mailbox', arguments={
-        'recipient': recipient, 'recipient_subject': 'u_buyer', 'verification': verification,
-        'subject': 'Verify msg email' if verification else 'msg order ready',
-        'text': 'test-only notification',
-    })
+    return SimpleNamespace(
+        id='job_mailbox',
+        arguments={
+            'recipient': recipient,
+            'recipient_subject': 'u_buyer',
+            'verification': verification,
+            'subject': 'Verify msg email' if verification else 'msg order ready',
+            'text': 'test-only notification',
+        },
+    )
 
 
 @pytest.mark.parametrize('address', AMBIGUOUS)

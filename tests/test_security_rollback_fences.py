@@ -1,4 +1,5 @@
 """Rollback compensation remains serialized with real independent writers."""
+
 import asyncio
 import sqlite3
 
@@ -14,8 +15,11 @@ from msg.storage.sqlite import SqliteMetadataStore
 def stores(request, tmp_path):
     if request.param == 'postgres':
         dsn = request.getfixturevalue('pg_dsn')
-        return (PostgresMetadataStore(dsn),
-                PostgresMetadataStore(dsn, initialize=False), request.param)
+        return (
+            PostgresMetadataStore(dsn),
+            PostgresMetadataStore(dsn, initialize=False),
+            request.param,
+        )
     path = tmp_path / 'fence.db'
     return SqliteMetadataStore(path), SqliteMetadataStore(path), request.param
 
@@ -41,7 +45,7 @@ async def test_rollback_compensation_excludes_competing_writer(stores, tmp_path,
             if sql_failure:
                 # Exercise automatic SQLite transaction abort as well as PG's
                 # INERROR state, not only an application exception before ROLLBACK.
-                sql = ('INSERT OR ROLLBACK' if backend == 'sqlite' else 'INSERT')
+                sql = 'INSERT OR ROLLBACK' if backend == 'sqlite' else 'INSERT'
                 tx.execute(sql + ' INTO schema_version VALUES (1)', write=True)
             raise ValueError('original failure')
 
@@ -62,9 +66,13 @@ async def test_rollback_compensation_excludes_competing_writer(stores, tmp_path,
         remained_blocked = not entered.is_set()
     finally:
         release.set()
-        results = await asyncio.wait_for(asyncio.gather(
-            *([first_task, second_task] if second_task else [first_task]),
-            return_exceptions=True), 5)
+        results = await asyncio.wait_for(
+            asyncio.gather(
+                *([first_task, second_task] if second_task else [first_task]),
+                return_exceptions=True,
+            ),
+            5,
+        )
     if sql_failure:
         assert isinstance(results[0], Failure) and results[0].code == 'constraint_conflict', results
         expected_cause = sqlite3.IntegrityError if backend == 'sqlite' else psycopg.IntegrityError
@@ -80,7 +88,9 @@ async def test_rollback_compensation_excludes_competing_writer(stores, tmp_path,
 
 
 @pytest.mark.parametrize('initial_cancel', [False, True])
-async def test_repeated_cancellation_cannot_interrupt_compensation(stores, tmp_path, initial_cancel):
+async def test_repeated_cancellation_cannot_interrupt_compensation(
+    stores, tmp_path, initial_cancel
+):
     store, other, _ = stores
     started, release = asyncio.Event(), asyncio.Event()
     pin = tmp_path / 'temporary-pin'
@@ -106,7 +116,7 @@ async def test_repeated_cancellation_cannot_interrupt_compensation(stores, tmp_p
             await asyncio.sleep(0)
     finally:
         release.set()
-        result, = await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 5)
+        (result,) = await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 5)
     if initial_cancel:
         assert isinstance(result, asyncio.CancelledError)
     else:
@@ -141,8 +151,9 @@ async def test_cancelled_writer_wait_does_not_leak_the_fence(stores):
         waiter.cancel()
     finally:
         release.set()
-        results = await asyncio.wait_for(asyncio.gather(
-            *([holder, waiter] if waiter else [holder]), return_exceptions=True), 5)
+        results = await asyncio.wait_for(
+            asyncio.gather(*([holder, waiter] if waiter else [holder]), return_exceptions=True), 5
+        )
     assert results[0] is None
     assert isinstance(results[1], asyncio.CancelledError), results
     async with second.transaction(write=True) as tx:
@@ -197,7 +208,7 @@ async def test_cancelled_git_pin_finishes_before_rollback(stores, tmp_path, monk
         waited_for_io = not task.done()
     finally:
         release.set()
-        result, = await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 5)
+        (result,) = await asyncio.wait_for(asyncio.gather(task, return_exceptions=True), 5)
     assert isinstance(result, asyncio.CancelledError), result
     assert waited_for_io, 'rollback overtook a still-running Git pin write'
     assert not await contents.pinned(blob, 'cancelled-upload')

@@ -1,4 +1,5 @@
 """Tags are normalized resource metadata; index/search never bypass ACL."""
+
 from dataclasses import replace
 from datetime import timedelta
 
@@ -17,32 +18,55 @@ from msg.transports.http import create_app
 @pytest.mark.asyncio
 async def test_taggable_types_normalize_tags_and_preserve_revision(installed):
     app, _ = installed
-    assert all(app.registry.resource_type(kind).taggable for kind in ('post','topic','repo'))
+    assert all(app.registry.resource_type(kind).taggable for kind in ('post', 'topic', 'repo'))
     key, uid, cert = await register(app, 'tag-normalization')
-    created = await call(app, 'content.post_create', {'parent': '/main', 'body': 'tagged'},
-                         key=key, subject=uid, certs=(cert,))
+    created = await call(
+        app,
+        'content.post_create',
+        {'parent': '/main', 'body': 'tagged'},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+    )
     rid, revision = created.resources[0].id, created.resources[0].revision
-    tagged = await call(app, 'content.tags_set',
-                        {'id': rid, 'tags': ['  Café ', 'café', 'ＡＩ', 'ai']},
-                        key=key, subject=uid, certs=(cert,),
-                        expected=((rid, created.data['generation']),))
+    tagged = await call(
+        app,
+        'content.tags_set',
+        {'id': rid, 'tags': ['  Café ', 'café', 'ＡＩ', 'ai']},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+        expected=((rid, created.data['generation']),),
+    )
     assert tagged.status == 'ok', tagged.error
-    projection = await call(app, 'discovery.get', {'id': rid},
-                            key=key, subject=uid, certs=(cert,))
+    projection = await call(app, 'discovery.get', {'id': rid}, key=key, subject=uid, certs=(cert,))
     assert projection.data['tags'] == ('ai', 'café')
     async with app.metadata.transaction(write=False) as tx:
         resource = await tx.resource(rid)
         assert resource.tags == ('ai', 'café')
         assert resource.revision == revision
-        assert tx.rows('SELECT tag FROM resource_tags WHERE resource_id=? ORDER BY tag',
-                       (rid,)) == [('ai',), ('café',)]
-    duplicate = await call(app, 'content.tags_set', {'id': rid, 'tags': ['new']},
-                           key=key, subject=uid, certs=(cert,),
-                           expected=((rid, created.data['generation']),))
+        assert tx.rows(
+            'SELECT tag FROM resource_tags WHERE resource_id=? ORDER BY tag', (rid,)
+        ) == [('ai',), ('café',)]
+    duplicate = await call(
+        app,
+        'content.tags_set',
+        {'id': rid, 'tags': ['new']},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+        expected=((rid, created.data['generation']),),
+    )
     assert duplicate.error.code == 'generation_conflict'
-    invalid = await call(app, 'content.tags_set', {'id': rid, 'tags': ['bad/tag']},
-                         key=key, subject=uid, certs=(cert,),
-                         expected=((rid, tagged.data['generation']),))
+    invalid = await call(
+        app,
+        'content.tags_set',
+        {'id': rid, 'tags': ['bad/tag']},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+        expected=((rid, tagged.data['generation']),),
+    )
     assert invalid.error.code == 'invalid_tag'
 
 
@@ -50,21 +74,40 @@ async def test_taggable_types_normalize_tags_and_preserve_revision(installed):
 async def test_topic_and_repo_use_the_same_tag_index(installed):
     app, _ = installed
     key, uid, cert = await register(app, 'tag-topic-repo')
-    topic = await call(app, 'content.topic_create', {'parent': '/main', 'name': 'tag-topic'},
-                       key=key, subject=uid, certs=(cert,))
-    repo = await call(app, 'git.create', {'parent': uid, 'name': 'tag-repo.git'},
-                      key=key, subject=uid, certs=(cert,))
+    topic = await call(
+        app,
+        'content.topic_create',
+        {'parent': '/main', 'name': 'tag-topic'},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+    )
+    repo = await call(
+        app,
+        'git.create',
+        {'parent': uid, 'name': 'tag-repo.git'},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+    )
     assert topic.status == repo.status == 'ok'
     ids = []
     for result in (topic, repo):
         rid = result.resources[0].id
-        tagged = await call(app, 'content.tags_set', {'id': rid, 'tags': ['Shared']},
-                            key=key, subject=uid, certs=(cert,),
-                            expected=((rid, result.data['generation']),))
+        tagged = await call(
+            app,
+            'content.tags_set',
+            {'id': rid, 'tags': ['Shared']},
+            key=key,
+            subject=uid,
+            certs=(cert,),
+            expected=((rid, result.data['generation']),),
+        )
         assert tagged.status == 'ok', tagged.error
         ids.append(rid)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
         response = await http.get('/_i/by-tag/shared')
         assert response.status_code == 200, response.text
         assert {row['id'] for row in response.json()['items']} == set(ids)
@@ -76,19 +119,31 @@ async def test_by_tag_index_aliases_paginate_and_hide_revoked_resources(installe
     key, uid, cert = await register(app, 'tag-index')
     posts = []
     for number in range(3):
-        created = await call(app, 'content.post_create',
-                             {'parent': '/main', 'body': f'tag post {number}'},
-                             key=key, subject=uid, certs=(cert,))
+        created = await call(
+            app,
+            'content.post_create',
+            {'parent': '/main', 'body': f'tag post {number}'},
+            key=key,
+            subject=uid,
+            certs=(cert,),
+        )
         rid = created.resources[0].id
-        tagged = await call(app, 'content.tags_set', {'id': rid, 'tags': ['Café']},
-                            key=key, subject=uid, certs=(cert,),
-                            expected=((rid, created.data['generation']),))
+        tagged = await call(
+            app,
+            'content.tags_set',
+            {'id': rid, 'tags': ['Café']},
+            key=key,
+            subject=uid,
+            certs=(cert,),
+            expected=((rid, created.data['generation']),),
+        )
         assert tagged.status == 'ok'
         posts.append((rid, tagged.data['generation']))
     async with app.metadata.transaction(write=False) as tx:
         events_before = tx.one('SELECT COUNT(*) FROM events')[0]
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
         long = await http.get('/_index/by-tag/caf%C3%A9?limit=1')
         short = await http.get('/_i/by-tag/caf%C3%A9?limit=1')
         assert long.status_code == short.status_code == 200, (long.text, short.text)
@@ -121,40 +176,86 @@ async def test_by_tag_index_aliases_paginate_and_hide_revoked_resources(installe
 async def test_by_tag_visibility_changes_immediately_and_signed_search_can_read_private(installed):
     app, _ = installed
     key, uid, cert = await register(app, 'tag-private')
-    created = await call(app, 'content.post_create', {'parent': '/main', 'body': 'secret tag'},
-                         key=key, subject=uid, certs=(cert,))
+    created = await call(
+        app,
+        'content.post_create',
+        {'parent': '/main', 'body': 'secret tag'},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+    )
     rid = created.resources[0].id
-    tagged = await call(app, 'content.tags_set', {'id': rid, 'tags': ['Private']},
-                        key=key, subject=uid, certs=(cert,),
-                        expected=((rid, created.data['generation']),))
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
+    tagged = await call(
+        app,
+        'content.tags_set',
+        {'id': rid, 'tags': ['Private']},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+        expected=((rid, created.data['generation']),),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
         before = await http.get('/_index/by-tag/private')
         assert [item['id'] for item in before.json()['items']] == [rid]
-    await call(app, 'content.chmod', {'id': rid, 'mode': '0600'}, key=key, subject=uid,
-               certs=(cert,), expected=((rid, tagged.data['generation']),))
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
+    await call(
+        app,
+        'content.chmod',
+        {'id': rid, 'mode': '0600'},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+        expected=((rid, tagged.data['generation']),),
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
         path = '/_index/by-tag/private'
         anonymous = await http.get(path)
         assert anonymous.status_code == 200
         assert anonymous.json()['items'] == []
         assert 'etag' not in anonymous.headers
-        packet = request_for('discovery.list', {'tag': 'private', 'limit': 50},
-                             app.settings.service_url, signer=key, subject=uid,
-                             expires_at=NOW + timedelta(seconds=120))
+        packet = request_for(
+            'discovery.list',
+            {'tag': 'private', 'limit': 50},
+            app.settings.service_url,
+            signer=key,
+            subject=uid,
+            expires_at=NOW + timedelta(seconds=120),
+        )
         permitted = await http.get(path, headers={'X-Msg-Request': b64(canonical(packet))})
         assert permitted.status_code == 200, permitted.text
         assert [item['id'] for item in permitted.json()['items']] == [rid]
-        wrong = await http.get(path, headers={'X-Msg-Request': b64(canonical(request_for(
-            'discovery.list', {'tag': 'other', 'limit': 50}, app.settings.service_url,
-            signer=key, subject=uid, expires_at=NOW + timedelta(seconds=120))))})
+        wrong = await http.get(
+            path,
+            headers={
+                'X-Msg-Request': b64(
+                    canonical(
+                        request_for(
+                            'discovery.list',
+                            {'tag': 'other', 'limit': 50},
+                            app.settings.service_url,
+                            signer=key,
+                            subject=uid,
+                            expires_at=NOW + timedelta(seconds=120),
+                        )
+                    )
+                )
+            },
+        )
         assert wrong.status_code == 400
         assert wrong.json()['error']['code'] == 'representation_mismatch'
 
-        changed = await call(app, 'content.tags_set', {'id': rid, 'tags': []},
-                             key=key, subject=uid, certs=(cert,),
-                             expected=((rid, tagged.data['generation'] + 1),))
+        changed = await call(
+            app,
+            'content.tags_set',
+            {'id': rid, 'tags': []},
+            key=key,
+            subject=uid,
+            certs=(cert,),
+            expected=((rid, tagged.data['generation'] + 1),),
+        )
         assert changed.status == 'ok', changed.error
         removed = await http.get(path, headers={'X-Msg-Request': b64(canonical(packet))})
         assert removed.status_code == 200 and removed.json()['items'] == []
@@ -171,10 +272,14 @@ async def test_tags_index_has_same_transactional_contract_on_both_stores(backend
         async with store.transaction(write=True) as tx:
             old = await tx.resource('post')
             assert old.tags == ('ai',)
-            assert tx.rows('SELECT resource_id FROM resource_tags WHERE tag=?', ('ai',)) == [('post',)]
+            assert tx.rows('SELECT resource_id FROM resource_tags WHERE tag=?', ('ai',)) == [
+                ('post',)
+            ]
             await tx.replace(replace(old, tags=('café',), generation=1), 0)
         async with store.transaction(write=False) as tx:
             assert (await tx.resource('post')).tags == ('café',)
-            assert tx.rows('SELECT tag FROM resource_tags WHERE resource_id=?', ('post',)) == [('café',)]
+            assert tx.rows('SELECT tag FROM resource_tags WHERE resource_id=?', ('post',)) == [
+                ('café',)
+            ]
     finally:
         await store.close()

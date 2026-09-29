@@ -1,4 +1,5 @@
 """SQL dialect and backup regressions for the PostgreSQL adapter."""
+
 import asyncio
 import subprocess
 import threading
@@ -15,7 +16,7 @@ def test_sql_translation_protects_literals_and_comments():
     assert translated == (
         "SELECT '?', 'offset', '100%%' FROM chunks -- ? offset\nWHERE \"offset\"=%s"
     )
-    assert _postgres_sql("INSERT OR IGNORE INTO watches VALUES (?,?); ") == (
+    assert _postgres_sql('INSERT OR IGNORE INTO watches VALUES (?,?); ') == (
         'INSERT INTO watches VALUES (%s,%s) ON CONFLICT DO NOTHING; '
     )
     assert _postgres_sql('SELECT id FROM resources LIMIT 1 OFFSET 2') == (
@@ -26,25 +27,32 @@ def test_sql_translation_protects_literals_and_comments():
 async def test_live_sql_translation_and_duplicate_ignore(pg_dsn):
     store = PostgresMetadataStore(pg_dsn)
     async with store.transaction(write=True) as tx:
-        tx.execute('INSERT OR IGNORE INTO watches VALUES (?,?);', ('subject', 'resource'),
-                   write=True)
-        tx.execute('INSERT OR IGNORE INTO watches VALUES (?,?);', ('subject', 'resource'),
-                   write=True)
+        tx.execute(
+            'INSERT OR IGNORE INTO watches VALUES (?,?);', ('subject', 'resource'), write=True
+        )
+        tx.execute(
+            'INSERT OR IGNORE INTO watches VALUES (?,?);', ('subject', 'resource'), write=True
+        )
         assert tx.one('SELECT COUNT(*) FROM watches')[0] == 1
         tx.execute('INSERT INTO chunks VALUES (?,?,?,?)', ('transfer', 4, 3, '{}'), write=True)
         assert tx.one("SELECT '?', 'offset', '100%' FROM chunks WHERE offset=?", (4,)) == (
-            '?', 'offset', '100%'
+            '?',
+            'offset',
+            '100%',
         )
-        assert tx.one('SELECT offset,length FROM chunks WHERE transfer_id=?',
-                      ('transfer',)) == (4, 3)
+        assert tx.one('SELECT offset,length FROM chunks WHERE transfer_id=?', ('transfer',)) == (
+            4,
+            3,
+        )
 
 
 def test_pg_backup_is_custom_format_and_hides_password(pg_dsn, tmp_path, monkeypatch):
     store = PostgresMetadataStore(pg_dsn)
     archive = tmp_path / 'metadata.dump'
     store.backup(archive)
-    listing = subprocess.run(['pg_restore', '--list', str(archive)],
-                             capture_output=True, text=True, check=True).stdout
+    listing = subprocess.run(
+        ['pg_restore', '--list', str(archive)], capture_output=True, text=True, check=True
+    ).stdout
     assert 'TABLE public resources' in listing
     assert 'TABLE public audit' in listing
 
@@ -54,8 +62,7 @@ def test_pg_backup_is_custom_format_and_hides_password(pg_dsn, tmp_path, monkeyp
         captured['command'] = command
         captured['env'] = kwargs['env']
 
-    protected = PostgresMetadataStore(make_conninfo(pg_dsn, password='topsecret'),
-                                      initialize=False)
+    protected = PostgresMetadataStore(make_conninfo(pg_dsn, password='topsecret'), initialize=False)
     monkeypatch.setattr('msg.storage.postgres.subprocess.run', fake_run)
     protected.backup(tmp_path / 'ignored.dump')
     assert 'topsecret' not in ' '.join(captured['command'])

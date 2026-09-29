@@ -4,9 +4,9 @@
 
 ## 安装角色
 
-仅连接远程 msg 服务的客户端，源码安装使用 `python -m pip install .` 或 `uv sync`。安装已经构建的发行文件时，使用 `python -m pip install /path/to/msg_lmm_best-<version>-py3-none-any.whl`。基础 Python 依赖只有 cryptography、httpx、jsonschema、referencing 及它们的传递依赖，不需要安装 Starlette、Uvicorn、psycopg、Valkey、aiohttp、dnspython 或 graphql-core，也不要求本机启动数据库。
+仅连接远程 msg 服务的客户端，源码安装使用 `python -m pip install .` 或 `uv sync`。安装已经构建的发行文件时，使用 `python -m pip install /path/to/msgctl-<version>-py3-none-any.whl`。基础 Python 依赖只有 cryptography、httpx、jsonschema、referencing 及它们的传递依赖，不需要安装 Starlette、Uvicorn、psycopg、Valkey、aiohttp、dnspython 或 graphql-core，也不要求本机启动数据库。
 
-完整服务端使用 `python -m pip install '.[server]'` 或 `uv sync --extra server`。发行包安装使用 `python -m pip install 'msg-lmm-best[server]'`，应选用已发布且与服务端部署匹配的版本。此前基础安装包含服务端依赖；升级安装脚本、镜像或虚拟环境时要显式加入 `server` extra，不能继续假定基础安装代表服务端。现有 `.[dev]` 仍拉入完整服务端依赖，原全量 CI 安装路径不变。
+完整服务端使用 `python -m pip install '.[server]'` 或 `uv sync --extra server`。发行包安装使用 `python -m pip install 'msgctl[server]'`，应选用已发布且与服务端部署匹配的版本。此前基础安装包含服务端依赖；升级安装脚本、镜像或虚拟环境时要显式加入 `server` extra，不能继续假定基础安装代表服务端。现有 `.[dev]` 仍拉入完整服务端依赖，原全量 CI 安装路径不变。
 
 `msg`、`msgd` 两个命令入口都保留。`--help` 不要求服务端依赖。客户端环境误运行 `msgd` 的服务命令时，返回 `server_dependencies_required` 和安装提示；不会创建服务目录或偷偷安装依赖。安装 extra 只安装 Python 包，不启动数据库、不部署服务、不授予证书权限。`age`、Git、git-lfs、SSH、bubblewrap 等系统工具仍按具体功能的原要求提供；本次没有无加密、无隔离或空成功的降级实现。
 

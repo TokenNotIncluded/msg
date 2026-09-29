@@ -1,4 +1,5 @@
 """Deterministic committed-operation event identity shared by all producers."""
+
 from msg.core.codec import digest
 
 

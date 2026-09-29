@@ -1,4 +1,5 @@
 """Live PostgreSQL checks; set MSG_TEST_POSTGRES_DSN to a disposable database."""
+
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -6,17 +7,37 @@ from datetime import UTC, datetime
 import pytest
 
 from msg.core.errors import Failure
-from msg.core.models import AuditEvent, EffectJob, Event, OperationResult, Principal, Resource, ResourceId
+from msg.core.models import (
+    AuditEvent,
+    EffectJob,
+    Event,
+    OperationResult,
+    Principal,
+    Resource,
+    ResourceId,
+)
 from msg.storage.postgres import PostgresMetadataStore
 
 
 def item(id='root', parent=None):
     now = datetime.now(UTC)
-    return Resource(id=ResourceId(id), type='topic', type_version=1, name=id,
-                    parent=parent, owner=ResourceId('owner'), group=ResourceId('group'),
-                    mode=0o1777, generation=0, revision=None, state='active',
-                    created_at=now, created_by=ResourceId('owner'), modified_at=now,
-                    modified_by=ResourceId('owner'))
+    return Resource(
+        id=ResourceId(id),
+        type='topic',
+        type_version=1,
+        name=id,
+        parent=parent,
+        owner=ResourceId('owner'),
+        group=ResourceId('group'),
+        mode=0o1777,
+        generation=0,
+        revision=None,
+        state='active',
+        created_at=now,
+        created_by=ResourceId('owner'),
+        modified_at=now,
+        modified_by=ResourceId('owner'),
+    )
 
 
 async def test_postgres_session_contract_and_rollback(pg_dsn):
@@ -37,8 +58,9 @@ async def test_postgres_session_contract_and_rollback(pg_dsn):
                 await nested.insert(item('nested', 'root'))
                 raise RuntimeError('nested rollback')
         assert tx.one('SELECT id FROM resources WHERE id=?', ('nested',)) is None
-        result = OperationResult(request_id='req', operation='test', status='ok',
-                                 actor=None, subject=None)
+        result = OperationResult(
+            request_id='req', operation='test', status='ok', actor=None, subject=None
+        )
         await tx.save_result('subject', 'digest', result)
         assert await tx.request_result('subject', 'req', 'digest') == result
         with pytest.raises(Failure, match='idempotency_conflict'):
@@ -80,11 +102,25 @@ async def test_postgres_audit_append_only_and_concurrent_writers(pg_dsn):
     release.set()
     await asyncio.wait_for(asyncio.gather(a, b), 5)
 
-    event = Event(id='e', type='test', time=datetime.now(UTC), request_id='req',
-                  actor=ResourceId('owner'), subject=ResourceId('owner'),
-                  resources=(), data={})
-    audit = AuditEvent(event=event, authority=(), before_digest=None,
-                       after_digest=None, previous_digest=None, entry_digest='', result='ok')
+    event = Event(
+        id='e',
+        type='test',
+        time=datetime.now(UTC),
+        request_id='req',
+        actor=ResourceId('owner'),
+        subject=ResourceId('owner'),
+        resources=(),
+        data={},
+    )
+    audit = AuditEvent(
+        event=event,
+        authority=(),
+        before_digest=None,
+        after_digest=None,
+        previous_digest=None,
+        entry_digest='',
+        result='ok',
+    )
     async with first.transaction(write=True) as tx:
         await tx.append_audit(audit)
         await tx.append_audit(replace(audit, event=replace(event, id='e2')))
@@ -101,34 +137,50 @@ async def test_postgres_audit_append_only_and_concurrent_writers(pg_dsn):
 async def test_outbox_signal_only_after_commit_and_does_not_own_result(pg_dsn):
     class Signal:
         def __init__(self):
-            self.seen=[]
-            self.fail=False
+            self.seen = []
+            self.fail = False
 
         async def publish_pending(self, ids):
             self.seen.append(tuple(ids))
             if self.fail:
                 raise RuntimeError('valkey_offline')
 
-    signal=Signal()
-    store=PostgresMetadataStore(pg_dsn,signal=signal)
-    now=datetime.now(UTC)
-    principal=Principal(actor=ResourceId('owner'),subject=ResourceId('owner'),
-                        credential_id=None,method='local',certificates=(),ceiling=())
+    signal = Signal()
+    store = PostgresMetadataStore(pg_dsn, signal=signal)
+    now = datetime.now(UTC)
+    principal = Principal(
+        actor=ResourceId('owner'),
+        subject=ResourceId('owner'),
+        credential_id=None,
+        method='local',
+        certificates=(),
+        ceiling=(),
+    )
 
     def job(id):
-        return EffectJob(id=id,event_id='event',kind='mail',dedupe_key=id,
-                         principal=principal,operation='mail.send',arguments={},
-                         state='pending',attempts=0,next_attempt_at=now,lease_until=None)
+        return EffectJob(
+            id=id,
+            event_id='event',
+            kind='mail',
+            dedupe_key=id,
+            principal=principal,
+            operation='mail.send',
+            arguments={},
+            state='pending',
+            attempts=0,
+            next_attempt_at=now,
+            lease_until=None,
+        )
 
-    with pytest.raises(RuntimeError,match='rollback'):
+    with pytest.raises(RuntimeError, match='rollback'):
         async with store.transaction(write=True) as tx:
             await tx.enqueue(job('rolled-back'))
             raise RuntimeError('rollback')
-    assert signal.seen==[]
-    signal.fail=True
+    assert signal.seen == []
+    signal.fail = True
     async with store.transaction(write=True) as tx:
         await tx.enqueue(job('committed'))
-    assert signal.seen==[('committed',)]
+    assert signal.seen == [('committed',)]
     async with store.transaction(write=False) as tx:
-        assert (await tx.job('committed')).state=='pending'
+        assert (await tx.job('committed')).state == 'pending'
     await store.close()

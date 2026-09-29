@@ -3,6 +3,7 @@
 Only this operator-invoked probe captures subprocess stderr. The packet contains
 no user input or credentials, and production errors keep their stable safe code.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -22,14 +23,30 @@ async def check():
     print(f'Python prefix: {sys.prefix}; base prefix: {sys.base_prefix}', flush=True)
     setting = Path('/proc/sys/kernel/apparmor_restrict_unprivileged_userns')
     if setting.exists():
-        print(f'AppArmor unprivileged userns restriction: {setting.read_text().strip()}', flush=True)
-    policy = NetworkPolicy(schemes=frozenset({'https'}), hosts=(), ports=frozenset({443}),
-                           methods=frozenset({'GET'}), allow_private=False,
-                           timeout_ms=1000, max_response_bytes=1024, max_redirects=0)
-    app = SimpleNamespace(settings=SimpleNamespace(server=SimpleNamespace(
-        limits=SimpleNamespace(max_request_bytes=1024))))
+        print(
+            f'AppArmor unprivileged userns restriction: {setting.read_text().strip()}', flush=True
+        )
+    policy = NetworkPolicy(
+        schemes=frozenset({'https'}),
+        hosts=(),
+        ports=frozenset({443}),
+        methods=frozenset({'GET'}),
+        allow_private=False,
+        timeout_ms=1000,
+        max_response_bytes=1024,
+        max_redirects=0,
+    )
+    app = SimpleNamespace(
+        settings=SimpleNamespace(
+            server=SimpleNamespace(limits=SimpleNamespace(max_request_bytes=1024))
+        )
+    )
     spawn = asyncio.create_subprocess_exec
-    with TemporaryDirectory(prefix='msg-sandbox-preflight-') as directory, TemporaryFile() as diagnostics:
+    with (
+        TemporaryDirectory(prefix='msg-sandbox-preflight-') as directory,
+        TemporaryFile() as diagnostics,
+    ):
+
         async def capture(*args, **kwargs):
             kwargs['stderr'] = diagnostics
             return await spawn(*args, **kwargs)
@@ -37,8 +54,12 @@ async def check():
         try:
             with patch('asyncio.create_subprocess_exec', capture):
                 try:
-                    await BubblewrapRunner(app)(SimpleNamespace(executor_key='curl'),
-                        {'url': 'file:///not-a-network-target'}, (policy,), Path(directory))
+                    await BubblewrapRunner(app)(
+                        SimpleNamespace(executor_key='curl'),
+                        {'url': 'file:///not-a-network-target'},
+                        (policy,),
+                        Path(directory),
+                    )
                 except Failure as exc:
                     if exc.code != 'network_policy_denied':
                         raise

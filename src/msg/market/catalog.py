@@ -2,12 +2,14 @@
 
 Version-specific schemas, creation and updates stay at catalog entrypoints.
 """
+
 from __future__ import annotations
+
 from msg.core.codec import loads
 from msg.core.errors import Failure, require
 from msg.core.models import ResourceRef
-from msg.plugins.common import check_access, resolve
 from msg.market.order_records import require_signed_subject
+from msg.plugins.common import check_access, resolve
 
 
 async def read_listing(app, ctx, request, tx, value, *, seller=False):
@@ -20,8 +22,13 @@ async def read_listing(app, ctx, request, tx, value, *, seller=False):
             require(resource.owner == require_signed_subject(ctx), 'listing_not_found')
         return resource
     except Failure as exc:
-        if exc.code in {'not_found', 'permission_denied', 'credential_ceiling',
-                        'certificate_gate', 'ancestor_inactive'}:
+        if exc.code in {
+            'not_found',
+            'permission_denied',
+            'credential_ceiling',
+            'certificate_gate',
+            'ancestor_inactive',
+        }:
             raise Failure('listing_not_found') from None
         raise
 
@@ -34,6 +41,8 @@ async def read_listing_body(app, tx, resource, revision=None):
 
 
 async def read_package_record(tx, package_id):
-    return tx.one('''SELECT id,listing_id,listing_revision,seller,revision,kind,manifest,
-        payload_refs,digest,total_size,delivery_mode,deposited_at FROM store_packages WHERE id=?''',
-        (package_id,))
+    return tx.one(
+        """SELECT id,listing_id,listing_revision,seller,revision,kind,manifest,
+        payload_refs,digest,total_size,delivery_mode,deposited_at FROM store_packages WHERE id=?""",
+        (package_id,),
+    )

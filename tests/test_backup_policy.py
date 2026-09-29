@@ -1,24 +1,33 @@
 """Restore keeps business policy while rebinding storage and disabling effects."""
+
 import tomllib
 
 import pytest
+from test_service import NOW, call, register
 
 from msg.admin.backups import backup, restore
 from msg.application import Application
 from msg.config import load_settings
 from msg.core.codec import wire
 from msg.plugins.money import _balance, _supply
-from test_service import NOW, call, register
 
 
 @pytest.mark.asyncio
-async def test_real_backup_restore_preserves_money_and_credential_policy(installed, tmp_path, pg_dsn):
+async def test_real_backup_restore_preserves_money_and_credential_policy(
+    installed, tmp_path, pg_dsn
+):
     app, _ = installed
     config = app.settings.config_dir / 'msgd.toml'
-    config.write_text(config.read_text().replace('display_name = "MSG"', 'display_name = "协作积分"')
-                      .replace('code = "MSG"', 'code = "COOP"')
-                      .replace('credential_delivery_recovery_window = "15m"',
-                               'credential_delivery_recovery_window = "7m"'))
+    config.write_text(
+        config
+        .read_text()
+        .replace('display_name = "MSG"', 'display_name = "协作积分"')
+        .replace('code = "MSG"', 'code = "COOP"')
+        .replace(
+            'credential_delivery_recovery_window = "15m"',
+            'credential_delivery_recovery_window = "7m"',
+        )
+    )
     app.settings = load_settings(app.settings.config_dir)
     key, subject, _ = await register(app, 'backup-policy-reader')
     original = await call(app, 'money.state', {})
@@ -43,9 +52,13 @@ async def test_real_backup_restore_preserves_money_and_credential_policy(install
     await restored.load()
     try:
         current = await call(restored, 'money.state', {})
-        assert current.status == 'error' and current.error.code == 'recovery_quarantined', wire(current)
+        assert current.status == 'error' and current.error.code == 'recovery_quarantined', wire(
+            current
+        )
         balance = await call(restored, 'money.balance', {}, key=key, subject=subject)
-        assert balance.status == 'error' and balance.error.code == 'recovery_quarantined', wire(balance)
+        assert balance.status == 'error' and balance.error.code == 'recovery_quarantined', wire(
+            balance
+        )
         async with restored.metadata.transaction(write=False) as tx:
             assert _supply(tx) == original.data['total_supply_minor']
             assert _balance(tx, subject) == original_balance.data['balance_minor']

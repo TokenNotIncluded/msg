@@ -1,4 +1,5 @@
 """The CI gate must reject missing, duplicate, changed, skipped or failing evidence."""
+
 import importlib.util
 import json
 import os
@@ -28,13 +29,15 @@ def write_evidence(directory, count=4):
         ET.ElementTree(suite).write(directory / f'tests-{index}.xml')
 
 
-@pytest.mark.parametrize('count', [1, 2, 4, 16])
+@pytest.mark.parametrize('count', [1, 2, 4, 8, 16])
 def test_partitions_cover_every_node_exactly_once_and_are_order_independent(count):
     selected = [node for index in range(count) for node in ci.partition(NODES, index, count)]
     assert len(selected) == len(set(selected)) == len(NODES)
     assert set(selected) == set(NODES)
     for index in range(count):
-        assert set(ci.partition(list(reversed(NODES)), index, count)) == set(ci.partition(NODES, index, count))
+        assert set(ci.partition(list(reversed(NODES)), index, count)) == set(
+            ci.partition(NODES, index, count)
+        )
 
 
 @pytest.mark.parametrize('index,count', [(-1, 4), (4, 4), (0, 0), (0, 65)])
@@ -53,9 +56,23 @@ def test_valid_complete_evidence_is_accepted(tmp_path):
     assert ci.verify(tmp_path, 4) == 100
 
 
-@pytest.mark.parametrize('damage', ['missing_manifest', 'missing_report', 'duplicate_shard',
-    'missing_test', 'failure', 'error', 'skipped', 'different_suite', 'wrong_id', 'duplicate_id',
-    'missing_id', 'ambiguous_id'])
+@pytest.mark.parametrize(
+    'damage',
+    [
+        'missing_manifest',
+        'missing_report',
+        'duplicate_shard',
+        'missing_test',
+        'failure',
+        'error',
+        'skipped',
+        'different_suite',
+        'wrong_id',
+        'duplicate_id',
+        'missing_id',
+        'ambiguous_id',
+    ],
+)
 def test_gate_rejects_incomplete_or_inconsistent_evidence(tmp_path, damage):
     write_evidence(tmp_path)
     manifest = tmp_path / 'shard-1.json'
@@ -96,15 +113,24 @@ def test_actual_pytest_shards_emit_verifiable_node_ids(tmp_path):
     (tmp_path / 'pytest.ini').write_text('[pytest]\n')
     (tests / 'test_probe.py').write_text(
         'import pytest\n@pytest.mark.parametrize("value", [1, 2, 3, 4])\n'
-        'def test_parameter(value):\n    assert value > 0\n')
+        'def test_parameter(value):\n    assert value > 0\n'
+    )
     for index in range(2):
-        result = subprocess.run([sys.executable, str(SCRIPT), 'run', str(index), '2'],
-            cwd=tmp_path, capture_output=True, text=True, timeout=30, check=False)
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT), 'run', str(index), '2'],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
         assert result.returncode == 0, result.stdout + result.stderr
     assert ci.verify(tmp_path / 'artifacts', 2) == 4
 
 
-@pytest.mark.parametrize('damage', ['renamed_node', 'duplicate_node', 'missing_identity', 'duplicate_identity'])
+@pytest.mark.parametrize(
+    'damage', ['renamed_node', 'duplicate_node', 'missing_identity', 'duplicate_identity']
+)
 def test_equal_test_counts_do_not_hide_wrong_execution_identities(tmp_path, damage):
     write_evidence(tmp_path)
     report = tmp_path / 'tests-1.xml'
@@ -113,8 +139,9 @@ def test_equal_test_counts_do_not_hide_wrong_execution_identities(tmp_path, dama
     if damage == 'renamed_node':
         cases[0].find('./properties/property').set('value', 'tests/test_other.py::wrong')
     elif damage == 'duplicate_node':
-        cases[0].find('./properties/property').set('value',
-            cases[1].find('./properties/property').get('value'))
+        cases[0].find('./properties/property').set(
+            'value', cases[1].find('./properties/property').get('value')
+        )
     elif damage == 'missing_identity':
         cases[0].remove(cases[0].find('properties'))
     else:
@@ -128,19 +155,26 @@ def test_real_pytest_reports_exact_nodeids_for_parameters_and_classes(tmp_path):
     tests = tmp_path / 'tests'
     tests.mkdir()
     (tests / 'test_sample.py').write_text(
-        "import pytest\n"
+        'import pytest\n'
         "@pytest.mark.parametrize('value', ['normal', '::[x]', '中文'])\n"
-        "def test_parameter(value):\n    assert value\n"
-        "class TestNested:\n    def test_child(self):\n        assert True\n")
+        'def test_parameter(value):\n    assert value\n'
+        'class TestNested:\n    def test_child(self):\n        assert True\n'
+    )
     directory = tmp_path / 'reports'
     completed = subprocess.run(
         [sys.executable, ci.__file__, 'run', '0', '1', '--directory', str(directory)],
-        cwd=tmp_path, env={**os.environ, 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1'},
-        capture_output=True, text=True, timeout=30)
+        cwd=tmp_path,
+        env={**os.environ, 'PYTEST_DISABLE_PLUGIN_AUTOLOAD': '1'},
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert ci.verify(directory, 1) == 4
     manifest = json.loads((directory / 'shard-0.json').read_text())
     tree = ET.parse(directory / 'tests-0.xml')
-    observed = [case.find('./properties/property[@name="msg.nodeid"]').get('value')
-                for case in tree.getroot().findall('.//testcase')]
+    observed = [
+        case.find('./properties/property[@name="msg.nodeid"]').get('value')
+        for case in tree.getroot().findall('.//testcase')
+    ]
     assert sorted(observed) == manifest['selected']

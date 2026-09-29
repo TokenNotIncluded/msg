@@ -1,4 +1,5 @@
 """Compensation retains savepoint ownership and never hides cancellation."""
+
 import asyncio
 
 import pytest
@@ -16,8 +17,10 @@ async def test_nested_rollback_compensates_only_its_scope(installed, tmp_path, b
     app, _ = installed
     store = app.metadata if backend == 'postgres' else SqliteMetadataStore(tmp_path / 'nested.db')
     effects = []
+
     async def record(value):
         effects.append(value)
+
     async with store.transaction(write=True) as outer:
         outer.on_rollback(lambda: record('outer'))
         with pytest.raises(ValueError, match='savepoint'):
@@ -42,15 +45,20 @@ async def test_nested_rollback_compensates_only_its_scope(installed, tmp_path, b
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('backend', ['postgres', 'sqlite'])
-async def test_compensation_failure_preserves_original_and_runs_remaining(installed, tmp_path, backend):
+async def test_compensation_failure_preserves_original_and_runs_remaining(
+    installed, tmp_path, backend
+):
     app, _ = installed
     store = app.metadata if backend == 'postgres' else SqliteMetadataStore(tmp_path / 'fail.db')
     effects = []
+
     async def record(value):
         effects.append(value)
+
     async def fail():
         effects.append('failure')
         raise OSError('injected')
+
     original = ValueError('primary')
     with pytest.raises(ValueError) as captured:
         async with store.transaction(write=True) as tx:
@@ -70,8 +78,10 @@ async def test_task_cancellation_rolls_back_sql_and_external_effect(installed, t
     store = app.metadata if backend == 'postgres' else SqliteMetadataStore(tmp_path / 'cancel.db')
     entered = asyncio.Event()
     external = tmp_path / 'external'
+
     async def compensate():
         external.unlink()
+
     async def work():
         async with store.transaction(write=True) as tx:
             tx.set_setting('cancelled', True)
@@ -79,6 +89,7 @@ async def test_task_cancellation_rolls_back_sql_and_external_effect(installed, t
             external.write_text('uncommitted')
             entered.set()
             await asyncio.Event().wait()
+
     task = asyncio.create_task(work())
     await entered.wait()
     assert external.exists()
@@ -97,19 +108,27 @@ async def test_failed_transfer_cleanup_restores_pin_and_metadata(installed, monk
     opened = await call(app, 'transfer.open', {'direction': 'upload'}, key=key, subject=subject)
     assert opened.status == 'ok', wire(opened)
     tid = opened.data['transfer_id']
-    result = await call(app, 'transfer.part_put', {'transfer_id': tid, 'offset': 0,
-        'data': b64(b'abcd'), 'digest': digest(b'abcd')}, key=key, subject=subject)
+    result = await call(
+        app,
+        'transfer.part_put',
+        {'transfer_id': tid, 'offset': 0, 'data': b64(b'abcd'), 'digest': digest(b'abcd')},
+        key=key,
+        subject=subject,
+    )
     assert result.status == 'ok', wire(result)
     blob = decode(BlobRef, result.data['chunk']['content'])
     from datetime import timedelta
 
     from test_security_patch_regressions import set_clock
     from test_service import NOW
+
     set_clock(app, NOW + timedelta(seconds=app.settings.transfer_ttl + 1))
     unpin = app.contents.unpin
+
     async def fail_after_unpin(*args):
         await unpin(*args)
         raise OSError('injected after external change')
+
     monkeypatch.setattr(app.contents, 'unpin', fail_after_unpin)
     with pytest.raises(OSError, match='injected'):
         await maintenance.run_maintenance(app, 'cleanup_expired', scheduled=True)
@@ -127,13 +146,17 @@ async def test_scheduled_collection_is_rate_limited_and_respects_cleanup_pause(i
     app, _ = installed
     async with app.metadata.transaction(write=True) as tx:
         tx.set_setting('runtime_config', {'cleanup_enabled': False})
-    assert await maintenance.run_maintenance(app, 'collect_garbage', scheduled=True) == {'skipped': 'cleanup_disabled'}
+    assert await maintenance.run_maintenance(app, 'collect_garbage', scheduled=True) == {
+        'skipped': 'cleanup_disabled'
+    }
     async with app.metadata.transaction(write=True) as tx:
         assert tx.setting('garbage_collection_last') is None
         tx.set_setting('runtime_config', {'cleanup_enabled': True})
     result = await maintenance.run_maintenance(app, 'collect_garbage', scheduled=True)
     assert result['unreferenced_contents_removed'] == 0
-    assert await maintenance.run_maintenance(app, 'collect_garbage', scheduled=True) == {'skipped': 'not_due'}
+    assert await maintenance.run_maintenance(app, 'collect_garbage', scheduled=True) == {
+        'skipped': 'not_due'
+    }
 
 
 @pytest.mark.asyncio
@@ -142,23 +165,42 @@ async def test_purged_sealed_output_does_not_break_expiry_or_collection(installe
 
     from test_security_patch_regressions import set_clock
     from test_service import NOW
+
     app, _ = installed
     key, subject, _ = await register(app, 'security-purged-upload')
     data = b'unreferenced after explicit purge'
-    opened = await call(app, 'transfer.open', {'direction': 'upload', 'size': len(data)}, key=key, subject=subject)
+    opened = await call(
+        app, 'transfer.open', {'direction': 'upload', 'size': len(data)}, key=key, subject=subject
+    )
     assert opened.status == 'ok', wire(opened)
     tid = opened.data['transfer_id']
-    uploaded = await call(app, 'transfer.part_put', {'transfer_id': tid, 'offset': 0,
-        'data': b64(data), 'digest': digest(data)}, key=key, subject=subject)
+    uploaded = await call(
+        app,
+        'transfer.part_put',
+        {'transfer_id': tid, 'offset': 0, 'data': b64(data), 'digest': digest(data)},
+        key=key,
+        subject=subject,
+    )
     assert uploaded.status == 'ok', wire(uploaded)
-    sealed = await call(app, 'transfer.seal', {'transfer_id': tid, 'final_size': len(data),
-        'final_digest': digest(data)}, key=key, subject=subject)
+    sealed = await call(
+        app,
+        'transfer.seal',
+        {'transfer_id': tid, 'final_size': len(data), 'final_digest': digest(data)},
+        key=key,
+        subject=subject,
+    )
     assert sealed.status == 'ok', wire(sealed)
     async with app.metadata.transaction(write=True) as tx:
         revision = await tx.revision(sealed.resources[0])
         resource = await tx.resource(sealed.resources[0].id)
-        await maintenance.purge_revisions(app, tx, resource, actor=subject,
-                                         request_id='test-explicit-purge', reason='retention_expired')
+        await maintenance.purge_revisions(
+            app,
+            tx,
+            resource,
+            actor=subject,
+            request_id='test-explicit-purge',
+            reason='retention_expired',
+        )
     assert await app.contents.pinned(revision.content, tid + ':sealed')
     set_clock(app, NOW + timedelta(seconds=app.settings.transfer_ttl + 1))
     await maintenance.run_maintenance(app, 'cleanup_expired', scheduled=True)

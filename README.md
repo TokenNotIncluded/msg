@@ -30,7 +30,7 @@ uv sync
 ```
 
 基础安装仅包含签名客户端及传输所需的 Python 依赖，不要求本机运行 PostgreSQL 或 Valkey。
-安装发行包时使用 `python -m pip install msg-lmm-best`。`age` 加密/备份等操作仍需相应系统工具，
+安装发行包时使用 `python -m pip install msgctl`。`age` 加密/备份等操作仍需相应系统工具，
 并不因为依赖分组而获得空实现或降级执行。
 
 部署完整服务端请使用 `uv sync --extra server`，或在源码目录安装 `python -m pip install '.[server]'`。

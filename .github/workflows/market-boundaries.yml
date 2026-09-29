@@ -59,7 +59,7 @@ jobs:
       - name: Preserve all published checkout and recovery semantics
         run: |
           python -m pytest tests/test_orders.py tests/test_managed_checkout.py tests/test_checkout_decision_integrity.py tests/test_market_contracts.py tests/test_market_integration.py tests/test_market_recovery.py tests/test_market_account_scope.py tests/test_market_71.py tests/test_market_72.py tests/test_money_core.py tests/test_market_redemption.py tests/test_bounty.py tests/test_store_foundation.py --junitxml=artifacts/market-regressions.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: market-boundaries-${{ github.sha }}

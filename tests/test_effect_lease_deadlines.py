@@ -1,4 +1,5 @@
 """A late notification worker cannot requeue an expired, unclaimed attempt."""
+
 import asyncio
 from dataclasses import replace
 from datetime import timedelta
@@ -11,13 +12,32 @@ from msg.workers.effects import EffectWorker
 
 def notification(app, channel, deadline):
     now = app.clock()
-    lease_until = {'exact': now, 'past': now - timedelta(seconds=1),
-                   'missing': None, 'live': now + timedelta(seconds=30)}[deadline]
-    return EffectJob(id='job_lease_deadline', event_id='e_lease_deadline', kind=channel,
-        dedupe_key='lease-deadline', principal=Principal(actor=None, subject=None,
-        credential_id=None, method='anonymous', certificates=(), ceiling=()),
-        operation='communication.send', arguments={}, state='running', attempts=1,
-        next_attempt_at=now - timedelta(seconds=10), lease_until=lease_until)
+    lease_until = {
+        'exact': now,
+        'past': now - timedelta(seconds=1),
+        'missing': None,
+        'live': now + timedelta(seconds=30),
+    }[deadline]
+    return EffectJob(
+        id='job_lease_deadline',
+        event_id='e_lease_deadline',
+        kind=channel,
+        dedupe_key='lease-deadline',
+        principal=Principal(
+            actor=None,
+            subject=None,
+            credential_id=None,
+            method='anonymous',
+            certificates=(),
+            ceiling=(),
+        ),
+        operation='communication.send',
+        arguments={},
+        state='running',
+        attempts=1,
+        next_attempt_at=now - timedelta(seconds=10),
+        lease_until=lease_until,
+    )
 
 
 async def retry(worker, job):
@@ -31,7 +51,9 @@ async def retry(worker, job):
 @pytest.mark.parametrize('channel', ['mail', 'webhook'])
 @pytest.mark.parametrize('deadline', ['exact', 'past', 'missing'])
 @pytest.mark.parametrize('transition', ['retry', 'finish'])
-async def test_expired_attempt_is_fenced_without_another_worker_claim(installed, channel, deadline, transition):
+async def test_expired_attempt_is_fenced_without_another_worker_claim(
+    installed, channel, deadline, transition
+):
     app, _ = installed
     job = notification(app, channel, deadline)
     async with app.metadata.transaction(write=True) as tx:

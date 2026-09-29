@@ -1,4 +1,5 @@
 """All network adapters reject legacy token issuance before writing state."""
+
 import os
 
 import httpx
@@ -11,8 +12,10 @@ from msg.transports.http import create_app
 
 async def _state_counts(app):
     async with app.metadata.transaction(write=False) as tx:
-        return tuple(tx.one(f'SELECT COUNT(*) FROM {table}')[0] for table in
-                     ('identities', 'credentials', 'events', 'results', 'token_deliveries'))
+        return tuple(
+            tx.one(f'SELECT COUNT(*) FROM {table}')[0]
+            for table in ('identities', 'credentials', 'events', 'results', 'token_deliveries')
+        )
 
 
 def _assert_no_token_field(value):
@@ -26,11 +29,16 @@ def _assert_no_token_field(value):
 
 
 def _legacy_packet(app, suffix):
-    return request_for('identity.custodial_create', {
-        'handle': 'legacy-entry-' + suffix,
-        'nonce': b64(os.urandom(32)),
-    }, app.settings.service_url, request_id='legacy-entry-' + suffix,
-        contract_version=1)
+    return request_for(
+        'identity.custodial_create',
+        {
+            'handle': 'legacy-entry-' + suffix,
+            'nonce': b64(os.urandom(32)),
+        },
+        app.settings.service_url,
+        request_id='legacy-entry-' + suffix,
+        contract_version=1,
+    )
 
 
 def _assert_rejected(result):
@@ -43,24 +51,30 @@ def _assert_rejected(result):
 async def test_old_custodial_issuance_packet_rejected_by_http_graphql_and_mcp(installed):
     app, _ = installed
     asgi = create_app(app)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=asgi),
-                                 base_url='http://testserver', headers={
-                                     'Accept': 'application/json, text/event-stream',
-                                     'MCP-Protocol-Version': '2025-11-25'}) as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=asgi),
+        base_url='http://testserver',
+        headers={
+            'Accept': 'application/json, text/event-stream',
+            'MCP-Protocol-Version': '2025-11-25',
+        },
+    ) as http:
         packet = _legacy_packet(app, 'http')
         before = await _state_counts(app)
-        response = await http.post('/-/p/identity.custodial_create',
-                                   content=canonical(packet))
+        response = await http.post('/-/p/identity.custodial_create', content=canonical(packet))
         assert response.status_code == 400, response.text
         _assert_rejected(response.json())
         assert await _state_counts(app) == before
 
         packet = _legacy_packet(app, 'graphql')
         before = await _state_counts(app)
-        response = await http.post('/-/graphql', json={
-            'query': 'mutation($p: JSON!) { call(packet: $p) }',
-            'variables': {'p': wire(packet)},
-        })
+        response = await http.post(
+            '/-/graphql',
+            json={
+                'query': 'mutation($p: JSON!) { call(packet: $p) }',
+                'variables': {'p': wire(packet)},
+            },
+        )
         assert response.status_code == 200, response.text
         result = response.json()['data']['call']
         _assert_rejected(result)
@@ -68,11 +82,18 @@ async def test_old_custodial_issuance_packet_rejected_by_http_graphql_and_mcp(in
 
         packet = _legacy_packet(app, 'mcp')
         before = await _state_counts(app)
-        response = await http.post('/-/mcp', json={
-            'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
-            'params': {'name': 'identity.custodial_create',
-                       'arguments': {'packet': wire(packet)}},
-        })
+        response = await http.post(
+            '/-/mcp',
+            json={
+                'jsonrpc': '2.0',
+                'id': 3,
+                'method': 'tools/call',
+                'params': {
+                    'name': 'identity.custodial_create',
+                    'arguments': {'packet': wire(packet)},
+                },
+            },
+        )
         assert response.status_code == 200, response.text
         result = response.json()['result']['structuredContent']
         _assert_rejected(result)

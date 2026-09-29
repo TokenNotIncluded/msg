@@ -1,4 +1,5 @@
 """Stable errors shared by business operations and every transport."""
+
 from __future__ import annotations
 
 _PUBLIC_MESSAGES = {
@@ -21,23 +22,35 @@ _PUBLIC_MESSAGES = {
 
 def public_error_message(code: str) -> str:
     """Fixed contract text only: never interpolate input or exception details."""
-    return (_PUBLIC_MESSAGES.get(code, 'The operation could not be completed.')
-            if isinstance(code, str) else 'The operation could not be completed.')
+    return (
+        _PUBLIC_MESSAGES.get(code, 'The operation could not be completed.')
+        if isinstance(code, str)
+        else 'The operation could not be completed.'
+    )
 
 
 class Failure(ValueError):
-    def __init__(self, code: str, field: str | None = None, *, retryable: bool = False,
-                 details: dict | None = None):
+    def __init__(
+        self,
+        code: str,
+        field: str | None = None,
+        *,
+        retryable: bool = False,
+        details: dict | None = None,
+    ):
         super().__init__(code)
         self.code, self.field, self.retryable, self.details = code, field, retryable, details
 
     def as_dict(self) -> dict:
-        value = {"code": self.code, "retryable": self.retryable,
-                 "message": public_error_message(self.code)}
+        value = {
+            'code': self.code,
+            'retryable': self.retryable,
+            'message': public_error_message(self.code),
+        }
         if self.field:
-            value["field_path"] = self.field
+            value['field_path'] = self.field
         if self.details:
-            value["details"] = self.details
+            value['details'] = self.details
         return value
 
 

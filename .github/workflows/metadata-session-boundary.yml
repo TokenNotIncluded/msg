@@ -58,7 +58,7 @@ jobs:
       - name: Preserve PostgreSQL locks, migration and recovery regressions
         run: |
           python -m pytest tests/test_postgres.py tests/test_security_storage_rollback.py tests/test_security_rollback_fences.py tests/test_ledger_accounts.py tests/test_ledger_account_isolation.py tests/test_ledger_migration_json.py tests/test_ledger_migration_references.py tests/test_recovery_safety_units.py tests/test_recovery_metadata.py --junitxml=artifacts/metadata-regressions.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: metadata-session-${{ github.sha }}

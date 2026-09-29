@@ -20,6 +20,7 @@ def test_honor_feature_has_non_granting_bootstrap_sample():
 @pytest.mark.asyncio
 async def test_honor_diagnostics_use_installed_sample_and_real_requests(installed):
     from msg.admin.honor_check import check_honors, inspect_honors
+
     app, _ = installed
     async with app.metadata.transaction(write=False) as tx:
         assert (await inspect_honors(app, tx))['read_only'] is True
@@ -40,7 +41,9 @@ async def test_honor_diagnostics_use_installed_sample_and_real_requests(installe
         assert tx.one('SELECT COUNT(*) FROM achievement_grants')[0] == 1
         assert tx.one('SELECT COUNT(*) FROM achievement_pins')[0] == 0
     async with app.metadata.transaction(write=True) as tx:
-        tx.execute('ALTER TABLE achievement_pins RENAME COLUMN position TO broken_position', write=True)
+        tx.execute(
+            'ALTER TABLE achievement_pins RENAME COLUMN position TO broken_position', write=True
+        )
     async with app.metadata.transaction(write=False) as tx:
         with pytest.raises(Failure, match='honor_schema_missing'):
             await inspect_honors(app, tx)

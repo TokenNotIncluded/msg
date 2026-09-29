@@ -4,6 +4,7 @@ A runner returns a local artifact, never a committed ResourceRef. The worker
 validates it, rechecks current authority/attempt/deadline and publishes it in its
 existing transaction. Implementing this Protocol grants no execution authority.
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -23,6 +24,10 @@ class ToolResult:
 @runtime_checkable
 class ToolRunner(Protocol):
     async def __call__(
-        self, tool: ToolSpec, arguments: JsonMap,
-        policies: tuple[NetworkPolicy, ...], directory: Path, /
+        self,
+        tool: ToolSpec,
+        arguments: JsonMap,
+        policies: tuple[NetworkPolicy, ...],
+        directory: Path,
+        /,
     ) -> ToolResult: ...

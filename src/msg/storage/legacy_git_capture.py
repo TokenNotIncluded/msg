@@ -1,12 +1,14 @@
 """Read-only SSH fixed-ref bundle capture. Never writes files on the source host."""
 
 from __future__ import annotations
+
 import argparse
 import json
 import os
-from pathlib import Path
 import re
 import subprocess
+from pathlib import Path
+
 from msg.core.errors import require
 from msg.storage.legacy_git_import import sha256_file, verify_bundle
 from msg.storage.legacy_rehearsal import _write
@@ -43,20 +45,20 @@ except BaseException:
 
 
 def capture(host, source, protected_target):
-    require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]*", host) is not None, "invalid_ssh_host")
+    require(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.@-]*', host) is not None, 'invalid_ssh_host')
     target = Path(protected_target)
     require(
         target.is_dir() and not target.is_symlink() and target.stat().st_mode & 0o077 == 0,
-        "private_target_required",
+        'private_target_required',
     )
-    destination = target / "repository.bundle"
-    require(not (target / "manifest.json").exists(), "capture_manifest_exists")
-    script = REMOTE_PROGRAM.replace("SOURCE_PATH", repr(str(source)))
+    destination = target / 'repository.bundle'
+    require(not (target / 'manifest.json').exists(), 'capture_manifest_exists')
+    script = REMOTE_PROGRAM.replace('SOURCE_PATH', repr(str(source)))
     fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
-        with os.fdopen(fd, "wb") as stream:
+        with os.fdopen(fd, 'wb') as stream:
             completed = subprocess.run(
-                ["ssh", "-o", "BatchMode=yes", host, "sudo", "-n", "python3", "-"],
+                ['ssh', '-o', 'BatchMode=yes', host, 'sudo', '-n', 'python3', '-'],
                 input=script.encode(),
                 stdout=stream,
                 stderr=subprocess.PIPE,
@@ -64,18 +66,18 @@ def capture(host, source, protected_target):
             )
             stream.flush()
             os.fsync(stream.fileno())
-        require(completed.returncode == 0, "legacy_git_capture_failed")
+        require(completed.returncode == 0, 'legacy_git_capture_failed')
         manifest = json.loads(completed.stderr)
         checked = verify_bundle(
-            destination, sha256_file(destination), protected_work=target / "verification"
+            destination, sha256_file(destination), protected_work=target / 'verification'
         )
         require(
-            manifest["refs_stable"] is True and checked["refs"] == manifest["refs"],
-            "legacy_git_source_changed",
+            manifest['refs_stable'] is True and checked['refs'] == manifest['refs'],
+            'legacy_git_source_changed',
         )
-        manifest.update({key: value for key, value in checked.items() if key != "refs"})
-        _write(target / "manifest.json", manifest)
-        return {key: value for key, value in manifest.items() if key not in {"refs", "default_ref"}}
+        manifest.update({key: value for key, value in checked.items() if key != 'refs'})
+        _write(target / 'manifest.json', manifest)
+        return {key: value for key, value in manifest.items() if key not in {'refs', 'default_ref'}}
     except BaseException:
         destination.unlink(missing_ok=True)
         raise
@@ -83,24 +85,24 @@ def capture(host, source, protected_target):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--ssh-host", required=True)
-    parser.add_argument("--private-source-descriptor", type=Path, required=True)
-    parser.add_argument("--protected-target", type=Path, required=True)
+    parser.add_argument('--ssh-host', required=True)
+    parser.add_argument('--private-source-descriptor', type=Path, required=True)
+    parser.add_argument('--protected-target', type=Path, required=True)
     args = parser.parse_args()
     try:
         require(
             not args.private_source_descriptor.is_symlink()
             and args.private_source_descriptor.stat().st_mode & 0o077 == 0,
-            "private_source_descriptor_required",
+            'private_source_descriptor_required',
         )
-        paths = json.loads(args.private_source_descriptor.read_text())["bare_repo_paths"]
-        require(len(paths) == 1, "source_repository_count_invalid")
+        paths = json.loads(args.private_source_descriptor.read_text())['bare_repo_paths']
+        require(len(paths) == 1, 'source_repository_count_invalid')
         print(json.dumps(capture(args.ssh_host, paths[0], args.protected_target), sort_keys=True))
     except BaseException:
         # Never emit Git stderr/ref names or raw database/content exceptions.
-        print(json.dumps({"result": "failed", "scope": "fixed-ref-bundle"}))
-        raise SystemExit(1)
+        print(json.dumps({'result': 'failed', 'scope': 'fixed-ref-bundle'}))
+        raise SystemExit(1) from None
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

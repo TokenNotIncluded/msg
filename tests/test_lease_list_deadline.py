@@ -1,4 +1,5 @@
 """Deadline exhaustion fails closed before legacy lease SQL materialization."""
+
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -38,7 +39,8 @@ async def test_expired_lease_list_budget_refuses_before_query(installed, monkeyp
             # runtime generation and current authorization are not replaced.
             patch.setattr(collaboration, 'time', SimpleNamespace(monotonic=lambda: float('inf')))
             patch.setattr(app.metadata, 'transaction', no_lease_scan)
-            result = await call(app, 'communication.lease_list', {'limit': 1},
-                                key=key, subject=subject)
+            result = await call(
+                app, 'communication.lease_list', {'limit': 1}, key=key, subject=subject
+            )
             assert not attempted, 'lease scan ran after its deadline: ' + repr(attempted)
             assert result.status == 'error' and result.error.code == 'query_cost_exceeded'

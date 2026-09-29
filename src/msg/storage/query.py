@@ -1,8 +1,10 @@
 """Session-bound query results without a public driver cursor/connection."""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from typing import Protocol
+
 from msg.core.query import SqlRow
 
 
@@ -15,6 +17,7 @@ class _Cursor(Protocol):
 
 class SessionQueryResult:
     """A narrow view, not a sandbox for trusted in-process Python consumers."""
+
     __slots__ = ('_cursor', '_check')
 
     def __init__(self, cursor: _Cursor, check: Callable[[], None]):

@@ -1,4 +1,5 @@
 """Exercise SMTP over a real, certificate-verified loopback TLS socket."""
+
 import socket
 import ssl
 import subprocess
@@ -17,10 +18,28 @@ from msg.workers.mail import SmtpSender
 @pytest.fixture
 def tls_contexts(tmp_path):
     cert, key = tmp_path / 'cert.pem', tmp_path / 'key.pem'
-    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
-                    '-keyout', str(key), '-out', str(cert), '-days', '1',
-                    '-subj', '/CN=localhost', '-addext', 'subjectAltName=IP:127.0.0.1'],
-                   check=True, capture_output=True)
+    subprocess.run(
+        [
+            'openssl',
+            'req',
+            '-x509',
+            '-newkey',
+            'rsa:2048',
+            '-nodes',
+            '-keyout',
+            str(key),
+            '-out',
+            str(cert),
+            '-days',
+            '1',
+            '-subj',
+            '/CN=localhost',
+            '-addext',
+            'subjectAltName=IP:127.0.0.1',
+        ],
+        check=True,
+        capture_output=True,
+    )
     server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     server.load_cert_chain(cert, key)
     client = ssl.create_default_context(cafile=str(cert))
@@ -41,9 +60,11 @@ def smtp_sink(context, outcome):
                 with context.wrap_socket(conn, server_side=True) as conn:
                     conn.settimeout(5)
                     with conn.makefile('rwb') as wire:
+
                         def reply(value):
                             wire.write(value + b'\r\n')
                             wire.flush()
+
                         reply(b'220 localhost isolated test sink')
                         while line := wire.readline():
                             commands.append(line.strip())
@@ -53,7 +74,11 @@ def smtp_sink(context, outcome):
                             elif verb == b'MAIL':
                                 reply(b'250 sender accepted')
                             elif verb == b'RCPT':
-                                reply(b'550 recipient refused' if outcome == 'refused' else b'250 recipient accepted')
+                                reply(
+                                    b'550 recipient refused'
+                                    if outcome == 'refused'
+                                    else b'250 recipient accepted'
+                                )
                             elif verb == b'RSET':
                                 reply(b'250 reset')
                             elif verb == b'DATA':
@@ -83,20 +108,37 @@ def smtp_sink(context, outcome):
 
 
 def sender(port):
-    return SmtpSender(SimpleNamespace(enabled=True, host='127.0.0.1', port=port,
-                                     sender='sender@example.test', tls='tls', credential_file=None))
+    return SmtpSender(
+        SimpleNamespace(
+            enabled=True,
+            host='127.0.0.1',
+            port=port,
+            sender='sender@example.test',
+            tls='tls',
+            credential_file=None,
+        )
+    )
 
 
 def job():
-    return SimpleNamespace(id='isolated-smtp-acceptance', arguments={
-        'recipient': 'reader@example.test', 'subject': 'minimal notice',
-        'text': 'Open your inbox.\n.dot-stuffed line'})
+    return SimpleNamespace(
+        id='isolated-smtp-acceptance',
+        arguments={
+            'recipient': 'reader@example.test',
+            'subject': 'minimal notice',
+            'text': 'Open your inbox.\n.dot-stuffed line',
+        },
+    )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(('outcome', 'expected'), [
-    ('accepted', 'sent'), ('disconnect', 'uncertain'), ('refused', 'uncertain')])
-async def test_real_tls_smtp_success_refusal_and_lost_ack(tls_contexts, monkeypatch, outcome, expected):
+@pytest.mark.parametrize(
+    ('outcome', 'expected'),
+    [('accepted', 'sent'), ('disconnect', 'uncertain'), ('refused', 'uncertain')],
+)
+async def test_real_tls_smtp_success_refusal_and_lost_ack(
+    tls_contexts, monkeypatch, outcome, expected
+):
     server, client = tls_contexts
     monkeypatch.setattr(ssl, 'create_default_context', lambda: client)
     # Keep EHLO hostname discovery independent of the host machine's DNS.
@@ -105,7 +147,8 @@ async def test_real_tls_smtp_success_refusal_and_lost_ack(tls_contexts, monkeypa
         assert await sender(port).send(job()) == expected
     assert sum(command.upper().startswith(b'MAIL ') for command in commands) == 1
     assert [command.lower() for command in commands if command.upper().startswith(b'RCPT ')] == [
-        b'rcpt to:<reader@example.test>']
+        b'rcpt to:<reader@example.test>'
+    ]
     assert len(messages) == (0 if outcome == 'refused' else 1)
     if messages:
         message = BytesParser(policy=policy.default).parsebytes(messages[0])

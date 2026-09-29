@@ -2,6 +2,7 @@
 
 The receiver must persist delivery IDs for replay rejection across restarts.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -31,18 +32,29 @@ def seal_secret(app, subject: str, value: str) -> tuple[str, str]:
 
 
 def open_secret(app, subject: str, nonce: str, ciphertext: str) -> bytes:
-    return AESGCM(app._vault_key).decrypt(unb64(nonce, limit=12),
-        unb64(ciphertext, limit=96), b'webhook-v1\0' + subject.encode())
+    return AESGCM(app._vault_key).decrypt(
+        unb64(nonce, limit=12), unb64(ciphertext, limit=96), b'webhook-v1\0' + subject.encode()
+    )
 
 
 def validate_endpoint(url: str) -> tuple[str, int]:
-    require(type(url) is str and 0 < len(url) <= 2048 and '\\' not in url and
-            all(32 < ord(char) < 127 for char in url), 'invalid_webhook_url')
+    require(
+        type(url) is str
+        and 0 < len(url) <= 2048
+        and '\\' not in url
+        and all(32 < ord(char) < 127 for char in url),
+        'invalid_webhook_url',
+    )
     try:
         parsed = urlsplit(url)
-        require(parsed.scheme == 'https' and parsed.hostname is not None and
-                parsed.username is None and parsed.password is None and not parsed.fragment,
-                'invalid_webhook_url')
+        require(
+            parsed.scheme == 'https'
+            and parsed.hostname is not None
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.fragment,
+            'invalid_webhook_url',
+        )
         host = normalized_host(parsed.hostname)
         port = parsed.port or 443
     except ValueError as exc:
@@ -67,13 +79,22 @@ _PUBLIC = _PublicPolicy()
 
 class PublicResolver(aiohttp.abc.AbstractResolver):
     async def resolve(self, host, port=0, family=socket.AF_INET):
-        resolved = await asyncio.get_running_loop().getaddrinfo(host, port,
-            family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)
+        resolved = await asyncio.get_running_loop().getaddrinfo(
+            host, port, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM
+        )
         addresses = [entry[4][0] for entry in resolved]
         validate_addresses(addresses, _PUBLIC)
-        return [{'hostname': host, 'host': address, 'port': port,
-                 'family': socket.AF_INET6 if ':' in address else socket.AF_INET,
-                 'proto': socket.IPPROTO_TCP, 'flags': 0} for address in addresses]
+        return [
+            {
+                'hostname': host,
+                'host': address,
+                'port': port,
+                'family': socket.AF_INET6 if ':' in address else socket.AF_INET,
+                'proto': socket.IPPROTO_TCP,
+                'flags': 0,
+            }
+            for address in addresses
+        ]
 
     async def close(self):
         pass
@@ -86,14 +107,24 @@ def sign_delivery(secret: bytes, timestamp: str, body: bytes) -> str:
 def _delivery_header(headers, name, code):
     # HTTP field names are case-insensitive. Reject duplicates instead of making
     # the proxy, signature verifier and replay ledger pick different values.
-    values = [value for key, value in headers.items()
-              if isinstance(key, str) and key.lower() == name.lower()]
+    values = [
+        value
+        for key, value in headers.items()
+        if isinstance(key, str) and key.lower() == name.lower()
+    ]
     require(len(values) == 1 and type(values[0]) is str, code)
     return values[0]
 
 
-def verify_delivery(headers: dict, body: bytes, secret: bytes, *, now: datetime,
-                    seen: set[str] | None = None, window_seconds: int = 300) -> str:
+def verify_delivery(
+    headers: dict,
+    body: bytes,
+    secret: bytes,
+    *,
+    now: datetime,
+    seen: set[str] | None = None,
+    window_seconds: int = 300,
+) -> str:
     """Authenticate the raw body *and* the identity used for persistent dedupe.
 
     Header identifiers alone are not signed. They must match the authenticated
@@ -105,17 +136,21 @@ def verify_delivery(headers: dict, body: bytes, secret: bytes, *, now: datetime,
     signature = _delivery_header(headers, 'Msg-Signature', 'invalid_webhook_signature')
     delivery_id = _delivery_header(headers, 'Msg-Delivery-Id', 'invalid_webhook_delivery')
     event_id = _delivery_header(headers, 'Msg-Event-Id', 'invalid_webhook_event')
-    require(timestamp.isascii() and timestamp.isdecimal() and 0 < len(timestamp) <= 16,
-            'invalid_webhook_timestamp')
-    require(type(window_seconds) is int and window_seconds >= 0,
-            'invalid_webhook_window')
-    require(abs(int(now.timestamp()) - int(timestamp)) <= window_seconds,
-            'webhook_replay_window')
-    require(re.fullmatch(r'job_[A-Za-z0-9_-]{1,156}', delivery_id) is not None,
-            'invalid_webhook_delivery')
-    require(re.fullmatch(r'sha256=[0-9a-f]{64}', signature) is not None and
-            hmac.compare_digest(signature[7:], sign_delivery(secret, timestamp, body)),
-            'invalid_webhook_signature')
+    require(
+        timestamp.isascii() and timestamp.isdecimal() and 0 < len(timestamp) <= 16,
+        'invalid_webhook_timestamp',
+    )
+    require(type(window_seconds) is int and window_seconds >= 0, 'invalid_webhook_window')
+    require(abs(int(now.timestamp()) - int(timestamp)) <= window_seconds, 'webhook_replay_window')
+    require(
+        re.fullmatch(r'job_[A-Za-z0-9_-]{1,156}', delivery_id) is not None,
+        'invalid_webhook_delivery',
+    )
+    require(
+        re.fullmatch(r'sha256=[0-9a-f]{64}', signature) is not None
+        and hmac.compare_digest(signature[7:], sign_delivery(secret, timestamp, body)),
+        'invalid_webhook_signature',
+    )
     try:
         envelope = loads(body)
     except Failure as exc:
@@ -133,19 +168,34 @@ def verify_delivery(headers: dict, body: bytes, secret: bytes, *, now: datetime,
 
 
 class WebhookSender:
-    async def send(self, url: str, secret: bytes, body: bytes, *, timestamp: str,
-                   event_id: str, delivery_id: str) -> str:
+    async def send(
+        self,
+        url: str,
+        secret: bytes,
+        body: bytes,
+        *,
+        timestamp: str,
+        event_id: str,
+        delivery_id: str,
+    ) -> str:
         validate_endpoint(url)
-        headers = {'Content-Type': 'application/json', 'Msg-Event-Id': event_id,
-                   'Msg-Delivery-Id': delivery_id, 'Msg-Timestamp': timestamp,
-                   'Msg-Signature': 'sha256=' + sign_delivery(secret, timestamp, body)}
-        connector = aiohttp.TCPConnector(resolver=PublicResolver(), use_dns_cache=False,
-                                         ttl_dns_cache=0, limit=1)
+        headers = {
+            'Content-Type': 'application/json',
+            'Msg-Event-Id': event_id,
+            'Msg-Delivery-Id': delivery_id,
+            'Msg-Timestamp': timestamp,
+            'Msg-Signature': 'sha256=' + sign_delivery(secret, timestamp, body),
+        }
+        connector = aiohttp.TCPConnector(
+            resolver=PublicResolver(), use_dns_cache=False, ttl_dns_cache=0, limit=1
+        )
         try:
-            async with aiohttp.ClientSession(connector=connector, trust_env=False,
-                    timeout=aiohttp.ClientTimeout(total=8)) as session:
-                async with session.post(url, data=body, headers=headers,
-                                        allow_redirects=False) as response:
+            async with aiohttp.ClientSession(
+                connector=connector, trust_env=False, timeout=aiohttp.ClientTimeout(total=8)
+            ) as session:
+                async with session.post(
+                    url, data=body, headers=headers, allow_redirects=False
+                ) as response:
                     # Only the status matters; a remote endpoint must not make
                     # delivery allocate memory for an unbounded response body.
                     if 200 <= response.status < 300:

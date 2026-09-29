@@ -73,7 +73,7 @@ jobs:
           python -m pytest tests/test_tool_runner_contract.py tests/test_tools.py
           tests/test_effect_completion_fencing.py
           --junitxml=artifacts/runner-contract.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: architecture-boundaries

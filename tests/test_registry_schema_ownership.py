@@ -1,4 +1,5 @@
 """Published schemas must not drift through aliases after registration/freeze."""
+
 from copy import deepcopy
 
 import pytest
@@ -8,17 +9,29 @@ from msg.core.errors import Failure
 from msg.core.models import PluginManifest, ResourceRef
 from msg.core.registry import Registry
 
-
 REF = ResourceRef(id='schema_test_ownership')
-SCHEMA = {'type': 'object', 'properties': {'mode': {'enum': ['read']}},
-          'required': ['mode'], 'additionalProperties': False}
+SCHEMA = {
+    'type': 'object',
+    'properties': {'mode': {'enum': ['read']}},
+    'required': ['mode'],
+    'additionalProperties': False,
+}
 
 
 def registry(schema):
     result = Registry()
     result.add_schema(REF, schema)
-    result.add(PluginManifest(name='identity', version='1', dependencies=(),
-        resource_types=(), capabilities=(), operations=(), migrations=()))
+    result.add(
+        PluginManifest(
+            name='identity',
+            version='1',
+            dependencies=(),
+            resource_types=(),
+            capabilities=(),
+            operations=(),
+            migrations=(),
+        )
+    )
     result.freeze()
     return result
 

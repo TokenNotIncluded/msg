@@ -4,6 +4,7 @@ Unlike opening Application/initializing a metadata store, this command performs
 no DDL, migration, filesystem repair, Root unlock, effect emission or sequence
 allocation. It never supplies missing operational evidence with fixture results.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -23,21 +24,43 @@ _FIELD_EVIDENCE = (
     ('ingress_log_chain', '#64', 'CDN/proxy/APM/nginx/service redaction and listener evidence'),
     ('protected_snapshot', '#65/#84', 'independent provenance and digest of the field backup'),
     ('restore_conservation', '#65/#84', 'isolated old/new ledger and signed-history comparison'),
-    ('current_checkpoint', '#69', 'independently current signed revocation head outside the rollback set'),
+    (
+        'current_checkpoint',
+        '#69',
+        'independently current signed revocation head outside the rollback set',
+    ),
     ('physical_console', '#70', 'real authorized local VT/serial console and rejection evidence'),
     ('ca_transition', '#70', 'finite old CA inventory and individually approved reissue/revoke'),
-    ('bank_fund_boundary', '#70/B', 'joint role versus injection gate evidence; no actual funding here'),
-    ('capacity_and_failure_drill', '#84', 'measured capacity and isolated install/crash/rollback drill'),
+    (
+        'bank_fund_boundary',
+        '#70/B',
+        'joint role versus injection gate evidence; no actual funding here',
+    ),
+    (
+        'capacity_and_failure_drill',
+        '#84',
+        'measured capacity and isolated install/crash/rollback drill',
+    ),
 )
 
 
 def inspect_database(connection):
-    require(connection.execute('SHOW transaction_read_only').fetchone() == ('on',),
-            'preflight_read_only_required')
-    tables = {row[0] for row in connection.execute(
-        'SELECT tablename FROM pg_tables WHERE schemaname=current_schema()')}
-    result = {'read_only': True, 'state': 'empty' if not tables else 'unclassified',
-              'table_count': len(tables), 'server_version': connection.info.server_version}
+    require(
+        connection.execute('SHOW transaction_read_only').fetchone() == ('on',),
+        'preflight_read_only_required',
+    )
+    tables = {
+        row[0]
+        for row in connection.execute(
+            'SELECT tablename FROM pg_tables WHERE schemaname=current_schema()'
+        )
+    }
+    result = {
+        'read_only': True,
+        'state': 'empty' if not tables else 'unclassified',
+        'table_count': len(tables),
+        'server_version': connection.info.server_version,
+    }
     if not tables:
         return result
     required = {'money_ledger', 'money_accounts', 'store_orders', 'bounty_listings', 'identities'}
@@ -47,11 +70,19 @@ def inspect_database(connection):
             _validate_identity_references,
             _validate_ledger,
         )
+
         escrow = _escrow_sources(connection)
-        legacy = sum(connection.execute('SELECT 1 FROM identities WHERE id=%s', (key,)).fetchone()
-                     is not None for key in escrow)
-        ledger = {'escrow_accounts': len(escrow), 'legacy_escrow_identities': legacy,
-                  'checks': 'blocked', 'migration_performed': False}
+        legacy = sum(
+            connection.execute('SELECT 1 FROM identities WHERE id=%s', (key,)).fetchone()
+            is not None
+            for key in escrow
+        )
+        ledger = {
+            'escrow_accounts': len(escrow),
+            'legacy_escrow_identities': legacy,
+            'checks': 'blocked',
+            'migration_performed': False,
+        }
         result['state'] = 'typed_ledger' if 'ledger_accounts' in tables else 'legacy_ledger'
         try:
             _validate_identity_references(connection, escrow)
@@ -77,54 +108,76 @@ def inspect_database(connection):
         ledger.update(rows=count, history_digest='sha256:' + hasher.hexdigest())
         result['ledger'] = ledger
     if 'settings' in tables:
-        gate = connection.execute("SELECT value FROM settings WHERE key='recovery_quarantine'").fetchone()
+        gate = connection.execute(
+            "SELECT value FROM settings WHERE key='recovery_quarantine'"
+        ).fetchone()
         result['quarantine_present'] = gate is not None
-        row = connection.execute("SELECT value FROM settings WHERE key='active_root_certificate'").fetchone()
+        row = connection.execute(
+            "SELECT value FROM settings WHERE key='active_root_certificate'"
+        ).fetchone()
         result['active_root_certificate'] = loads(row[0]) if row else None
     if 'certificates' in tables:
         inventory = []
         for identifier, subject, parent, revoked, body in connection.execute(
-                'SELECT id,subject,parent,revoked,body FROM certificates ORDER BY id'):
+            'SELECT id,subject,parent,revoked,body FROM certificates ORDER BY id'
+        ):
             certificate = decode(Certificate, loads(body))
-            require((certificate.resource_id, certificate.subject_id, certificate.parent_certificate_id) ==
-                    (identifier, subject, parent), 'preflight_certificate_mismatch')
+            require(
+                (certificate.resource_id, certificate.subject_id, certificate.parent_certificate_id)
+                == (identifier, subject, parent),
+                'preflight_certificate_mismatch',
+            )
             if certificate.kind != 'ca':
                 continue
             policy = certificate.issuance
             grants = (*certificate.grants, *(policy.issue_grants if policy is not None else ()))
             operations = sorted({operation for grant in grants for operation in grant.operations})
-            inventory.append({'id': identifier, 'subject': subject, 'parent': parent,
-                'revoked': bool(revoked), 'key_id': certificate.key_id,
+            inventory.append({
+                'id': identifier,
+                'subject': subject,
+                'parent': parent,
+                'revoked': bool(revoked),
+                'key_id': certificate.key_id,
                 'signed_grants_digest': digest(certificate.grants),
-                'issuance_digest': digest(policy), 'operation_count': len(operations),
+                'issuance_digest': digest(policy),
+                'operation_count': len(operations),
                 'explicit_operations': all('*' not in operation for operation in operations),
                 'max_child_ca_depth': policy.max_child_ca_depth if policy is not None else None,
                 'max_cert_ttl_seconds': policy.max_cert_ttl_seconds if policy is not None else None,
-                'next_step': 'explicit_operator_review_only'})
+                'next_step': 'explicit_operator_review_only',
+            })
         result['ca_inventory'] = inventory
     return result
 
 
 def preflight(config_dir):
     """The config directory is explicit; no accidental default production probe."""
-    result = {'format': 'msg-preflight-v1', 'captured_at': datetime.now(UTC).isoformat(),
-              'decision': 'blocked', 'source_kind': 'unattested', 'mutation_performed': False,
-              'root_private_material': 'not_opened', 'outbound_effects': 'not_run',
-              'field_evidence': [{'id': key, 'issue': issue, 'required': description, 'status': 'missing'}
-                                 for key, issue, description in _FIELD_EVIDENCE]}
+    result = {
+        'format': 'msg-preflight-v1',
+        'captured_at': datetime.now(UTC).isoformat(),
+        'decision': 'blocked',
+        'source_kind': 'unattested',
+        'mutation_performed': False,
+        'root_private_material': 'not_opened',
+        'outbound_effects': 'not_run',
+        'field_evidence': [
+            {'id': key, 'issue': issue, 'required': description, 'status': 'missing'}
+            for key, issue, description in _FIELD_EVIDENCE
+        ],
+    }
     try:
         settings = load_settings(Path(config_dir))
         config = settings.config_dir / 'msgd.toml'
         if not config.is_file():
             config = settings.config_dir / 'server.toml'
         result['config_digest'] = digest(config.read_bytes())
-    except (OSError, Failure, ValueError, KeyError):
+    except OSError, Failure, ValueError, KeyError:
         return dict(result, error='preflight_configuration_unavailable')
     try:
         with psycopg.connect(settings.server.postgres_dsn, connect_timeout=5) as connection:
             connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
             result['database'] = inspect_database(connection)
-    except (psycopg.Error, Failure, ValueError, KeyError):
+    except psycopg.Error, Failure, ValueError, KeyError:
         result['error'] = 'preflight_database_unavailable_or_inconsistent'
     return result
 

@@ -1,4 +1,5 @@
 """The transfer selftest checks real storage and refuses an ordinary app."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -15,7 +16,8 @@ async def test_transfer_selftest_refuses_nonisolated_application():
 
 @pytest.mark.parametrize('read_mutation', [False, True])
 async def test_transfer_selftest_real_upload_download_and_readonly_boundaries(
-        installed, monkeypatch, read_mutation):
+    installed, monkeypatch, read_mutation
+):
     app, _ = installed
     # installed creates a disposable PostgreSQL database and content directory.
     monkeypatch.setattr(app, 'selftest_run_id', 'isolated-transfer-fixture')

@@ -1,0 +1,67 @@
+name: Python quality
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: python-quality-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install the locked development environment
+        run: |
+          python -m pip install uv==0.12.20
+          uv lock --check --python "$(command -v python)"
+          uv sync --locked --extra dev --python "$(command -v python)"
+          uv pip check
+      - name: Require zero Ruff errors and warnings, and exact formatting
+        run: |
+          mkdir -p artifacts
+          uv run --locked --extra dev ruff check . --output-format json > artifacts/ruff.json 2> artifacts/ruff.stderr
+          test ! -s artifacts/ruff.stderr
+          uv run --locked --extra dev ruff format --check . > artifacts/format.txt 2> artifacts/format.stderr
+          test ! -s artifacts/format.stderr
+          uv run --locked --extra dev python -W error -m compileall -q src tests conformance scripts
+      - name: Record source and toolchain evidence
+        if: always()
+        run: |
+          mkdir -p artifacts
+          uv run --locked --extra dev python - <<'PYTHON'
+          import importlib.metadata, json, os, pathlib, platform, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          pathlib.Path('artifacts/quality-source.json').write_text(json.dumps({
+              'commit': git('rev-parse', 'HEAD'),
+              'tree': git('rev-parse', 'HEAD^{tree}'),
+              'run_id': os.environ['GITHUB_RUN_ID'],
+              'python': platform.python_version(),
+              'ruff': importlib.metadata.version('ruff'),
+              'uv': subprocess.check_output(['uv', '--version'], text=True).strip(),
+              'uv_build_requirement': 'uv_build==0.12.20',
+          }, indent=2) + '\n')
+          PYTHON
+      - name: Preserve a suggested safe Ruff patch after failure
+        if: failure()
+        run: |
+          uv run --locked --extra dev ruff check . --fix --no-unsafe-fixes > artifacts/fix-suggestions.txt 2>&1 || true
+          uv run --locked --extra dev ruff format . >> artifacts/fix-suggestions.txt 2>&1
+          git diff --binary > artifacts/quality-fixes.patch
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: python-quality
+          path: artifacts/
+          if-no-files-found: error

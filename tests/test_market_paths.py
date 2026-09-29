@@ -1,4 +1,5 @@
 """Published pickup/payment URLs remain private read-only lifecycle projections."""
+
 import httpx
 import pytest
 from test_market_delivery import Sender, drain, enable_mail, verified_address
@@ -13,8 +14,10 @@ from msg.transports.http import create_app
 
 async def snapshot(app):
     async with app.metadata.transaction(write=False) as tx:
-        return {table: tx.rows(f'SELECT * FROM {table} ORDER BY 1') for table in (
-            'store_orders', 'store_deliveries', 'money_ledger', 'events', 'audit')}
+        return {
+            table: tx.rows(f'SELECT * FROM {table} ORDER BY 1')
+            for table in ('store_orders', 'store_deliveries', 'money_ledger', 'events', 'audit')
+        }
 
 
 @pytest.mark.asyncio
@@ -35,8 +38,9 @@ async def test_emailed_pickup_url_reads_new_delivery_without_claiming(installed)
     before = await snapshot(app)
     args = {'order_id': oid}
     headers = _headers(app, 'delivery.get', args, bk, buyer)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url=app.settings.service_url) as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
         response = await http.get(message['pickup'], headers=headers)
         assert response.status_code == 200, response.text
         delivery = response.json()['delivery']
@@ -51,8 +55,11 @@ async def test_emailed_pickup_url_reads_new_delivery_without_claiming(installed)
             auth = {} if key is None else _headers(app, 'delivery.get', args, key, subject)
             denied = await http.get(message['pickup'], headers=auth)
             missing_id = 'ord_' + 'z' * 32
-            missing_auth = {} if key is None else _headers(app, 'delivery.get',
-                {'order_id': missing_id}, key, subject)
+            missing_auth = (
+                {}
+                if key is None
+                else _headers(app, 'delivery.get', {'order_id': missing_id}, key, subject)
+            )
             missing = await http.get(f'/_orders/{missing_id}/_delivery', headers=missing_auth)
             assert denied.status_code in {403, 404} and denied.status_code == missing.status_code
     assert await snapshot(app) == before
@@ -67,15 +74,19 @@ async def test_unfunded_payment_url_has_no_fabricated_receipt_or_payment(install
     assert created.status == 'ok', wire(created)
     oid = created.data['order']['id']
     if cancelled:
-        result = await call(app, 'orders.cancel', {'order_id': oid}, key=bk,
-                            subject=buyer, contract_version=2)
+        result = await call(
+            app, 'orders.cancel', {'order_id': oid}, key=bk, subject=buyer, contract_version=2
+        )
         assert result.status == 'ok', wire(result)
     before = await snapshot(app)
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url=app.settings.service_url) as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
         for key, subject in ((bk, buyer), (sk, seller)):
-            response = await http.get(f'/_orders/{oid}/_payment', headers=_headers(
-                app, 'orders.payment', {'order_id': oid}, key, subject))
+            response = await http.get(
+                f'/_orders/{oid}/_payment',
+                headers=_headers(app, 'orders.payment', {'order_id': oid}, key, subject),
+            )
             assert response.status_code == 200, response.text
             payment = response.json()['payment']
             assert payment['status'] == 'pending'

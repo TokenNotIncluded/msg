@@ -1,11 +1,12 @@
 """One current buyer binding for site delivery and optional email projections."""
+
 from __future__ import annotations
 
 from urllib.parse import urlsplit
 
 from msg.core.codec import decode, loads, wire
+from msg.core.email_address import validate_address as validate_address
 from msg.core.errors import Failure, require
-from msg.core.email_address import validate_address
 from msg.core.models import EmailSettings
 
 
@@ -17,15 +18,23 @@ def mail_enabled(app):
 def pickup_url(app, order_id):
     """Build a non-capability link without leaking credentials from configuration."""
     origin = app.settings.service_url
-    require(isinstance(origin, str) and
-            all(ord(c) > 32 and ord(c) != 127 for c in origin) and
-            '\\' not in origin, 'invalid_delivery_origin')
+    require(
+        isinstance(origin, str)
+        and all(ord(c) > 32 and ord(c) != 127 for c in origin)
+        and '\\' not in origin,
+        'invalid_delivery_origin',
+    )
     try:
         base = urlsplit(origin)
-        valid = (base.scheme in {'http', 'https'} and base.hostname and
-                 base.username is None and base.password is None and
-                 not base.query and not base.fragment)
-        base.port  # Validate malformed/out-of-range ports as well as IPv6 syntax.
+        valid = (
+            base.scheme in {'http', 'https'}
+            and base.hostname
+            and base.username is None
+            and base.password is None
+            and not base.query
+            and not base.fragment
+        )
+        _ = base.port  # Validate malformed/out-of-range ports as well as IPv6 syntax.
     except ValueError:
         raise Failure('invalid_delivery_origin') from None
     require(valid, 'invalid_delivery_origin')
@@ -43,13 +52,17 @@ def account_email(tx, buyer):
 
 
 def validate_target(order, delivery=None):
-    require(order['delivery_target'] == {
-        'subject_id': order['buyer'], 'channel': 'site'},
-        'delivery_recipient_mismatch')
+    require(
+        order['delivery_target'] == {'subject_id': order['buyer'], 'channel': 'site'},
+        'delivery_recipient_mismatch',
+    )
     if delivery is not None:
-        require(delivery['order_id'] == order['id'] and
-                delivery['recipient_subject'] == order['buyer'] and
-                delivery['channel'] == 'site', 'delivery_recipient_mismatch')
+        require(
+            delivery['order_id'] == order['id']
+            and delivery['recipient_subject'] == order['buyer']
+            and delivery['channel'] == 'site',
+            'delivery_recipient_mismatch',
+        )
 
 
 def email_binding(tx, buyer, address):
@@ -62,15 +75,21 @@ def email_binding(tx, buyer, address):
     if email is None or email.address != address or email.verified_at is None:
         return None
     validate_address(email.address)
-    return {'endpoint_id': 'email:' + buyer, 'owner': buyer,
-            'generation': generation, 'address_snapshot': address,
-            'verified_at': wire(email.verified_at)}
+    return {
+        'endpoint_id': 'email:' + buyer,
+        'owner': buyer,
+        'generation': generation,
+        'address_snapshot': address,
+        'verified_at': wire(email.verified_at),
+    }
 
 
 def validate_email_binding(tx, order, binding):
     validate_target(order)
-    require(isinstance(binding, dict) and binding.get('owner') == order['buyer'],
-            'delivery_recipient_mismatch')
+    require(
+        isinstance(binding, dict) and binding.get('owner') == order['buyer'],
+        'delivery_recipient_mismatch',
+    )
     current = email_binding(tx, order['buyer'], binding.get('address_snapshot'))
     require(current is not None and current == binding, 'delivery_recipient_mismatch')
     return current['address_snapshot']

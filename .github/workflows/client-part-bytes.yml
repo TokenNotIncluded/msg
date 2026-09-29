@@ -68,7 +68,7 @@ jobs:
           python -m pytest -q
           tests/test_client_part_bytes.py tests/test_client.py
           --junitxml=artifacts/client-part-bytes.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: client-part-bytes-evidence

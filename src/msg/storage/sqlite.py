@@ -1,4 +1,5 @@
 """One transactional metadata session; handlers never own commit rights."""
+
 from __future__ import annotations
 
 import asyncio
@@ -225,26 +226,28 @@ class SqliteSession(RelationalSession):
         super().__init__(write=write)
         self._connection = connection
 
-    def execute(self, sql: str, parameters: SqlParameters = (), *,
-                write: bool = False) -> QueryResult:
+    def execute(
+        self, sql: str, parameters: SqlParameters = (), *, write: bool = False
+    ) -> QueryResult:
         self.check(write)
         try:
             return SessionQueryResult(self._connection.execute(sql, parameters), self.check)
         except sqlite3.IntegrityError as exc:
-            raise Failure("constraint_conflict") from exc
+            raise Failure('constraint_conflict') from exc
 
 
 class SqliteMetadataStore:
-    def __init__(self,path: Path, *, busy_timeout: float=10):
-        self.path=Path(path)
-        self.path.parent.mkdir(parents=True,exist_ok=True)
-        self.busy_timeout=busy_timeout
-        self._current=contextvars.ContextVar('msg_transaction_'+uuid.uuid4().hex,default=None)
-        conn=self._connect()
+    def __init__(self, path: Path, *, busy_timeout: float = 10):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.busy_timeout = busy_timeout
+        self._current = contextvars.ContextVar('msg_transaction_' + uuid.uuid4().hex, default=None)
+        conn = self._connect()
         try:
-            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute('PRAGMA journal_mode=WAL')
             conn.executescript(_SCHEMA)
             from msg.storage.topic_event_migration import migrate_topic_events
+
             conn.execute('BEGIN IMMEDIATE')
             try:
                 migrate_topic_events(conn)
@@ -256,58 +259,65 @@ class SqliteMetadataStore:
             conn.close()
 
     def _connect(self):
-        conn=sqlite3.connect(self.path,timeout=self.busy_timeout,isolation_level=None,check_same_thread=False)
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.execute("PRAGMA synchronous=FULL")
+        conn = sqlite3.connect(
+            self.path, timeout=self.busy_timeout, isolation_level=None, check_same_thread=False
+        )
+        conn.execute('PRAGMA foreign_keys=ON')
+        conn.execute('PRAGMA synchronous=FULL')
         return conn
 
     async def _acquire_write_fence(self):
         # SQLite can release its own lock on an implicit transaction abort.
         # Keep independent processes out until external compensation completes.
-        fd=os.open(self.path.with_name(self.path.name+'.writer.lock'),
-                   os.O_CREAT|os.O_RDWR|os.O_CLOEXEC|os.O_NOFOLLOW,0o600)
-        loop=asyncio.get_running_loop()
-        deadline=loop.time()+self.busy_timeout
+        fd = os.open(
+            self.path.with_name(self.path.name + '.writer.lock'),
+            os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW,
+            0o600,
+        )
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + self.busy_timeout
         try:
             while True:
                 try:
-                    fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                     return fd
                 except BlockingIOError:
-                    require(loop.time()<deadline,'server_busy',retryable=True)
-                    await asyncio.sleep(min(0.01,max(0,deadline-loop.time())))
+                    require(loop.time() < deadline, 'server_busy', retryable=True)
+                    await asyncio.sleep(min(0.01, max(0, deadline - loop.time())))
         except BaseException:
             os.close(fd)
             raise
 
     @asynccontextmanager
     async def transaction(self, *, write):
-        existing=self._current.get()
+        existing = self._current.get()
         if existing is not None:
             existing.check(write)
-            name='nested_'+uuid.uuid4().hex
-            existing.execute('SAVEPOINT '+name)
-            rollback_at=len(existing.rollback_effects)
+            name = 'nested_' + uuid.uuid4().hex
+            existing.execute('SAVEPOINT ' + name)
+            rollback_at = len(existing.rollback_effects)
             try:
                 yield existing
-                existing.execute('RELEASE SAVEPOINT '+name)
+                existing.execute('RELEASE SAVEPOINT ' + name)
             except BaseException as exc:
-                existing.execute('ROLLBACK TO SAVEPOINT '+name)
-                existing.execute('RELEASE SAVEPOINT '+name)
-                await existing.run_rollback_effects(exc,rollback_at)
+                existing.execute('ROLLBACK TO SAVEPOINT ' + name)
+                existing.execute('RELEASE SAVEPOINT ' + name)
+                await existing.run_rollback_effects(exc, rollback_at)
                 raise
             return
-        conn=self._connect()
-        tx=SqliteSession(conn,write=write)
-        token=None
-        writer_fence=None
+        conn = self._connect()
+        tx = SqliteSession(conn, write=write)
+        token = None
+        writer_fence = None
         try:
             if write:
-                writer_fence=await self._acquire_write_fence()
+                writer_fence = await self._acquire_write_fence()
             if not write:
-                conn.execute("PRAGMA query_only=ON")
+                conn.execute('PRAGMA query_only=ON')
             try:
-                beginning=asyncio.create_task(asyncio.to_thread(conn.execute,"BEGIN IMMEDIATE" if write else "BEGIN"))
+                beginning = asyncio.create_task(
+                    asyncio.to_thread(conn.execute, 'BEGIN IMMEDIATE' if write else 'BEGIN')
+                )
                 try:
                     await asyncio.shield(beginning)
                 except asyncio.CancelledError:
@@ -318,17 +328,17 @@ class SqliteMetadataStore:
                     finally:
                         raise
             except sqlite3.OperationalError as exc:
-                raise Failure("server_busy",retryable=True) from exc
-            token=self._current.set(tx)
+                raise Failure('server_busy', retryable=True) from exc
+            token = self._current.set(tx)
             yield tx
-            conn.execute("COMMIT")
+            conn.execute('COMMIT')
         except BaseException as exc:
             if conn.in_transaction:
-                conn.execute("ROLLBACK")
+                conn.execute('ROLLBACK')
             await tx.run_rollback_effects(exc)
             raise
         finally:
-            tx.closed=True
+            tx.closed = True
             if token is not None:
                 self._current.reset(token)
             try:
@@ -341,9 +351,9 @@ class SqliteMetadataStore:
         # Connections are scoped to transactions, not retained per account.
         return None
 
-    def backup(self,destination: Path):
-        source=self._connect()
-        target=sqlite3.connect(destination)
+    def backup(self, destination: Path):
+        source = self._connect()
+        target = sqlite3.connect(destination)
         try:
             source.backup(target)
         finally:
@@ -357,9 +367,10 @@ class FakeMetadataStore(SqliteMetadataStore):
     Uses the same isolation/rollback behavior rather than unrelated dictionaries.
     It deliberately is not an independent SQL correctness oracle.
     """
-    def __init__(self,path=None,**kwargs):
-        self._temporary=tempfile.TemporaryDirectory(prefix='msg-fake-')
-        super().__init__(Path(self._temporary.name)/'metadata.db',**kwargs)
+
+    def __init__(self, path=None, **kwargs):
+        self._temporary = tempfile.TemporaryDirectory(prefix='msg-fake-')
+        super().__init__(Path(self._temporary.name) / 'metadata.db', **kwargs)
 
     async def close(self):
         self._temporary.cleanup()

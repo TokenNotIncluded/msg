@@ -3,12 +3,12 @@
 Order IDs, digests and pins never confer read access. Pins protect a blob before
 SQL commits; this inventory protects it after the originating file is purged.
 """
+
 from msg.core.codec import loads
 
 
 def content_references(execute):
-    for table, column in (('store_packages', 'payload_refs'),
-                          ('store_deliveries', 'payload_refs')):
+    for table, column in (('store_packages', 'payload_refs'), ('store_deliveries', 'payload_refs')):
         for (raw,) in execute(f'SELECT {column} FROM {table} ORDER BY id'):
             for ref in loads(raw):
                 yield ref['blob']

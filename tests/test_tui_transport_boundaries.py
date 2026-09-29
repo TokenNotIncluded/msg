@@ -1,4 +1,5 @@
 """No implicit retries/writes or stale selections after a terminal read fails."""
+
 from io import StringIO
 from types import SimpleNamespace
 
@@ -24,12 +25,25 @@ class Client:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('error_type', [httpx.ConnectError, httpx.ReadError, httpx.ReadTimeout,
-    httpx.WriteError, httpx.PoolTimeout, httpx.RemoteProtocolError, httpx.DecodingError])
+@pytest.mark.parametrize(
+    'error_type',
+    [
+        httpx.ConnectError,
+        httpx.ReadError,
+        httpx.ReadTimeout,
+        httpx.WriteError,
+        httpx.PoolTimeout,
+        httpx.RemoteProtocolError,
+        httpx.DecodingError,
+    ],
+)
 async def test_httpx_disconnect_is_sanitized_and_retry_is_explicit(error_type):
     secret = 'https://testserver/private?token=never-display-this'
-    client = Client([{'items': [{'id': 'old', 'name': 'OLD'}], 'cursor': 'old-cursor'},
-                     error_type(secret), {'items': [{'id': 'new', 'name': 'FRESH'}]}])
+    client = Client([
+        {'items': [{'id': 'old', 'name': 'OLD'}], 'cursor': 'old-cursor'},
+        error_type(secret),
+        {'items': [{'id': 'new', 'name': 'FRESH'}]},
+    ])
     output = StringIO()
     ui = TerminalUI(client, stdout=output, width=160)
     await ui.home()
@@ -49,8 +63,10 @@ async def test_httpx_disconnect_is_sanitized_and_retry_is_explicit(error_type):
 
 @pytest.mark.asyncio
 async def test_successful_document_replaces_old_list_selection():
-    client = Client([{'items': [{'id': 'old'}], 'cursor': 'old-cursor'},
-                     {'path': '/main/current.md', 'content': 'CURRENT'}])
+    client = Client([
+        {'items': [{'id': 'old'}], 'cursor': 'old-cursor'},
+        {'path': '/main/current.md', 'content': 'CURRENT'},
+    ])
     ui = TerminalUI(client, stdout=StringIO())
     await ui.home()
     await ui.read('current')
@@ -67,8 +83,11 @@ async def test_changed_identity_or_service_drops_old_selection(change, command):
     client = Client([{'items': [{'id': 'old-private'}], 'cursor': 'old-cursor'}])
     ui = TerminalUI(client, stdout=StringIO())
     await ui.home()
-    setattr(client.state, change, {'subject': 'bob', 'server': 'http://other',
-                                  'certificates': ('new-cert',)}[change])
+    setattr(
+        client.state,
+        change,
+        {'subject': 'bob', 'server': 'http://other', 'certificates': ('new-cert',)}[change],
+    )
     await ui.command(command)
     assert ui.page is None
     assert ui._last_read is None
@@ -86,14 +105,26 @@ async def test_oversized_selection_is_rejected_without_integer_conversion_crash(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('payload', [
-    ['not', 'an', 'object'], 'text', None, 7,
-    {'items': 'abc'}, {'items': ['x']}, {'items': [{'id': 'ok'}, None]},
-    {'items': [], 'cursor': {'forged': 'cursor'}}, {'items': [], 'cursor': 5},
-])
+@pytest.mark.parametrize(
+    'payload',
+    [
+        ['not', 'an', 'object'],
+        'text',
+        None,
+        7,
+        {'items': 'abc'},
+        {'items': ['x']},
+        {'items': [{'id': 'ok'}, None]},
+        {'items': [], 'cursor': {'forged': 'cursor'}},
+        {'items': [], 'cursor': 5},
+    ],
+)
 async def test_malformed_read_payload_is_a_stable_error_not_a_crash(payload):
-    client = Client([{'items': [{'id': 'old', 'name': 'OLD'}], 'cursor': 'old-cursor'},
-                     payload, {'items': [{'id': 'new', 'name': 'FRESH'}]}])
+    client = Client([
+        {'items': [{'id': 'old', 'name': 'OLD'}], 'cursor': 'old-cursor'},
+        payload,
+        {'items': [{'id': 'new', 'name': 'FRESH'}]},
+    ])
     output = StringIO()
     ui = TerminalUI(client, stdout=output, width=160)
     await ui.home()
@@ -111,8 +142,10 @@ async def test_malformed_read_payload_is_a_stable_error_not_a_crash(payload):
 @pytest.mark.asyncio
 async def test_frozen_client_payload_is_still_a_valid_page():
     from msg.core.codec import freeze_json
-    client = Client([freeze_json({'items': [{'ref': {'id': 'r_frozen'}, 'name': 'FROZEN'}],
-                                  'cursor': 'next'})])
+
+    client = Client([
+        freeze_json({'items': [{'ref': {'id': 'r_frozen'}, 'name': 'FROZEN'}], 'cursor': 'next'})
+    ])
     output = StringIO()
     ui = TerminalUI(client, stdout=output, width=160)
     await ui.home()
@@ -122,8 +155,16 @@ async def test_frozen_client_payload_is_still_a_valid_page():
 
 @pytest.mark.asyncio
 async def test_items_without_readable_identifier_are_not_dereferenced():
-    client = Client([{'items': [{'name': 'no id'}, {'ref': 'not-a-dict'},
-                                {'resource': {'id': ['list']}}, {'id': 'r_ok', 'ref': 'x'}]}])
+    client = Client([
+        {
+            'items': [
+                {'name': 'no id'},
+                {'ref': 'not-a-dict'},
+                {'resource': {'id': ['list']}},
+                {'id': 'r_ok', 'ref': 'x'},
+            ]
+        }
+    ])
     output = StringIO()
     ui = TerminalUI(client, stdout=output, width=160)
     await ui.home()
@@ -169,8 +210,9 @@ async def test_inflight_read_from_previous_identity_is_not_displayed():
     async def switch_during_read(operation, arguments):
         client.calls.append((operation, arguments))
         client.state.subject = 'bob'
-        return SimpleNamespace(status='ok', data={'items': [{'id': 'alice-private',
-                                                           'name': 'NEVER DISPLAY'}]})
+        return SimpleNamespace(
+            status='ok', data={'items': [{'id': 'alice-private', 'name': 'NEVER DISPLAY'}]}
+        )
 
     client.call = switch_during_read
     ui = TerminalUI(client, stdout=StringIO())

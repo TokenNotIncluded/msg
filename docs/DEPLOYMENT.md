@@ -33,7 +33,7 @@ service_keys = "/var/lib/msgd/service"
 sudo install -d -m 0755 /opt/msgd
 sudo /absolute/path/to/verified/python3.15 -m venv /opt/msgd/venv
 # 下面的锁生成只在验收环境运行；目录需由构建操作者可写。
-printf '%s\n' 'msg-lmm-best[server] @ file:///protected/staged/msg_lmm_best-1.0.0a1-py3-none-any.whl' > /protected/staged/server.in
+printf '%s\n' 'msgctl[server] @ file:///protected/staged/msgctl-0.1.0a1-py3-none-any.whl' > /protected/staged/server.in
 uv pip compile --python /opt/msgd/venv/bin/python --generate-hashes \
   /protected/staged/server.in --output-file /protected/staged/server.lock
 sudo uv pip sync --python /opt/msgd/venv/bin/python --require-hashes /protected/staged/server.lock

@@ -74,7 +74,7 @@ jobs:
           tests/test_batch_secret_release.py tests/test_tools.py tests/test_webhook_domain_events.py
           tests/test_read_projection_cache_transports.py tests/test_read_projection_cache_unit.py
           tests/issue_78_80 --junitxml=artifacts/architecture-ports.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: architecture-ports-evidence

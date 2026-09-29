@@ -1,15 +1,16 @@
 """The terminal navigator uses only read contracts and never acknowledges."""
+
 from io import StringIO
 from types import SimpleNamespace
 
 import httpx
 import pytest
+from test_service import NOW
 
 from msg.client import ClientState, MsgClient
 from msg.transports.client import HTTPTransport
 from msg.transports.http import create_app
 from msg.tui import TerminalUI, run_tui, safe_text
-from test_service import NOW
 
 
 class FakeClient:
@@ -32,8 +33,10 @@ class FakeClient:
 async def test_tui_read_call_matrix_cursor_revocation_and_safe_rendering():
     client = FakeClient(subject='u_me')
     client.responses = {
-        'discovery.read_query': [{'items': [{'id': 't_public', 'name': '\x1b[31mMain'}],
-                                  'cursor': 'next-secret'}, 'access_denied'],
+        'discovery.read_query': [
+            {'items': [{'id': 't_public', 'name': '\x1b[31mMain'}], 'cursor': 'next-secret'},
+            'access_denied',
+        ],
         'communication.inbox': {'items': [{'resource': {'id': 'p_1'}, 'source': 'dm'}]},
         'discovery.lexical_search': {'items': [{'id': 'p_1', 'name': 'found'}]},
         'discussion.thread': {'items': [{'id': 'p_1', 'name': 'reply'}]},
@@ -47,9 +50,17 @@ async def test_tui_read_call_matrix_cursor_revocation_and_safe_rendering():
     for command in ('id', 'i', 's /main found', 't p_1', 'r p_1'):
         assert await ui.command(command)
     assert ('discovery.read_query', {'cursor': 'next-secret'}) in client.calls
-    assert all(operation in {'discovery.read_query', 'communication.inbox',
-                             'discovery.lexical_search', 'discussion.thread',
-                             'discovery.get'} for operation, _ in client.calls)
+    assert all(
+        operation
+        in {
+            'discovery.read_query',
+            'communication.inbox',
+            'discovery.lexical_search',
+            'discussion.thread',
+            'discovery.get',
+        }
+        for operation, _ in client.calls
+    )
     assert '\x1b' not in output.getvalue() and '\x07' not in output.getvalue()
     assert 'https://msg.example' in output.getvalue()
     assert 'access_denied' in output.getvalue()
@@ -69,21 +80,32 @@ async def test_tui_anonymous_entry_and_eof_exits_without_mutation():
 @pytest.mark.asyncio
 async def test_tui_real_pg_read_and_revocation_no_business_effect(installed, tmp_path):
     app, _ = installed
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url=app.settings.service_url) as http:
-        author = MsgClient(ClientState(tmp_path / 'author', server=app.settings.service_url),
-                           HTTPTransport(app.settings.service_url, http=http), clock=lambda: NOW)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        author = MsgClient(
+            ClientState(tmp_path / 'author', server=app.settings.service_url),
+            HTTPTransport(app.settings.service_url, http=http),
+            clock=lambda: NOW,
+        )
         assert (await author.register('tui-author')).status == 'ok'
-        post = await author.call('content.post_create', {'parent': '/main', 'body': 'TUI public text'})
+        post = await author.call(
+            'content.post_create', {'parent': '/main', 'body': 'TUI public text'}
+        )
         assert post.status == 'ok'
         rid = post.resources[0].id
-        reader = MsgClient(ClientState(tmp_path / 'anonymous', server=app.settings.service_url),
-                           HTTPTransport(app.settings.service_url, http=http), clock=lambda: NOW)
+        reader = MsgClient(
+            ClientState(tmp_path / 'anonymous', server=app.settings.service_url),
+            HTTPTransport(app.settings.service_url, http=http),
+            clock=lambda: NOW,
+        )
         output = StringIO()
         ui = TerminalUI(reader, stdout=output, width=32)
         async with app.metadata.transaction(write=False) as tx:
-            before = tuple(tx.one(f'SELECT COUNT(*) FROM {table}')[0] for table in
-                           ('resources', 'revisions', 'messages', 'events', 'reactions'))
+            before = tuple(
+                tx.one(f'SELECT COUNT(*) FROM {table}')[0]
+                for table in ('resources', 'revisions', 'messages', 'events', 'reactions')
+            )
         await ui.home()
         await ui.read(rid)
         output.seek(0)
@@ -92,12 +114,19 @@ async def test_tui_real_pg_read_and_revocation_no_business_effect(installed, tmp
         assert 'TUI public text' in output.getvalue()
         await ui.thread(rid)
         async with app.metadata.transaction(write=False) as tx:
-            after = tuple(tx.one(f'SELECT COUNT(*) FROM {table}')[0] for table in
-                          ('resources', 'revisions', 'messages', 'events', 'reactions'))
+            after = tuple(
+                tx.one(f'SELECT COUNT(*) FROM {table}')[0]
+                for table in ('resources', 'revisions', 'messages', 'events', 'reactions')
+            )
         assert after == before
         assert 'TUI public text' in output.getvalue()
-        assert (await author.call('content.chmod', {'id': rid, 'mode': '0600'},
-                                  expected=((rid, post.data['generation']),))).status == 'ok'
+        assert (
+            await author.call(
+                'content.chmod',
+                {'id': rid, 'mode': '0600'},
+                expected=((rid, post.data['generation']),),
+            )
+        ).status == 'ok'
         ui.page = None
         hidden = StringIO()
         ui.stdout = hidden

@@ -41,6 +41,9 @@ dev = [
     "tiktoken>=0.12",
 ]
 
+[tool.uv]
+required-version = "==0.12.20"
+
 [tool.uv.build-backend]
 module-name = "msg"
 source-include = [
@@ -73,6 +76,9 @@ select = [
     "PIE", "PGH", "RSE", "T10", "TID", "YTT", "RUF100",
 ]
 explicit-preview-rules = true
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
 
 [tool.ruff.format]
 quote-style = "single"

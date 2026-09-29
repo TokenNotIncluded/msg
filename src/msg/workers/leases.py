@@ -1,4 +1,5 @@
 """One transaction-local fence for publishing any durable effect's result."""
+
 from dataclasses import replace
 
 

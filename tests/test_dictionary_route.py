@@ -1,4 +1,5 @@
 """Two-segment dictionary details bind an operation to its namespace."""
+
 import httpx
 import pytest
 
@@ -12,8 +13,9 @@ async def test_namespace_operation_dictionary_by_name_and_code(installed):
     dictionary = build_dictionary(app.registry)
     namespace_code = dictionary.code_for('namespace', 'transfer')
     operation_code = dictionary.code_for('operation', 'transfer.part_put@1')
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
         by_name = await http.get('/-/d/transfer/transfer.part_put')
         assert by_name.status_code == 200, by_name.text
         assert [row['name'] for row in by_name.json()['operations']] == ['transfer.part_put']
@@ -24,19 +26,26 @@ async def test_namespace_operation_dictionary_by_name_and_code(installed):
         head = await http.head('/-/d/transfer/transfer.part_put')
         assert head.status_code == 200 and head.content == b''
         assert head.headers['etag'] == by_name.headers['etag']
-        assert (await http.get('/-/d/transfer/transfer.part_put',
-                               headers={'If-None-Match': by_name.headers['etag']})).status_code == 304
+        assert (
+            await http.get(
+                '/-/d/transfer/transfer.part_put',
+                headers={'If-None-Match': by_name.headers['etag']},
+            )
+        ).status_code == 304
 
 
 @pytest.mark.asyncio
 async def test_dictionary_rejects_mismatched_or_unknown_namespace(installed):
     app, _ = installed
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
-        for path in ('/-/d/content/transfer.part_put',
-                     '/-/d/missing/transfer.part_put',
-                     '/-/d/transfer/content.post_create',
-                     '/-/d/transfer/part_put'):
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
+        for path in (
+            '/-/d/content/transfer.part_put',
+            '/-/d/missing/transfer.part_put',
+            '/-/d/transfer/content.post_create',
+            '/-/d/transfer/part_put',
+        ):
             response = await http.get(path)
             assert response.status_code == 404, (path, response.text)
         assert (await http.post('/-/d/transfer/transfer.part_put')).status_code == 405

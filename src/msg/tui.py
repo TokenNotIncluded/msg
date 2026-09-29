@@ -3,6 +3,7 @@
 The UI deliberately has no mutation command.  It never interprets links or
 resource text as terminal control sequences or as operations to execute.
 """
+
 from __future__ import annotations
 
 import re
@@ -16,11 +17,18 @@ import httpx
 
 from msg.core.errors import Failure
 
-
 READ_OPERATIONS = frozenset({
-    'discovery.get', 'discovery.read_query', 'discovery.lexical_search',
-    'communication.inbox', 'communication.outbox', 'communication.following', 'discussion.thread',
-    'identity.note_list', 'identity.note_get', 'identity.todo_list', 'identity.todo_get',
+    'discovery.get',
+    'discovery.read_query',
+    'discovery.lexical_search',
+    'communication.inbox',
+    'communication.outbox',
+    'communication.following',
+    'discussion.thread',
+    'identity.note_list',
+    'identity.note_get',
+    'identity.todo_list',
+    'identity.todo_get',
 })
 _CONTROL = re.compile(r'[\x00-\x1f\x7f-\x9f]')
 
@@ -31,8 +39,13 @@ def safe_text(value):
         return ''
     if not isinstance(value, str):
         value = str(value)
-    return ''.join(' ' if _CONTROL.fullmatch(char) or char in '\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069'
-                   else char for char in value)
+    return ''.join(
+        ' '
+        if _CONTROL.fullmatch(char)
+        or char in '\u202a\u202b\u202c\u202d\u202e\u2066\u2067\u2068\u2069'
+        else char
+        for char in value
+    )
 
 
 def terminal_lines(value, width):
@@ -50,8 +63,13 @@ def terminal_lines(value, width):
                 yield line.rstrip()
                 line, used = '', 0
             for char in token:
-                cells = (0 if unicodedata.combining(char) or unicodedata.category(char) == 'Cf'
-                         else 2 if unicodedata.east_asian_width(char) in {'W', 'F'} else 1)
+                cells = (
+                    0
+                    if unicodedata.combining(char) or unicodedata.category(char) == 'Cf'
+                    else 2
+                    if unicodedata.east_asian_width(char) in {'W', 'F'}
+                    else 1
+                )
                 if cells > width:
                     char, cells = '?', 1
                 if cells and used + cells > width:
@@ -62,10 +80,12 @@ def terminal_lines(value, width):
         yield line.rstrip()
 
 
-HELP = ('命令：h Home，id 身份，topics 话题，following 关注，i Inbox，o Outbox，notes 笔记，'
-        'todos 待办，files 文件，groups 组织，credentials 本地凭据，'
-        's <scope> <terms> 搜索，t <id> 线程，r <id> 读取，'
-        'n 下一页，retry 重新读取，q 退出。')
+HELP = (
+    '命令：h Home，id 身份，topics 话题，following 关注，i Inbox，o Outbox，notes 笔记，'
+    'todos 待办，files 文件，groups 组织，credentials 本地凭据，'
+    's <scope> <terms> 搜索，t <id> 线程，r <id> 读取，'
+    'n 下一页，retry 重新读取，q 退出。'
+)
 
 
 def service_origin(value):
@@ -77,7 +97,7 @@ def service_origin(value):
         host = '[' + parsed.hostname + ']' if ':' in parsed.hostname else parsed.hostname
         port = ':' + str(parsed.port) if parsed.port is not None else ''
         return parsed.scheme + '://' + host + port
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return '（无效地址）'
 
 
@@ -94,8 +114,11 @@ class TerminalUI:
     def _context(self):
         state = self.client.state
         # Public identifiers only; do not inspect the token, signer or journals.
-        return (getattr(state, 'subject', None), getattr(state, 'server', None),
-                tuple(getattr(state, 'certificates', ())))
+        return (
+            getattr(state, 'subject', None),
+            getattr(state, 'server', None),
+            tuple(getattr(state, 'certificates', ())),
+        )
 
     def _remember_read(self, function, *arguments):
         self.page = None
@@ -110,7 +133,9 @@ class TerminalUI:
         return False
 
     def _write(self, value=''):
-        columns = self.width if self.width is not None else shutil.get_terminal_size((80, 24)).columns
+        columns = (
+            self.width if self.width is not None else shutil.get_terminal_size((80, 24)).columns
+        )
         width = max(1, min(columns, 160))
         for line in terminal_lines(value, width):
             self.stdout.write(line + '\n')
@@ -154,8 +179,11 @@ class TerminalUI:
     @staticmethod
     def _item_id(item):
         ref = item.get('ref') or item.get('resource')
-        for rid in (item.get('id'), ref.get('id') if isinstance(ref, Mapping) else None,
-                    item.get('conversation_id')):
+        for rid in (
+            item.get('id'),
+            ref.get('id') if isinstance(ref, Mapping) else None,
+            item.get('conversation_id'),
+        ):
             if isinstance(rid, str) and rid:
                 return rid
         return None
@@ -163,10 +191,20 @@ class TerminalUI:
     def _show_items(self, items):
         for index, item in enumerate(items, 1):
             rid = self._item_id(item) or ''
-            name = item.get('title') or item.get('name') or item.get('path') or item.get('source') or rid
+            name = (
+                item.get('title')
+                or item.get('name')
+                or item.get('path')
+                or item.get('source')
+                or rid
+            )
             self._write(f'{index}. {name}  {rid}')
             snippet = item.get('snippet')
-            if isinstance(snippet, Mapping) and isinstance(snippet.get('text'), str) and snippet['text']:
+            if (
+                isinstance(snippet, Mapping)
+                and isinstance(snippet.get('text'), str)
+                and snippet['text']
+            ):
                 self._write('   ' + snippet['text'])
 
     async def _show_page(self, operation, arguments, title):
@@ -177,13 +215,23 @@ class TerminalUI:
         if data is None:
             return
         items = data.get('items', [])
-        cursor = data.get('next_after_name') if operation == 'identity.todo_list' else data.get('cursor')
-        if (not isinstance(items, (list, tuple)) or not all(isinstance(item, Mapping) for item in items)
-                or not (cursor is None or isinstance(cursor, str))):
+        cursor = (
+            data.get('next_after_name') if operation == 'identity.todo_list' else data.get('cursor')
+        )
+        if (
+            not isinstance(items, (list, tuple))
+            or not all(isinstance(item, Mapping) for item in items)
+            or not (cursor is None or isinstance(cursor, str))
+        ):
             self._invalid_response()
             return
-        self.page = {'operation': operation, 'arguments': arguments, 'cursor': cursor,
-                     'title': title, 'items': items}
+        self.page = {
+            'operation': operation,
+            'arguments': arguments,
+            'cursor': cursor,
+            'title': title,
+            'items': items,
+        }
         self._write(title)
         if items:
             self._show_items(items)
@@ -224,12 +272,14 @@ class TerminalUI:
             return
         self._remember_read(self.files)
         profile = await self._read('discovery.get', {'id': subject, 'fields': ['path']})
-        if profile is not None and not (isinstance(profile.get('path'), str)
-                                        and profile['path'].startswith('/')):
+        if profile is not None and not (
+            isinstance(profile.get('path'), str) and profile['path'].startswith('/')
+        ):
             self._invalid_response()
         elif profile is not None:
-            await self._show_page('discovery.read_query',
-                                 {'parent': profile['path'] + '/files', 'limit': 20}, 'Files')
+            await self._show_page(
+                'discovery.read_query', {'parent': profile['path'] + '/files', 'limit': 20}, 'Files'
+            )
 
     def credentials(self):
         self.identity()
@@ -242,9 +292,11 @@ class TerminalUI:
         if not scope or not terms:
             self._write('用法：s <scope> <terms>')
             return
-        await self._show_page('discovery.lexical_search',
-                              {'scope': scope, 'terms': terms, 'limit': 20,
-                               'snippet': True}, '搜索')
+        await self._show_page(
+            'discovery.lexical_search',
+            {'scope': scope, 'terms': terms, 'limit': 20, 'snippet': True},
+            '搜索',
+        )
 
     async def thread(self, rid):
         if not rid:
@@ -282,10 +334,17 @@ class TerminalUI:
             self._write('没有下一页。')
             return
         current = self.page
-        arguments = ({'cursor': current['cursor']} if current['operation'] in
-                     {'discovery.read_query', 'discovery.lexical_search', 'communication.following'} else
-                     {**current['arguments'],
-                      'after_name' if current['operation'] == 'identity.todo_list' else 'cursor': current['cursor']})
+        arguments = (
+            {'cursor': current['cursor']}
+            if current['operation']
+            in {'discovery.read_query', 'discovery.lexical_search', 'communication.following'}
+            else {
+                **current['arguments'],
+                'after_name' if current['operation'] == 'identity.todo_list' else 'cursor': current[
+                    'cursor'
+                ],
+            }
+        )
         await self._show_page(current['operation'], arguments, current['title'])
 
     async def command(self, raw):
@@ -302,7 +361,9 @@ class TerminalUI:
         elif command == 'topics':
             await self._show_page('discovery.read_query', {'type': 'topic', 'limit': 20}, 'Topics')
         elif command == 'groups':
-            await self._show_page('discovery.read_query', {'type': 'organization', 'limit': 20}, 'Groups')
+            await self._show_page(
+                'discovery.read_query', {'type': 'organization', 'limit': 20}, 'Groups'
+            )
         elif command in {'o', 'outbox'}:
             await self.private_page('communication.outbox', {'limit': 20}, 'Outbox')
         elif command == 'following':
@@ -325,8 +386,9 @@ class TerminalUI:
             await self.next_page()
         elif command.startswith('s '):
             parts = command.split(maxsplit=2)
-            await self.search(parts[1] if len(parts) > 1 else '',
-                              parts[2] if len(parts) > 2 else '')
+            await self.search(
+                parts[1] if len(parts) > 1 else '', parts[2] if len(parts) > 2 else ''
+            )
         elif command.startswith('t '):
             await self.thread(command[2:].strip())
         elif command.startswith('r '):

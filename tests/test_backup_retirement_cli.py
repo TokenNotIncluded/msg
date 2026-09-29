@@ -1,9 +1,10 @@
 """Installed administrative entry and real descriptor boundaries, not console success."""
+
 import json
 import os
-from pathlib import Path
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -13,22 +14,28 @@ from msg.daemon import parser
 
 @pytest.mark.parametrize('action', ['sign', 'import'])
 def test_retirement_command_parser(action, tmp_path):
-    command = ['root', 'backup-retirement', action, str(tmp_path/'statement.json')]
+    command = ['root', 'backup-retirement', action, str(tmp_path / 'statement.json')]
     if action == 'sign':
-        command.append(str(tmp_path/'record.json'))
+        command.append(str(tmp_path / 'record.json'))
     args = parser().parse_args(command)
     assert args.retirement_command == action
-    assert args.source == tmp_path/'statement.json'
+    assert args.source == tmp_path / 'statement.json'
 
 
 @pytest.mark.parametrize('action', ['sign', 'import'])
 def test_retirement_cli_refuses_nonconsole_before_reading_files(action, tmp_path):
-    command = [str(Path(sys.executable).with_name('msgd')),
-               '--config-dir', str(tmp_path), 'root', 'backup-retirement', action,
-               str(tmp_path/'missing.json')]
+    command = [
+        str(Path(sys.executable).with_name('msgd')),
+        '--config-dir',
+        str(tmp_path),
+        'root',
+        'backup-retirement',
+        action,
+        str(tmp_path / 'missing.json'),
+    ]
     if action == 'sign':
-        command.append(str(tmp_path/'output.json'))
-    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]/'src'))
+        command.append(str(tmp_path / 'output.json'))
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'src'))
     for key in ('SSH_CONNECTION', 'SSH_CLIENT', 'SSH_TTY'):
         env.pop(key, None)
     result = subprocess.run(command, env=env, capture_output=True, text=True)
@@ -36,21 +43,22 @@ def test_retirement_cli_refuses_nonconsole_before_reading_files(action, tmp_path
     expected = 'local_os_administrator_required' if os.geteuid() else 'local_console_required'
     assert json.loads(result.stderr) == {'status': 'error', 'error': {'code': expected}}
     assert result.stdout == ''
-    assert not (tmp_path/'output.json').exists()
+    assert not (tmp_path / 'output.json').exists()
 
 
 @pytest.mark.parametrize('kind', ['symlink', 'hardlink', 'permissions', 'fifo', 'oversize'])
 def test_statement_file_boundary(kind, tmp_path):
     from msg.admin.backup_retirement import read_statement
-    path = tmp_path/'statement.json'
+
+    path = tmp_path / 'statement.json'
     path.write_bytes(b'{}')
     path.chmod(0o600)
     if kind == 'symlink':
-        target = tmp_path/'target'
+        target = tmp_path / 'target'
         path.rename(target)
         path.symlink_to(target)
     elif kind == 'hardlink':
-        os.link(path, tmp_path/'other')
+        os.link(path, tmp_path / 'other')
     elif kind == 'permissions':
         path.chmod(0o644)
     elif kind == 'fifo':
@@ -64,7 +72,8 @@ def test_statement_file_boundary(kind, tmp_path):
 
 def test_statement_file_valid(tmp_path):
     from msg.admin.backup_retirement import read_statement
-    path = tmp_path/'statement.json'
+
+    path = tmp_path / 'statement.json'
     path.write_bytes(b'{"statement": {}}')
     path.chmod(0o600)
     assert read_statement(path) == {'statement': {}}
@@ -73,7 +82,8 @@ def test_statement_file_valid(tmp_path):
 @pytest.mark.parametrize('existing', [False, True])
 def test_record_output_never_overwrites(existing, tmp_path):
     from msg.admin.backup_retirement import write_record
-    target = tmp_path/'record.json'
+
+    target = tmp_path / 'record.json'
     if existing:
         target.write_bytes(b'preserve')
         with pytest.raises(Failure, match='backup_retirement_destination_exists'):
@@ -88,9 +98,10 @@ def test_record_output_never_overwrites(existing, tmp_path):
 
 def test_record_output_refuses_symlink(tmp_path):
     from msg.admin.backup_retirement import write_record
-    victim = tmp_path/'victim.json'
+
+    victim = tmp_path / 'victim.json'
     victim.write_bytes(b'preserve')
-    target = tmp_path/'record.json'
+    target = tmp_path / 'record.json'
     target.symlink_to(victim)
     with pytest.raises(Failure, match='backup_retirement_destination_exists'):
         write_record(target, {'statement': {}})

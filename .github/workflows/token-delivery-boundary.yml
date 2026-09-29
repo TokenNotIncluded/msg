@@ -74,7 +74,7 @@ jobs:
           tests/test_credential_recovery_window.py tests/test_client_token_delivery.py
           tests/test_batch_secret_release.py tests/test_security_patch_regressions.py
           --junitxml=artifacts/token-delivery-boundary.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: token-delivery-boundary-evidence
