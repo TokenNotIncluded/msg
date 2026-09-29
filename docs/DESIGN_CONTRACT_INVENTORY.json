@@ -13543,7 +13543,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Subject.resource_id / Resource.id",
+        "source_refs": [
+          "src/msg/core/models.py:103"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "user_id denotes stable subject identity, not a second ID; handle is mutable Resource.name.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F021.identity.actor",
@@ -13733,7 +13743,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "RecoveryCustodian.id",
+        "source_refs": [
+          "src/msg/config.py:18"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Configured id is the stable custodian reference; recipient/fingerprint separately bind the age key.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F027.RecoveryCustodian.name",
@@ -13861,7 +13881,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "recipient_fingerprints[] + RecoveryPolicy recipients fingerprint/custodian_ref",
+        "source_refs": [
+          "src/msg/plugins/recovery.py:275"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Plural because design28 permits OR multi-recipient age; caller fingerprints must be a subset of the current policy, not new authority.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F028.RecoveryEnvelope.custodian_ref",
@@ -14077,7 +14107,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "mapping.new.{id,revision,ciphertext_digest}; mapping.recipient/new_key_id",
+        "source_refs": [
+          "src/msg/plugins/recovery.py:98"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Explicit old/new mapping is stored in custodial_upgrades and audited. New ciphertext is a separate immutable Revision; old bytes/key_id unchanged.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F029.rewrap_mapping.new_digest",
@@ -14097,7 +14137,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "mapping.new.{id,revision,ciphertext_digest}; mapping.recipient/new_key_id",
+        "source_refs": [
+          "src/msg/plugins/recovery.py:98"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Explicit old/new mapping is stored in custodial_upgrades and audited. New ciphertext is a separate immutable Revision; old bytes/key_id unchanged.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F029.rewrap_mapping.recipient_key",
@@ -14117,7 +14167,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "mapping.new.{id,revision,ciphertext_digest}; mapping.recipient/new_key_id",
+        "source_refs": [
+          "src/msg/plugins/recovery.py:98"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Explicit old/new mapping is stored in custodial_upgrades and audited. New ciphertext is a separate immutable Revision; old bytes/key_id unchanged.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F032.AchievementGrant.id",
@@ -14133,7 +14193,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "grant JSON id / achievement_grants.id",
+        "source_refs": [
+          "src/msg/plugins/achievements.py:145"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Same explicit id, located in plugin runtime JSON rather than a model dataclass. Ownership and id match rechecked.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F032.AchievementGrant.subject_id",
@@ -14442,7 +14512,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "r4_result and final_statement in ceremony_digest",
+        "source_refs": [
+          "src/msg/plugins/achievements.py:115"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "R5 constant and answered R1–R4 rounds are bound to subject/challenge digest; uppercase inventory labels were descriptive, not wire fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F039.challenge_signature.R5_statement",
@@ -14460,7 +14540,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "r4_result and final_statement in ceremony_digest",
+        "source_refs": [
+          "src/msg/plugins/achievements.py:115"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "R5 constant and answered R1–R4 rounds are bound to subject/challenge digest; uppercase inventory labels were descriptive, not wire fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F040.round_evidence.round",
@@ -14703,7 +14793,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "CapabilitySpec.operations",
+        "source_refs": [
+          "src/msg/core/models.py:329"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Explicit finite operations set; discovery serializes the installed spec. No wildcard grant expansion implied by naming difference.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F045.CapabilitySpec_projection.delegatable",
@@ -15557,7 +15657,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "BlobRef.digest → validated sha256 key → private index {kind:git|binary, oid?, size}",
+        "source_refs": [
+          "src/msg/storage/git.py:264"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Backend/key are private storage indirection, not exposed in signed/public BlobRef. Design136/86 prohibit backend disclosure/direct CAS links; no need to add backend to existing signed BlobRef.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F057.BlobRef.key",
@@ -15779,7 +15889,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "integer amount_minor, SCALE / MAX_MINOR",
+        "source_refs": [
+          "src/msg/market/ledger.py:49"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "minor_units is the amount unit/representation, not a second CurrencySpec balance. checked_amount rejects bool/non-int/nonpositive/out-of-range.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F062.LedgerTransaction.id",
@@ -15796,7 +15916,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "money_ledger.id; signed receipt body.transaction_id",
+        "source_refs": [
+          "src/msg/market/ledger.py:116"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Single generated transaction identifier; sequence is separate and receipt signatures/legacy id bytes are preserved.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F062.LedgerTransaction.kind",
@@ -16247,7 +16377,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "min_quantity / max_quantity / duration_seconds",
+        "source_refs": [
+          "src/msg/market/offer_resources.py:14"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design shorthand made explicit units in existing contract; signed Listing server_offer projection verifies exact tuple equality.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F064.ServerOffer_compatibility.max",
@@ -16271,7 +16411,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "min_quantity / max_quantity / duration_seconds",
+        "source_refs": [
+          "src/msg/market/offer_resources.py:14"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design shorthand made explicit units in existing contract; signed Listing server_offer projection verifies exact tuple equality.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F064.ServerOffer_compatibility.entitlement_kind",
@@ -16322,7 +16472,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "min_quantity / max_quantity / duration_seconds",
+        "source_refs": [
+          "src/msg/market/offer_resources.py:14"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design shorthand made explicit units in existing contract; signed Listing server_offer projection verifies exact tuple equality.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F064.ServerOffer_compatibility.enabled",
@@ -16655,7 +16815,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named fields in bounty_listings projection and signed Listing body",
+        "source_refs": [
+          "src/msg/plugins/bounty.py:47"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Earlier sale profile missed the bounty owner. These are implemented fields, with immutable source/projection checks in bounty contracts; not absent members.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F065.Listing_bounty.currency_id",
@@ -16716,7 +16886,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named fields in bounty_listings projection and signed Listing body",
+        "source_refs": [
+          "src/msg/plugins/bounty.py:47"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Earlier sale profile missed the bounty owner. These are implemented fields, with immutable source/projection checks in bounty contracts; not absent members.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F065.Listing_bounty.claim_limit_per_subject",
@@ -16734,7 +16914,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named fields in bounty_listings projection and signed Listing body",
+        "source_refs": [
+          "src/msg/plugins/bounty.py:47"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Earlier sale profile missed the bounty owner. These are implemented fields, with immutable source/projection checks in bounty contracts; not absent members.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F065.Listing_bounty.verifier_id",
@@ -16752,7 +16942,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named fields in bounty_listings projection and signed Listing body",
+        "source_refs": [
+          "src/msg/plugins/bounty.py:47"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Earlier sale profile missed the bounty owner. These are implemented fields, with immutable source/projection checks in bounty contracts; not absent members.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F065.Listing_bounty.verifier_version",
@@ -16770,7 +16970,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named fields in bounty_listings projection and signed Listing body",
+        "source_refs": [
+          "src/msg/plugins/bounty.py:47"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Earlier sale profile missed the bounty owner. These are implemented fields, with immutable source/projection checks in bounty contracts; not absent members.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F065.Listing_bounty.eligibility",
@@ -16788,7 +16998,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named fields in bounty_listings projection and signed Listing body",
+        "source_refs": [
+          "src/msg/plugins/bounty.py:47"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Earlier sale profile missed the bounty owner. These are implemented fields, with immutable source/projection checks in bounty contracts; not absent members.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F065.Listing_bounty.terms_revision",
@@ -17127,7 +17347,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "delivery_envelopes.body: recipient_key.{key_id,recipient,fingerprint}, ciphertext_ref; delivery manifest.recipient_key_id",
+        "source_refs": [
+          "src/msg/market/delivery.py:273"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Locked order recipient_key is copied into envelope and validated against buyer/current delivery. Nested key facts replace flattened conceptual fields; no separate authority.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F066.DeliveryEnvelope.fingerprint",
@@ -17148,7 +17378,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "delivery_envelopes.body: recipient_key.{key_id,recipient,fingerprint}, ciphertext_ref; delivery manifest.recipient_key_id",
+        "source_refs": [
+          "src/msg/market/delivery.py:273"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Locked order recipient_key is copied into envelope and validated against buyer/current delivery. Nested key facts replace flattened conceptual fields; no separate authority.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F066.DeliveryEnvelope.ciphertext_ref",
@@ -17169,7 +17409,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "delivery_envelopes.body: recipient_key.{key_id,recipient,fingerprint}, ciphertext_ref; delivery manifest.recipient_key_id",
+        "source_refs": [
+          "src/msg/market/delivery.py:273"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Locked order recipient_key is copied into envelope and validated against buyer/current delivery. Nested key facts replace flattened conceptual fields; no separate authority.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F066.DeliveryEnvelope.delivery_digest",
@@ -17521,7 +17771,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "store_orders unit_price_minor/total_price_minor and delivery_target snapshot",
+        "source_refs": [
+          "src/msg/market/orders.py:104"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Amounts are integer minor units; order write binds listing revision, price and quantity. DeliveryTarget is a typed embedded locked snapshot, not another independent state machine.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F069.Order.total_price",
@@ -17538,7 +17798,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "store_orders unit_price_minor/total_price_minor and delivery_target snapshot",
+        "source_refs": [
+          "src/msg/market/orders.py:104"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Amounts are integer minor units; order write binds listing revision, price and quantity. DeliveryTarget is a typed embedded locked snapshot, not another independent state machine.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F069.Order.currency_id",
@@ -17596,7 +17866,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "store_orders unit_price_minor/total_price_minor and delivery_target snapshot",
+        "source_refs": [
+          "src/msg/market/orders.py:104"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Amounts are integer minor units; order write binds listing revision, price and quantity. DeliveryTarget is a typed embedded locked snapshot, not another independent state machine.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F069.Order.delivery_id",
@@ -17942,7 +18222,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "template_id + template_version + template_digest + normalized values in signed content",
+        "source_refs": [
+          "src/msg/plugins/content.py:98"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Exact implementation exists in content.template_content, omitted from initial registry-only profile.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F087.Post_template_binding.version",
@@ -18035,7 +18325,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Installed discovery.read_query @1/@2/@3: fields, typed filters, limit, cursor, collection/expand; read_projection returns selected authorized fields",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:459"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design labels describe shared read structure. Wire fields are versioned installed schemas; select/first/after are not newly accepted aliases. Filters remain finite schema keys, no arbitrary expression language.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F098.ReadQuery.filter",
@@ -18050,7 +18350,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Installed discovery.read_query @1/@2/@3: fields, typed filters, limit, cursor, collection/expand; read_projection returns selected authorized fields",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:459"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design labels describe shared read structure. Wire fields are versioned installed schemas; select/first/after are not newly accepted aliases. Filters remain finite schema keys, no arbitrary expression language.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F098.ReadQuery.sort",
@@ -18082,7 +18392,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Installed discovery.read_query @1/@2/@3: fields, typed filters, limit, cursor, collection/expand; read_projection returns selected authorized fields",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:459"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design labels describe shared read structure. Wire fields are versioned installed schemas; select/first/after are not newly accepted aliases. Filters remain finite schema keys, no arbitrary expression language.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F098.ReadQuery.after",
@@ -18097,7 +18417,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Installed discovery.read_query @1/@2/@3: fields, typed filters, limit, cursor, collection/expand; read_projection returns selected authorized fields",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:459"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design labels describe shared read structure. Wire fields are versioned installed schemas; select/first/after are not newly accepted aliases. Filters remain finite schema keys, no arbitrary expression language.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F098.ReadQuery.expand",
@@ -18130,7 +18460,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Installed discovery.read_query @1/@2/@3: fields, typed filters, limit, cursor, collection/expand; read_projection returns selected authorized fields",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:459"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design labels describe shared read structure. Wire fields are versioned installed schemas; select/first/after are not newly accepted aliases. Filters remain finite schema keys, no arbitrary expression language.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F098.ReadQuery_budget.max_depth",
@@ -18145,7 +18485,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "MAX_READ_DEPTH=4; MAX_READ_NODES=100; MAX_READ_COST=1000; ReadBudget",
+        "source_refs": [
+          "src/msg/core/read_query.py:9"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Runtime budget.node/check and expansion_schema enforce fixed limits; not separately configurable fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F098.ReadQuery_budget.max_nodes",
@@ -18160,7 +18510,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "MAX_READ_DEPTH=4; MAX_READ_NODES=100; MAX_READ_COST=1000; ReadBudget",
+        "source_refs": [
+          "src/msg/core/read_query.py:9"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Runtime budget.node/check and expansion_schema enforce fixed limits; not separately configurable fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F098.ReadQuery_budget.max_response_bytes",
@@ -18192,7 +18552,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "MAX_READ_DEPTH=4; MAX_READ_NODES=100; MAX_READ_COST=1000; ReadBudget",
+        "source_refs": [
+          "src/msg/core/read_query.py:9"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Runtime budget.node/check and expansion_schema enforce fixed limits; not separately configurable fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F098.ReadQuery_budget.max_collection_page_size",
@@ -18207,7 +18577,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "nested_first/expand node limit maximum10; top-level limit maximum200",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:564"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Each nested collection has its own page boundary; one global conceptual label maps to explicit outer/nested maxima.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F098.ReadQuery_budget.timeout",
@@ -18222,7 +18602,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "ExecutionContext.deadline_monotonic → ReadBudget.deadline",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:691"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Executor bounded deadline is passed into read traversal; timeout is not a caller-controlled permission or unbounded input.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F101.Cursor.kind",
@@ -18317,7 +18707,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "query.arguments (fields/projection); position.snapshot; position.last",
+        "source_refs": [
+          "src/msg/core/cursors.py:30"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "MAC covers operation+arguments and last/snapshot/principal/expiry. No new public cursor field aliases; opaque payload version remains unchanged.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F101.Cursor.subject",
@@ -18411,7 +18811,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "query.arguments (fields/projection); position.snapshot; position.last",
+        "source_refs": [
+          "src/msg/core/cursors.py:30"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "MAC covers operation+arguments and last/snapshot/principal/expiry. No new public cursor field aliases; opaque payload version remains unchanged.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F102.PageCursor.last_key",
@@ -18428,7 +18838,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "query.arguments (fields/projection); position.snapshot; position.last",
+        "source_refs": [
+          "src/msg/core/cursors.py:30"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "MAC covers operation+arguments and last/snapshot/principal/expiry. No new public cursor field aliases; opaque payload version remains unchanged.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F102.PageCursor.fields",
@@ -18490,7 +18910,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "OperationRequest.arguments",
+        "source_refs": [
+          "src/msg/core/models.py:242"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Typed input schema validates arguments; payload_digest and signing bytes retain published spelling.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F113.OperationRequest.request_id",
@@ -18644,7 +19074,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Operation-specific arguments.expected_revision/base_revision; envelope.expected_generations",
+        "source_refs": [
+          "src/msg/plugins/content.py:523"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Revision concurrency is validated by each versioned content operation; resource generation handles metadata. No duplicate envelope field needed.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F113.OperationRequest.source",
@@ -18731,7 +19171,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "opened_by + buyer/seller parties; reason",
+        "source_refs": [
+          "src/msg/market/arbitration.py:277"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Claimant is opened_by, respondent is other fixed party; deterministic reason enum. Role facts derive from pinned order, not arbitrary caller claims.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F119.ArbitrationCase.respondent",
@@ -18749,7 +19199,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "opened_by + buyer/seller parties; reason",
+        "source_refs": [
+          "src/msg/market/arbitration.py:277"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Claimant is opened_by, respondent is other fixed party; deterministic reason enum. Role facts derive from pinned order, not arbitrary caller claims.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F119.ArbitrationCase.reason_code",
@@ -18767,7 +19227,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "opened_by + buyer/seller parties; reason",
+        "source_refs": [
+          "src/msg/market/arbitration.py:277"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Claimant is opened_by, respondent is other fixed party; deterministic reason enum. Role facts derive from pinned order, not arbitrary caller claims.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F119.ArbitrationCase.statement",
@@ -18805,7 +19275,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "arbitration_evidence rows projected under case.evidence with author/visibility/body",
+        "source_refs": [
+          "src/msg/market/arbitration.py:299"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Evidence has independent rows for privacy and updates; case relation is case_id. Signed/pinned ref handling and panel visibility are enforced on submission/read.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F119.ArbitrationCase.policy_version",
@@ -19113,7 +19593,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "confirmed_source_gap_assigned",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "No common safe message member in current OperationError",
+        "source_refs": [
+          "src/msg/core/models.py:259"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Confirmed design121 representation omission: only code/retryable/field_path/retry_after_seconds. GraphQL/MCP envelope messages do not fill common operation errors. recover_transports assigned additive static message preserving old signed bytes.",
+        "status": "confirmed_source_gap_assigned"
+      }
     },
     {
       "id": "F121.Error.field",
@@ -19168,7 +19658,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "optional_feature_not_implemented",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Grep line_hint only; no explicit line fingerprint option implemented",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:1208"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design125 describes optional opt-in fingerprint behavior; design193 explicitly says line fingerprints optional. Existing heading/block digests and grep line hints are different. Record optional feature absent, not silently claim implemented or make it release-blocking.",
+        "status": "optional_feature_not_implemented"
+      }
     },
     {
       "id": "F125.Line_fingerprint.hash",
@@ -19183,7 +19683,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "optional_feature_not_implemented",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Grep line_hint only; no explicit line fingerprint option implemented",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:1208"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design125 describes optional opt-in fingerprint behavior; design193 explicitly says line fingerprints optional. Existing heading/block digests and grep line hints are different. Record optional feature absent, not silently claim implemented or make it release-blocking.",
+        "status": "optional_feature_not_implemented"
+      }
     },
     {
       "id": "F125.Line_fingerprint.context_hash",
@@ -19198,7 +19708,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "optional_feature_not_implemented",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Grep line_hint only; no explicit line fingerprint option implemented",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:1208"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design125 describes optional opt-in fingerprint behavior; design193 explicitly says line fingerprints optional. Existing heading/block digests and grep line hints are different. Record optional feature absent, not silently claim implemented or make it release-blocking.",
+        "status": "optional_feature_not_implemented"
+      }
     },
     {
       "id": "F128.Search_projection.fields",
@@ -19294,7 +19814,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "search result links + signed encode_page cursor/next",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:1062"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "LinkSet is projected relationship map and PageCursor opaque encoded continuation, not literal field/class names required in every row.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F128.Search_projection.ResourceRef",
@@ -19473,7 +20003,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "search result links + signed encode_page cursor/next",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:1062"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "LinkSet is projected relationship map and PageCursor opaque encoded continuation, not literal field/class names required in every row.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F131.Grep_options.include",
@@ -19490,7 +20030,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "glob / exclude_glob / before / after",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:1121"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Existing public schema explicitly bounds before/after0..3; fnmatch filters scope paths after authorization. Do not add duplicate alias fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F131.Grep_options.exclude",
@@ -19507,7 +20057,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "glob / exclude_glob / before / after",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:1121"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Existing public schema explicitly bounds before/after0..3; fnmatch filters scope paths after authorization. Do not add duplicate alias fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F131.Grep_options.case_sensitive",
@@ -19543,7 +20103,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "glob / exclude_glob / before / after",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:1121"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Existing public schema explicitly bounds before/after0..3; fnmatch filters scope paths after authorization. Do not add duplicate alias fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F131.Grep_options.context_after",
@@ -19560,7 +20130,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "glob / exclude_glob / before / after",
+        "source_refs": [
+          "src/msg/plugins/discovery.py:1121"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Existing public schema explicitly bounds before/after0..3; fnmatch filters scope paths after authorization. Do not add duplicate alias fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F131.Grep_options.max_matches",
@@ -19652,7 +20232,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F149.request.title",
@@ -19668,7 +20258,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F149.request.description",
@@ -19684,7 +20284,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F149.request.resource_refs",
@@ -19757,7 +20367,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F149.request.expires_at",
@@ -19814,7 +20434,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F149.offer.subject",
@@ -19851,7 +20481,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F149.offer.capability_hint",
@@ -19867,7 +20507,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F149.offer.scope",
@@ -19901,7 +20551,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F149.offer.expires_at",
@@ -19992,7 +20652,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "content_ref alternative: fixed ResourceRef to proposed replacement content",
+        "source_refs": [
+          "src/msg/plugins/proposals.py:21"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Design150 patch/content_ref alternatives; implementation supports pinned content_ref. It does not accept raw patch in this operation version; acceptance rechecks target base revision and source read permission.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F150.proposal.content_ref",
@@ -20137,7 +20807,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "OperationResult.resources/output + receipt Signature over canonical result (minus replay/presentation/secret fields)",
+        "source_refs": [
+          "src/msg/core/requests.py:52"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Receipt facts are the persisted signed OperationResult, not an independently creatable Receipt resource. Canonical payload binds result content; digest may be computed, not an extra stored mutable field. Dedicated /receipts view is separately audited; these mappings do not assert its existence.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F151.receipt.result_digest",
@@ -20151,7 +20831,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "OperationResult.resources/output + receipt Signature over canonical result (minus replay/presentation/secret fields)",
+        "source_refs": [
+          "src/msg/core/requests.py:52"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Receipt facts are the persisted signed OperationResult, not an independently creatable Receipt resource. Canonical payload binds result content; digest may be computed, not an extra stored mutable field. Dedicated /receipts view is separately audited; these mappings do not assert its existence.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F151.receipt.committed_at",
@@ -20183,7 +20873,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "OperationResult.resources/output + receipt Signature over canonical result (minus replay/presentation/secret fields)",
+        "source_refs": [
+          "src/msg/core/requests.py:52"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Receipt facts are the persisted signed OperationResult, not an independently creatable Receipt resource. Canonical payload binds result content; digest may be computed, not an extra stored mutable field. Dedicated /receipts view is separately audited; these mappings do not assert its existence.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F151.receipt.receipt_proof",
@@ -20197,7 +20897,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "OperationResult.resources/output + receipt Signature over canonical result (minus replay/presentation/secret fields)",
+        "source_refs": [
+          "src/msg/core/requests.py:52"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Receipt facts are the persisted signed OperationResult, not an independently creatable Receipt resource. Canonical payload binds result content; digest may be computed, not an extra stored mutable field. Dedicated /receipts view is separately audited; these mappings do not assert its existence.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F152.checkpoint.subject",
@@ -20249,7 +20959,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Relation(type=state, target=ResourceRef) projected as state_ref",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:113"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Current authorization checked before creating fixed relation; signed record excludes duplicated ref fields.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F152.checkpoint.summary",
@@ -20264,7 +20984,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F152.checkpoint.resume_hint",
@@ -20279,7 +21009,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Same named JSON schema fields in collaboration_records / signed Resource Revision",
+        "source_refs": [
+          "src/msg/plugins/collaboration_resources.py:23"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Initial profile looked at collaboration.py (handoff/lease); dedicated collaboration_resources defines these fields and validates immutable content.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F152.checkpoint.created_at",
@@ -20615,7 +21355,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "delivery_envelopes.body: recipient_key.{key_id,recipient,fingerprint}, ciphertext_ref; delivery manifest.recipient_key_id",
+        "source_refs": [
+          "src/msg/market/delivery.py:273"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Locked order recipient_key is copied into envelope and validated against buyer/current delivery. Nested key facts replace flattened conceptual fields; no separate authority.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F155.Delivery.package_digest",
@@ -20678,7 +21428,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "delivery_envelopes.body: recipient_key.{key_id,recipient,fingerprint}, ciphertext_ref; delivery manifest.recipient_key_id",
+        "source_refs": [
+          "src/msg/market/delivery.py:273"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Locked order recipient_key is copied into envelope and validated against buyer/current delivery. Nested key facts replace flattened conceptual fields; no separate authority.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F155.Delivery.state",
@@ -20798,7 +21558,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "email:<buyer> endpoint identity + generation/address_snapshot/verified_at",
+        "source_refs": [
+          "src/msg/market/delivery_targets.py:65"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Single-email endpoint generations bind ownership and revoke/reverify; this is not arbitrary address input or capability URL.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F156.DeliveryTarget.address_snapshot",
@@ -20827,7 +21597,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "email:<buyer> endpoint identity + generation/address_snapshot/verified_at",
+        "source_refs": [
+          "src/msg/market/delivery_targets.py:65"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Single-email endpoint generations bind ownership and revoke/reverify; this is not arbitrary address input or capability URL.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F156.DeliveryTarget.subject",
@@ -21029,7 +21809,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "ToolSpec.network: NetworkPolicy",
+        "source_refs": [
+          "src/msg/core/models.py:459"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Registered tool facts, deployment config and current capability network limits are intersected before executing.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F162.ToolSpec.timeout",
@@ -21062,7 +21852,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "Input schema URL/name/header maxima + server.max_request_bytes; sandbox packet<=max_request_bytes+65536",
+        "source_refs": [
+          "src/msg/workers/sandbox.py:58"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Input is bounded by existing schema/request/sandbox transport limits; no unbounded command string accepted. No tool-local max_input_bytes field currently; concurrency work may make a declared value explicit without weakening global ceiling.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F162.ToolSpec.output_limit",
@@ -21077,7 +21877,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "semantic_representation_verified",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "ToolSpec.network.max_response_bytes, intersected with deployment and capability",
+        "source_refs": [
+          "src/msg/core/models.py:363"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "NetworkPolicy maximum response bytes provides the output bound; separate duplicated ToolSpec field not needed.",
+        "status": "semantic_representation_verified"
+      }
     },
     {
       "id": "F162.ToolSpec.concurrency",
@@ -21092,7 +21902,17 @@
       "status": "named_member_explicitly_inventoried; implementation aliases must be checked, not assumed identical",
       "source_definitions": [],
       "source_token_locations": [],
-      "trace_status": "implementation_name_not_resolved"
+      "trace_status": "confirmed_source_gap_assigned",
+      "semantic_review": {
+        "review_commit": "cfdb211",
+        "implementation": "No tool-keyed cross-worker concurrency limit in existing claim path",
+        "source_refs": [
+          "src/msg/workers/effects.py:111"
+        ],
+        "normative_basis": "Original design_line and parent_obligations; published names/versions are preserved, not silently renamed.",
+        "assessment": "Confirmed design162 gap: each process serializes its loop, but multiple workers can claim different same-tool jobs; there is no registered cap and atomic running count/admission. recover_recovery assigned bounded cross-worker enforcement.",
+        "status": "confirmed_source_gap_assigned"
+      }
     },
     {
       "id": "F162.ToolSpec.executor_key",
@@ -24352,11 +25172,51 @@
     "range full-object digest not promised; official client final digest before publish",
     "legacy resource body/attachment uses ContentStore/CAS, user Git fixed refs/OIDs preserved; no inferred history rewriting"
   ],
-  "remaining_source_blockers": "Only the bounded formal diagnostic wiring listed in pending is confirmed here. Unresolved field-name trace is an evidence mapping limitation, not a claimed missing implementation. No chapter completion percentage is asserted.",
+  "remaining_source_blockers": "Bounded diagnostic wiring plus common safe Error.message and cross-worker ToolSpec concurrency are assigned. No other confirmed source defect was established by this82-member review; optional fingerprints and missing archive material are explicitly separate. Related design154 personal receipts readonly projection is also missing and reported to parent; persisted signed OperationResult is already implemented.",
   "mapping_limitations": {
     "direct_model_field_rows": 46,
     "source_token_only_rows": 243,
-    "implementation_name_unresolved_rows": 82,
-    "meaning": "371 normalized design members are explicit inventory labels. Direct field or token mentions are navigation, not behavioral proof. 82 unresolved spelling aliases require semantic trace review; do not automatically create fields or call them absent."
+    "implementation_name_unresolved_rows": 0,
+    "meaning": "Initial82 unresolved names manually reviewed at cfdb211; see member_trace_review and each semantic_review. Two confirmed source gaps assigned; three optional fingerprint fields not implemented; other77 have explicit representation mappings. This does not turn source reading into behavioral test proof."
+  },
+  "member_trace_review": {
+    "source_commit": "cfdb211d19c0e4b745896fa29ebcffebd66ef5af",
+    "scope": "All82 previously unresolved normalized members, manual source reading; no large test suites and no production material read",
+    "counts": {
+      "confirmed_source_gap_assigned": 2,
+      "optional_feature_not_implemented": 3,
+      "semantic_representation_verified": 77
+    },
+    "confirmed_defects": [
+      "F121.Error.message",
+      "F162.ToolSpec.concurrency"
+    ],
+    "not_defects": [
+      "Wire aliases/nested fields/private backend indirection/persisted signed-result receipt facts",
+      "Optional line fingerprints absent under explicit optional design193",
+      "Proposal supports the content_ref branch; raw patch not silently claimed"
+    ],
+    "archive_material_limit": "Current design92 delegates exact path alias list to completed archive. That archive content is not attached to this inventory; cannot establish a complete historical alias denominator from this document alone.",
+    "related_confirmed_gap": {
+      "design_line": 154,
+      "area": "personal receipts readonly view",
+      "status": "reported_to_parent_pending_assignment",
+      "source_refs": [
+        "src/msg/transports/http_routes.py:66",
+        "src/msg/plugins/communication.py:563",
+        "src/msg/core/executor.py:140"
+      ],
+      "detail": "Signed OperationResult persists and is reused, but no registered receipt list/get or subject receipts view. Existing outbox lists messages by sender; cannot represent all signed request results. Add projection over existing facts, not independent receipt lifecycle."
+    },
+    "after_snapshot_reports": [
+      {
+        "commit": "9807e18",
+        "owner": "recover_transports",
+        "area": "Error.message",
+        "reported_result": "356 related tests passed including tests/test_error_messages.py",
+        "status": "delivered_to_parent_not_verified_in_cfdb211",
+        "detail": "Optional omit_if_none message preserves old signed bytes; new errors use fixed safe catalog/fallback. Do not mark merged or current-baseline complete from agent report."
+      }
+    ]
   }
 }
