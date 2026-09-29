@@ -287,9 +287,10 @@ class MoneyAdmin:
                 await app.close()
         return asyncio.run(run())
 
-    def execute_offer(self, action, *, offer_id, fields=None):
+    def execute_offer(self, action, *, offer_id, fields=None, dry_run=False):
         operator = require_local_console(self.config_dir)
-        require(action in {'set', 'disable'}, 'invalid_offer_action')
+        require(action in {'set', 'disable', 'import'}, 'invalid_offer_action')
+        require(not dry_run or action == 'import', 'invalid_offer_action')
         require(isinstance(offer_id, str) and
                 re.fullmatch(r'[a-zA-Z][a-zA-Z0-9_-]{0,79}', offer_id), 'invalid_offer_id')
         from msg.admin.root import RootAdmin
@@ -298,6 +299,20 @@ class MoneyAdmin:
         async def run():
             await app.load()
             try:
+                if action == 'import':
+                    from msg.admin.offer_import import preview_import, apply_import
+                    async with app.metadata.transaction(write=False) as tx:
+                        plan = await preview_import(app, tx, offer_id)
+                    print(canonical(plan).decode())
+                    if dry_run:
+                        return {'plan': plan, 'approval_digest': digest(plan)}
+                    approval = 'CONFIRM MONEY ' + digest(plan)
+                    require(input('Type ' + approval + ' to continue: ') == approval,
+                            'approval_cancelled')
+                    pin = getpass.getpass('Root PIN/passphrase: ')
+                    private = open_private_key(loads(root_envelope(self.config_dir).read_bytes()), pin)
+                    return await apply_import(app, Ed25519Signer.from_bytes(private), plan,
+                                              operator=operator)
                 if action == 'set':
                     require(isinstance(fields, dict) and set(fields) == {
                         'resource_kind', 'unit', 'price', 'min_quantity',

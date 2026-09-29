@@ -127,6 +127,9 @@ def parser():
     offer_set.add_argument('--max-quantity',type=int,required=True)
     offer_set.add_argument('--duration-seconds',type=int)
     ops.add_parser('disable').add_argument('offer_id')
+    offer_import=ops.add_parser('import',help='Explicitly adopt one legacy offer as a signed Listing')
+    offer_import.add_argument('offer_id')
+    offer_import.add_argument('--dry-run',action='store_true')
     market=sub.add_parser('market',help='Physical-console arbitration configuration')
     market_sub=market.add_subparsers(dest='market_command',required=True)
     market_sub.add_parser('grant').add_argument('subject_id')
@@ -200,7 +203,8 @@ def main(argv=None):
                          'duration_seconds':args.duration_seconds}
                         if args.offer_command=='set' else None)
                 emit(MoneyAdmin(args.config_dir).execute_offer(
-                    args.offer_command,offer_id=args.offer_id,fields=fields))
+                    args.offer_command,offer_id=args.offer_id,fields=fields,
+                    **({'dry_run': args.dry_run} if args.offer_command == 'import' else {})))
                 return 0
             if args.money_command=='bank':
                 action='bank_'+args.bank_command

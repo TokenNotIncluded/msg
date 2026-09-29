@@ -72,7 +72,8 @@ async def verify_projection(app, tx, row):
     return source
 
 
-async def write_offer_revision(app, tx, signer, offer, *, now, request_id, new=False):
+async def write_offer_revision(app, tx, signer, offer, *, now, request_id, new=False,
+                               revision_id=None, source_digest=None):
     """Caller owns the local authorization and database transaction."""
     require(signer.public_key == app.certificates.root_public_key, 'root_key_mismatch')
     app.registry.resource_type('listing', 1)
@@ -92,13 +93,13 @@ async def write_offer_revision(app, tx, signer, offer, *, now, request_id, new=F
         resource = await tx.resource(mapped_listing(tx, offer_id))
     # Disable has a new immutable revision but retains the published quote ID.
     from uuid import uuid4
-    revision_id = offer['price_revision'] if offer['enabled'] else 'v_' + uuid4().hex
+    revision_id = revision_id or (offer['price_revision'] if offer['enabled'] else 'v_' + uuid4().hex)
     blob = await app.contents.put_bytes(canonical(listing_body(offer)), 'application/json')
     revision = Revision(format_version=1, id=revision_id, resource_id=offer_id,
         parents=(resource.revision,) if resource.revision else (), content=blob, relations=(),
         actor=ROOT_SUBJECT, subject=ROOT_SUBJECT, author=ROOT_SUBJECT, created_at=now,
         manifest_digest='', source_kind='operation', source_version=1,
-        source_digest=digest({'request_id': request_id, 'offer': offer}))
+        source_digest=source_digest or digest({'request_id': request_id, 'offer': offer}))
     manifest = {k: v for k, v in wire(revision).items() if k not in {'manifest_digest', 'signature'}}
     revision = replace(revision, manifest_digest=digest(manifest),
                        signature=signer.sign(canonical(manifest), purpose='revision'))

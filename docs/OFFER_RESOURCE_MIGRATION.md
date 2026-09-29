@@ -72,3 +72,28 @@ Only newly created offers and their subsequent edits use the unified Resource
 writer in this stage. Existing Offer adoption, Purchase → Order writer migration,
 and a new redemption contract remain separate stages. Do not label those complete
 based on this change or the prior read projections.
+
+## Stage 2: explicit old-offer import
+
+`msgd money offer import OFFER_ID --dry-run` is a read-only local preflight and
+needs no Root PIN. `msgd money offer import OFFER_ID` prints a newly generated
+complete plan, requires its exact `CONFIRM MONEY sha256:...` string, then unlocks
+Root. A dry-run never authorizes a later run; the operator approves the actual
+plan being applied.
+
+The plan fixes the exact old quote, target IDs, purchase/grant counts and a digest
+of original serialized Purchase rows, entitlement rows and ledger rows (including
+receipt bytes). Before publishing, the write transaction repeats consistency and
+collision checks and compares the complete plan. Any new purchase, cancellation,
+settlement or quote edit since approval makes it stale. Inconsistent grants or
+ledger references, unsupported providers, existing Resource IDs/names and an
+already imported offer are rejected.
+
+Import creates a fresh signed Revision with a fresh revision ID and explicit
+source digest referencing the approved plan. It preserves the old `offer_id` and
+`price_revision` verbatim; the new revision is an import fact, not a claim that a
+historical quote was originally a Resource revision. Existing snapshots, grants,
+accounts and ledger bytes are untouched. The signed Root audit contains the plan
+and approval digest. Failure during publication rolls back Resource, mapping,
+Revision and audit in the same transaction; the unchanged plan can be retried.
+No automatic startup adoption or remote import operation is registered.
