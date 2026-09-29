@@ -51,9 +51,10 @@ async def test_restore_private_git_after_all_refs_are_packed(installed, tmp_path
     _verify_storage(data, references, settings=settings, repair_git_layout=False)
     with psycopg.connect(pg_dsn) as connection:
         assert _db_refs(connection) == references
-        assert connection.execute(
+        resource = connection.execute(
             'SELECT body FROM resources WHERE id=%s', (created.resources[0].id,)
-        ).fetchone() is not None
+        ).fetchone()
+        assert resource is not None
         quarantine = connection.execute(
             "SELECT value FROM settings WHERE key='recovery_quarantine'"
         ).fetchone()

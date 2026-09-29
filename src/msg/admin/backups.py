@@ -421,7 +421,47 @@ def restore(source, config_dir, data_dir, *, postgres_dsn='service=msgd'):
                 _db_refs(connection) == manifest['references'], 'backup_database_reference_mismatch'
             )
             row = connection.execute(
-                "SELECT value FROM settings…492 tokens truncated…       settings.config_dir,
+                "SELECT value FROM settings WHERE key='runtime_config'"
+            ).fetchone()
+            runtime = loads(row[0]) if row is not None else {}
+            require(type(runtime) is dict, 'backup_runtime_config_invalid')
+            runtime['accept_writes'] = False
+            runtime['cleanup_enabled'] = False
+            connection.execute(
+                """INSERT INTO settings(key,value) VALUES('runtime_config',%s)
+                ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value""",
+                (canonical(runtime).decode(),),
+            )
+        data_dir.mkdir(mode=0o700)
+        settings = write_example(
+            config_dir, data_dir, manifest['service_url'], postgres_dsn=postgres_dsn
+        )
+        # Install the fail-closed marker as soon as a runnable config exists,
+        # including if a later filesystem verification fails.
+        durable_write(
+            config_dir / 'recovery-drill.json',
+            canonical({**quarantine, 'format': 'msg-recovery-drill-v1'}),
+            mode=0o600,
+        )
+        _write_restored_config(directory / 'source-config.toml', settings, postgres_dsn)
+        settings = load_settings(config_dir)
+        for name, target in (
+            ('content', settings.server.content_dir),
+            ('repositories', settings.server.repositories_dir),
+            ('blobs', settings.server.blob_dir),
+            ('staging', settings.server.staging_dir),
+        ):
+            if (directory / name).exists():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(directory / name), target)
+        settings.service_keys.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(directory / 'service'), settings.service_keys)
+        os.chmod(settings.service_keys, 0o700)
+        settings.trust_file.parent.mkdir(parents=True, exist_ok=True)
+        from msg.security.trust_files import write_trust
+
+        write_trust(
+            settings.config_dir,
             loads((directory / 'root-public.json').read_bytes()),
             writer=durable_write,
         )
