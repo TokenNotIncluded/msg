@@ -8,6 +8,7 @@ from msg.core.errors import require
 
 
 FEATURE_SOURCES = {
+    'honors': ('achievements', 'honors', 'honor_ceremony_display'),
     'money': ('money', 'market_clearing', 'market_e2e'),
     'bounty': ('bounty', 'market_clearing', 'market_e2e'),
     'orders': ('orders', 'market_clearing', 'market_e2e'),

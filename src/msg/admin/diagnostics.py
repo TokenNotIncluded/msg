@@ -277,6 +277,14 @@ async def _doctor(config_dir,clock):
                 success('credential_delivery',recovery_window_seconds=settings.credential_delivery_recovery_window,
                         release='once',secret_url=False,versions=SECRET_DELIVERY_MIN_VERSION)
             except Failure as exc:failed('credential_delivery',exc.code)
+            if 'achievements' in settings.server.plugins:
+                try:
+                    from msg.admin.honor_check import inspect_honors
+                    success('honors', **await inspect_honors(app,tx))
+                except (Failure,OSError,ValueError,KeyError,psycopg.Error) as exc:
+                    failed('honors',getattr(exc,'code','honor_inspection_failed'))
+            else:
+                checks['honors']={'ok':True,'status':'disabled'}
             if 'communication' in settings.server.plugins:
                 try:
                     spec=app.registry.operation('communication.following')
@@ -778,6 +786,8 @@ async def selftest():
             checks['root_network_rejected']=rejected.error is not None and rejected.error.code=='local_only'
             all_versions=await call('discovery.get',{'id':post.resources[0].id,'view':'meta'})
             checks['stable_id_read']=all_versions.status=='ok'
+            from msg.admin.honor_check import check_honors
+            checks['honor_ceremony_display']=await check_honors(app,call,register)
             checks.update(await _selftest_ca_chain(app,root,call,register,now))
             from msg.admin.upgrade_check import check_upgrade_recovery
             checks['identity_upgrade_recovery']=await check_upgrade_recovery(app,now)

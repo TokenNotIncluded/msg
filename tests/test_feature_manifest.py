@@ -88,7 +88,7 @@ async def test_doctor_feature_results_are_grounded_in_read_only_checks(installed
     result=doctor(app.settings.config_dir,clock=lambda:NOW)
     for feature_id in ('bootstrap','postgres','root_trust','online_ca','authorization',
                        'audit','content','git_content','identity_upgrade',
-                       'recovery','search','hosting'):
+                       'recovery','search','hosting','honors'):
         row=result['features'][feature_id]
         assert row['status']=='pass',result
         assert result['checks'][row['check']]['ok'] is True
@@ -101,7 +101,7 @@ async def test_selftest_feature_results_are_grounded_in_isolated_operations():
     result=await selftest()
     assert result['ok'] and result['cleaned_up'],result['checks'].get('failure',result)
     for feature_id in ('bootstrap','postgres','root_trust','online_ca','authorization',
-                       'audit','content','identity_upgrade','recovery','search','hosting'):
+                       'audit','content','identity_upgrade','recovery','search','hosting','honors'):
         row=result['features'][feature_id]
         assert row['status']=='pass',result
         assert result['checks'][row['check']] is True

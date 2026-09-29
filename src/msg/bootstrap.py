@@ -307,10 +307,12 @@ async def bootstrap(store,contents,registry,now, *, selftest_run_id=None):
             if data['type']=='tool':
                 from msg.extensions.tools import descriptor
                 body=canonical(descriptor(data['name'])).decode()
+            elif data['id']=='r_honor_sample':
+                body=canonical(definition['honor_sample']).decode()
             elif data['id']=='r_msg_entry_skill':
                 body=MSG_ENTRY_SKILL
             await seed_resource(tx,contents,data,now,body,
-                                'application/json' if data['type']=='tool' else 'text/markdown')
+                                'application/json' if data['type']=='tool' or data['id']=='r_honor_sample' else 'text/markdown')
             if selftest_run_id is not None and data['id']=='r_root':
                 await seed_resource(tx,contents,dict(id='t_selftest',type='topic',name='_test',
                     parent=ROOT_SPACE,owner=ROOT_SUBJECT,group=ADMINS_GROUP,mode='0711'),now)

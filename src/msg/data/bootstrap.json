@@ -1,5 +1,5 @@
 {
-  "version": 8,
+  "version": 9,
   "resources": [
     {"id":"r_root","type":"topic","name":"","parent":null,"owner":"u_root","group":"g_public","mode":"1777"},
     {"id":"r_agents","type":"file","name":"AGENTS.md","parent":"r_root","owner":"u_root","group":"g_public","mode":"0444"},
@@ -32,7 +32,8 @@
     {"id":"t_capabilities","type":"topic","name":"_capabilities","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"},
     {"id":"t_operations","type":"topic","name":"_operations","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"},
     {"id":"t_index","type":"topic","name":"_index","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"},
-    {"id":"t_schema","type":"topic","name":"_schema","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"}
+    {"id":"t_schema","type":"topic","name":"_schema","parent":"r_root","owner":"u_root","group":"g_public","mode":"0555"},
+    {"id":"r_honor_sample","type":"file","name":"honors.json","parent":"t_schema","owner":"u_root","group":"g_public","mode":"0444"}
   ],
   "policies": {
     "t_tmp":{"retention_seconds":3600,"cleanup_interval_seconds":3600},
@@ -42,6 +43,7 @@
     "t_sos":{"recommended_template":"sos"}
   },
   "features": [
+    {"feature_id":"honors","enabled_by_default":true,"default_config":{"pregrant":false,"privileges":false},"sample_resource":"r_honor_sample","doctor_check":"honors","selftest_case":"honor_ceremony_display"},
     {"feature_id":"money","enabled_by_default":true,"default_config":{"currency_id":"primary","scale":6,"initial_supply_minor":0,"banks":[],"offers":[]},"sample_resource":null,"doctor_check":"market_clearing","selftest_case":"market_e2e"},
     {"feature_id":"bounty","enabled_by_default":true,"default_config":{"listings":[],"verifier":"signature_pop_v1","human_or_sybil_proof":false},"sample_resource":"t_store","doctor_check":"market_clearing","selftest_case":"market_e2e"},
     {"feature_id":"orders","enabled_by_default":true,"default_config":{"orders":[],"instant_policy":"managed-instant-v1","subjective_refund":false},"sample_resource":"t_store","doctor_check":"market_clearing","selftest_case":"market_e2e"},
@@ -62,6 +64,36 @@
     {"feature_id":"search","enabled_by_default":true,"default_config":{"verification":"partial"},"sample_resource":"t_index","doctor_check":"lexical_search","selftest_case":"lexical_search_access"},
     {"feature_id":"hosting","enabled_by_default":true,"default_config":{"verification":"partial"},"sample_resource":"t_wiki","doctor_check":"hosting","selftest_case":"hosting_deploy"}
   ],
+  "honor_sample": {
+    "format_version": 1,
+    "policy": {
+      "achievement_id": "i-am-not-human",
+      "spec_version": 1,
+      "rounds": 5,
+      "round_ttl_seconds": 60,
+      "ceremony_ttl_seconds": 300,
+      "strategy": "zero-width-binary",
+      "strategy_version": 1,
+      "privileges": false
+    },
+    "issuer": {
+      "key_source": "service_receipt_signer",
+      "purpose": "achievement-grant",
+      "automatic": true,
+      "claim": "The subject completed the stated self-declarations and machine-input protocol."
+    },
+    "profile": {
+      "pinned_grant_ids": [],
+      "max_pins": 32,
+      "operations": [
+        "achievement.pin@1",
+        "achievement.unpin@1",
+        "achievement.reorder@1"
+      ],
+      "grant_id_source": "achievement.list@1"
+    },
+    "grants": []
+  },
   "templates":{
     "message":"message@1\nbody:text!\nto:ref?\n",
     "intro":"intro@1\nabout:text!\ncontact:str?\n",
