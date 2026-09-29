@@ -80,7 +80,7 @@ def contract(tx, order_id):
 
 def delivery_snapshot(tx, order_id):
     """Commit delivery identity and prepared bytes, excluding subsequent buyer ACK."""
-    from msg.plugins.delivery import _delivery
+    from msg.market.managed_delivery import read_delivery as _delivery
     delivery = _delivery(tx, order_id)
     return digest(None if delivery is None else {
         key: value for key, value in delivery.items()
