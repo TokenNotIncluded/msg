@@ -199,3 +199,15 @@ async def test_directory_sync_failure_keeps_database_closed_and_can_resume(compl
     assert result['status'] == 'recovery_promoted'
     async with app.metadata.transaction(write=False) as tx:
         assert not active(tx)
+
+
+async def test_configuration_policy_drift_cannot_bypass_full_database_proof(complete_state):
+    app, root, packet, pin = complete_state
+    config = app.settings.config_dir/'msgd.toml'
+    content = config.read_text()
+    assert '[server]' in content
+    config.write_text(content.replace('[server]', '[server]\ntransfer_ttl = 12345', 1))
+    with pytest.raises(Failure, match='recovery_cached_configuration_mismatch'):
+        await promote(app, packet, pin=pin, signer=root, operator='isolated-fixture')
+    async with app.metadata.transaction(write=False) as tx:
+        assert active(tx)

@@ -11,7 +11,12 @@ The current authoritative instance signs a separate, versioned
 `complete-recovery-state-v1` statement. It commits to all 85 supported metadata
 tables, exact columns and schema definitions, typed row counts/digests (including
 duplicates), sequence positions, storage references, actual content/Git/LFS trees,
-trust document, and random service-key digests. Credentials, certificates,
+trust document, normalized configuration policy, and random service-key digests.
+Configuration normalization excludes only listen/port, deployment paths, database
+connection, Valkey and mail settings. The latter two must remain disabled on the
+recovery target. Plugin, limits, tool sandbox/network policy, TTLs and all other
+policy fields must match; a hosting marker is bound by presence rather than its
+deployment-specific path. Configuration is reloaded to reject cached-policy drift. Credentials, certificates,
 revocations, policies, scope/ownership, task/nonce/ledger/settlement data,
 authorization epoch and the full audit chain are included. Usable certificate
 chains, current Root/online/receipt keys, resource ancestry and ledger/market

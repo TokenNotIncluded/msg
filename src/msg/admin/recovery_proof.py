@@ -86,9 +86,27 @@ async def verify_current_authority(app, tx, public_key):
     await inspect_market(tx)
 
 
+def configuration_state(settings):
+    """Bind policy, while naming every deployment-only field explicitly."""
+    value = wire(settings)
+    for key in ('listen', 'port'):
+        value.pop(key)
+    value['hosting_recovery_marker'] = settings.hosting_recovery_marker is not None
+    for key in ('config_dir', 'postgres_dsn', 'valkey_url', 'mail', 'content_dir',
+                'repositories_dir', 'blob_dir', 'staging_dir', 'service_keys_dir'):
+        value['server'].pop(key)
+    return value
+
+
 def file_state(app, tx):
     from msg.admin.backups import _db_refs, _verify_storage, _regular_tree, _hash
     settings = app.settings
+    from msg.config import load_settings
+    actual_settings = load_settings(settings.config_dir)
+    if active(tx):
+        require(actual_settings.server.mail is None and actual_settings.server.valkey_url is None, 'recovery_target_not_isolated')
+    policy = configuration_state(actual_settings)
+    require(actual_settings == settings, 'recovery_cached_configuration_mismatch')
     require(settings.trust_file.is_file() and not settings.trust_file.is_symlink(), 'invalid_trust_anchor')
     trees = {}
     for name, path in (('content', settings.server.content_dir), ('blobs', settings.server.blob_dir),
@@ -113,7 +131,7 @@ def file_state(app, tx):
             for name in ('online.key', 'receipt.key', 'tokens.key')}
     require(len((settings.service_keys/'tokens.key').read_bytes()) == 32, 'invalid_service_key')
     # Digests commit random service key material without exporting it.
-    return {'references': refs, 'trees': trees, 'service_key_digests': keys,
+    return {'configuration': policy, 'references': refs, 'trees': trees, 'service_key_digests': keys,
             'trust': loads(settings.trust_file.read_bytes())}
 
 
@@ -170,6 +188,8 @@ def _receipt(value, pin):
 async def promote(app, packet, *, pin, signer, operator):
     """Internal fixture-capable use case. Caller must enforce physical console ceremony."""
     body = verify_proof(packet, pin, app.clock())
+    require(app.settings.server.mail is None and app.settings.server.valkey_url is None,
+            'recovery_target_not_isolated')
     require(signer.public_key == pin.public_key, 'recovery_root_mismatch')
     require(type(operator) is str and bool(operator), 'recovery_operator_required')
     marker = app.settings.config_dir/'recovery-drill.json'
