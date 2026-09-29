@@ -154,12 +154,12 @@ async def test_hosting_database_has_both_transaction_and_role_write_denial(reade
     reader = runtime_class()(reader_settings, clock=lambda: NOW)
     await reader.load()
     try:
-        with pytest.raises(Failure, match='readonly_transaction'):
+        with pytest.raises(Failure, match='read_only_transaction'):
             async with reader.metadata.transaction(write=True):
                 pytest.fail('write transaction was entered')
         async with reader.metadata.transaction(write=False) as tx:
             assert tx.one('SHOW transaction_read_only') == ('on',)
-            with pytest.raises(Failure, match='readonly_transaction'):
+            with pytest.raises(Failure, match='read_only_transaction'):
                 tx.execute("UPDATE settings SET value=value", write=True)
         # Even bypassing the wrapper and READ ONLY transaction, DB grants deny it.
         with psycopg.connect(reader_settings.server.postgres_dsn) as conn:
@@ -240,7 +240,7 @@ async def test_hosting_private_preview_head_range_revocation_and_zero_effects(in
             assert (await http.get('/@readonly-host/web/missing.html')).status_code == 404
             assert (await http.post(path, headers=headers, content=b'write')).status_code == 405
             assert (await http.post('/-/p/content.post_create', content=b'{}')).status_code == 404
-            assert (await http.get('/@readonly-host/web/', headers={'Host': 'other.invalid'})).status_code == 404
+            assert (await http.get('/@readonly-host/web/', headers={'Host': 'other.invalid'})).status_code == 403
             async with app.metadata.transaction(write=False) as tx:
                 assert before == {table: tuple(tx.rows(f'SELECT * FROM {table}')) for table in before}
             revoked = await call(app, 'content.chmod', {'id': candidate, 'mode': '0000'},
@@ -282,4 +282,22 @@ def test_hosting_unit_has_distinct_identity_and_no_data_write_grant():
     assert 'ReadWritePaths=' not in service
     assert '--config-dir /etc/msgd-hosting' in service
     assert 'ProtectSystem=strict' in service
-    assert '/var/lib/msgd/service-keys' in service
+    assert '/var/lib/msgd/service' in service
+
+
+def test_hosting_subcommand_never_assembles_main_application(reader_settings, monkeypatch):
+    from msg import daemon
+    import msg.config
+    import uvicorn
+    called = []
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('hosting constructed the normal write Application')
+
+    monkeypatch.setattr(daemon, 'load_application', forbidden)
+    monkeypatch.setattr(daemon, 'network_runtime', lambda settings: called.append(settings))
+    monkeypatch.setattr(msg.config, 'load_settings', lambda directory: reader_settings)
+    monkeypatch.setattr(uvicorn, 'run', lambda asgi, **options: called.append((asgi, options)))
+    assert daemon.main(['--config-dir', str(reader_settings.config_dir), 'hosting']) == 0
+    assert called[0] == reader_settings
+    assert len(called) == 2 and called[1][1]['access_log'] is False

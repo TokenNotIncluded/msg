@@ -70,6 +70,8 @@ class Settings:
     recovery_custodians: tuple[RecoveryCustodian,...]=()
     money: MoneyConfig=MoneyConfig()
     hosting_base_capacity_bytes: int=10*1024*1024
+    hosting_recovery_marker: Path | None=None
+    hosting_content_group_read: bool=False
 
     @property
     def config_dir(self):
@@ -108,11 +110,17 @@ def load_settings(config_dir=Path('/etc/msgd')):
     window_minutes=int(window[:-1])
     require(1<=window_minutes<=60,'invalid_credential_delivery_recovery_window')
     hosting=data.get('hosting',{})
-    require(isinstance(hosting,dict) and set(hosting)<={'base_capacity_bytes'},
+    require(isinstance(hosting,dict) and set(hosting)<={'base_capacity_bytes','recovery_marker','content_group_read'},
             'unknown_hosting_configuration')
     hosting_base=hosting.get('base_capacity_bytes',10*1024*1024)
     require(type(hosting_base) is int and 0 < hosting_base <= 1024**4,
             'invalid_hosting_capacity')
+    content_group_read=hosting.get('content_group_read',False)
+    require(type(content_group_read) is bool,'invalid_content_group_read')
+    recovery_marker=hosting.get('recovery_marker')
+    require(recovery_marker is None or (isinstance(recovery_marker,str) and
+            Path(recovery_marker).is_absolute() and '..' not in Path(recovery_marker).parts and
+            not any(ord(c)<32 for c in recovery_marker)), 'invalid_hosting_recovery_marker')
     money=data.get('money',{})
     require(isinstance(money,dict) and set(money)<=set(MoneyConfig.__dataclass_fields__),
             'unknown_money_configuration')
@@ -255,7 +263,9 @@ def load_settings(config_dir=Path('/etc/msgd')):
         tool_methods=tuple(tools.get('methods',('GET','HEAD'))),tool_ports=tuple(tools.get('ports',(80,443))),
         recovery_custodians=tuple(custodians),
         money=MoneyConfig(display_name=display_name,code=code),
-        hosting_base_capacity_bytes=hosting_base)
+        hosting_base_capacity_bytes=hosting_base,
+        hosting_recovery_marker=Path(recovery_marker) if recovery_marker is not None else None,
+        hosting_content_group_read=content_group_read)
 
 
 def write_example(config_dir,data_dir,service_url='https://msg.lmm.best',*,postgres_dsn='service=msgd',valkey_url=None):
@@ -283,6 +293,7 @@ allow_overdraft = false
 
 [hosting]
 base_capacity_bytes = 10485760
+content_group_read = false
 
 [storage]
 postgres_dsn = {json.dumps(postgres_dsn)}

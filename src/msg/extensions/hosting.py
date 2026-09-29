@@ -161,6 +161,8 @@ async def serve_hosted(service,request):
     site_path='/'+parts[0]+'/'+parts[1]
     try:
         async with service.metadata.transaction(write=False) as tx:
+            from msg.security.quarantine import require_live_authority
+            require_live_authority(tx)
             try:
                 rid=await tx.resolve(site_path)
             except Failure as exc:
@@ -243,7 +245,12 @@ async def serve_hosted(service,request):
 
 
 def hosting_app(service):
+    require(getattr(service,'readonly_hosting',False),'hosting_runtime_required')
     async def dispatch(request):
+        try:
+            service.require_ready()
+        except Failure as exc:
+            return hosted_error(exc.code)
         expected=urlsplit(service.settings.service_url)
         supplied=urlsplit('//'+request.headers.get('host',''))
         if supplied.hostname!=expected.hostname:

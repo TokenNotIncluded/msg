@@ -6,7 +6,6 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 import hashlib
 import hmac
-import importlib
 
 from msg.constants import ROOT_SPACE, ROOT_SUBJECT
 from msg.core.codec import loads, decode, unb64, b64, canonical, wire
@@ -18,7 +17,8 @@ from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
 from msg.core.registry import Registry
 from msg.security.authentication import AuthenticationService
 from msg.security.authorization import AuthorizationService
-from msg.security.capabilities import install_capabilities, primary_ceiling, base_grants, temporary_ceiling
+from msg.security.capabilities import primary_ceiling, base_grants, temporary_ceiling
+from msg.plugins import install_registry
 from msg.security.certificates import CertificateValidator
 from msg.security.crypto import Ed25519Signer
 from msg.security.quarantine import active as quarantine_active
@@ -40,18 +40,7 @@ class Application:
         self.contents=None
         self.executor=None
         self._loaded=False
-        # Plugins are installed code, never resources, posts, or configuration expressions.
-        implemented=('identity','content','discussion','communication','discovery','achievements','recovery','sharing','money','offers','store','bounty','orders','delivery')
-        configured=set(settings.server.plugins)
-        require(configured<=set(implemented)|{'transfer','extensions','system','batch'},'unknown_plugin')
-        for plugin in implemented:
-            if plugin in configured:
-                importlib.import_module('msg.plugins.'+plugin).install(self)
-        for plugin in ('transfer','extensions','system','batch'):
-            if plugin in configured:
-                importlib.import_module('msg.plugins.'+plugin).install(self)
-        install_capabilities(self.registry)
-        self.registry.freeze()
+        install_registry(self, settings.server.plugins)
 
     def primary_ceiling(self):
         return primary_ceiling(self.registry,self.default_scope())
@@ -79,7 +68,8 @@ class Application:
         if self.contents is None:
             self.contents=GitContentStore(self.settings.server.content_dir,
                                           binary_dir=self.settings.server.blob_dir,
-                                          staging_dir=self.settings.server.staging_dir)
+                                          staging_dir=self.settings.server.staging_dir,
+                                          group_read=self.settings.hosting_content_group_read)
 
     async def load(self):
         require(self.settings.trust_file.is_file(),'root_not_initialized')

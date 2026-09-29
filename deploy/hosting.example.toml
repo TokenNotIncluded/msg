@@ -1,0 +1,18 @@
+# Install as /etc/msgd-hosting/msgd.toml, root:msgd-hosting 0640.
+# This is NOT a copy of the writer configuration or its PostgreSQL credentials.
+[server]
+service_url = "https://msg.example.org"
+public_web_origin = "https://msg.example.org"
+
+[hosting]
+# The same marker checked by the write service. Never select a private copy.
+recovery_marker = "/etc/msgd/recovery-drill.json"
+
+[storage]
+postgres_dsn = "service=msgd-hosting"
+content = "/var/lib/msgd/git/content"
+blobs = "/var/lib/msgd/blobs/sha256"
+# These parser-compatible paths are deliberately inaccessible and never opened.
+service_keys = "/var/lib/msgd/service"
+staging = "/var/lib/msgd/transfers/staging"
+repositories = "/var/lib/msgd/git/repos"

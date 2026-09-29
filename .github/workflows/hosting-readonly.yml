@@ -65,6 +65,7 @@ jobs:
       - name: Exercise isolated hosting and retain established web regressions
         run: >-
           python -m pytest tests/test_hosting*.py tests/test_cli_hosting.py
+          tests/test_extensions.py::test_hosting_publish_is_explicit_versioned_on_service_origin
           --junitxml=artifacts/hosting.xml
       - uses: actions/upload-artifact@v4
         if: always()
