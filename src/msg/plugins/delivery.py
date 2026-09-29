@@ -36,9 +36,21 @@ from msg.plugins.common import registration
 from msg.plugins.schemas import IDENTIFIER, obj
 
 __all__ = [
-    'CURRENCY_ID', 'EscrowEngine', 'MAX_INLINE_BYTES', '_COLUMNS', '_buyer_order',
-    '_delivery', '_package', '_payload', '_subject', '_verified_delivery',
-    'account_requirements', 'delivery_summary', 'install', 'prepare_managed', 'validate_target',
+    'CURRENCY_ID',
+    'EscrowEngine',
+    'MAX_INLINE_BYTES',
+    '_COLUMNS',
+    '_buyer_order',
+    '_delivery',
+    '_package',
+    '_payload',
+    '_subject',
+    '_verified_delivery',
+    'account_requirements',
+    'delivery_summary',
+    'install',
+    'prepare_managed',
+    'validate_target',
 ]
 
 

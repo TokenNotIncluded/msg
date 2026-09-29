@@ -1,4 +1,4 @@
-# Python 3.15 质量与部署收口 · 2026-09-30
+# Python 3.15 质量与部署收口 · 2026-09-29
 
 当前入口 PR #185，起点 main `25cf518a` / tree `61cc47b7`。上轮补丁
 SHA256 `118915fe14d589cf9f1b6e512f528c3a4af1fe2b76c8bdf3aab8d9930d955798`
@@ -20,6 +20,12 @@ SHA256 `118915fe14d589cf9f1b6e512f528c3a4af1fe2b76c8bdf3aab8d9930d955798`
   干净安装、checkout外实际daemon启动/重启、四传输只读、签名客户端与幂等、
   doctor只读、默认禁外发worker及已有真实OpenSSH/Git/撤销脚本。
   全部使用可销毁回环实例和独立Test Root，不访问生产或真实收件人。
+- 第二轮06d5e803/tree6bba0332：Recovery/Storage及工具、客户端、hosting、协作
+  专项已通过。部署36621959536的干净server安装、启动/重启、签名客户端、
+  四传输/doctor只读和worker步骤通过，真实sshd在认证阶段失败，未计为全通过。
+  将隔离daemon的PAM策略对齐现有部署配置，并补认证诊断与直接key lookup。
+  质量36621959251实际1个I001，已核验对应tree并应用安全格式补丁；
+  ZIP SHA256 `f3bd6265b6a7d657af3bf5d40269afaecc71af919fbb62a732a1f470d4d2aafe`。
 
 最终头仍须通过fresh Ruff/format/compile、精确node-ID八分片互斥并集、
 conformance/实际tokenizer、真实wheel/sdist/干净安装及适用专项；新失败继续修复。

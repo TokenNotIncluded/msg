@@ -29,7 +29,12 @@ from msg.application import Application
 from msg.client import ClientState, MsgClient
 from msg.config import write_example
 from msg.core.codec import canonical
-from msg.transports.client import GraphQLTransport, HTTPTransport, MCPHTTPTransport, PathGETTransport
+from msg.transports.client import (
+    GraphQLTransport,
+    HTTPTransport,
+    MCPHTTPTransport,
+    PathGETTransport,
+)
 
 
 def run(*command):
@@ -88,7 +93,9 @@ async def acceptance():
         try:
             try:
                 csr, root = await _provision(app, 'test-only-' + os.urandom(24).hex())
-                await _approve_csr(app, csr, root, expected_digest=None, operator='isolated-rehearsal')
+                await _approve_csr(
+                    app, csr, root, expected_digest=None, operator='isolated-rehearsal'
+                )
             finally:
                 await app.close()
             run('sudo', '-n', 'chown', '-R', '0:0', str(settings.root_private_dir))
@@ -100,7 +107,8 @@ async def acceptance():
             async def start():
                 child = subprocess.Popen(
                     [str(executable), '--config-dir', str(settings.config_dir), 'serve'],
-                    stdout=log, stderr=log,
+                    stdout=log,
+                    stderr=log,
                 )
                 try:
                     async with httpx.AsyncClient(timeout=1, trust_env=False) as http:
@@ -128,7 +136,8 @@ async def acceptance():
                 registered = await client.register('rehearsal-client')
                 assert registered.status == 'ok'
                 packet = client.prepare(
-                    'content.post_create', {'parent': '/main', 'body': 'installed release\r\n'},
+                    'content.post_create',
+                    {'parent': '/main', 'body': 'installed release\r\n'},
                     request_id='restart-stable-write',
                 )
                 posted = await client.send(packet)
@@ -142,14 +151,21 @@ async def acceptance():
                 assert repeated.resources == posted.resources
                 checks.append('restart_preserves_identity_content_and_idempotency')
                 before = database_digest(dsn)
-                for transport in (HTTPTransport, PathGETTransport, GraphQLTransport, MCPHTTPTransport):
+                for transport in (
+                    HTTPTransport,
+                    PathGETTransport,
+                    GraphQLTransport,
+                    MCPHTTPTransport,
+                ):
                     reader = MsgClient(state, transport(origin, http=http))
                     read = await reader.call('discovery.get', {'id': posted.resources[0].id})
                     assert read.status == 'ok' and read.data['content'] == 'installed release\r\n'
                 assert database_digest(dsn) == before
                 checks.append('four_real_transports_preserve_all_database_facts')
             before = database_digest(dsn)
-            diagnosed = json.loads(run(str(executable), '--config-dir', str(settings.config_dir), 'doctor').stdout)
+            diagnosed = json.loads(
+                run(str(executable), '--config-dir', str(settings.config_dir), 'doctor').stdout
+            )
             assert diagnosed['ok'] is True
             assert database_digest(dsn) == before
             checks.append('installed_doctor_is_read_only')
@@ -169,8 +185,11 @@ async def acceptance():
                 run('sudo', '-n', 'rm', '-rf', '--', str(settings.root_private_dir))
     assert not folder.exists()
     return {
-        'checks': checks, 'python': sys.version, 'version': msg.__version__,
-        'temporary_installation_removed': True, 'external_recipients': 0,
+        'checks': checks,
+        'python': sys.version,
+        'version': msg.__version__,
+        'temporary_installation_removed': True,
+        'external_recipients': 0,
     }
 
 

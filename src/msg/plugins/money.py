@@ -33,9 +33,21 @@ from msg.plugins.common import registration
 from msg.plugins.schemas import IDENTIFIER, obj
 
 __all__ = [
-    'CODE', 'CURRENCY_ID', 'MAX_MINOR', 'POLICY_DIGEST', 'POLICY_VERSION', 'SCALE',
-    '_amount', '_balance', '_owner', '_post_entry', '_post_transfer', '_supply',
-    'account_requirements', 'clearing_decision', 'install',
+    'CODE',
+    'CURRENCY_ID',
+    'MAX_MINOR',
+    'POLICY_DIGEST',
+    'POLICY_VERSION',
+    'SCALE',
+    '_amount',
+    '_balance',
+    '_owner',
+    '_post_entry',
+    '_post_transfer',
+    '_supply',
+    'account_requirements',
+    'clearing_decision',
+    'install',
 ]
 
 

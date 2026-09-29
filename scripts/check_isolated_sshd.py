@@ -202,6 +202,9 @@ async def acceptance():
                 ).returncode
                 == 0
             )
+            lookup = run(str(privileged / 'authorized'), *line.split())
+            assert lookup.returncode == 0, lookup.stderr.decode()
+            assert lookup.stdout.startswith(b'restrict,command="')
             with socket.socket() as probe:
                 probe.bind(('127.0.0.1', 0))
                 port = probe.getsockname()[1]
@@ -218,7 +221,10 @@ PasswordAuthentication no
 KbdInteractiveAuthentication no
 PubkeyAuthentication yes
 AuthenticationMethods publickey
-UsePAM no
+# Match deploy/sshd_config: PAM performs account/session checks even when
+# password authentication is disabled (including password-locked CI users).
+UsePAM yes
+StrictModes yes
 AuthorizedKeysFile none
 AuthorizedKeysCommand {privileged}/authorized %t %k
 AuthorizedKeysCommandUser {username}
@@ -226,7 +232,8 @@ PermitTTY no
 DisableForwarding yes
 PermitUserRC no
 PermitUserEnvironment no
-LogLevel ERROR
+# Disposable test keys only; preserve enough detail to diagnose auth failures.
+LogLevel VERBOSE
 """)
             assert run('sudo', '-n', sshd, '-t', '-f', str(config)).returncode == 0
             server = subprocess.Popen(
@@ -383,7 +390,14 @@ LogLevel ERROR
             run('sudo', '-n', 'rm', '-rf', '--', str(app.settings.root_private_dir))
             if privileged is not None:
                 run('sudo', '-n', 'rm', '-rf', '--', str(privileged))
-    return {'checks': checks, 'temporary_installation_removed': not folder.exists()}
+    return {
+        'checks': checks,
+        'temporary_installation_removed': not folder.exists(),
+        'openssh': run('ssh', '-V').stderr.decode().strip(),
+        'python': sys.version,
+        'use_pam': True,
+        'strict_modes': True,
+    }
 
 
 if __name__ == '__main__':
