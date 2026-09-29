@@ -1,4 +1,6 @@
 """Explicit collaboration records backed by ordinary Resource and Revision facts."""
+import time
+
 from msg.core.codec import canonical, loads, parse_time, wire
 from msg.core.errors import Failure, require
 from msg.core.models import HandlerOutput, Relation, ResourceRef, ResourceTypeSpec
@@ -155,23 +157,33 @@ def install(app, op):
         async def list_records(ctx, request, tx):
             subject = await _self(app, ctx, request, tx)
             limit = request.arguments.get('limit', 50)
-            rows = tx.rows('SELECT id FROM resources WHERE owner=? AND type=? '
-                           "AND state='active' AND id>? ORDER BY id",
-                           (subject, KINDS[kind], request.arguments.get('after', '')))
+            position = request.arguments.get('after', '')
             items = []
-            for (rid,) in rows:
-                try:
-                    await check_access(app, ctx, request, tx, rid, 'read')
-                except Failure as exc:
-                    if exc.code in {'permission_denied', 'credential_ceiling', 'certificate_gate',
-                                    'delegation_scope', 'ancestor_inactive', 'not_found'}:
-                        continue
-                    raise
-                resource = await tx.resource(rid)
-                revision = await tx.revision(ResourceRef(id=rid))
-                record = loads(await app.contents.read_bytes(revision.content))
-                items.append(await _project(app, ctx, request, tx, resource, revision, record))
-                if len(items) > limit:
+            scanned = 0
+            while len(items) <= limit:
+                require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+                rows = tx.rows('SELECT id FROM resources WHERE owner=? AND type=? '
+                               "AND state='active' AND id>? ORDER BY id LIMIT 128",
+                               (subject, KINDS[kind], position))
+                for (rid,) in rows:
+                    scanned += 1
+                    require(scanned <= 4096 and time.monotonic() < ctx.deadline_monotonic,
+                            'query_cost_exceeded')
+                    position = rid
+                    try:
+                        await check_access(app, ctx, request, tx, rid, 'read')
+                    except Failure as exc:
+                        if exc.code in {'permission_denied', 'credential_ceiling', 'certificate_gate',
+                                        'delegation_scope', 'ancestor_inactive', 'not_found'}:
+                            continue
+                        raise
+                    resource = await tx.resource(rid)
+                    revision = await tx.revision(ResourceRef(id=rid))
+                    record = loads(await app.contents.read_bytes(revision.content))
+                    items.append(await _project(app, ctx, request, tx, resource, revision, record))
+                    if len(items) > limit:
+                        break
+                if len(rows) < 128:
                     break
             return HandlerOutput(data={'items': items[:limit],
                 'next_after': items[limit - 1]['id'] if len(items) > limit else None})

@@ -60,7 +60,7 @@ jobs:
       - name: Run real bounded work-record regressions
         run: >-
           python -m pytest -q
-          tests/test_collaboration_list_bounds.py
+          tests/test_collaboration_list_bounds.py tests/test_collaboration_list_deadline.py
           tests/test_collaboration_resources.py tests/test_collaboration_resource_surfaces.py
           tests/test_proposals.py
           --junitxml=artifacts/work-list-regressions.xml
