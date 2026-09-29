@@ -1,27 +1,31 @@
 # Hosting read-only runtime — #161
 
-Base: `261c8816cd581deaf69fc0c810b8fa6dad5ead5e`, tree `6171f6041ffd0addaf72eadd35acf562f478281f` (#167 merged).
-Branch: `fix/hosting-readonly-20260929`; PR #173; coordination #83.
+Base `261c8816cd581deaf69fc0c810b8fa6dad5ead5e`, tree `6171f6041ffd0addaf72eadd35acf562f478281f` (#167). Branch `fix/hosting-readonly-20260929`, PR #173; coordination #83.
 
-## Scope and authority
+## Scope and implementation
 
-Only #161: independent hosting composition, read-only metadata/content, public trust, deployment identity and regression evidence. Keep current same-origin/CSP rules. Do not change signing bytes, IDs, grants, operation versions or main/worker behavior. #80/#84 production acceptance remains separate. Capability matrix and operator guidance: `HOSTING_RUNTIME.md`.
+Independent HostingRuntime, canonical Registry metadata without business callbacks, original authentication/authorization, real SELECT-only PostgreSQL login, no initialization/migration/write execution, read-only canonical Git/CAS streaming, public trust/recovery gates and dedicated OS/DB deployment. Explicit content-group sharing preserves future publication readability without exposing staging or changing default private permissions. Details: `HOSTING_RUNTIME.md`.
 
-Read the current design and completed-contract archive on 2026-09-29. Initial source: #167 artifact `10999494535` (independently verified SHA256 `cff2bbc5beb0575f79e1eaf069494a0cbdcfe5862b64c15401f974a1791340f0`); source tree matches this base.
+Keep current same-origin/CSP, signing bytes, IDs, grants and operation versions. #80/#84 production acceptance is separate. Read the authoritative design/completed archive on 2026-09-29. Baseline source artifact10999494535 has independently verified SHA256 `cff2bbc5beb0575f79e1eaf069494a0cbdcfe5862b64c15401f974a1791340f0`; source tree matches base.
 
-## Cloud evidence
+## Verified cloud evidence
 
-- `0942251`: first tests/workflow. Run `36547254507` failed at Docker initialization because runner health-command parsing requires double quotes. No test execution; not RED evidence.
-- `6d24ee847c2e4c0349c71ce667d45b4ac04393f1`: valid RED run `36547778158`: **17 tests, 11 failures, 6 passed, 0 errors, 0 skipped**. Ten missing-runtime failures and one existing shared-user/read-write unit failure. Old hosting/CLI tests passed. Artifact `11023785174`, independently verified SHA256 `c4f67c186d03cd57df2a85668dcd5487ac5f261a91f913dfb047432eb6b7f2c0`; merge checkout `90744666cc37d156366041d63ee4b7d33a4e26eb`, tree `201784072a47b7b036e400b769c9e9dab225cd89`, Python 3.15.0rc2.
-- `20399c0eacffece853d2d0e2035986e30b0636a4`: permission tests added before implementation. Valid RED run `36548533968`: **20 tests, 14 failures, 6 passed, 0 errors, 0 skipped**. Three additional failures are the missing `group_read` option. Artifact `11023512357`, independently verified SHA256 `33ff93271408f4e2006891154bf4621aa660dce6c26324b9945fdc4f54faac60`; checkout `475335d453cb3be925c6ddf5ce48c0769b83aaf1`, tree `2763aed9a71f7cefa6b68bc3214a15c3d43aaa36`.
+| Head | Run / artifact | JUnit | Independent ZIP SHA256 |
+|---|---|---|---|
+| `0942251` | 36547254507 / none | Docker setup failed; NOT RED | none |
+| `6d24ee847c2e4c0349c71ce667d45b4ac04393f1` | 36547778158 / 11023785174 | 17: 11 failed, 6 passed, 0 errors/skips | `c4f67c186d03cd57df2a85668dcd5487ac5f261a91f913dfb047432eb6b7f2c0` |
+| `20399c0eacffece853d2d0e2035986e30b0636a4` | 36548533968 / 11023512357 | 20: 14 failed, 6 passed, 0 errors/skips | `33ff93271408f4e2006891154bf4621aa660dce6c26324b9945fdc4f54faac60` |
+| `246f0fd83f41185dde4e796d0f96f1cca8db7934` | 36549829088 / 11024435325 | 22: 8 failed, 14 passed, 0 errors/skips | `f308a1c1dd112339cd6fb6912350c4f63f9964e6e4bd79acc37bd739c9789fe9` |
+| `df7efdbaa637e7f316d0eab1e0ce3dc156f83954` | 36550574815 / 11024546594 | **22 passed, 0 failures/errors/skips** | `6dd107a22546b392c6ce136d1eab61f9c7927c387731e73d73a4cbb9add2fd9f` |
 
-## Implemented; GREEN/full verification pending
+Source manifests checked against each head/tree. First implementation tree0941aa2, checkout05e7b3b; GREEN tree `d974b049886a93e3cf784cba251231fcb88e6ac5`, checkout `f976bb8bbe91ca4afd88473334b9db2940dcf07b`, Python3.15.0rc2, attempt1. Initial eight implementation failures shared a PostgreSQL evaluation-order bug: sequence privilege checks received index OIDs. `df7efd` resolves sequence OIDs before privilege calls; no assertion removed or weakened. Existing error name `read_only_transaction` and Host403 remain unchanged.
 
-- Shared ordered Registry installer; HostingRuntime retains contracts but replaces every handler/requirement closure, including plugin manifests. No full Application, issuer, executor, private service key, cursor MAC or outbound sender.
-- Read-only PostgreSQL composition opens with initialization disabled, uses real READ ONLY transactions and validates the independent login's actual grants. Content reader binds the canonical streaming implementations without a writer/staging instance.
-- Startup verifies public trust, current authority and exact release source records. It never creates missing storage, migrates schema or synchronizes release rules. Shared recovery marker plus per-request database quarantine remain fail-closed.
-- Dedicated OS/DB configuration and operator-only preparation script. Opt-in writer `hosting.content_group_read=true` publishes group-readable/non-writable Git/index/CAS files under umask 0077; existing private permissions are never silently rewritten.
-- Daemon chooses hosting before normal Application construction. Existing publication/CSP test now uses the read-only fixture without deleting assertions. New assertions use the existing canonical error `read_only_transaction` and existing forbidden-host 403 status, rather than changing those contracts.
-- Added daemon composition regression; dedicated workflow also executes the established publication-origin regression.
+## Parallel convergence and remaining acceptance
 
-All project execution runs in GitHub Actions. Local work is source text/Git/AST inspection and artifact parsing only. No production probes, deployments, real Root/PIN/key reads, outbound delivery, destructive backups or restore promotion. Do not close #161 before inspecting GREEN and complete four-shard evidence against the current head/tree; reconcile live main before merge.
+Discovered overlapping #174 after implementation; coordinated in #83 comments5887561813 and #174 comment5887616225. Do not merge both runtime implementations. Preserve #174's independent UID and failure-containment acceptance, adapted from head `eafea15af0b8ff26c0208d5c0fcc039b4d32fb56` into `tests/test_hosting_runtime_isolation.py`.
+
+The retained tests check post-revocation HEAD/Range/304, cached quarantine and dangling markers, missing schema, excess DB privileges, and an actual UID65534 reader of fresh text/binary publications. Adaptations use the #173 runtime/error names, explicit group-read opt-in and a disposable libpq service file. No default ACL/post-publication chmod may hide unreadable new files. Added wrong schema version, missing SELECT, sequence/secret-table privileges and latched quarantine cases. This test-only extension is not yet verified; required-schema checks may need correction before GREEN.
+
+Full four-shard/gate/conformance/build run36550574826 and ancillary boundary/recovery runs still require inspection; focused GREEN is not final completion. Reconcile current main and both PR discussions before merge; do not overwrite #155/#168/#170/#171/#172. No #161 closure yet.
+
+All project execution runs in GitHub Actions. Local work is source text/Git/AST inspection and artifact parsing only. No production probes, deployments, Root/PIN/private-key access, real outbound delivery, funds, destructive backup operations or restore promotion.
