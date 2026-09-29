@@ -125,9 +125,14 @@ async def harness(tmp_path):
     app.authorizer=AuthorizationService(registry,app.certificates)
     app.authenticator=AuthenticationService(registry,app.certificates,app.settings.service_url,
         app.clock,lambda:base_grants(registry),lambda:base_grants(registry))
+    async def result_projection(context, request, session, resource, *, fields):
+        return await discovery.read_projection(app,context,request,session,resource.id,
+                                               revision=resource.revision,fields=fields)
+
     app.executor=OperationExecutor(registry,metadata,app.contents,app.authenticator,
-        app.authorizer,app.clock,Ed25519Signer.generate())
-    app.executor.application=app
+        app.authorizer,app.clock,Ed25519Signer.generate(),
+        max_request_bytes=app.settings.server.limits.max_request_bytes,
+        result_projection=result_projection)
     app._loaded=True
 
     def packet(operation,args,version=1, *, signed=True,**kwargs):
