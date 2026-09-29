@@ -195,3 +195,42 @@ async def test_acl_restriction_preserves_existing_special_security_bits(policy_t
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.resource(resource.id)).mode == special | 0o400
         assert active(tx)
+
+
+@pytest.mark.parametrize('current', ['same', 'different_grants', 'different_constraints',
+                                     'different_issuance', 'different_parent', 'different_expiry', 'absent'])
+async def test_current_certificate_digest_revokes_stale_authority_without_resigning(policy_target, current):
+    from dataclasses import replace
+    app, resource = policy_target
+    async with app.metadata.transaction(write=False) as tx:
+        certificate_id = tx.setting('active_root_certificate')
+        certificate = await tx.certificate(certificate_id)
+        original = tx.one('SELECT body FROM certificates WHERE id=?', (certificate_id,))[0]
+    wanted = certificate if current == 'same' else replace(certificate, grants=())
+    if current == 'different_constraints':
+        wanted = replace(certificate, grants=(replace(certificate.grants[0],
+                         constraints={'max_response_bytes': 1}),))
+    elif current == 'different_issuance':
+        wanted = replace(certificate, issuance=replace(certificate.issuance, max_cert_ttl_seconds=1))
+    elif current == 'different_parent':
+        wanted = replace(certificate, parent_certificate_id='different-parent')
+    elif current == 'different_expiry':
+        wanted = replace(certificate, expires_at=NOW + timedelta(days=1))
+    body, signed, pin = packet_for(resource)
+    body['entries'][0].update(kind='certificate.current', target=certificate_id,
+        subject=certificate.subject_id, value={'body_digest': None if current == 'absent' else digest(wanted)})
+    body['coverage']['domains'] = ['certificates']
+    result = await replay(app, body, signed, pin)
+    assert result['changed'] == (current != 'same')
+    assert (await replay(app, body, signed, pin))['changed'] == 0
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT body,revoked FROM certificates WHERE id=?', (certificate_id,)) == (original, int(current != 'same'))
+        assert active(tx)
+    # Even a fresh exact fingerprint cannot un-revoke a previously retired cert.
+    async with app.metadata.transaction(write=True) as tx:
+        tx.execute('UPDATE certificates SET revoked=1 WHERE id=?', (certificate_id,), write=True)
+    body['entries'].append(dict(body['entries'][0], sequence=2, value={'body_digest': digest(certificate)}))
+    body['sequence'] = 2
+    await replay(app, body, signed, pin)
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT revoked FROM certificates WHERE id=?', (certificate_id,)) == (1,)

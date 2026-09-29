@@ -75,6 +75,7 @@ def verify_checkpoint(packet, *, pin):
         require(type(entries) is list and len(entries) == pin.sequence,
                 'recovery_checkpoint_invalid')
         domains = set()
+        authority_chains = {}
         for sequence, fact in enumerate(entries, 1):
             typed = policy and type(fact) is dict and fact.get('kind') in recovery_policy.FACTS
             fact_fields = {'sequence', 'kind', 'subject', 'target', 'at'}
@@ -88,6 +89,11 @@ def verify_checkpoint(packet, *, pin):
             require(parse_time(fact['at']) <= datetime.now(UTC), 'recovery_checkpoint_invalid')
             if typed:
                 recovery_policy.validate(fact)
+            if fact['kind'] == 'resource.authority.reconcile':
+                chain = authority_chains.setdefault(fact['target'], [])
+                require(not chain or chain[-1]['value']['current'] == fact['value']['previous'],
+                        'recovery_authority_chain_gap')
+                chain.append(fact)
             domains.add(recovery_policy.DOMAINS[fact['kind']] if typed else 'revocations')
         if policy:
             require(body['coverage'] == {'complete': False, 'domains': sorted(domains)} and
@@ -288,7 +294,43 @@ async def _replay(store, packet, *, pin, operator):
                     previous.get('prefix_digest') == digest(body['entries'][:previous['sequence']]),
                     'recovery_checkpoint_regression')
         changed = 0
+        reconciled = set()
+        authority_chains = {}
+        for item in body['entries']:
+            if item['kind'] == 'resource.authority.reconcile':
+                authority_chains.setdefault(item['target'], []).append(item)
         for fact in body['entries']:
+            if fact['kind'] == 'resource.authority.reconcile':
+                if fact['target'] in reconciled:
+                    continue
+                chain = authority_chains[fact['target']]
+                actual_resource = await tx.resource(fact['target'])
+                actual = {field: getattr(actual_resource, field) for field in ('owner', 'group', 'parent')}
+                require(actual in [chain[0]['value']['previous']] +
+                        [item['value']['current'] for item in chain], 'recovery_authority_state_mismatch')
+                # Collapse only a verified contiguous chain; an old or intermediate
+                # snapshot converges once without transiently restoring old scope.
+                fact = dict(chain[-1], subject=actual['owner'],
+                            value={'previous': actual, 'current': chain[-1]['value']['current']})
+                reconciled.add(fact['target'])
+            if fact['kind'] in {'resource.acl.restrict', 'topic.policy.restrict'} and fact['target'] in authority_chains:
+                chain = authority_chains[fact['target']]
+                states = [chain[0]['value']['previous']] + [item['value']['current'] for item in chain]
+                actual_resource = await tx.resource(fact['target'])
+                actual = {field: getattr(actual_resource, field) for field in ('owner', 'group', 'parent')}
+                require(actual in states, 'recovery_authority_state_mismatch')
+                bound = chain[0]['value']['previous']
+                for transition in chain:
+                    if transition['sequence'] < fact['sequence']:
+                        bound = transition['value']['current']
+                if fact['kind'] == 'resource.acl.restrict':
+                    require(fact['subject'] == fact['value']['owner'] == bound['owner'] and
+                            fact['value']['group'] == bound['group'], 'recovery_fact_subject_mismatch')
+                    fact = dict(fact, subject=actual['owner'],
+                                value=dict(fact['value'], owner=actual['owner'], group=actual['group']))
+                else:
+                    require(fact['subject'] == bound['owner'], 'recovery_fact_subject_mismatch')
+                    fact = dict(fact, subject=actual['owner'])
             changed += bool(await _apply(tx, fact))
         receipt = {'format': body['format'], 'checkpoint_digest': pin.digest, 'sequence': pin.sequence,
                    'prefix_digest': digest(body['entries']), 'scope': 'supported_deny_only_facts',
@@ -298,6 +340,12 @@ async def _replay(store, packet, *, pin, operator):
         if body['format'] == POLICY_FORMAT:
             receipt['scope'] = 'supported_policy_restrictions_only'
             receipt['coverage'] = body['coverage']
+            staged = sorted({fact['target'] for fact in body['entries']
+                             if fact['kind'] == 'resource.authority.reconcile'})
+            if staged:
+                receipt['scope'] = 'supported_policy_reconciliation_only'
+                receipt['authority_rebuild_required'] = staged
+                receipt['promotion_blocked_reasons'].append('derived_authority_inventory_incomplete')
         if changed:
             tx.set_setting('authorization_epoch', tx.setting('authorization_epoch', 0) + 1)
         if changed or previous != receipt:

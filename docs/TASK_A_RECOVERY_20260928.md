@@ -152,14 +152,48 @@ is still required. It adds typed `value` payloads:
 
 The packet must state `coverage.complete=false` and an exact sorted list of the
 fact domains it contains (`resource_acl`, `topic_policy`, `topic_ban`,
-`revocations`). Missing/mismatched coverage or a claim of complete recovery is
+`revocations`, `certificates`, `resource_authority`). Missing/mismatched coverage or a claim of complete recovery is
 rejected. The packaged schema is `recovery-policy-checkpoint.schema.json`.
 All facts, receipt, authorization epoch and audit commit together. Existing v1
 prefixes can continue into v2; rollback to v1 after a v2 receipt is refused.
 
 This is conservative restriction, not reconstruction of all current authority.
-Owner/group/parent changes, certificate grant/constraint reconciliation, complete
+Full derived-authority reconstruction after owner/group/parent changes, complete
 external log provenance/currentness, exhaustive inventory and controlled promotion
 remain unfinished. Certificates are still revoked through existing facts; their
 signed body is never rewritten to manufacture current grants. Neither coverage
 metadata nor an isolated test establishes external freshness or backup destruction.
+
+### Current certificate fingerprint and staged ownership/parent reconciliation
+
+Two additional typed v2 facts advance reconciliation while `complete=false` and
+persistent quarantine remain mandatory:
+
+- `certificate.current` binds a subject/certificate ID to `value.body_digest`,
+  the canonical digest of its entire currently expected signed Certificate, or
+  null if that certificate has no current authority. A restored body that differs
+  is revoked as a whole; matching already-revoked certificates remain revoked.
+  Grants, constraints, issuance bounds, validity, key and chain/source bindings
+  are all covered by the digest. The original signed body is preserved, never
+  rewritten to invent narrower grants. Missing facts do not mean a complete
+  certificate inventory or authorize untouched certificates.
+- `resource.authority.reconcile` carries exact `previous` and `current`
+  `{owner,group,parent}` maps. The subject binds the previous owner. Current owner
+  and group must exist; parent must exist and remain acyclic. The actual snapshot
+  must match the previous or already-applied current state. A contiguous sequence
+  for one resource is verified and collapsed to its final state, allowing old,
+  intermediate and already-applied snapshots to converge without transiently
+  restoring older ownership. Interleaved ACL/policy facts must bind the exact
+  owner/group state at their signed sequence position; replay applies only their
+  restrictions to the actual old/intermediate/final resource. Unrelated or
+  temporally mismatched bindings, gaps or unexpected states abort the replay.
+
+Ownership/parent changes stage metadata only inside the quarantined instance;
+resource mode (including CERTGATE/SETGID/STICKY) is preserved and historical
+Revision bytes remain unchanged. The receipt names `authority_rebuild_required`
+resources and `derived_authority_inventory_incomplete`. Existing certificates
+and new/old scope-derived permissions are not declared valid or rebuilt by this
+operation: ordinary reads/writes and effect workers remain blocked before and
+after it. There is no promotion path. A full current authority inventory and its
+independently current provenance are still required before any future promotion
+implementation could safely release these staged changes.
