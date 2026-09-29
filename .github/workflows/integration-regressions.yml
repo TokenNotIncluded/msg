@@ -64,7 +64,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U msgtest"
+          --health-cmd "pg_isready -U msgtest -d postgres"
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
@@ -124,9 +124,19 @@ jobs:
           import psycopg
           dsn = os.environ['MSG_TEST_POSTGRES_URL_TEMPLATE'].format(database='postgres')
           with psycopg.connect(dsn) as connection:
-              values = {name: connection.execute('SHOW ' + name).fetchone()[0]
-                        for name in ('server_version', 'lc_collate', 'lc_ctype', 'server_encoding')}
-          values['python'] = platform.python_version()
+              server_version = connection.execute('SHOW server_version').fetchone()[0]
+              locale_row = connection.execute(
+                  "SELECT datcollate,datctype,pg_encoding_to_char(encoding) "
+                  "FROM pg_database WHERE datname=current_database()"
+              ).fetchone()
+          assert locale_row is not None
+          values = {
+              'server_version': server_version,
+              'lc_collate': locale_row[0],
+              'lc_ctype': locale_row[1],
+              'server_encoding': locale_row[2],
+              'python': platform.python_version(),
+          }
           Path('artifacts/database.json').write_text(json.dumps(values, indent=2) + '\n')
           assert values['lc_collate'] == os.environ['EXPECTED_DATABASE_LOCALE'], values
           assert values['server_encoding'] == 'UTF8', values
