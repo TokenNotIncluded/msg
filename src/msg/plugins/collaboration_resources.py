@@ -13,7 +13,7 @@ from msg.plugins.common import (
 )
 from msg.plugins.schemas import IDENTIFIER, STRING, obj
 
-KINDS = {'request': 'collab_request', 'offer': 'collab_offer', 'checkpoint': 'checkpoint'}
+KINDS = {'request': 'collab_request', 'offer': 'collab_offer', 'checkpoint': 'checkpoint', 'proposal': 'collab_proposal'}
 REFS = {'type': 'array', 'items': IDENTIFIER, 'maxItems': 16, 'uniqueItems': True}
 TEXT = {'type': 'string', 'minLength': 1, 'maxLength': 4096}
 
@@ -26,10 +26,12 @@ def resource_types(app):
                     'due_at': STRING, 'status': {'enum': ['open', 'claimed', 'fulfilled', 'cancelled']}},
         'offer': {'description': TEXT, 'scope': TEXT, 'availability': TEXT,
                   'capability_hint': TEXT, 'status': {'enum': ['active', 'withdrawn']}},
+        'proposal': {'author': IDENTIFIER, 'message': TEXT,
+                     'status': {'enum': ['open', 'accepted', 'rejected', 'withdrawn', 'superseded']}},
         'checkpoint': {'summary': TEXT, 'resume_hint': TEXT, 'status': {'const': 'active'}},
     }
     required = {'request': ('title', 'description', 'requirements', 'requester', 'assignee'),
-                'offer': ('description', 'scope', 'availability'), 'checkpoint': ('summary',)}
+                'offer': ('description', 'scope', 'availability'), 'checkpoint': ('summary',), 'proposal': ('author', 'message')}
     for kind, name in KINDS.items():
         ref = ResourceRef(id='schema:collaboration-record:' + kind + ':1')
         app.registry.add_schema(ref, obj({**fields[kind], 'subject': IDENTIFIER,
@@ -37,7 +39,7 @@ def resource_types(app):
             (*required[kind], 'subject', 'created_at', 'status')))
         types.append(ResourceTypeSpec(name=name, version=1, container=False,
             content_schema=ref, operations=frozenset(),
-            relations=frozenset({'reference', 'state'})))
+            relations=frozenset({'reference', 'state', 'target', 'content'})))
     return tuple(types)
 
 
@@ -77,7 +79,9 @@ async def _project(app, ctx, request, tx, resource, revision, record):
                             'collaboration_ref_forbidden'}:
                 continue
             raise
-        if relation.type == 'state':
+        if relation.type in {'target', 'content'}:
+            result[relation.type + '_ref'] = wire(relation.target)
+        elif relation.type == 'state':
             result['state_ref'] = relation.target.id
         else:
             result['resource_refs'].append(relation.target.id)
@@ -174,6 +178,9 @@ def install(app, op):
 
     for kind in KINDS:
         install_reads(kind)
+
+    from msg.plugins.proposals import install as install_proposals
+    install_proposals(app, op)
 
     def install_transition(kind, action):
         @op('communication.' + kind + '_' + action,

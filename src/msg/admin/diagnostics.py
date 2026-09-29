@@ -282,8 +282,19 @@ async def _doctor(config_dir,clock):
                     require({'subject','resource'}<=columns,'following_schema_missing')
                     success('following',default='empty',read_only=True,max_page_size=100)
                 except Failure as exc:failed('following',exc.code)
+                try:
+                    for kind in ('request','offer','checkpoint','proposal'):
+                        require(app.registry.operation('communication.'+kind+'_create').effect=='transaction',
+                                'collaboration_contract_invalid')
+                        require(app.registry.operation('communication.'+kind+'_get').effect=='read' and
+                                app.registry.operation('communication.'+kind+'_list').effect=='read',
+                                'collaboration_contract_invalid')
+                    success('collaboration',default='empty',storage='resource_revision',
+                            kinds=['request','offer','checkpoint','proposal'])
+                except Failure as exc:failed('collaboration',exc.code)
             else:
                 checks['following']={'ok':True,'status':'disabled'}
+                checks['collaboration']={'ok':True,'status':'disabled'}
             try:
                 await validator.validate(root.resource_id,tx)
                 require((await tx.subject(ROOT_SUBJECT)).local_only,'root_policy_corrupt')
@@ -658,6 +669,31 @@ async def selftest():
                 watched.status=='ok' and shown.status=='ok' and
                 [item['id'] for item in shown.data['items']]==[followed_id] and
                 hidden.status=='ok' and redacted.status=='ok' and not redacted.data['items'])
+            work = await call('communication.request_create',
+                {'title':'Isolated task','description':'Validate work records','requirements':'Explicit claim'},alice,ua)
+            offer = await call('communication.offer_create',
+                {'description':'Review','scope':'Selftest','availability':'Now'},alice,ua)
+            checkpoint = await call('communication.checkpoint_create',
+                {'summary':'Selftest progress','resource_refs':[]},alice,ua)
+            proposal_target = await call('content.post_create',
+                {'parent':test_path+'/tmp','body':'before proposal'},alice,ua)
+            proposal_source = await call('content.post_create',
+                {'parent':test_path+'/tmp','body':'after proposal'},alice,ua)
+            require(all(item.status=='ok' for item in
+                (work,offer,checkpoint,proposal_target,proposal_source)), 'selftest_collaboration_create_failed')
+            proposal = await call('communication.proposal_create',
+                {'target':proposal_target.resources[0].id,
+                 'base_revision':proposal_target.resources[0].revision,
+                 'content_ref':wire(proposal_source.resources[0]),'message':'Apply selftest text'},alice,ua)
+            require(proposal.status=='ok','selftest_proposal_create_failed')
+            accepted = await call('communication.proposal_accept',
+                {'id':proposal.data['id'],'proposal_revision':proposal.resources[0].revision,
+                 'base_revision':proposal_target.resources[0].revision},alice,ua,
+                expected=((proposal.data['id'],proposal.data['generation']),
+                          (proposal_target.resources[0].id,proposal_target.data['generation'])))
+            restored = await call('discovery.get',{'id':proposal_target.resources[0].id},alice,ua)
+            checks['collaboration']=(accepted.status=='ok' and restored.status=='ok' and
+                                     restored.data['content']=='after proposal')
             # OnlineIssuer exercises only the independent temporary Test Root
             # created above. No production trust material or signer is opened.
             async with app.metadata.transaction(write=False) as tx:

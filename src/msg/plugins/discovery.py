@@ -257,7 +257,7 @@ async def read_projection(app,ctx,request,tx,rid, *, revision=None,fields=()):
         else:
             meta['raw_url']=f'/_id/{rid}/revisions/{rev.id}/raw'
             meta['transfer_operation']='transfer.open'
-        if resource.type in {'collab_request', 'collab_offer', 'checkpoint'}:
+        if resource.type in {'collab_request', 'collab_offer', 'checkpoint', 'collab_proposal'}:
             from msg.plugins.collaboration import _visible_refs
             permitted = set(await _visible_refs(app, ctx, request, tx,
                                                [r.target.id for r in rev.relations]))

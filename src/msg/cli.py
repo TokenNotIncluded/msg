@@ -114,6 +114,8 @@ def parser():
     for action in ('accept','reject','archive'):
         dm_actions.add_parser(action).add_argument('conversation')
     dm_actions.add_parser('block').add_argument('subject')
+    from msg.client_collaboration import add_commands as add_collaboration_commands
+    add_collaboration_commands(commands)
     handoff=commands.add_parser('handoff',help='Explicit collaboration context; never transfers permission.')
     handoff_actions=handoff.add_subparsers(dest='action',required=True)
     handoff_create=handoff_actions.add_parser('create')
@@ -371,6 +373,9 @@ async def run(args):
                                                                {'subject_id':args.subject})
             else:result=await client.call('communication.dm_'+args.action,
                                           {'conversation_id':args.conversation})
+        elif command in {'request','offer','checkpoint','proposal','watch'}:
+            from msg.client_collaboration import run_command as run_collaboration_command
+            result=await run_collaboration_command(client,args)
         elif command=='handoff':
             if args.action=='create':
                 params={'to_subject':args.recipient,'resource_refs':args.ref}

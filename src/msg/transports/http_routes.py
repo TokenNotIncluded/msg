@@ -1327,7 +1327,7 @@ def create_app(service):
                         return Response(status_code=304,headers=headers)
                     return Response(b'' if request.method=='HEAD' else payload,
                                     media_type='application/json',headers=headers)
-                if name in {'handoffs','leases'}:
+                if name in {'handoffs','leases','requests','offers','checkpoints','proposals','watches'}:
                     require(request.method in {'GET','HEAD'},'method_not_allowed')
                     require(raw_path.decode('utf-8')==request.url.path and b'%' not in raw_path,
                             'not_found')
@@ -1336,7 +1336,7 @@ def create_app(service):
                     if not listing:
                         require(re.fullmatch(r'[A-Za-z0-9_.:-]{1,160}(?:/json)?',tail)
                                 is not None,'not_found')
-                    singular='handoff' if name=='handoffs' else 'lease'
+                    singular='watch' if name=='watches' else name[:-1]
                     operation='communication.'+singular+('_list' if listing else '_get')
                     pairs=request.query_params.multi_items()
                     require(len(pairs)==len({key for key,_ in pairs}),
