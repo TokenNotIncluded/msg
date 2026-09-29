@@ -11,31 +11,27 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Correct test configuration without changing acceptance boundaries
+      - name: Grant only reader-group traversal in the disposable fixture
         run: |
           set -eu
-          git fetch origin bb3c159138c36473537e9be76aa2e59973c37285
-          git checkout --detach bb3c159138c36473537e9be76aa2e59973c37285
+          git fetch origin b3bfdb51f54d6e0ee398fb7571444a22e2d71b2a
+          git checkout --detach b3bfdb51f54d6e0ee398fb7571444a22e2d71b2a
           python - <<'PY'
           from pathlib import Path
           p=Path('tests/test_hosting_readonly_isolation.py')
           text=p.read_text()
-          changes=[
-              ("'Host': 'other.example'})).status_code == 404", "'Host': 'other.example'})).status_code == 403"),
-              ("        config = write_example(base/'etc', base/'unused', 'http://testserver',\n                               postgres_dsn=reader_settings.server.postgres_dsn)",
-               "        fields = psycopg.conninfo.conninfo_to_dict(reader_settings.server.postgres_dsn)\n        assert all('\\n' not in value for value in fields.values())\n        pgservice = base/'pg_service.conf'\n        pgservice.write_text('[hosting_test]\\n' + ''.join(f'{key}={value}\\n' for key, value in fields.items()))\n        config = write_example(base/'etc', base/'unused', 'http://testserver',\n                               postgres_dsn='service=hosting_test')"),
-              ("path.chmod(0o555 if path.is_dir() else 0o444)", "path.chmod(0o550 if path.is_dir() else 0o440)"),
-              ("'env', 'PYTHONDONTWRITEBYTECODE=1', 'PYTHONPATH='+str(base/'src'),", "'env', 'PYTHONDONTWRITEBYTECODE=1', 'PYTHONPATH='+str(base/'src'),\n            'PGSERVICEFILE='+str(pgservice), 'HOME='+str(base),")]
-          for old,new in changes:
-              assert text.count(old)==1, old
-              text=text.replace(old,new)
-          p.write_text(text)
+          assert text.count('0o001')==2
+          p.write_text(text.replace('0o001','0o010'))
+          p=Path('deploy/HOSTING.md')
+          text=p.read_text()
+          assert text.count('` /@name/web/ `')==1
+          p.write_text(text.replace('` /@name/web/ `','`/@name/web/`'))
           PY
           git diff --check
-          git add tests/test_hosting_readonly_isolation.py
+          git add tests/test_hosting_readonly_isolation.py deploy/HOSTING.md
           git config user.name 'msg maintenance CI'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'test: use a real libpq service for the isolated hosting process'
+          git commit -m 'test: scope disposable reader traversal to its content group'
           test -z "$(git status --porcelain)"
           git push origin HEAD:refs/heads/ci/hosting-161-source-00ba8f7
           git log -1 --format='%H %T %P'
