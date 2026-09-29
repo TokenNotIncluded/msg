@@ -160,6 +160,8 @@ def install(app):
             max_quantity,entitlement_kind,duration_seconds,price_revision
             FROM server_offers WHERE offer_id=? AND enabled=TRUE""", (request.arguments['id'],))
         require(row is not None and _valid_catalog_offer(app, row), 'listing_not_found')
+        from msg.market.offer_resources import verify_projection
+        await verify_projection(app, tx, row)
         require(request.arguments.get('revision', row[8]) == row[8], 'listing_not_found')
         return HandlerOutput(data={'listing': offer_listing(_public_offer(row))})
 

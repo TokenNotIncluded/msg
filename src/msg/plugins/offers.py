@@ -117,7 +117,12 @@ def install(app):
         rows = tx.rows('''SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
             max_quantity,entitlement_kind,duration_seconds,price_revision
             FROM server_offers WHERE enabled=TRUE ORDER BY offer_id''')
-        public = [_public_offer(row) for row in rows if _valid_catalog_offer(app, row)]
+        from msg.market.offer_resources import verify_projection
+        public = []
+        for row in rows:
+            if _valid_catalog_offer(app, row):
+                await verify_projection(app, tx, row)
+                public.append(_public_offer(row))
         data = {'currency_id': CURRENCY_ID, 'offers': public}
         if request.contract_version == 2:
             from msg.market.compatibility import offer_listing
@@ -137,6 +142,8 @@ def install(app):
             max_quantity,entitlement_kind,duration_seconds,price_revision FROM server_offers
             WHERE offer_id=? AND enabled=TRUE''',(args['offer_id'],))
         require(row is not None and _valid_catalog_offer(app, row),'offer_not_found')
+        from msg.market.offer_resources import verify_projection
+        await verify_projection(app, tx, row)
         require(args['price_revision'] == row[8],'offer_price_changed')
         require(row[4] <= args['quantity'] <= row[5] and row[3]*args['quantity'] <= MAX_MINOR,
                 'invalid_offer_quantity')

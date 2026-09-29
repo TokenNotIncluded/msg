@@ -35,7 +35,9 @@ async def test_offer_listing_v2_projection_preserves_v1_and_checks_revision(inst
                        'revision': 'nonexistent'}, contract_version=2)
     assert wrong.error.code == 'listing_not_found'
     native = await call(app, 'store.listing_get', {'id': args['offer_id']}, contract_version=2)
-    assert native.error.code == 'listing_not_found'
+    assert native.status == 'ok'
+    assert native.data['listing']['listing_id'] == args['offer_id']
+    assert native.data['listing']['server_offer']['price_revision'] == args['price_revision']
     assert await snapshot(app) == before
 
 

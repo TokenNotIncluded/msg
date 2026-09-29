@@ -38,9 +38,8 @@ def _root_signer(app, signer):
             signer.public_key == app.certificates.root_public_key, 'root_key_mismatch')
 
 
-_OFFER_COLUMNS = ('offer_id', 'resource_kind', 'unit', 'price_minor', 'min_quantity',
-                  'max_quantity', 'entitlement_kind', 'duration_seconds', 'enabled',
-                  'price_revision')
+from msg.market.offer_resources import OFFER_COLUMNS as _OFFER_COLUMNS
+
 _UNSET = object()
 
 
@@ -69,6 +68,10 @@ async def apply_offer(app, signer, *, action: str, operator: str, offer_id: str,
     request_id = 'local_offer_' + uuid4().hex
     async with app.metadata.transaction(write=True) as tx:
         previous = _offer_snapshot(tx, offer_id)
+        from msg.market.offer_resources import authoritative_offer, write_offer_revision
+        source = await authoritative_offer(app, tx, offer_id)
+        if source is not None:
+            require(source == previous, 'offer_projection_mismatch')
         if expected_offer is not _UNSET:
             require(previous == expected_offer, 'offer_preview_stale')
         if action == 'set':
@@ -93,6 +96,9 @@ async def apply_offer(app, signer, *, action: str, operator: str, offer_id: str,
             tx.execute('UPDATE server_offers SET enabled=FALSE WHERE offer_id=?',
                        (offer_id,), write=True)
         current = _offer_snapshot(tx, offer_id)
+        if previous is None or source is not None:
+            await write_offer_revision(app, tx, signer, current, now=now,
+                                       request_id=request_id, new=previous is None)
         statement = {'action': 'offer_' + action, 'offer_id': offer_id,
                      'before': previous, 'after': current, 'operator': operator,
                      'request_id': request_id, 'time': wire(now)}

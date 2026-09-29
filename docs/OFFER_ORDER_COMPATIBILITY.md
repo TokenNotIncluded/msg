@@ -60,8 +60,17 @@ Existing redemption failure tests verify a grant failure rolls back the shared
 release and all purchase/grant facts; retry/concurrency and backup restore
 coverage remain required.
 
-The physical tables still retain their legacy names. Server offers are not yet
-ordinary editable Resource revisions, and new `money.redeem` versions have not
-been introduced. A future write-model migration must preserve historical IDs,
+The physical tables still retain their legacy names. Unmapped legacy offers
+remain SQL-only; new local offers use the Resource writer described below. New
+`money.redeem` versions have not been introduced. A future write-model migration must preserve historical IDs,
 receipts and cached request results and retire the old writer atomically. This
 read compatibility slice does not claim that physical migration is complete.
+
+
+## Subsequent write-model stage
+
+New local offers now use signed ordinary Resource/Revision authority; their SQL
+rows are verified compatibility projections. Existing unmapped offers remain on
+their old writer. See [OFFER_RESOURCE_MIGRATION.md](OFFER_RESOURCE_MIGRATION.md)
+for the staged implementation, unchanged redemption semantics and remaining
+explicit adoption/Purchase migration work.
