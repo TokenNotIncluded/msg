@@ -1,4 +1,4 @@
-"""Resource-backed target watches, projected by the existing Event transaction."""
+"""Pinned target and saved-query watches on the existing Event transaction."""
 import time
 from dataclasses import replace
 from datetime import timedelta
