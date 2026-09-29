@@ -14,6 +14,7 @@ from test_authorization import approve, scoped
 from test_authorization_sources import private_post, grant
 from test_service import NOW, call, register
 from read_only_evidence import readonly_evidence
+from http_read_cache_matrix import assert_read_cache_matrix
 
 
 SOURCES = ('owner','mode','inheritance','group-member','group-maintainer','group-owner',
@@ -70,7 +71,7 @@ async def test_live_source_loss_across_transports_cli_and_projections(installed,
     elif source == 'share-user':
         gid = await grant(app,owner,rid,reader[1])
     elif source == 'certificate':
-        ops = ('discovery.get@1','discovery.search@1','communication.sync@1',
+        ops = ('discovery.get@1','discovery.raw@1','discovery.search@1','communication.sync@1',
                'communication.inbox@1','communication.outbox@1')
         cert = await approve(app,root,reader[1],reader[0],(
             scoped(app,'resource.read_override',rid,ops),))
@@ -85,8 +86,11 @@ async def test_live_source_loss_across_transports_cli_and_projections(installed,
         monkeypatch.setitem(cli.TRANSPORTS,'http',lambda server:HTTPTransport(server,http=http))
         monkeypatch.setattr(cli,'MsgClient',lambda saved,adapter:MsgClient(saved,adapter,clock=lambda:NOW))
 
+        http_cache={}
+
         async def matrix(expected):
             async with readonly_evidence(app, monkeypatch):
+                await assert_read_cache_matrix(http,app,reader,certs,rid,revision,expected,http_cache)
                 for args in ({'id':rid},{'id':rid,'view':'history'},{'id':rid,'revision':revision}):
                     packet = request_for('discovery.get',args,app.settings.service_url,
                         signer=reader[0],subject=reader[1],certificates=certs,source='msg',
