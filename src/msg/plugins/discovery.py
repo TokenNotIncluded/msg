@@ -505,7 +505,7 @@ def install(app):
             position,snapshot=app.cursors.decode_page(a['cursor'],request.operation,
                                                        query_args,principal,ctx.now)
         else:
-            position=app.cursors.decode(a['cursor'],'page',query_hash) if a.get('cursor') else (['\uffff','\uffff'] if descending else ['', ''])
+            position=app.cursors.decode(a['cursor'],'page',query_hash) if a.get('cursor') else None
             snapshot=ctx.now
         from msg.plugins.read_predicates import read_predicates
         filters,parameters=await read_predicates(app,tx,a,parent)
@@ -517,8 +517,11 @@ def install(app):
         scanned=0
         while len(values)<=limit:
             require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
-            sql=f"SELECT r.body,{column},r.id FROM resources r WHERE {' AND '.join(filters)} AND ({column},r.id){comparison}(?,?) ORDER BY {column} {ordering},r.id {ordering} LIMIT 128"
-            rows=tx.rows(sql,(*parameters,*last_position))
+            # No text value is a universal endpoint under database collations.
+            # Seek only from an actual cursor or the last scanned resource.
+            seek=f" AND ({column},r.id){comparison}(?,?)" if last_position is not None else ''
+            sql=f"SELECT r.body,{column},r.id FROM resources r WHERE {' AND '.join(filters)}{seek} ORDER BY {column} {ordering},r.id {ordering} LIMIT 128"
+            rows=tx.rows(sql,(*parameters,*(last_position if last_position is not None else ())))
             if not rows:
                 break
             for raw,order,rid in rows:
