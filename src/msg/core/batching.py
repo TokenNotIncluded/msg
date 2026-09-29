@@ -5,7 +5,7 @@ from msg.core.packet import decode_packet
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
 
 # Credential delivery has response-only secrets; it requires its own call.
-NO_BATCH=frozenset(SECRET_DELIVERY_MIN_VERSION) | {'identity.register','identity.upgrade'}
+NO_BATCH=frozenset(SECRET_DELIVERY_MIN_VERSION) | {'identity.register','identity.upgrade','file.batch'}
 
 
 def packets(registry,request,subject,max_bytes=None):

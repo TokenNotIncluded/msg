@@ -33,7 +33,7 @@ BASE_FAMILIES = {
         'identity.recovery_envelope_list','identity.recovery_custodians',
         'achievement.start', 'achievement.answer', 'achievement.finish',
         'achievement.pin','achievement.unpin','achievement.reorder'),
-    'resource.basic': ('content.',),
+    'resource.basic': ('content.', 'file.'),
     'sharing.basic': ('sharing.',),
     'discussion.basic': ('discussion.',),
     'communication.basic': ('communication.',),

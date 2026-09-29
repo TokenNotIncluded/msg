@@ -186,11 +186,9 @@ async def ensure_public_repositories(tx,resource, *, mode=None,parent=None):
         require(p.mode&1 and all(a.mode&1 for a in await tx.ancestors(parent)),'repo_public_read_required')
 
 
-async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
-    """Prepare an authorized edit without publishing any content or SQL reference."""
-    resource=await tx.resource(await resolve(tx,args['id']))
-    if post_only:
-        require(resource.type=='post','not_editable')
+async def editable_resource(app,ctx,request,tx,identifier):
+    """One authority and lifecycle boundary for body replacement and patch."""
+    resource=await tx.resource(await resolve(tx,identifier))
     require(resource.type in {'post','file'} and resource.state=='active','not_editable')
     chain=(*await tx.ancestors(resource.id),resource)
     require(not any(item.id=='t_last_will' for item in chain),'legacy_directive_only')
@@ -200,6 +198,14 @@ async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
     await check_access(app,ctx,request,tx,resource.id,'write')
     await assert_generation(request,resource)
     require((await topic_policy(tx,resource)).get('editable',True),'content_frozen')
+    return resource
+
+
+async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
+    """Prepare an authorized edit without publishing any content or SQL reference."""
+    resource=await editable_resource(app,ctx,request,tx,args['id'])
+    if post_only:
+        require(resource.type=='post','not_editable')
     current=await tx.revision(ResourceRef(id=resource.id,revision=resource.revision))
     media=current.content.media_type
     require(media in {'text/plain','text/markdown'},'text_patch_required')
@@ -675,7 +681,7 @@ def install(app):
         await assert_generation(request,resource)
         await removable(app,ctx,request,tx,resource)
         require(resource.state!='purged','resource_purged')
-        state='archived' if request.operation=='content.archive' else 'active'
+        state='archived' if request.operation in {'content.archive','file.delete'} else 'active'
         if state=='active' and resource.type=='website':
             from msg.plugins.hosting_capacity import manifest_size,require_capacity
             await require_capacity(app,tx,resource,await manifest_size(app,tx,resource),ctx.now)

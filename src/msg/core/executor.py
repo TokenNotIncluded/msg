@@ -57,7 +57,7 @@ class OperationExecutor:
                 return await self._independent(request,spec,entry)
             async with self.metadata.transaction(write=spec.effect!='read') as session:
                 principal=await self.authenticator.authenticate(request,session,entry=entry)
-                if spec.name=='batch.atomic':
+                if spec.name in {'batch.atomic','file.batch'}:
                     # Validate the child set before an old cached parent result
                     # can bypass the handler's secret-delivery exclusion.
                     packets(self.registry,request,principal.subject,
@@ -79,6 +79,7 @@ class OperationExecutor:
                 else:
                     capacity_writes={'identity.register','identity.temporary','identity.custodial_create','content.topic_create',
                         'content.post_create','content.post_edit','content.file_put','content.attach',
+                        'file.create','file.copy','file.write','file.patch','file.mkdir',
                         'content.template_put','discussion.reply','discussion.quote','discussion.repost',
                         'transfer.part_put','git.create','git.push','git.receive','hosting.deploy','hosting.preview','keystore.put','achievement.start'}
                     if spec.name in capacity_writes:
@@ -91,7 +92,7 @@ class OperationExecutor:
                                 operation=f'{spec.name}@{spec.version}',check=check),),session)
                         require(current.generation==generation,'generation_conflict',
                                 details={'id':rid,'generation':current.generation,'revision':current.revision})
-                    audited=(spec.name in {'content.chmod','content.chgrp','content.chown','content.purge','content.move',
+                    audited=(spec.name in {'content.chmod','content.chgrp','content.chown','content.purge','content.move','file.move',
                         'identity.key_add','identity.key_revoke','identity.recover','identity.delegate','identity.delegation_revoke',
                         'identity.ssh_key_add','identity.ssh_key_revoke','identity.ssh_certificates','cert.publish','cert.request'}
                         or (spec.name.startswith('group.') and spec.effect!='read'))

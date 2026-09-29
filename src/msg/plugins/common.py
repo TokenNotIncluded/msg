@@ -187,6 +187,8 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
         text=(await app.contents.read_bytes(blob)).decode('utf-8',errors='replace')
         tx.execute('INSERT INTO projections VALUES (?,?) ON CONFLICT(resource_id) DO UPDATE SET text=excluded.text',
                    (resource.id,text),write=True)
+    else:
+        tx.execute('DELETE FROM projections WHERE resource_id=?',(resource.id,),write=True)
     return updated
 
 
@@ -215,6 +217,8 @@ def default_operation_rules(name):
         rules=('topics','read-write')
     elif name.startswith('content.'):
         rules=('read-write',)
+    elif name.startswith('file.'):
+        rules=('files','read-write','protocol')
     elif name.startswith(('transfer.','keystore.','git.')):
         rules=('files','protocol')
     elif name.startswith(('cert.','group.')):

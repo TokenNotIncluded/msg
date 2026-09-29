@@ -24,5 +24,7 @@ def install_registry(context, plugins):
     for name in BUILTINS:
         if name in configured:
             importlib.import_module('msg.plugins.' + name).install(context)
+    if {'content','discovery','batch'} <= configured:
+        importlib.import_module('msg.plugins.files').install(context)
     install_capabilities(context.registry)
     context.registry.freeze()

@@ -16,6 +16,7 @@ from msg.security.token_delivery import recovery_verifier
 
 CUSTODIAL_SIGNED_WRITES=frozenset({
     'content.post_create','content.post_edit','content.file_put','content.attach',
+    'file.create','file.copy','file.write','file.patch',
     'discussion.reply','discussion.quote','discussion.repost','identity.token_rotate',
     'identity.custodial_upgrade_start','identity.custodial_upgrade_finish',
     'identity.custodial_rewrap_entry','identity.custodial_rewrap_revision',
