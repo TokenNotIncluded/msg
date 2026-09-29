@@ -1,11 +1,12 @@
 """Ordinary read views reject changed effects before resolving any resource."""
 from dataclasses import replace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from msg.transports.http import create_app
+from msg.storage.session import RelationalSession
 from read_only_evidence import readonly_evidence
 
 
@@ -23,9 +24,12 @@ async def test_non_read_views_do_not_resolve_or_execute(installed, monkeypatch, 
                     key = (operation, 1)
                     patch.setitem(app.registry._operations, key,
                                   replace(app.registry._operations[key], effect=effect))
-                lookup = Mock(side_effect=AssertionError('effect gate performed a resource lookup'))
+                lookup = AsyncMock(side_effect=AssertionError('effect gate performed a resource lookup'))
                 execute = AsyncMock(side_effect=AssertionError('effect gate executed an operation'))
-                patch.setattr(app.metadata, 'transaction', lookup)
+                # The runtime-generation fence must still read its setting before routing.
+                # Block actual resource resolution, not that required safety transaction.
+                for name in ('resolve', 'resolve_migrated', 'resource', 'path'):
+                    patch.setattr(RelationalSession, name, lookup)
                 patch.setattr(app.executor, 'execute', execute)
                 for path in paths:
                     response = await http.request(method, path)
