@@ -276,7 +276,13 @@ def apply_patch(source, patch, *, base_source=None):
         result = apply_text_patch(source,patch['exact'],patch['replacement'],
                                   patch.get('before',''),patch.get('after',''))
     elif kind=='unified':
-        result = _unified(source,_hunks(patch['diff']),rebase=base_source is not None)
+        hunks = _hunks(patch['diff'])
+        if base_source is not None:
+            # Coordinates identify a target only in the original revision.
+            # A duplicate old block surviving elsewhere is not that target;
+            # relocation requires a unique anchor in both revisions.
+            _unified(base_source,hunks,rebase=True)
+        result = _unified(source,hunks,rebase=base_source is not None)
     else:
         result = _structured(source,patch)
     require(len(result.encode('utf-8'))<=PATCH_LIMIT, 'patch_too_large')
