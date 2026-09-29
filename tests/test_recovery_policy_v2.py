@@ -130,6 +130,19 @@ async def test_v2_policy_ban_expiry_and_rollback(policy_target):
     assert (await replay(app, body, signed, pin))['changed'] == 0
     async with app.metadata.transaction(write=False) as tx:
         assert tx.one('SELECT membership_policy FROM topic_settings WHERE topic=?', (topic.id,)) == ('closed',)
+    # The historical explicit lift is a relaxation, not a deny-only fact.
+    body['entries'].append({'sequence': 5, 'kind': 'topic_ban.lift', 'subject': owner.id,
+                            'target': topic.id, 'at': wire(NOW)})
+    body['sequence'] = 5
+    body['coverage']['domains'] = ['resource_acl', 'revocations', 'topic_ban', 'topic_policy']
+    receipt = await replay(app, body, signed, pin)
+    assert receipt['scope'] == 'supported_policy_reconciliation_only'
+    assert receipt['promotion'] == 'blocked' and receipt['coverage']['complete'] is False
+    assert 'supported_fact_inventory_incomplete' in receipt['promotion_blocked_reasons']
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT status FROM topic_bans WHERE topic=?', (topic.id,)) == ('lifted',)
+        assert tx.one('SELECT role,status FROM topic_memberships WHERE topic=?', (topic.id,)) == ('member', 'removed')
+        assert active(tx)
 
 
 def test_packaged_policy_schema_matches_typed_contract():

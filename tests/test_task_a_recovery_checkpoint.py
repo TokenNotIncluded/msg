@@ -1,4 +1,4 @@
-"""Independent checkpoint pins, not database flags, authorize deny-only replay."""
+"""Independent checkpoint pins, not database flags, authorize partial authority replay."""
 import asyncio
 from copy import deepcopy
 from dataclasses import replace
@@ -91,7 +91,7 @@ async def test_replay_is_atomic_monotonic_idempotent_and_never_promotes(restored
     assert sum(result['changed'] for result in results) == 1
     assert all(result['promotion'] == 'blocked' and result['backup_retired'] is False and
                result['promotion_blocked_reasons'] == [
-                   'quarantine_remains', 'supported_facts_are_deny_only',
+                   'quarantine_remains', 'supported_fact_inventory_incomplete',
                    'backup_retirement_not_attested'] for result in results)
     async with restored.transaction(write=False) as tx:
         assert active(tx)
@@ -306,7 +306,7 @@ async def test_all_supported_owned_revocations_preserve_signed_bytes_and_never_i
     result = await replay(restored, signed(body), pin=pin)
     assert result['changed'] == len(facts) and result['backup_retired'] is False
     assert result['promotion_blocked_reasons'] == [
-        'quarantine_remains', 'supported_facts_are_deny_only', 'backup_retirement_not_attested']
+        'quarantine_remains', 'supported_fact_inventory_incomplete', 'backup_retirement_not_attested']
     async with restored.transaction(write=False) as tx:
         assert tx.one('SELECT body,revoked FROM certificates WHERE id=?', ('cert_one',)) == (original, 1)
         assert (await tx.credential(signer.key_id)).revoked_at == NOW
@@ -375,7 +375,9 @@ async def test_replayed_ban_removes_restored_admin_even_after_lift(restored, che
     body = dict(body, entries=facts, sequence=len(facts))
     pin = replace(pin, digest=digest(body), sequence=len(facts))
     for _ in range(2):
-        await replay(restored, signed(body), pin=pin)
+        receipt = await replay(restored, signed(body), pin=pin)
+        assert receipt['scope'] == 'supported_authority_reconciliation_facts'
+        assert 'supported_fact_inventory_incomplete' in receipt['promotion_blocked_reasons']
         async with restored.transaction(write=False) as tx:
             assert tx.one('SELECT role,status FROM topic_memberships WHERE topic=? AND subject=?',
                           (resource.id, 'u_owner')) == ('member', 'removed')

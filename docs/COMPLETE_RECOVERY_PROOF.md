@@ -36,7 +36,7 @@ All other runtime settings remain exact.
 
 This is a strict matching path: the restored/reconciled state must equal the
 independently committed complete current state. It does **not** rebuild arbitrary
-missing grants from a partial replay log. Earlier deny-only/authority replay
+missing grants from a partial replay log. Earlier partial authority replay
 receipts remain incomplete; their receipt alone cannot authorize promotion. A
 state with extra recovery audit entries will not match an earlier complete proof.
 

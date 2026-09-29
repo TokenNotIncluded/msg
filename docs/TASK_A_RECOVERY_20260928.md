@@ -26,7 +26,7 @@ Refs #64, #65, #68, #69, #70, #84, #85；接续 #112，不关闭现场验收项�
 在线清除、身份切换、历史恢复和备份退役依然分别报告。没有独立备份材料时
 `backup_retired` 和 `server_key_retired` 不变为 true。
 
-## #69：独立精确检查点下的 deny-only 重放
+## #69：独立精确检查点下的部分当前权限协调
 
 `TrustedCheckpointPin` 必须由受信任的本机调用方通过独立认证渠道取得：服务、公开验签钥、
 完整检查点摘要、单调序号四项均必填。不能从待恢复数据库、其备份、可一起回滚的审计链或待验证 packet
@@ -39,7 +39,7 @@ Refs #64, #65, #68, #69, #70, #84, #85；接续 #112，不关闭现场验收项�
 同序号内容变化会被精确 pin 拒绝；跨水位的已重放前缀不一致会拒绝。
 
 支持 credential、certificate、ShareGrant v1/v2、ShareLink 撤销，普通 Membership 与 TopicMembership 移除，
-IdentityKey/EncryptionSubkey 退役，以及指定账号在线 vault 销毁。 `topic_ban.apply` 同时将旧快照里的话题成员降为 member/removed，与正常禁言一致；后续 `topic_ban.lift` 不恢复旧成员资格或 admin 角色。只收缩现存权限：不新增身份、授权、
+IdentityKey/EncryptionSubkey 退役，以及指定账号在线 vault 销毁。 `topic_ban.apply` 同时将旧快照里的话题成员降为 member/removed，与正常禁言一致；后续 `topic_ban.lift` 不恢复旧成员资格或 admin 角色。显式 lift 会解除封禁，因此不能把整份日志称为只收缩权限；它不新增身份、授权、
 密钥、财务交易、外发 job 或任何历史正文；证书的原始签署 body 不改。
 `g_public` 是虚拟成员关系，不能通过修改一条 Membership 假装移除，明确拒绝该事实。
 
@@ -49,7 +49,7 @@ IdentityKey/EncryptionSubkey 退役，以及指定账号在线 vault 销毁。 `
 公开本机 `replay()` 先调用现有实际 OS 控制台检查；`_replay` 与 `_provision` 一样只是内部用例，
 不注册为 HTTP、SSH、MCP 或公共 CLI 操作。
 
-**边界：这不是 #69 完成或生产提升。** 现有模块仅重放列出的 deny-only 事实。
+**边界：这不是 #69 完成或生产提升。** 现有模块仅重放列出的部分权限事实；显式 `topic_ban.lift` 保留原有解禁语义。
 完整 ACL/TopicBan/授权策略快照协调、独立日志的现场来源与当前性证明、完整不变量验收和受控 promotion
 仍未完成。数据库收据只是一致性防线，不是抗数据库整体回滚的信任根。
 隔离标记始终保留，`promotion=blocked`、`backup_retired=false`；没有把 quarantine 当作“已重放全部当前事实”。
@@ -197,3 +197,7 @@ operation: ordinary reads/writes and effect workers remain blocked before and
 after it. There is no promotion path. A full current authority inventory and its
 independently current provenance are still required before any future promotion
 implementation could safely release these staged changes.
+
+新生成 replay 收据统一称为 partial authority/policy reconciliation，阻断原因是
+`supported_fact_inventory_incomplete`。旧签署检查点的格式、purpose、字节和 lift 行为不变；
+lift 解禁后仍全实例隔离，且不恢复已移除的成员资格或 admin 角色。

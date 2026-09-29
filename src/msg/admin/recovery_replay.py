@@ -1,4 +1,4 @@
-"""Local recovery's deny-only replay, never a promotion or trust bootstrap.
+"""Local recovery's partial authority replay, never a promotion or trust bootstrap.
 
 A pin MUST arrive through an independently authenticated operator channel outside
 this database and its backup/rollback set. Neither a database watermark nor an
@@ -29,7 +29,7 @@ SUPPORTED_FACTS = frozenset({'credential.revoke', 'certificate.revoke', 'share_g
     'encryption_key.retire', 'vault.destroy'})
 PROMOTION_BLOCKED_REASONS = (
     'quarantine_remains',
-    'supported_facts_are_deny_only',
+    'supported_fact_inventory_incomplete',
     'backup_retirement_not_attested',
 )
 _SHARE_TABLES = {'share_grant.revoke': 'share_grants', 'share_grant_v2.revoke': 'share_grants_v2',
@@ -269,13 +269,14 @@ async def replay(store, packet, *, pin, config_dir):
 
 
 async def _replay(store, packet, *, pin, operator):
-    """Atomically apply an explicitly pinned supported deny-only log to quarantine.
+    """Atomically apply explicitly pinned partial authority facts to quarantine.
 
     Always re-apply facts, including after a repeated invocation/restart: cached
     watermarks are not evidence that an authorization row has not been restored.
     This neither imports keys, emits effects, nor clears quarantine. topic_ban.apply
-    only records an active ban, and topic_ban.lift only marks an existing ban lifted.
-    Neither reconciles ACLs nor promotes production.
+    removes restored membership; explicit topic_ban.lift relaxes the ban without
+    restoring membership. V2 also reconciles typed policy/authority facts. No
+    receipt asserts complete authority or authorizes promotion.
     """
     require(isinstance(operator, str) and bool(operator), 'recovery_operator_required')
     body = verify_checkpoint(packet, pin=pin)
@@ -333,12 +334,12 @@ async def _replay(store, packet, *, pin, operator):
                     fact = dict(fact, subject=actual['owner'])
             changed += bool(await _apply(tx, fact))
         receipt = {'format': body['format'], 'checkpoint_digest': pin.digest, 'sequence': pin.sequence,
-                   'prefix_digest': digest(body['entries']), 'scope': 'supported_deny_only_facts',
+                   'prefix_digest': digest(body['entries']), 'scope': 'supported_authority_reconciliation_facts',
                    'promotion': 'blocked',
                    'promotion_blocked_reasons': list(PROMOTION_BLOCKED_REASONS),
                    'backup_retired': False}
         if body['format'] == POLICY_FORMAT:
-            receipt['scope'] = 'supported_policy_restrictions_only'
+            receipt['scope'] = 'supported_policy_reconciliation_only'
             receipt['coverage'] = body['coverage']
             staged = sorted({fact['target'] for fact in body['entries']
                              if fact['kind'] == 'resource.authority.reconcile'})
