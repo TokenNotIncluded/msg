@@ -21,7 +21,7 @@ from msg.core.models import BlobRef,SignatureProof
 from msg.core.requests import request_for
 from msg.core.tags import normalize_tag
 from msg.core.read_query import read_query_version
-from msg.core.search_query import search_query_version
+from msg.core.search_query import search_query_version, SEARCH_V5_RELATIONS
 from msg.transports.read_tree_path import decode_read_tree_path
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, gunzip, path_packet, require_url_safe_packet
@@ -76,7 +76,7 @@ SEARCH_V2_SEGMENTS={'scope':'s','terms':'t','mode':'m','field':'f','order':'o',
 SEARCH_V3_SEGMENTS={**SEARCH_V2_SEGMENTS,'source_kind':'sk','relation_type':'rt'}
 SEARCH_V4_SEGMENTS={**SEARCH_V3_SEGMENTS,'suggest':'sg'}
 SEARCH_V5_SEGMENTS={**SEARCH_V4_SEGMENTS,'revision':'rv','source_version':'sv',
-                    'relation_to':'to','relation_from':'fr','has_replies':'hr','has_references':'hf'}
+                    'relation_to':'to','relation_from':'fr','has_replies':'hr','has_references':'hf','spell':'sp'}
 GREP_V1_SEGMENTS={'scope':'s','pattern':'t','regex':'r','glob':'g',
                   'exclude_glob':'x','case_sensitive':'i','before':'b','after':'a',
                   'max_matches':'m','max_files':'f','files_with_matches':'w',
@@ -306,7 +306,7 @@ def compile_lexical_search(query):
             'updated_after','updated_before','has_attachment','order','limit',
             'cursor','snippet','explain','fields','facets','source_kind',
             'relation_type','suggest','revision','source_version','relation_to','relation_from',
-            'has_replies','has_references','depth','recursive'},
+            'has_replies','has_references','spell','depth','recursive'},
             'unknown_query_parameter')
     if 'cursor' in query:
         require(set(query)=={'cursor'},'cursor_query_mismatch')
@@ -327,7 +327,7 @@ def compile_lexical_search(query):
                     (0<=int(args[name])<=5 if name=='depth' else 1<=int(args[name])<=100),
                     'query_cost_exceeded')
             args[name]=int(args[name])
-    for name in ('snippet','has_attachment','recursive','suggest','has_replies','has_references'):
+    for name in ('snippet','has_attachment','recursive','suggest','has_replies','has_references','spell'):
         if name in args:
             require(args[name] in {'0','1'},'invalid_search_flag')
             args[name]=args[name]=='1'
@@ -349,7 +349,8 @@ def decode_search_v2_path(raw_path,version=b'2'):
     values,proof=decode_query_path(raw_path,prefix,segments,version)
     modes={'a':'all','n':'any'}
     require(version==b'5' or (not values.get('scope','').startswith('{') and
-            'title' not in values.get('fields','').split(',')), 'invalid_search_scope')
+            'title' not in values.get('fields','').split(',') and
+            values.get('relation_type') not in SEARCH_V5_RELATIONS), 'invalid_search_scope')
     fields={'a':'all','b':'body','n':'name','m':'metadata',**({'t':'title'} if version==b'5' else {})}
     order={'r':'relevance','u':'updated','c':'created','n':'name'}
     if 'mode' in values:
@@ -846,7 +847,7 @@ def create_app(service):
                     bool(set(query)&{'terms','exact','not_terms','scope','mode','field','order',
                                       'snippet','explain','has_attachment','facets',
                                       'source_kind','relation_type','suggest','revision','source_version',
-                                      'relation_to','relation_from','has_replies','has_references'}))
+                                      'relation_to','relation_from','has_replies','has_references','spell'}))
                 if lexical:
                     args=compile_lexical_search(query)
                     operation='discovery.lexical_search'
@@ -989,6 +990,10 @@ def create_app(service):
                     'field_v5':{'all':'a','body':'b','name':'n','metadata':'m','title':'t'},
                     'title_semantics':'Resource display name (alias of name)',
                     'scope_v5':'path or JSON object: subject, org, or resource_refs (up to 32 id refs)',
+                    'spell_v5':{'enabled_by':'spell=true', 'source':'currently readable resource names',
+                        'algorithm':'Levenshtein; distance 1 for terms up to 4 characters, otherwise 2',
+                        'max_terms':4,'term_length':[2,32],'max_dictionary_words':512,
+                        'max_suggestions_per_term':5,'rewrites_query':False},
                     'order':{'relevance':'r','updated':'u','created':'c','name':'n'},
                     'facets':['type','tag'],
                     'contract_version':{'default':1,'with_facets':2,

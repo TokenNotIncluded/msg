@@ -12,7 +12,7 @@ from msg.core.codec import canonical,wire,decode,loads,digest,b64
 from msg.core.errors import Failure,require
 from msg.core.models import Resource,ResourceRef,Revision,HandlerOutput,Credential
 from msg.core.tags import normalize_tag
-from msg.core.search_query import search_query_version
+from msg.core.search_query import search_query_version, spelling_distance
 from msg.core.read_query import (ReadBudget,MAX_READ_DEPTH,NESTED_FIELDS,ROOT_FIELDS,
     expansion_schema,read_query_version)
 from msg.core.requests import request_for
@@ -827,6 +827,9 @@ def install(app):
                                    ('resource_refs',))]},
                            'revision':IDENTIFIER,'relation_to':IDENTIFIER,'relation_from':IDENTIFIER,
                            'has_replies':BOOLEAN,'has_references':BOOLEAN,
+                           'spell':BOOLEAN,
+                           'relation_type':{'enum':['reply_to','thread_root','quote','repost',
+                               'attachment','template','reference','state','target','content']},
                            'source_version':{'type':'integer','minimum':1,'maximum':2147483647}}}
 
     @op('discovery.lexical_search',lexical_schema_v5,effect='read',version=5)
@@ -889,6 +892,10 @@ def install(app):
         # Suggestion counts describe *matched readable resources*, not raw
         # indexed terms. Rebuild on every page so revoked grants disappear.
         suggestions={}
+        spelling_words={}
+        if a.get('spell'):
+            require(1<=len(terms)<=4 and all(2<=len(term)<=32 for term in terms),
+                    'query_cost_exceeded')
         suggest_prefix=terms[-1] if a.get('suggest') and terms else ''
         if a.get('suggest'):
             require(2<=len(suggest_prefix)<=32,'query_cost_exceeded')
@@ -1000,6 +1007,16 @@ def install(app):
                     relation.type=='attachment' for relation in revision.relations))!=a['has_attachment']:
                 continue
             name=resource.name
+            if a.get('spell'):
+                # Explicit spelling hints use the current readable name corpus
+                # before lexical matching. They never rewrite this query.
+                require(len(name)<=256,'query_cost_exceeded')
+                words={word.casefold() for word in re.findall(r'[\w-]+',name)
+                       if 2<=len(word)<=32}
+                for word in words:
+                    if len(word)<=32:
+                        spelling_words[word]=spelling_words.get(word,0)+1
+                require(len(spelling_words)<=512,'query_cost_exceeded')
             body=''
             if a.get('field','all') in {'all','body'} and revision and revision.content.media_type.startswith('text/'):
                 require(revision.content.size<=65536,'query_cost_exceeded')
@@ -1092,6 +1109,21 @@ def install(app):
             data['suggestions']=[{'value':word,'count':count}
                                  for word,count in sorted(suggestions.items(),
                                      key=lambda pair:(-pair[1],pair[0]))[:10]]
+        if a.get('spell'):
+            hints=[]
+            for term in dict.fromkeys(terms):
+                maximum=1 if len(term)<=4 else 2
+                matches=[]
+                if term not in spelling_words:
+                    for word,count in spelling_words.items():
+                        require(time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+                        distance=spelling_distance(term,word,maximum)
+                        if distance<=maximum:
+                            matches.append((distance,-count,word))
+                hints.append({'term':term,'suggestions':[
+                    {'value':word,'distance':distance,'count':-negative_count}
+                    for distance,negative_count,word in sorted(matches)[:5]]})
+            data['spelling']={'source':'name','terms':hints}
         if len(following)>limit:
             cursor=app.cursors.encode_page(request.operation,normalized,page[-1][0],snapshot,
                 principal,ctx.now+timedelta(minutes=15))
