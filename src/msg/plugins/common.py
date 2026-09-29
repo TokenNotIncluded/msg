@@ -194,6 +194,27 @@ async def topic_policy(tx,resource):
     return tx.setting('policy:'+topic.id,{})
 
 
+def default_operation_rules(name):
+    """Compatibility defaults captured when constructing an operation."""
+    if name.startswith('identity.'):
+        rules=('identity','auth')
+    elif name.startswith('content.topic_') or name.startswith('discussion.'):
+        rules=('topics','read-write')
+    elif name.startswith('content.'):
+        rules=('read-write',)
+    elif name.startswith(('transfer.','keystore.','git.')):
+        rules=('files','protocol')
+    elif name.startswith(('cert.','group.')):
+        rules=('auth',)
+    elif name.startswith(('system.','tool.')):
+        rules=('security','protocol')
+    elif name.startswith('discovery.'):
+        rules=('read-write','protocol')
+    else:
+        rules=('protocol',)
+    return tuple('msg.'+rule for rule in rules)
+
+
 def registration(app,name,dependencies=()):
     from msg.core.models import OperationSpec,PluginManifest,ResourceRef
     from msg.plugins.schemas import OUTPUT
@@ -201,13 +222,14 @@ def registration(app,name,dependencies=()):
     output_ref=ResourceRef(id='schema:operation-result')
     if output_ref.id not in app.registry._schemas:
         app.registry.add_schema(output_ref,OUTPUT)
-    def operation(opname,schema, *, effect='transaction',requirements=no_requirements,signature=False,version=1):
+    def operation(opname,schema, *, effect='transaction',requirements=no_requirements,signature=False,version=1,requires_rules=None):
         def decorate(handler):
             ref=ResourceRef(id='schema:'+opname+':'+str(version))
             app.registry.add_schema(ref,schema)
             operations.append(OperationSpec(name=opname,version=version,input_schema=ref,output_schema=output_ref,
                 effect=effect,entries=frozenset({'network','worker'}),require_signature=signature,
-                requirements=requirements,handler=handler))
+                requirements=requirements,handler=handler,
+                requires_rules=default_operation_rules(opname) if requires_rules is None else tuple(requires_rules)))
             return handler
         return decorate
     def finish(resource_types=()):

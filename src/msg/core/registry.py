@@ -83,8 +83,12 @@ class Registry:
         self._plugins[manifest.name]=manifest
 
     def freeze(self):
+        from msg.bootstrap import RULE_PATHS
         require('identity' in self._plugins,'identity_plugin_required')
         for spec in self._operations.values():
+            require(spec.requires_rules and len(set(spec.requires_rules))==len(spec.requires_rules)
+                    and all(rule_id in RULE_PATHS for rule_id in spec.requires_rules),
+                    'dangling_requires_rules')
             require(spec.input_schema.id in self._schemas and spec.output_schema.id in self._schemas,'missing_schema')
         operation_ids={f'{s.name}@{s.version}' for s in self._operations.values()}
         for resource in self._types.values():
@@ -143,26 +147,7 @@ class Registry:
 
     def describe(self,spec):
         from msg.bootstrap import RULE_PATHS
-        name=spec.name
-        if name.startswith('identity.'):
-            rules=('identity','auth')
-        elif name.startswith('content.topic_') or name.startswith('discussion.'):
-            rules=('topics','read-write')
-        elif name.startswith('content.'):
-            rules=('read-write',)
-        elif name.startswith(('transfer.','keystore.','git.')):
-            rules=('files','protocol')
-        elif name.startswith(('cert.','group.')):
-            rules=('auth',)
-        elif name.startswith(('system.','tool.')):
-            rules=('security','protocol')
-        elif name.startswith('discovery.'):
-            rules=('read-write','protocol')
-        else:
-            rules=('protocol',)
-        rule_ids=tuple('msg.'+rule for rule in rules)
-        require(len(set(rule_ids))==len(rule_ids) and all(rid in RULE_PATHS for rid in rule_ids),
-                'dangling_requires_rules',name)
+        rule_ids=spec.requires_rules
         result={'name':spec.name,'version':spec.version,'effect':spec.effect,
                 'entries':sorted(spec.entries),'require_signature':spec.require_signature,
                 'input_schema':wire(spec.input_schema),'output_schema':wire(spec.output_schema),
