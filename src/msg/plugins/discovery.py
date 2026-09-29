@@ -19,6 +19,19 @@ from msg.plugins.common import *
 from msg.plugins.schemas import *
 
 
+def original_casefold_span(text, folded_start, folded_end):
+    """Translate a nonempty casefold match back to whole original characters."""
+    offset = 0
+    start = None
+    for index, char in enumerate(text):
+        offset += len(char.casefold())
+        if start is None and offset > folded_start:
+            start = index
+        if offset >= folded_end:
+            return start, index + 1
+    raise ValueError('casefold match outside source')
+
+
 async def visible(app,ctx,request,tx,rid):
     try:
         await check_access(app,ctx,request,tx,rid,'read')
@@ -929,11 +942,12 @@ def install(app):
                     low=lowered[key]
                     needle=exact if exact and exact in low else next((term for term in terms if term in low),'')
                     if needle:
-                        start=low.index(needle)
+                        folded_start=low.index(needle)
+                        start,end=original_casefold_span(value,folded_start,folded_start+len(needle))
                         left=max(0,start-40)
-                        right=min(len(value),start+len(needle)+40)
+                        right=min(len(value),end+40)
                         item['snippet']={'field':key,'text':value[left:right],
-                                         'range':[start-left,start-left+len(needle)]}
+                                         'range':[start-left,end-left]}
                         break
             if a.get('explain')=='compact':
                 item['rank_reason']={'matched_fields':[key for key,value in lowered.items()

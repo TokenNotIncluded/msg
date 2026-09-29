@@ -280,3 +280,27 @@ async def test_sealed_search_query_ref_reads_same_authorized_results(installed):
         assert {item['ref']['id'] for item in path.json()['items']+continued.json()['items']}=={
             result.resources[0].id,second.resources[0].id}
     assert await business_state(app)==before
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('prefix,matched,query', [
+    ('ß' * 80, 'Target', 'target'),
+    ('İ' * 80, 'Straße', 'STRASSE'),
+    ('x' * 80, 'ß', 's'),
+])
+async def test_unicode_casefold_snippet_ranges_address_original_text(installed, prefix, matched, query):
+    app, _ = installed
+    key, subject, _ = await register(app, 'unicode-search-owner')
+    created = await call(app, 'content.post_create',
+                         {'parent': '/main', 'body': prefix + matched + '尾' * 80},
+                         key=key, subject=subject)
+    assert created.status == 'ok', wire(created)
+    result = await call(app, 'discovery.lexical_search', {
+        'scope': '/main', 'terms': query, 'field': 'body', 'snippet': True,
+    }, key=key, subject=subject)
+    assert result.status == 'ok', wire(result)
+    item = next(item for item in result.data['items'] if item['id'] == created.resources[0].id)
+    snippet = item['snippet']
+    start, end = snippet['range']
+    assert snippet['text'][start:end] == matched
+    assert snippet['text'] == prefix[-40:] + matched + '尾' * 40
