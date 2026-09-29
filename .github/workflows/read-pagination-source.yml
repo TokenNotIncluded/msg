@@ -1,0 +1,72 @@
+name: Prepare reviewed pagination source
+on:
+  push:
+    branches: [work/read-pagination-publisher-20260929]
+    paths: ['.github/workflows/read-pagination-source.yml']
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: de3cd872b71e062d6141916b11ea0bdfa28adca6
+          persist-credentials: false
+      - name: Apply two exact source replacements and publish only the resulting blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, hashlib, json, os, subprocess, urllib.request
+          from pathlib import Path
+          base = 'de3cd872b71e062d6141916b11ea0bdfa28adca6'
+          path = 'src/msg/plugins/discovery.py'
+          assert os.environ['GITHUB_REPOSITORY'] == 'TokenNotIncluded/msg.lmm.best'
+          assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == base
+          raw = Path(path).read_bytes()
+          assert hashlib.sha256(raw).hexdigest() == '9bf6e29f1ee910e173b35e3c185b525fde2834956fd245206563226e5f3dd159'
+          text = raw.decode('utf-8')
+          old = "position=app.cursors.decode(a['cursor'],'page',query_hash) if a.get('cursor') else (['\\uffff','\\uffff'] if descending else ['', ''])"
+          new = "position=app.cursors.decode(a['cursor'],'page',query_hash) if a.get('cursor') else None"
+          assert text.count(old) == 1
+          text = text.replace(old, new)
+          old = '''            sql=f"SELECT r.body,{column},r.id FROM resources r WHERE {' AND '.join(filters)} AND ({column},r.id){comparison}(?,?) ORDER BY {column} {ordering},r.id {ordering} LIMIT 128"
+                      rows=tx.rows(sql,(*parameters,*last_position))'''.replace('\n                      ', '\n            ')
+          new = '''            # No text value is a universal endpoint under database collations.
+                      # Seek only from an actual cursor or the last scanned resource.
+                      seek=f" AND ({column},r.id){comparison}(?,?)" if last_position is not None else ''
+                      sql=f"SELECT r.body,{column},r.id FROM resources r WHERE {' AND '.join(filters)}{seek} ORDER BY {column} {ordering},r.id {ordering} LIMIT 128"
+                      rows=tx.rows(sql,(*parameters,*(last_position if last_position is not None else ())))'''.replace('\n                      ', '\n            ')
+          assert text.count(old) == 1
+          result = text.replace(old, new).encode('utf-8')
+          expected = '2cc2b605e6590d61e0f65e63f613f75e1488b2d40c77224d1b77b4012694ffc0'
+          assert hashlib.sha256(result).hexdigest() == expected
+          expected_blob = '985c0c222220bfc23b0e28b4e54871bef5e7885d'
+          assert hashlib.sha1(b'blob ' + str(len(result)).encode() + b'\0' + result).hexdigest() == expected_blob
+          request = urllib.request.Request(
+              'https://api.github.com/repos/TokenNotIncluded/msg.lmm.best/git/blobs',
+              data=json.dumps({'encoding': 'base64', 'content': base64.b64encode(result).decode()}).encode(),
+              headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                       'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json'},
+              method='POST')
+          with urllib.request.urlopen(request, timeout=30) as response:
+              published = json.load(response)
+          assert published['sha'] == expected_blob
+          Path('evidence').mkdir()
+          Path('evidence/discovery.py').write_bytes(result)
+          Path('evidence/source.json').write_text(json.dumps({
+              'base': base, 'path': path, 'old_blob': '56c155c7122d662dff1c9af73a2b08fa7ba7acd7',
+              'new_blob': expected_blob, 'sha256': expected,
+              'run_id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'project_executed': False, 'branch_updated': False}, indent=2) + '\n')
+          print('Published reviewed source blob:', expected_blob)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reviewed-pagination-source
+          path: evidence/
+          if-no-files-found: error
