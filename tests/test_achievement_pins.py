@@ -71,3 +71,72 @@ async def test_foreign_revoked_or_incomplete_pin_requests_do_not_leak_or_mutate(
     assert not public.data['pinned_grant_ids']
     rejected=await call(app,'achievement.pin',{'grant_id':grants[0]['id']},key=owner_key,subject=owner)
     assert rejected.status=='error' and rejected.error.code=='achievement_grant_not_found'
+
+
+@pytest.mark.asyncio
+async def test_custodial_pin_changes_are_signed_audited_and_keep_grants(installed):
+    import os
+    from msg.core.codec import b64, decode, loads, unb64
+    from msg.core.models import Signature
+    from msg.security.crypto import verify
+    app,_=installed
+    created=await call(app,'identity.custodial_create',{
+        'handle':'custodial-pin-owner','nonce':b64(os.urandom(32)),
+        'recovery_secret':b64(os.urandom(32))},contract_version=2)
+    assert created.status=='ok',wire(created)
+    subject=created.data['subject_id']
+    token=(created.data['credential_id'],unb64(created.data['token']))
+    grants=await _fixture_grants(app,subject)
+    ids=[g['id'] for g in grants]
+    async with app.metadata.transaction(write=False) as tx:
+        before=(tx.rows('SELECT body FROM certificates ORDER BY id'),
+                tx.rows('SELECT body FROM credentials ORDER BY id'))
+    first=await call(app,'achievement.pin',{'grant_id':ids[0]},subject=subject,token=token,rid='custodial-pin-first')
+    assert first.status=='ok' and first.data['signature_source']=='custodial',wire(first)
+    replay=await call(app,'achievement.pin',{'grant_id':ids[0]},subject=subject,token=token,rid='custodial-pin-first')
+    assert replay.status=='ok' and replay.replayed
+    second=await call(app,'achievement.pin',{'grant_id':ids[1]},subject=subject,token=token)
+    assert second.status=='ok',wire(second)
+    reordered=await call(app,'achievement.reorder',{'grant_ids':ids[::-1]},subject=subject,token=token)
+    assert reordered.status=='ok' and list(reordered.data['pinned_grant_ids'])==ids[::-1]
+    removed=await call(app,'achievement.unpin',{'grant_id':ids[0]},subject=subject,token=token)
+    assert removed.status=='ok' and list(removed.data['pinned_grant_ids'])==[ids[1]]
+    async with app.metadata.transaction(write=False) as tx:
+        assert (tx.rows('SELECT body FROM certificates ORDER BY id'),
+                tx.rows('SELECT body FROM credentials ORDER BY id'))==before
+        assert [row[0] for row in tx.rows('SELECT body FROM achievement_grants ORDER BY id')]==[
+            canonical(g).decode() for g in grants]
+        audits=[loads(row[0]) for row in tx.rows('SELECT body FROM audit')]
+        displays=[row['event'] for row in audits if row['event']['type']=='achievement.display.update']
+        assert len(displays)==4
+        for event in displays:
+            data=event['data']
+            assert data['signature_source']=='custodial' and data['auth_method']=='token'
+            assert data['confirmation']['subject_id']==subject
+            assert data['confirmation']['request_id']==event['request_id']
+            credential=await tx.credential(data['signature']['key_id'])
+            verify(credential.verifier,canonical(data['confirmation']),
+                   decode(Signature,data['signature']),purpose='achievement-display')
+    async with app.metadata.transaction(write=True) as tx:
+        tx.execute("UPDATE custodial_vault SET status='decrypt_only',signing_nonce=NULL,signing_ciphertext=NULL WHERE subject=?",(subject,),write=True)
+    denied=await call(app,'achievement.unpin',{'grant_id':ids[1]},subject=subject,token=token)
+    assert denied.status=='error' and denied.error.code=='custodial_vault_unavailable'
+    public=await call(app,'achievement.list',{'subject_id':subject})
+    assert list(public.data['pinned_grant_ids'])==[ids[1]]
+    assert 'confirmation' not in public.data and 'signature_source' not in public.data
+    private=await call(app,'discovery.get',{'id':'/private'},subject=subject,token=token)
+    assert private.status=='error'
+
+
+@pytest.mark.asyncio
+async def test_temporary_token_still_cannot_sign_honor_display(installed):
+    from msg.core.codec import unb64
+    from test_service import temporary_v3_args
+    app,_=installed
+    args,rid,_,_=temporary_v3_args()
+    created=await call(app,'identity.temporary',args,rid=rid,contract_version=3)
+    assert created.status=='ok',wire(created)
+    subject=created.data['subject_id']
+    token=(created.data['credential_id'],unb64(created.data['token']))
+    denied=await call(app,'achievement.pin',{'grant_id':'achg_absent'},subject=subject,token=token)
+    assert denied.status=='error' and denied.error.code=='signature_required'

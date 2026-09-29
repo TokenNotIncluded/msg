@@ -155,6 +155,23 @@ def _save_pins(tx, subject, grant_ids):
                    (subject,grant_id,position), write=True)
 
 
+async def _custodial_signature(app, ctx, tx, confirmation, purpose):
+    subject = _owner(ctx)
+    require(ctx.principal.method == 'token' and (await tx.subject(subject)).kind == 'custodial',
+            'self_custody_signature_required')
+    from msg.security.vault import open_signer
+    signer = open_signer(app, tx, subject)
+    primary = tx.one('SELECT key_id FROM identity_keys WHERE subject=? AND is_primary=1 AND retired_at IS NULL',
+                     (subject,))
+    require(primary is not None and primary[0] == signer.key_id, 'custodial_vault_key_mismatch')
+    credential = await tx.credential(signer.key_id)
+    require(credential.subject_id == subject and credential.kind == 'signing_key',
+            'custodial_vault_key_mismatch')
+    require(credential.revoked_at is None and credential.not_before <= ctx.now and
+            (credential.expires_at is None or ctx.now < credential.expires_at), 'credential_revoked')
+    return wire(signer.sign(canonical(confirmation), purpose=purpose))
+
+
 def install(app):
     op, finish = registration(app, 'achievements', ('identity',))
 
@@ -173,6 +190,25 @@ def install(app):
         await app.authorizer.require_base(ctx.principal,operation_id(request),subject,tx)
         return subject
 
+    async def save_display(ctx, request, tx, subject, pins):
+        data={'subject_id':subject,'pinned_grant_ids':pins}
+        if ctx.principal.method=='token':
+            before=digest(_pins(tx,subject))
+            confirmation={'subject_id':subject,'operation':operation_id(request),
+                'request_id':request.request_id,'arguments':wire(request.arguments),
+                'before_digest':before,'pinned_grant_ids':pins,'signature_source':'custodial'}
+            signature=await _custodial_signature(app,ctx,tx,confirmation,'achievement-display')
+            event=Event(id=new_id('audit'),type='achievement.display.update',time=ctx.now,
+                request_id=request.request_id,actor=ctx.principal.actor,subject=subject,
+                resources=(ResourceRef(id=subject),),data={'signature_source':'custodial',
+                    'auth_method':ctx.principal.method,'confirmation':confirmation,'signature':signature})
+            await tx.append_audit(AuditEvent(event=event,authority=(ResourceRef(id=subject),),
+                before_digest=before,after_digest=digest(pins),previous_digest=None,
+                entry_digest='',result='updated'))
+            data['signature_source']='custodial'
+        _save_pins(tx,subject,pins)
+        return HandlerOutput(data=data)
+
     @op('achievement.pin',obj({'grant_id':IDENTIFIER},('grant_id',)),signature=True)
     async def pin(ctx, request, tx):
         subject=await pin_owner(ctx,request,tx)
@@ -181,8 +217,7 @@ def install(app):
         pins=_pins(tx,subject)
         if gid not in pins:
             pins.append(gid)
-        _save_pins(tx,subject,pins)
-        return HandlerOutput(data={'subject_id':subject,'pinned_grant_ids':pins})
+        return await save_display(ctx,request,tx,subject,pins)
 
     @op('achievement.unpin',obj({'grant_id':IDENTIFIER},('grant_id',)),signature=True)
     async def unpin(ctx, request, tx):
@@ -190,8 +225,7 @@ def install(app):
         gid=request.arguments['grant_id']
         _owned_grant(tx,subject,gid,active=False)
         pins=[item for item in _pins(tx,subject) if item!=gid]
-        _save_pins(tx,subject,pins)
-        return HandlerOutput(data={'subject_id':subject,'pinned_grant_ids':pins})
+        return await save_display(ctx,request,tx,subject,pins)
 
     @op('achievement.reorder',obj({'grant_ids':{'type':'array','items':IDENTIFIER,
         'uniqueItems':True,'maxItems':MAX_PINS}},('grant_ids',)),signature=True)
@@ -199,8 +233,7 @@ def install(app):
         subject=await pin_owner(ctx,request,tx)
         pins=list(request.arguments['grant_ids'])
         require(set(pins)==set(_pins(tx,subject)), 'achievement_pin_set_mismatch')
-        _save_pins(tx,subject,pins)
-        return HandlerOutput(data={'subject_id':subject,'pinned_grant_ids':pins})
+        return await save_display(ctx,request,tx,subject,pins)
 
     @op('achievement.start', obj())
     async def start(ctx, request, tx):
@@ -279,23 +312,11 @@ def install(app):
             return _failure(state, tx, 'final_confirmation_failed')
         signature_source = 'self-custody'
         if ctx.principal.method == 'token':
-            require((await tx.subject(subject)).kind == 'custodial',
-                    'self_custody_signature_required')
-            from msg.security.vault import open_signer
-            signer = open_signer(app, tx, subject)
-            primary = tx.one('SELECT key_id FROM identity_keys WHERE subject=? AND is_primary=1',
-                             (subject,))
-            require(primary is not None and primary[0] == signer.key_id,
-                    'custodial_vault_key_mismatch')
-            credential = await tx.credential(signer.key_id)
-            require(credential.revoked_at is None and credential.not_before <= ctx.now and
-                    (credential.expires_at is None or ctx.now < credential.expires_at),
-                    'credential_revoked')
             state['final_confirmation'] = {'subject_id': subject, 'challenge_id': state['id'],
                 'ceremony_digest': args['ceremony_digest'], 'statement': args['statement'],
                 'request_id': request.request_id, 'signature_source': 'custodial'}
-            state['final_signature'] = wire(signer.sign(canonical(state['final_confirmation']),
-                                                       purpose='achievement-confirmation'))
+            state['final_signature'] = await _custodial_signature(app,ctx,tx,
+                state['final_confirmation'],'achievement-confirmation')
             signature_source = 'custodial'
         else:
             require(ctx.principal.method == 'signature', 'self_custody_signature_required')

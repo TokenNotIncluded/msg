@@ -73,6 +73,7 @@ TEMPORARY_OPERATIONS = frozenset({
     'keystore.get',
     'batch.independent','batch.atomic','job.get',
     'achievement.start','achievement.answer','achievement.finish','achievement.list',
+    'achievement.pin','achievement.unpin','achievement.reorder',
 })
 
 
