@@ -1,0 +1,55 @@
+name: Local acceptance toolchain
+on:
+  push:
+    branches: [work/py315-ruff-scout-20260929]
+    paths:
+      - .github/workflows/local-acceptance-toolchain.yml
+permissions:
+  contents: read
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Build offline Python wheelhouse
+        run: |
+          mkdir -p bundle/wheelhouse bundle/bin bundle/lib
+          python -m pip install -U pip wheel
+          python -m pip wheel --wheel-dir bundle/wheelhouse             'ruff==0.16.9' 'uv==0.12.20' 'uv_build==0.12.20' 'build>=1.2'             'cryptography>=46,<52' 'httpx>=0.28,<1' 'jsonschema>=4.25,<5' 'referencing>=0.36,<1'             'starlette>=0.50,<2' 'uvicorn>=0.38,<1' 'aiohttp>=3.13,<4' 'dnspython>=2.8,<3'             'graphql-core>=3.2.7,<3.3' 'psycopg[binary]>=3.3,<4' 'valkey>=6.1,<7'             'pytest>=8.4' 'pytest-asyncio>=1.1' 'pytest-cov>=6' 'tiktoken>=0.12'
+      - name: Fetch exact standalone Python 3.15 runtime
+        run: |
+          curl -fL --retry 4 -o bundle/python315.tar.gz             'https://github.com/astral-sh/python-build-standalone/releases/download/20260924/cpython-3.15.0rc2%2B20260924-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz'
+          echo 'f6a315ae7509260d5434c1a5e01b6b7e3c190b1dddcde209b606eb333df5ffea  bundle/python315.tar.gz' | sha256sum -c -
+      - name: Collect disposable service and system-test tools
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq postgresql-16 postgresql-client-16 redis-server git-lfs age bubblewrap
+          for command in             /usr/lib/postgresql/16/bin/initdb /usr/lib/postgresql/16/bin/pg_ctl             /usr/lib/postgresql/16/bin/pg_dump /usr/lib/postgresql/16/bin/pg_restore             /usr/bin/redis-server /usr/bin/git-lfs /usr/bin/age /usr/bin/bwrap; do
+            cp -L "$command" bundle/bin/
+            ldd "$command" | awk '/=> \/|^\// {for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' || true
+          done | sort -u > /tmp/libs.txt
+          while read -r lib; do cp -L "$lib" bundle/lib/; done < /tmp/libs.txt
+          {
+            python --version
+            /usr/lib/postgresql/16/bin/postgres --version
+            /usr/bin/redis-server --version
+            /usr/bin/git-lfs version
+            /usr/bin/age --version
+            /usr/bin/bwrap --version
+          } > bundle/versions.txt 2>&1
+          cp -L /usr/lib/postgresql/16/bin/postgres bundle/bin/
+          ldd /usr/lib/postgresql/16/bin/postgres | awk '/=> \/|^\// {for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' | sort -u | while read -r lib; do cp -L "$lib" bundle/lib/; done
+          tar -C bundle -czf system-tools.tar.gz bin lib versions.txt
+          rm -rf bundle/bin bundle/lib bundle/versions.txt
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: local-acceptance-toolchain
+          path: |
+            bundle/python315.tar.gz
+            bundle/wheelhouse/
+            system-tools.tar.gz
+          if-no-files-found: error
