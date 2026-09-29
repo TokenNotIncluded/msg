@@ -98,6 +98,11 @@ def parser():
     rotate=rs.add_parser('rotate');rotate.add_argument('--lost-key',action='store_true');rotate.add_argument('--resume',action='store_true')
     rb=rs.add_parser('backup');rb.add_argument('destination',type=Path)
     rr=rs.add_parser('recover');rr.add_argument('source',type=Path)
+    retirement=rs.add_parser('backup-retirement',help='Physical-console attestation for listed backup sets')
+    retirement_sub=retirement.add_subparsers(dest='retirement_command',required=True)
+    retirement_sign=retirement_sub.add_parser('sign')
+    retirement_sign.add_argument('source',type=Path);retirement_sign.add_argument('destination',type=Path)
+    retirement_sub.add_parser('import').add_argument('source',type=Path)
     money=sub.add_parser('money',help='Physical-console central bank administration')
     ms=money.add_subparsers(dest='money_command',required=True)
     ms.add_parser('mint').add_argument('amount')
@@ -168,6 +173,9 @@ def main(argv=None):
                 admin.change_pin();result={'status':'pin_changed'}
             elif args.root_command=='rotate':result=admin.rotate(lost_key=args.lost_key,resume=args.resume)
             elif args.root_command=='backup':result=admin.backup(args.destination)
+            elif args.root_command=='backup-retirement':
+                result=(admin.sign_backup_retirement(args.source,args.destination)
+                        if args.retirement_command=='sign' else admin.import_backup_retirement(args.source))
             else:result=admin.recover(args.source)
             emit(result);return 0
         if args.command=='market':
