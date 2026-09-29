@@ -23,7 +23,8 @@ chains, current Root/online/receipt keys, resource ancestry and ledger/market
 invariants are checked again before approval.
 
 The fixed packaged schema vocabulary rejects unknown schemas, relations, columns,
-indexes, triggers and functions. Full definitions must also match the signed
+indexes, triggers and functions. Row-level security, policies, rewrite rules and
+custom public collations are rejected; column/database collations are bound. Full definitions must also match the signed
 source. There is no caller-selected table list or `complete=true` bypass.
 
 Exactly three local control settings are omitted from row digests:
@@ -79,8 +80,11 @@ sequence. Audit insertion uses an explicit transactional sequence number;
 PostgreSQL's nontransactional sequence is advanced only after the receipt commits,
 while the filesystem marker still blocks requests. Retries accept only the exact
 prior/final sequence states, rehash all metadata/files, and exclude only that
-signed audit tail and generation delta. Extra rows, altered receipt/state, or an
-unrelated proof fail closed.
+signed audit tail and generation delta. Extra rows or altered pending receipt/state fail closed. The signed generation
+row must actually exist; absence never means a successful restart fence. A backup
+of a previously promoted source may contain a historical receipt: only a receipt
+for the current independent manifest can resume; a new manifest must instead
+match the complete initial state before creating its own receipt.
 
 The database gate remains active until marker removal and directory fsync succeed
 under the final transaction lock. Marker removal failure leaves both barriers

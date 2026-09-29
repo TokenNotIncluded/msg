@@ -173,6 +173,10 @@ async def test_complete_proof_from_real_backup_restores_exact_inventory(installe
     'CREATE SCHEMA pga_hidden',
     'CREATE VIEW hidden_view AS SELECT id FROM resources',
     'CREATE INDEX hidden_idx ON resources(owner)',
+    'ALTER TABLE resources ENABLE ROW LEVEL SECURITY',
+    'CREATE POLICY hidden_policy ON resources USING (true)',
+    'CREATE RULE hidden_rule AS ON DELETE TO resources DO INSTEAD NOTHING',
+    'ALTER TABLE resources DISABLE TRIGGER ALL',
 ])
 async def test_unknown_schema_objects_reject_promotion(complete_state, ddl):
     app, root, packet, pin = complete_state
@@ -228,3 +232,20 @@ async def test_resume_requires_committed_generation_fence(complete_state, monkey
         await promote(app, packet, pin=pin, signer=root, operator='isolated-fixture')
     async with app.metadata.transaction(write=False) as tx:
         assert active(tx)
+
+
+async def test_subsequent_complete_recovery_does_not_resume_historical_receipt(complete_state):
+    app, root, packet, pin = complete_state
+    await promote(app, packet, pin=pin, signer=root, operator='isolated-fixture')
+    packet = await capture(app, root, source_backup_sha256='b'*64, sequence=2)
+    pin = IndependentRecoveryPin(service=app.settings.service_url, public_key=root.public_key,
+        digest=digest(packet['state']), sequence=2, source_backup_sha256='b'*64)
+    gate = {'format': 'msg-recovery-quarantine-v1', 'source_backup_sha256': 'b'*64,
+            'outbound_enabled': False, 'authority': 'health_only'}
+    async with app.metadata.transaction(write=True) as tx:
+        tx.set_setting(SETTING, gate)
+        tx.set_setting('runtime_config', dict(tx.setting('runtime_config', {}), accept_writes=False, cleanup_enabled=False))
+    marker = app.settings.config_dir/'recovery-drill.json'
+    marker.write_bytes(canonical(gate))
+    marker.chmod(0o600)
+    assert (await promote(app, packet, pin=pin, signer=root, operator='isolated-fixture'))['status'] == 'recovery_promoted'

@@ -15,11 +15,17 @@ def catalogue(tx):
     require(namespaces == [('public',)], 'recovery_schema_unknown_namespace')
     relations = tx.rows("SELECT c.relname,c.relkind FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' ORDER BY c.relname")
     require(all(kind in ('r', 'i', 'S') for _, kind in relations), 'recovery_schema_unknown_relation')
+    require(not tx.rows("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND (c.relrowsecurity OR c.relforcerowsecurity OR c.relpersistence<>'p')"), 'recovery_schema_unsupported')
+    require(not tx.rows("SELECT 1 FROM pg_policy p JOIN pg_class c ON c.oid=p.polrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'"), 'recovery_schema_unsupported')
+    require(not tx.rows("SELECT 1 FROM pg_rewrite r JOIN pg_class c ON c.oid=r.ev_class JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public'"), 'recovery_schema_unsupported')
+    require(not tx.rows("SELECT 1 FROM pg_collation c JOIN pg_namespace n ON n.oid=c.collnamespace WHERE n.nspname='public'"), 'recovery_schema_unsupported')
+    require(not tx.rows("SELECT 1 FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND t.tgisinternal AND t.tgenabled<>'O'"), 'recovery_schema_unsupported')
     tables = [name for name, kind in relations if kind == 'r']
     result = {'tables': {}, 'constraints': [], 'indexes': [], 'triggers': [], 'functions': [], 'sequences': []}
     for table in tables:
         result['tables'][table] = tx.rows('''SELECT a.attname,format_type(a.atttypid,a.atttypmod),
-            a.attnotnull,a.attidentity,pg_get_expr(d.adbin,d.adrelid)
+            a.attnotnull,a.attidentity,pg_get_expr(d.adbin,d.adrelid),
+            (SELECT n.nspname||'.'||co.collname FROM pg_collation co JOIN pg_namespace n ON n.oid=co.collnamespace WHERE co.oid=a.attcollation)
             FROM pg_attribute a JOIN pg_class c ON c.oid=a.attrelid
             JOIN pg_namespace n ON n.oid=c.relnamespace
             LEFT JOIN pg_attrdef d ON d.adrelid=c.oid AND d.adnum=a.attnum
@@ -36,6 +42,7 @@ def catalogue(tx):
         pg_get_functiondef(p.oid) FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
         WHERE n.nspname='public' ORDER BY p.proname,pg_get_function_identity_arguments(p.oid)''')
     result['sequences'] = tx.rows("SELECT sequencename,data_type,start_value,min_value,max_value,increment_by,cycle FROM pg_sequences WHERE schemaname='public' ORDER BY sequencename")
+    result['database_collation'] = tx.one("SELECT encoding,datcollate,datctype FROM pg_database WHERE datname=current_database()")
     return loads(canonical(result))
 
 

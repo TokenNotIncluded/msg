@@ -201,7 +201,11 @@ async def promote(app, packet, *, pin, signer, operator):
                 'recovery_checkpoint_backup_mismatch')
     async with app.metadata.transaction(write=True) as tx:
         previous = tx.setting('recovery_promotion')
-        resume = _receipt(previous, pin) if previous is not None else None
+        # A backup of an already recovered source contains a historical receipt.
+        # Only the exact current manifest can resume its pending delta; a new
+        # recovery must independently match the entire initial source state.
+        pending = type(previous) is dict and type(previous.get('receipt')) is dict and previous['receipt'].get('manifest_digest') == pin.digest
+        resume = _receipt(previous, pin) if pending else None
         gate = tx.setting(SETTING)
         require(active(tx) and type(gate) is dict and gate.get('source_backup_sha256') == pin.source_backup_sha256,
                 'recovery_quarantine_required')
