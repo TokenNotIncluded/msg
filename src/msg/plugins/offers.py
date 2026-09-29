@@ -65,6 +65,17 @@ def validate_local_offer(app, *, resource_kind: str, entitlement_kind: str,
             'invalid_offer_duration')
 
 
+def _valid_catalog_offer(app, row):
+    """Apply current issuer bounds to old rows without rewriting signed history."""
+    try:
+        validate_local_offer(app, resource_kind=row[1], unit=row[2], price_minor=row[3],
+                             min_quantity=row[4], max_quantity=row[5],
+                             entitlement_kind=row[6], duration_seconds=row[7])
+    except Failure:
+        return False
+    return True
+
+
 def _public_offer(row):
     return dict(zip(('offer_id','resource_kind','unit','price_minor','min_quantity',
                      'max_quantity','entitlement_kind','duration_seconds','price_revision'),row)) | {
@@ -115,7 +126,7 @@ def install(app):
             max_quantity,entitlement_kind,duration_seconds,price_revision
             FROM server_offers WHERE enabled=TRUE ORDER BY offer_id''')
         return HandlerOutput(data={'currency_id':CURRENCY_ID,'offers':[
-            _public_offer(row) for row in rows if purchasable(app,row[1],row[6])]})
+            _public_offer(row) for row in rows if _valid_catalog_offer(app, row)]})
 
     @op('money.redeem',obj({'offer_id':IDENTIFIER,'quantity':{'type':'integer','minimum':1,'maximum':MAX_MINOR},
         'currency_id':{'const':CURRENCY_ID},'price_revision':IDENTIFIER},
@@ -129,7 +140,7 @@ def install(app):
         row = tx.one('''SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
             max_quantity,entitlement_kind,duration_seconds,price_revision FROM server_offers
             WHERE offer_id=? AND enabled=TRUE''',(args['offer_id'],))
-        require(row is not None and purchasable(app,row[1],row[6]),'offer_not_found')
+        require(row is not None and _valid_catalog_offer(app, row),'offer_not_found')
         require(args['price_revision'] == row[8],'offer_price_changed')
         require(row[4] <= args['quantity'] <= row[5] and row[3]*args['quantity'] <= MAX_MINOR,
                 'invalid_offer_quantity')
