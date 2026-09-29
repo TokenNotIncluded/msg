@@ -95,4 +95,3 @@ def read_purchase(tx, purchase_id, subject):
         'final_transaction_id','entitlement_id','reason'),row))
     result['offer_snapshot'] = loads(result['offer_snapshot'])
     return result
-
