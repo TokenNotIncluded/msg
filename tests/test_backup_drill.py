@@ -11,7 +11,7 @@ import psycopg
 import pytest
 from test_service import NOW, call, register
 
-from msg.admin.backups import backup, restore
+from msg.admin.backups import _db_refs, _verify_storage, backup, restore
 from msg.application import Application
 from msg.config import load_settings
 from msg.core.codec import canonical, loads
@@ -21,6 +21,71 @@ from msg.storage.git import LFSObjectStore
 from msg.transports.http import create_app
 from msg.workers.effects import EffectWorker
 from msg.workers.maintenance import run_maintenance
+
+
+@pytest.mark.asyncio
+async def test_restore_private_git_after_all_refs_are_packed(installed, tmp_path, pg_dsn):
+    app, _ = installed
+    key, subject, _ = await register(app, 'backup-packed')
+    created = await call(
+        app,
+        'content.post_create',
+        {'parent': '/main', 'body': 'preserve packed private content'},
+        key=key,
+        subject=subject,
+    )
+    assert created.status == 'ok'
+    repository = app.settings.server.content_dir / 'private.git'
+    app.contents._run('pack-refs', '--all', '--prune')
+    assert (repository / 'packed-refs').is_file()
+    assert not any(path.is_file() for path in (repository / 'refs').rglob('*'))
+    archive = tmp_path / 'packed.zip'
+    await backup(app, archive)
+    with zipfile.ZipFile(archive) as source:
+        assert not any(name.startswith('content/private.git/refs/') for name in source.namelist())
+        references = loads(source.read('manifest.json'))['references']
+    config, data = tmp_path / 'packed-etc', tmp_path / 'packed-data'
+    result = restore(archive, config, data, postgres_dsn=pg_dsn)
+    assert result['promotion'] == 'blocked'
+    settings = load_settings(config)
+    _verify_storage(data, references, settings=settings, repair_git_layout=False)
+    with psycopg.connect(pg_dsn) as connection:
+        assert _db_refs(connection) == references
+        assert connection.execute(
+            'SELECT body FROM resources WHERE id=%s', (created.resources[0].id,)
+        ).fetchone() is not None
+        quarantine = connection.execute(
+            "SELECT value FROM settings WHERE key='recovery_quarantine'"
+        ).fetchone()
+        assert loads(quarantine[0])['authority'] == 'health_only'
+
+
+@pytest.mark.asyncio
+async def test_readonly_storage_verification_does_not_repair_private_git(installed, tmp_path):
+    app, _ = installed
+    directory = app.settings.server.content_dir / 'private.git' / 'refs' / 'tags'
+    directory.rmdir()
+    with pytest.raises(Failure, match='backup_git_layout_missing'):
+        _verify_storage(
+            tmp_path,
+            {'contents': {}, 'revisions': []},
+            settings=app.settings,
+            repair_git_layout=False,
+        )
+    assert not directory.exists()
+
+
+@pytest.mark.asyncio
+async def test_storage_layout_repair_rejects_symlink(installed, tmp_path):
+    app, _ = installed
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    directory = app.settings.server.content_dir / 'private.git' / 'refs' / 'tags'
+    directory.rmdir()
+    directory.symlink_to(outside, target_is_directory=True)
+    with pytest.raises(Failure, match='backup_symlink_forbidden'):
+        _verify_storage(tmp_path, {'contents': {}, 'revisions': []}, settings=app.settings)
+    assert not tuple(outside.iterdir())
 
 
 @pytest.mark.asyncio

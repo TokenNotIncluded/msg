@@ -24,7 +24,10 @@
 - 增加安装包的有界并发写入/读取测量、真实 SIGKILL 重启与全表/sequence 不变量检查。
 - 增加安装包的真实 PostgreSQL/Git/CAS 备份恢复计时和全表值比较；只允许恢复流程
   明确规定的 runtime_config/quarantine 变化，验证删 marker 后仍隔离业务与幂等重放。
-- 这些新检查尚待云端执行，不能使用 #186 的旧成功结果标记新检查通过。
+- 首次新演练 [36643217304](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36643217304)
+  在真实恢复时失败：私有 Git 打包引用后，ZIP 丢失空 refs 目录，Git 无法识别仓库。
+  本轮修复私有/用户仓库统一结构目录重建，保持只读 proof 校验不修改磁盘，
+  并新增 packed-ref 恢复、只读拒绝和符号链接拒绝回归。新最终 tree 仍须重新完整验收。
 - 逐条核对 issue 中尚未刷新到当前源码的描述，保留原验收范围和历史证据。
 
 ## issue 交接
