@@ -198,21 +198,23 @@ async def objective_fault(app, tx, order, now):
 
 
 async def execute(app, tx, case, decision_id, now, actor, request_id):
-    from msg.market.escrow import settle
-    order = _row(tx, case['order_id'], case['buyer'])
-    row = tx.one('SELECT body FROM arbitration_decisions WHERE id=? AND case_id=? AND round=?',
-                 (decision_id,case['id'],case['round']))
-    require(row is not None, 'decision_not_current')
-    decision = loads(row[0])
-    existing = tx.one('SELECT body FROM order_settlements WHERE order_id=?', (order['id'],))
-    if existing:
-        settlement = loads(existing[0])
-        require(settlement['decision_id'] == decision_id, 'order_already_settled')
-        return settlement['receipts']
-    receipts = await settle(app, tx, order, now=now, actor=actor, request_id=request_id,
-        reason='arbitration_decision', refund_minor=decision['refund_minor'], decision=decision)
-    notice(tx, case, 'executed', now)
-    return receipts
+    from msg.market.order_resources import internal_mutation
+    async with internal_mutation(app, tx, case['order_id'], now=now, actor=actor, request_id=request_id):
+        from msg.market.escrow import settle
+        order = _row(tx, case['order_id'], case['buyer'])
+        row = tx.one('SELECT body FROM arbitration_decisions WHERE id=? AND case_id=? AND round=?',
+                     (decision_id,case['id'],case['round']))
+        require(row is not None, 'decision_not_current')
+        decision = loads(row[0])
+        existing = tx.one('SELECT body FROM order_settlements WHERE order_id=?', (order['id'],))
+        if existing:
+            settlement = loads(existing[0])
+            require(settlement['decision_id'] == decision_id, 'order_already_settled')
+            return settlement['receipts']
+        receipts = await settle(app, tx, order, now=now, actor=actor, request_id=request_id,
+            reason='arbitration_decision', refund_minor=decision['refund_minor'], decision=decision)
+        notice(tx, case, 'executed', now)
+        return receipts
 
 
 async def resolve_cases(app, *, limit=100):

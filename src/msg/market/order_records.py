@@ -45,6 +45,8 @@ def read_order(tx, order_id, viewer):
         settled_at,receipt_refs FROM store_orders WHERE id=?''', (order_id,))
     # A valid ID is not an access grant. Keep nonexistent and unauthorized alike.
     require(row is not None and viewer in row[1:3], 'order_not_found')
+    from msg.market.order_resources import source_metadata
+    source_metadata(tx, order_id)
     result = dict(zip(_COLUMNS, row))
     result['delivery_target'] = loads(result['delivery_target'])
     result['receipt_refs'] = loads(result['receipt_refs'])

@@ -12,7 +12,7 @@ from functools import partial
 from msg.market.escrow import EscrowEngine, validate_policy
 from msg.core.codec import canonical, digest, loads, parse_time, wire
 from msg.core.errors import require
-from msg.core.models import HandlerOutput
+from msg.core.models import HandlerOutput, ResourceTypeSpec
 from msg.plugins.common import registration
 from msg.market.ledger import CURRENCY_ID, MAX_MINOR, balance as _balance, post_transfer as _post_transfer, account_requirements
 from msg.plugins.schemas import IDENTIFIER, obj
@@ -30,6 +30,8 @@ from msg.market.order_records import _COLUMNS
 
 def install(app):
     op, finish = registration(app, 'orders', ('store', 'money'))
+    from msg.market.order_resources import operation_boundary
+    op = operation_boundary(app, op)
     # Account authority belongs to the operation contract, not just the handler:
     # the executor must apply it before returning an idempotent cached result.
     op = partial(op, requirements=account_requirements)
@@ -257,4 +259,6 @@ def install(app):
     install_market(app, op)
     from msg.market.arbitration import install as install_arbitration
     install_arbitration(app, op)
-    finish()
+    finish(tuple(ResourceTypeSpec(name=name, version=1, container=container,
+        content_schema=None, operations=frozenset(), relations=frozenset())
+        for name, container in (('order', False), ('order_collection', True))))

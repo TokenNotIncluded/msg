@@ -65,6 +65,12 @@ async def create(app, tx, ctx, request, *, version=3):
     total = body['price_minor'] * args['quantity']
     require(0 < total <= MAX_MINOR, 'money_overflow')
     require(total == args['total_price_minor'], 'price_changed')
+    # Inventory is a query projection too: validate all Resource-backed orders
+    # for this immutable listing before using its quantity/state index.
+    from msg.market.order_resources import verify_source
+    for (existing_id,) in tx.rows("SELECT order_id FROM order_contracts WHERE "
+            "body::jsonb->>'listing_id'=? AND body::jsonb->>'resource_model'='1'", (listing.id,)):
+        await verify_source(app, tx, existing_id)
     sold = tx.one('''SELECT COALESCE(SUM(quantity),0) FROM store_orders
         WHERE listing_id=? AND state NOT IN ('cancelled','refunded')''', (listing.id,))[0]
     require(sold + args['quantity'] <= body['quantity'], 'quantity_unavailable')
@@ -87,6 +93,9 @@ async def create(app, tx, ctx, request, *, version=3):
         recipient_key = {'key_id': row[0], 'recipient': row[1], 'fingerprint': digest(row[2])}
     target = await target_for(app, tx, buyer, args.get('email'))
     order_id, now = _order_id(), wire(ctx.now)
+    if version == 4:
+        from msg.market.order_resources import begin_new
+        begin_new(tx, order_id)
     escrow = 'esc_' + order_id[4:]
     tx.execute("INSERT INTO ledger_accounts(id,kind,subject_id,source_id) VALUES (?,'order_escrow',NULL,?)",
                (escrow, order_id), write=True)
@@ -110,6 +119,8 @@ async def create(app, tx, ctx, request, *, version=3):
         'recipient_key': recipient_key, 'handle_snapshot': target['handle_snapshot'],
         'buyer_principal': wire(ctx.principal), 'created_at': now}
     if version == 4:
+        locked['resource_model'] = 1
+        locked['creation_request'] = wire(request)
         locked['settlement_policy'] = {'id': 'explicit-buyer-acceptance', 'version': 1}
     tx.execute('INSERT INTO order_contracts(order_id,body,digest) VALUES (?,?,?)',
                (order_id,canonical(locked).decode(),digest(locked)), write=True)

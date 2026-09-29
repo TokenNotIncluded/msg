@@ -43,6 +43,10 @@ def _post_escrow_transfer(tx, *, order, recipient, amount, actor, request_id, no
 
 
 async def transition(tx, order, state, *, now, actor, request_id, reason):
+    from msg.market.order_resources import _active
+    raw = tx.one('SELECT body FROM order_contracts WHERE order_id=?', (order['id'],))
+    if raw and loads(raw[0]).get('resource_model') == 1:
+        require(order['id'] in _active(tx), 'order_resource_write_forbidden')
     if order['state'] == 'funded' and state == 'settled':
         locked = contract(tx, order['id'])
         require(locked['version'] == 5 and reason == 'deterministic_entitlement',
@@ -98,6 +102,8 @@ async def settle(app, tx, order, *, now, actor, request_id, reason,
         require(reason in OBJECTIVE_REFUNDS and order['state'] in {'funded', 'delivered'},
                 'escrow_release_forbidden')
     else:
+        if locked['version'] == 4:
+            require(reason == 'buyer_acceptance' and actor == order['buyer'], 'escrow_release_forbidden')
         require(refund_minor == 0 and order['state'] == 'accepted' and
                 reason in {'buyer_acceptance', 'managed_instant_verified'},
                 'escrow_release_forbidden')
@@ -156,22 +162,25 @@ async def resolve_due(app, *, limit=100):
             WHERE o.state IN ('created','funded') AND d.expires_at<=?
             ORDER BY d.expires_at,o.id LIMIT ?''', (wire(now),limit))
         for order_id, buyer in rows:
-            order = _row(tx, order_id, buyer)
-            terms = contract(tx, order_id)
-            policy = terms['policy']['policy']
-            origin, seconds = ((order['created_at'], policy['funding_timeout_seconds'])
-                if order['state'] == 'created' else
-                (order['funded_at'], policy['delivery_timeout_seconds']))
-            if now < parse_time(origin) + timedelta(seconds=seconds):
-                continue
-            if order['state'] == 'created':
-                await transition(tx, order, 'cancelled', now=now, actor=buyer,
-                                 request_id='timeout:'+order_id, reason='funding_timeout')
-            else:
-                await settle(app, tx, order, now=now, actor=buyer,
-                    request_id='timeout:'+order_id, reason='delivery_timeout',
-                    refund_minor=order['total_price_minor'])
-            changed.append(order_id)
+            from msg.market.order_resources import internal_mutation
+            async with internal_mutation(app, tx, order_id, now=now, actor=buyer,
+                                         request_id='timeout:' + order_id):
+                order = _row(tx, order_id, buyer)
+                terms = contract(tx, order_id)
+                policy = terms['policy']['policy']
+                origin, seconds = ((order['created_at'], policy['funding_timeout_seconds'])
+                    if order['state'] == 'created' else
+                    (order['funded_at'], policy['delivery_timeout_seconds']))
+                if now < parse_time(origin) + timedelta(seconds=seconds):
+                    continue
+                if order['state'] == 'created':
+                    await transition(tx, order, 'cancelled', now=now, actor=buyer,
+                                     request_id='timeout:'+order_id, reason='funding_timeout')
+                else:
+                    await settle(app, tx, order, now=now, actor=buyer,
+                        request_id='timeout:'+order_id, reason='delivery_timeout',
+                        refund_minor=order['total_price_minor'])
+                changed.append(order_id)
     return changed
 
 

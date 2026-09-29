@@ -161,6 +161,7 @@ async def removable(app,ctx,request,tx,resource):
 
 
 async def require_unmanaged_personal(tx,resource):
+    require(resource.type not in {'order', 'order_collection'}, 'order_controlled_resource')
     chain=(*await tx.ancestors(resource.id),resource)
     require(not any(parent.type=='user' and child.name in {'SOUL.md','AGENTS.md','notes','todos'}
                     for parent,child in zip(chain,chain[1:])),
@@ -706,6 +707,7 @@ def install(app):
         require(await direct_ancestor(tx,resource.id) is None,'dm_controlled_resource')
         target=await resolve(tx,request.arguments['parent'])
         require(target!='t_store','store_controlled_resource')
+        require((await tx.resource(target)).type != 'order_collection', 'order_controlled_resource')
         await check_access(app,ctx,request,tx,target,'create')
         parent=await tx.resource(target)
         require(app.registry.resource_type(parent.type,1).container,'not_a_container')

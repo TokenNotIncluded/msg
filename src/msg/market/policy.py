@@ -78,6 +78,8 @@ def contract(tx, order_id):
     body = loads(row[0])
     require(digest(body) == row[1] and body['order_id'] == order_id,
             'order_contract_corrupt')
+    from msg.market.order_resources import source_metadata
+    source_metadata(tx, order_id)
     validate_projection(tx, body)
     return body
 
@@ -180,6 +182,9 @@ def validate_projection(tx, locked):
             all(order[name] == value for name, value in fact['order_facts'].items()) and
             delivery_snapshot(tx, locked['order_id']) == fact['delivery_snapshot'],
             'order_settlement_mismatch')
+    if locked['version'] == 4 and fact['decision_id'] is None and fact['release_minor']:
+        require(fact['reason'] == 'buyer_acceptance' and fact['refund_minor'] == 0,
+                'order_acceptance_policy_mismatch')
     if locked['version'] == 5:
         require(order['state'] == 'settled' and fact['reason'] == 'deterministic_entitlement' and
                 fact['refund_minor'] == 0 and order['delivered_at'] is None and

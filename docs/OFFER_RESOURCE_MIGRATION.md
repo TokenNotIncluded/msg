@@ -150,7 +150,59 @@ The isolated official selftest retains all 20 → 10 → 5 PoP/store acceptance
 checkpoints, then exercises a separate one-minor-unit deterministic grant using
 a real @3 buyer signature, replay and supply checks.
 
-This stage converges new redemptions onto the existing native Order writer. It
-does not yet convert `store_orders`/`order_contracts` themselves into ordinary
-Resource/Revision records, or adopt historical Purchase rows; those are separate
-remaining write-model stages. Compatibility reads are not evidence of migration.
+This stage converges new redemptions onto the existing native Order writer. Stage 4 below gives new default Orders ordinary Resource/Revision authority.
+Historical Purchase adoption remains separate. Compatibility reads are not
+evidence of migration.
+
+## Stage 4: controlled ordinary Order Resources
+
+Design lines 56/58 define the shared Resource/Revision structure and reserve
+controlled facts to dedicated operations; lines 64/118 require Order convergence
+and unchanged old signed policies; lines 135/193 prohibit index-derived financial
+authority and silent historical rewriting. Issue #85 repeats Resource/Revision
+reuse and the single protected ledger; #71 requires preserved #102 contracts and
+atomic, recoverable fulfillment.
+
+New `orders.create@2`, `orders.buy@4` and `money.redeem@3` contracts carry an
+explicit `resource_model=1` marker. Their ordinary private `order` Resource keeps
+the same `ord_` ID at `/@buyer/orders/<id>` under a controlled `order_collection`.
+Its immutable JSON Revision contains the original locked contract, core Order
+state, funding/settlement times and receipt references, settlement fact, and
+transition facts. New v4 contracts also preserve the original creation request
+verbatim. Revision manifests are signed by the service receipt signer as
+**operation facts**, not falsely represented as buyer-signed content. Original
+request signatures and financial receipt bytes are unchanged.
+
+`store_orders` and `order_contracts` are validated query projections for marked
+orders: every record/contract read compares their canonical document digest to
+the current immutable Revision metadata. Dedicated operations additionally read
+and verify source bytes and the Revision signature before acting. Inventory
+checks validate existing Resource orders before using SQL quantity/state indexes.
+Projection drift, deleted source, missing content or invalid signatures fail
+closed; no startup repair, adoption or automatic re-signing exists. Ledger,
+Delivery, arbitration evidence and notification jobs remain their respective
+financial/delivery/evidence facts, not parallel Order state machines. Notification
+endpoint changes are intentionally outside the Order content snapshot.
+
+A dedicated operation starts from a verified source, validates the existing
+versioned business rules, then appends its final committed Order Revision in the
+same transaction as the SQL projection and ledger changes. Internal transitions
+within one operation are preserved as transition facts; they are not separate
+commits. No-op/replay creates no new Revision. Buyer acceptance, objective refunds,
+and arbitration retain their existing semantics. The timeout and internal
+arbitration entrypoints use the same boundary; Resource-backed transitions
+outside that boundary are rejected. Any source publication failure rolls back
+Order, Delivery, ledger, grants, events and the revision pointer together.
+
+Generic content/file creation, write, lifecycle, ownership, group, permission and
+move operations cannot edit the controlled types. The buyer can read ordinary
+Resource bytes; sellers still use the existing role-trimmed market view. Source
+refs are returned as `data.order_resources`; they do not add generic descendant
+read rights to existing account-scoped credentials or change replay authority.
+
+Existing orders without the marker retain their published compatibility writer
+and policies, including old @1/@2/@3 and previously created @4/@3-redemption
+records. No historical request, ID, receipt, pending Purchase or Order is adopted
+on read or startup. Explicit historical Order/Purchase adoption is intentionally
+not claimed; the design permits this compatibility boundary. New legacy-version
+requests continue their exact published writer and response shape.

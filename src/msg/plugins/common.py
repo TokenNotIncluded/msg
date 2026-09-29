@@ -72,6 +72,8 @@ async def protect_namespace(app,ctx,request,tx,parent,name):
 async def create_resource(app,ctx,request,tx, *, parent,type,name=None,body=None,media_type='text/markdown',
                           relations=(),mode=None,resource_id=None,author=None,content_signature=None,revision_id=None):
     parent=await tx.resource(parent)
+    require(type not in {'order', 'order_collection'} and parent.type != 'order_collection',
+            'order_controlled_resource')
     require(parent.state=='active','ancestor_inactive')
     require(app.registry.resource_type(parent.type,parent.type_version).container,'not_a_container')
     app.registry.resource_type(type,1)
@@ -121,6 +123,7 @@ async def create_resource(app,ctx,request,tx, *, parent,type,name=None,body=None
 async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/markdown', *, relations=(),author=None,
                           signature=None,revision_id=None,change_note=None,source_kind=None,
                           source_version=None,source_digest=None,content_created_at=None):
+    require(resource.type not in {'order', 'order_collection'}, 'order_controlled_resource')
     from msg.core.models import BlobRef
     # Internal operation labels (e.g. transfer.seal publishing) carry no client arguments.
     timestamp=(content_created_at if content_created_at is not None else

@@ -110,6 +110,8 @@ def _finalize(app, tx, purchase, now, request_id, *, cancel=False):
 
 def install(app):
     op,finish = registration(app,'offers',('money',))
+    from msg.market.order_resources import operation_boundary
+    op = operation_boundary(app, op)
 
     @op('money.offers',obj(),effect='read', version=2)
     @op('money.offers',obj(),effect='read')

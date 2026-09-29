@@ -25,6 +25,8 @@ async def redeem(app, tx, ctx, request, offer, fulfill):
     listing = listing_body(source)
     target = await target_for(app, tx, buyer)
     order_id, now = new_order_id(), wire(ctx.now)
+    from msg.market.order_resources import begin_new
+    begin_new(tx, order_id)
     escrow = 'esc_' + order_id[4:]
     tx.execute("INSERT INTO ledger_accounts(id,kind,subject_id,source_id) VALUES (?,'order_escrow',NULL,?)",
                (escrow, order_id), write=True)
@@ -39,7 +41,7 @@ async def redeem(app, tx, ctx, request, offer, fulfill):
          listing['dispute_policy'], digest(listing['terms']), canonical(target).decode(),
          request.payload_digest, now), write=True)
     credential = await tx.credential(ctx.principal.credential_id)
-    locked = {'order_id': order_id, 'version': 5, 'buyer': buyer, 'seller': ROOT_SUBJECT,
+    locked = {'order_id': order_id, 'version': 5, 'resource_model': 1, 'buyer': buyer, 'seller': ROOT_SUBJECT,
         'listing': listing, 'listing_id': resource.id, 'listing_revision': resource.revision,
         'escrow_subject': escrow, 'package_id': None, 'package_revision': None,
         'package_digest': None, 'quantity': args['quantity'], 'total_price_minor': total,
