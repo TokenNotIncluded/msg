@@ -110,6 +110,7 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
                 all(isinstance(p,str) for p in move) and
                 move[1]==source_paths.get(rule_id,next(s[4] for s in RULE_SPECS if s[0]==rule_id)),
                 'system_source_invalid_migration',rule_id)
+        migrations[rule_id]=tuple(move)
     for rid,name,mode in (('r_rules','_rules','0555'),('t_wiki','wiki','1777')):
         await seed_resource(tx,contents,dict(id=rid,type='topic',name=name,parent=namespace_root,
             owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode=mode),now)
