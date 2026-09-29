@@ -64,6 +64,38 @@ async def test_follow_delivery_dedup_and_revoked_credential(installed):
 
 
 @pytest.mark.asyncio
+async def test_cancelled_watches_leave_the_bounded_active_set(installed):
+    app, _ = installed
+    ak, author, _ = await register(app, 'watch-churn-author')
+    rk, reader, _ = await register(app, 'watch-churn-reader')
+    # Owners cannot archive watch resources through generic content operations,
+    # so cancellation is the only way to shrink the set watch_list must return.
+    for _ in range(101):
+        followed = await call(app, 'communication.watch', {'id': '/main'}, key=rk, subject=reader)
+        assert followed.status == 'ok', wire(followed)
+        unfollowed = await call(app, 'communication.unwatch', {'id': '/main'}, key=rk, subject=reader)
+        assert unfollowed.status == 'ok', wire(unfollowed)
+    created = await call(app, 'communication.watch_create', {
+        'target': '/main', 'event_types': ['content.post_create'], 'delivery': 'inbox'},
+        key=rk, subject=reader)
+    assert created.status == 'ok', wire(created)
+    cancelled = await call(app, 'communication.watch_cancel', {'id': created.data['id']},
+                           key=rk, subject=reader)
+    assert cancelled.status == 'ok', wire(cancelled)
+    watches = await call(app, 'communication.watch_list', {}, key=rk, subject=reader)
+    assert watches.status == 'ok' and not watches.data['items'], wire(watches)
+    got = await call(app, 'communication.watch_get', {'id': created.data['id']}, key=rk, subject=reader)
+    assert got.status == 'ok' and got.data['status'] == 'cancelled', wire(got)
+    archived = await call(app, 'content.archive', {'id': created.data['id']}, key=rk, subject=reader)
+    assert archived.status == 'error', wire(archived)
+    post = await call(app, 'content.post_create', {'parent': '/main', 'body': 'after churn'},
+                      key=ak, subject=author)
+    assert post.status == 'ok', wire(post)
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.one('SELECT COUNT(*) FROM messages WHERE recipient=?', (reader,))[0] == 0
+
+
+@pytest.mark.asyncio
 async def test_watch_quarantine_and_duplicate_event_projection(installed):
     from msg.core.codec import decode, loads
     from msg.core.models import Event

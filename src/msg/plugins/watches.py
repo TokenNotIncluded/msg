@@ -48,7 +48,11 @@ async def create(app, ctx, request, tx, target, *, legacy=False, query_ref=None,
 
 
 async def cancel(app, ctx, request, tx, resource, saved):
-    await revise_resource(app, ctx, request, tx, resource, canonical({**saved, 'status': 'cancelled'}), 'application/json')
+    updated = await revise_resource(app, ctx, request, tx, resource, canonical({**saved, 'status': 'cancelled'}), 'application/json')
+    # Generic lifecycle operations cannot archive watches, so cancellation must
+    # leave the active set that listing bounds and every Event scans.
+    await tx.replace(replace(updated, state='archived', generation=updated.generation + 1,
+                             modified_at=ctx.now, modified_by=ctx.principal.actor), updated.generation)
     if saved.get('legacy'):
         tx.execute('DELETE FROM watches WHERE subject=? AND resource=?', (saved['subject'], saved['target']), write=True)
 
