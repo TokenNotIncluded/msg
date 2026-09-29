@@ -136,6 +136,7 @@ async def resolve_due(app, *, limit=100):
     now = app.clock()
     changed = []
     async with app.metadata.transaction(write=True) as tx:
+        app.runtime_generation.require_current(tx)
         rows = tx.rows('''SELECT o.id,o.buyer FROM store_orders o
             JOIN order_deadlines d ON d.order_id=o.id
             WHERE o.state IN ('created','funded') AND d.expires_at<=?

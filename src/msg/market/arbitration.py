@@ -218,6 +218,7 @@ async def execute(app, tx, case, decision_id, now, actor, request_id):
 async def resolve_cases(app, *, limit=100):
     changed, now = [], app.clock()
     async with app.metadata.transaction(write=True) as tx:
+        app.runtime_generation.require_current(tx)
         for (case_id,) in tx.rows('''SELECT id FROM arbitration_cases
             WHERE state IN ('open','decided') AND deadline<=? ORDER BY deadline,id LIMIT ?''',
             (wire(now),limit)):

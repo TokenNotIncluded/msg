@@ -163,6 +163,7 @@ async def serve_hosted(service,request):
         async with service.metadata.transaction(write=False) as tx:
             from msg.security.quarantine import require_live_authority
             require_live_authority(tx)
+            service.runtime_generation.require_current(tx)
             try:
                 rid=await resolve_read(tx,site_path)
             except Failure as exc:
@@ -256,6 +257,8 @@ def hosting_app(service):
     async def dispatch(request):
         try:
             service.require_ready()
+            async with service.metadata.transaction(write=False) as tx:
+                service.runtime_generation.require_current(tx)
         except Failure as exc:
             return hosted_error(exc.code)
         expected=urlsplit(service.settings.service_url)

@@ -10,7 +10,7 @@ from msg.core.errors import Failure,require
 from msg.core.models import Principal,SignatureProof,TokenProof
 from msg.core.requests import payload_fields,signing_bytes
 from msg.security.crypto import key_id,subject_id,verify
-from msg.security.quarantine import active as quarantine_active
+from msg.security.quarantine import RuntimeGeneration, active as quarantine_active
 from msg.security.token_delivery import recovery_verifier
 
 
@@ -30,8 +30,10 @@ class AuthenticationService:
     def __init__(self,registry,certificates,service,clock,primary_ceiling,temporary_ceiling):
         self.registry,self.certificates,self.service,self.clock=registry,certificates,service,clock
         self.primary_ceiling,self.temporary_ceiling=primary_ceiling,temporary_ceiling
+        self.runtime_generation=RuntimeGeneration()
 
     async def authenticate(self,request,session, *, entry):
+        self.runtime_generation.require_current(session)
         require(session.setting('active_root_certificate',self.certificates.root_certificate.resource_id)==
                 self.certificates.root_certificate.resource_id,'service_restart_required')
         spec=self.registry.operation(request.operation,request.contract_version)

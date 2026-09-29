@@ -5,7 +5,7 @@ from msg.core.errors import Failure,require
 from msg.core.codec import loads,parse_time,wire
 from msg.core.models import ResourceRef
 from msg.security.sharing_policy import share_target_error
-from msg.security.quarantine import active as quarantine_active, require_live_authority
+from msg.security.quarantine import RuntimeGeneration, active as quarantine_active, require_live_authority
 from msg.security.policy import allows,grant_covers,scope_contains,CERTGATE
 
 _WRITE_CHECKS={'write','create','remove','chmod','chgrp','chown','manage','certgate','purge','tool_use'}
@@ -17,8 +17,10 @@ _OVERRIDE={'read':'resource.read_override','list':'resource.read_override','trav
 class AuthorizationService:
     def __init__(self,registry,certificates):
         self.registry,self.certificates=registry,certificates
+        self.runtime_generation=RuntimeGeneration()
 
     async def grants(self,principal,session):
+        self.runtime_generation.require_current(session)
         require_live_authority(session)
         grants=[]
         for cid in principal.certificates:
@@ -29,6 +31,7 @@ class AuthorizationService:
         return tuple(grants)
 
     async def has(self,principal,capability,operation,resource,session):
+        self.runtime_generation.require_current(session)
         if principal.method=='local' and principal.subject==ROOT_SUBJECT:
             return True
         if not any([await grant_covers(g,capability,operation,resource,session) for g in principal.ceiling]):
@@ -37,6 +40,7 @@ class AuthorizationService:
                     for g in await self.grants(principal,session)])
 
     async def _ceiling(self,principal,operation,resource,session):
+        self.runtime_generation.require_current(session)
         require_live_authority(session)
         if principal.method=='anonymous':
             return
@@ -145,6 +149,7 @@ class AuthorizationService:
         The original signed owner's credential is a revocation boundary. A link
         cannot borrow that principal for other reads or outlive its current scope.
         """
+        self.runtime_generation.require_current(session)
         if quarantine_active(session):
             return False
         if resource.owner!=grantor or share_target_error(self.registry,resource,chain,session):
@@ -173,6 +178,7 @@ class AuthorizationService:
 
     async def require(self,context,request,checks,session):
         principal=context.principal
+        self.runtime_generation.require_current(session)
         require_live_authority(session)
         if principal.subject==ROOT_SUBJECT or principal.actor==ROOT_SUBJECT:
             require(context.entry=='local_admin' and principal.method=='local','local_only')

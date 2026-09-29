@@ -27,6 +27,8 @@ class OperationExecutor:
         self.response_hook=None
         self.recovery_drill_marker=None
         self.recovery_quarantined=False
+        from msg.security.quarantine import RuntimeGeneration
+        self.runtime_generation=RuntimeGeneration()
         require(max_request_bytes is None or (type(max_request_bytes) is int and max_request_bytes>0),
                 'invalid_request_limit')
         self.max_request_bytes=max_request_bytes
@@ -36,6 +38,10 @@ class OperationExecutor:
     def recovery_drill_active(self):
         marker=self.recovery_drill_marker
         return self.recovery_quarantined or (marker is not None and (marker.exists() or marker.is_symlink()))
+
+    async def require_current_runtime(self):
+        async with self.metadata.transaction(write=False) as session:
+            self.runtime_generation.require_current(session)
 
     async def execute(self,request, *, entry='network'):
         principal=None
@@ -56,6 +62,7 @@ class OperationExecutor:
             if spec.name=='batch.independent':
                 return await self._independent(request,spec,entry)
             async with self.metadata.transaction(write=spec.effect!='read') as session:
+                self.runtime_generation.require_current(session)
                 principal=await self.authenticator.authenticate(request,session,entry=entry)
                 if spec.name in {'batch.atomic','file.batch'}:
                     # Validate the child set before an old cached parent result
@@ -159,6 +166,7 @@ class OperationExecutor:
         No child is reported rolled back merely because its sibling failed.
         """
         async with self.metadata.transaction(write=True) as tx:
+            self.runtime_generation.require_current(tx)
             principal=await self.authenticator.authenticate(request,tx,entry=entry)
             await self.authorizer._ceiling(principal,f'{spec.name}@{spec.version}',principal.subject,tx)
             children=packets(self.registry,request,principal.subject,self.max_request_bytes)
@@ -177,6 +185,7 @@ class OperationExecutor:
             results.append(result_wire(result))
             resources.extend(result.resources)
         async with self.metadata.transaction(write=True) as tx:
+            self.runtime_generation.require_current(tx)
             current=await self.authenticator.authenticate(request,tx,entry=entry)
             await self.authorizer._ceiling(current,f'{spec.name}@{spec.version}',current.subject,tx)
             previous=await tx.request_result(principal.subject,request.request_id,request.payload_digest)

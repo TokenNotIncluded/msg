@@ -17,7 +17,7 @@ from msg.security.authentication import AuthenticationService
 from msg.security.authorization import AuthorizationService
 from msg.security.capabilities import primary_ceiling, temporary_ceiling
 from msg.security.certificates import CertificateValidator
-from msg.security.quarantine import require_live_authority
+from msg.security.quarantine import RuntimeGeneration, require_live_authority
 from msg.storage.read_only import GitContentReader, ReadOnlyPostgresStore
 
 
@@ -80,6 +80,7 @@ class HostingRuntime:
         install_registry(SimpleNamespace(registry=self.registry), settings.server.plugins)
         self.metadata = None
         self.contents = None
+        self.runtime_generation = None
         self._loaded = False
         self._quarantined = False
         self._marker = settings.hosting_recovery_marker or settings.config_dir / 'recovery-drill.json'
@@ -101,6 +102,17 @@ class HostingRuntime:
         require(not self._loaded, 'hosting_already_loaded')
         require(self.settings.public_web_origin is not None, 'hosting_origin_not_configured')
         self.require_ready(loading=True)
+        self.metadata = ReadOnlyPostgresStore(self.settings.server.postgres_dsn)
+        try:
+            async with self.metadata.transaction(write=False) as tx:
+                require_live_authority(tx)
+                if self.runtime_generation is None:
+                    self.runtime_generation = RuntimeGeneration.capture(tx)
+                else:
+                    self.runtime_generation.require_current(tx)
+        except (psycopg.errors.UndefinedTable, psycopg.errors.UndefinedColumn,
+                psycopg.errors.InsufficientPrivilege) as exc:
+            raise Failure('hosting_installation_stale') from exc
         require(self.settings.trust_file.is_file(), 'root_not_initialized')
         trust = loads(self.settings.trust_file.read_bytes())
         require(type(trust) is dict and set(trust) == {'version', 'public_key', 'certificate'}
@@ -110,12 +122,12 @@ class HostingRuntime:
         require(len(public) == 32, 'invalid_trust_anchor')
         self.contents = GitContentReader(self.settings.server.content_dir,
                                         binary_dir=self.settings.server.blob_dir)
-        self.metadata = ReadOnlyPostgresStore(self.settings.server.postgres_dsn)
         self.certificates = CertificateValidator(self.registry, root, public,
                                                  self.settings.service_url, self.clock)
         try:
             async with self.metadata.transaction(write=False) as tx:
                 require_live_authority(tx)
+                self.runtime_generation.require_current(tx)
                 require(tx.setting('active_root_certificate', root.resource_id) == root.resource_id,
                         'service_restart_required')
                 await self.certificates.validate(root.resource_id, tx)
@@ -128,6 +140,8 @@ class HostingRuntime:
             self.settings.service_url, self.clock,
             partial(primary_ceiling, self.registry), partial(temporary_ceiling, self.registry))
         self.authorizer = AuthorizationService(self.registry, self.certificates)
+        self.authenticator.runtime_generation=self.runtime_generation
+        self.authorizer.runtime_generation=self.runtime_generation
         self.require_ready(loading=True)
         self._loaded = True
         return self
