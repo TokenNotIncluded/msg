@@ -228,6 +228,24 @@ async def _doctor(config_dir,clock):
         from msg.admin.config_check import configuration_doctor
         return {'ok':False,'root_id':ROOT_SUBJECT,'checks':checks,
                 'configuration_fields':configuration_doctor(checks)}
+    # This read-only phase checks installed contracts; real behavior belongs to
+    # the separate isolated selftest vectors below.
+    for feature,owner,operations in (
+        ('content_editing','file',('file.create','file.patch','file.read')),
+        ('private_dm','communication',('communication.dm_request','communication.dm_accept',
+                                       'communication.dm_send','communication.dm_list')),
+        ('transfer','transfer',('transfer.open','transfer.part_put','transfer.part_get',
+                                'transfer.status','transfer.seal'))):
+        if owner not in app.registry._plugins:
+            checks[feature]={'ok':True,'status':'disabled'}
+            continue
+        try:
+            for name in operations:
+                operation=app.registry.operation(name)
+                app.registry.schema(operation.input_schema)
+                app.registry.schema(operation.output_schema)
+            success(feature,scope='registered_contracts',operations=list(operations))
+        except Failure as exc:failed(feature,exc.code)
     if sys.version_info[:2]>=(3,15):success('python',version='.'.join(map(str,sys.version_info[:3])))
     else:failed('python','python_315_required',actual='.'.join(map(str,sys.version_info[:3])))
     missing=[name for name in ('cryptography','starlette','uvicorn','httpx','jsonschema','aiohttp','dns','graphql','psycopg','valkey') if find_spec(name) is None]
@@ -235,8 +253,13 @@ async def _doctor(config_dir,clock):
     else:failed('dependencies','dependency_unavailable',missing=missing)
     if shutil.which('git'):success('git')
     else:failed('git','git_missing')
-    if not shutil.which('bwrap'):
-        warnings.append({'code':'tool_isolation_unavailable','effect':'network_tool_jobs_fail_closed'})
+    if 'extensions' in settings.server.plugins:
+        from msg.admin.tool_check import inspect_tool_sandbox
+        try:success('tool_sandbox',**await inspect_tool_sandbox(app))
+        except (Failure,OSError) as exc:
+            failed('tool_sandbox',getattr(exc,'code','tool_isolation_failed'))
+    else:
+        checks['tool_sandbox']={'ok':True,'status':'disabled'}
     try:
         trust=loads(settings.trust_file.read_bytes())
         root=decode(Certificate,trust['certificate'])
@@ -401,7 +424,7 @@ async def _doctor(config_dir,clock):
         except Failure as exc:failed(name,exc.code)
     from msg.admin.config_check import configuration_doctor
     features=feature_results(feature_manifest(),checks,'doctor_check',
-                             enabled_plugins=settings.server.plugins)
+                             enabled_plugins=tuple(app.registry._plugins))
     return {'ok':all(c['ok'] for c in checks.values()) and
             all(row['status']!='fail' for row in features.values()),
             'root_id':ROOT_SUBJECT,'checks':checks,'features':features,'warnings':warnings,
@@ -612,6 +635,7 @@ async def selftest():
     from msg.admin import recovery_replay
     from msg.admin.config_check import configuration_selftest
     configuration_fields=configuration_selftest()
+    tool_sandbox_details={'code':'not_run'}
     checks={'configuration_loading':all(row['status']=='pass'
                                        for row in configuration_fields.values())}
     try:
@@ -665,6 +689,13 @@ async def selftest():
                 require(result.status=='ok','selftest_csr_failed')
                 return await _approve_csr(app,result.data['csr_id'],root,expected_digest=result.data['request_digest'],operator='isolated-selftest')
             alice,ua=await register('alice');bob,ub=await register('bob')
+            from msg.admin.tool_check import check_tool_sandbox
+            try:
+                tool_sandbox_details=await check_tool_sandbox(app,call,approve,alice,ua)
+                checks['tool_sandbox']=True
+            except (Failure,OSError) as exc:
+                tool_sandbox_details={'code':getattr(exc,'code','tool_isolation_failed')}
+                checks['tool_sandbox']=False
             post=await call('content.post_create',{'parent':test_path+'/tmp','body':'retained source bytes\r\n'},alice,ua,request_id='same-write')
             require(post.status=='ok',post.error.code if post.error else 'selftest_post_failed')
             # Following reads only existing watches; use a separate fixture so
@@ -801,6 +832,12 @@ async def selftest():
             from msg.admin.git_check import check_git
             checks['git_push_read_cas']=await check_git(app,call,register)
             checks.update(await _selftest_search_hosting(app,call,register,test_path))
+            from msg.admin.dm_check import check_private_dm
+            checks['private_dm']=await check_private_dm(app,now)
+            from msg.admin.content_edit_check import check_content_editing
+            checks['content_editing']=await check_content_editing(app,call,register,test_path)
+            from msg.admin.transfer_check import check_transfer
+            checks['transfer_state_machine']=await check_transfer(app,call,register)
         except Failure as exc:
             checks['failure']={'code':exc.code}
         finally:
@@ -809,4 +846,4 @@ async def selftest():
     return {'ok':bool(checks) and all(value is True for value in checks.values()) and
             all(row['status']!='fail' for row in features.values()),
             'checks':checks,'features':features,'cleaned_up':not folder.exists(),
-            'configuration_fields':configuration_fields}
+            'configuration_fields':configuration_fields,'tool_sandbox':tool_sandbox_details}

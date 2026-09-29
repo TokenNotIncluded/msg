@@ -8,6 +8,12 @@ from msg.core.errors import require
 
 
 FEATURE_SOURCES = {
+    'content_editing': ('file', 'content_editing', 'content_editing'),
+    'private_dm': ('communication', 'private_dm', 'private_dm'),
+    'transfer': ('transfer', 'transfer', 'transfer_state_machine'),
+    'tool_sandbox': ('extensions', 'tool_sandbox', 'tool_sandbox'),
+    'following': ('communication', 'following', 'following'),
+    'collaboration': ('communication', 'collaboration', 'collaboration'),
     'honors': ('achievements', 'honors', 'honor_ceremony_display'),
     'money': ('money', 'market_clearing', 'market_e2e'),
     'bounty': ('bounty', 'market_clearing', 'market_e2e'),
