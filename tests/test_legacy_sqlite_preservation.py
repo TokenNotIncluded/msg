@@ -1,6 +1,7 @@
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -64,7 +65,7 @@ def test_preserve_is_inert_lossless_and_bound(snapshot, tmp_path):
     ],
 )
 def test_unknown_schema(snapshot, mutation):
-    with sqlite3.connect(snapshot) as db:
+    with closing(sqlite3.connect(snapshot)) as db, db:
         db.execute(mutation)
     with pytest.raises(ValueError):
         preserve(snapshot, expected_sha256=digest(snapshot))
@@ -100,7 +101,7 @@ def test_posts_and_ciphertext_preserved_without_new_signature(snapshot, tmp_path
 
     raw_body = '旧帖\n  exact spacing\n'
     ciphertext = b'\x00\xffopaque\x00'
-    with sqlite3.connect(snapshot) as db:
+    with closing(sqlite3.connect(snapshot)) as db, db:
         db.execute(
             'INSERT INTO posts(id,board,seq,body,created,updated,signature,sig_version,sig_nonce,sig_issued,deleted,hidden) VALUES (41,?,?,?,?,?,?,?,?,?,?,?)',
             ('main', 3, raw_body, 1.0, 2.0, 'old-signature', 2, 'nonce', 1, 1, 1),
@@ -119,7 +120,7 @@ def test_posts_and_ciphertext_preserved_without_new_signature(snapshot, tmp_path
         )
     dest = tmp_path / 'archive.db'
     manifest = preserve(snapshot, expected_sha256=digest(snapshot), destination=dest)
-    with sqlite3.connect(dest) as db:
+    with closing(sqlite3.connect(dest)) as db:
         cells = json.loads(
             db.execute("SELECT envelope FROM legacy_rows WHERE source_table='posts'").fetchone()[0]
         )
@@ -143,7 +144,7 @@ def test_posts_and_ciphertext_preserved_without_new_signature(snapshot, tmp_path
 
 
 def test_bad_attachment_digest_aborts(snapshot, tmp_path):
-    with sqlite3.connect(snapshot) as db:
+    with closing(sqlite3.connect(snapshot)) as db, db:
         db.execute(
             'INSERT INTO attachments(post_id,slot,name,content_type,data,nbytes,sha256,created,uploader_name,downloads) VALUES (1,0,?,?,?,?,?,1.0,?,0)',
             ('a.txt', 'text/plain', b'content', 7, '0' * 64, 'legacy'),

@@ -3,6 +3,7 @@
 当前入口 PR #185，起点 main `25cf518a` / tree `61cc47b7`。上轮补丁
 SHA256 `118915fe14d589cf9f1b6e512f528c3a4af1fe2b76c8bdf3aab8d9930d955798`
 精确匹配基线，全部本地修改保留。当前未部署生产。
+发布与现场交接入口见 [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md)。
 
 ## 当前实际证据与修复
 
@@ -26,6 +27,21 @@ SHA256 `118915fe14d589cf9f1b6e512f528c3a4af1fe2b76c8bdf3aab8d9930d955798`
   将隔离daemon的PAM策略对齐现有部署配置，并补认证诊断与直接key lookup。
   质量36621959251实际1个I001，已核验对应tree并应用安全格式补丁；
   ZIP SHA256 `f3bd6265b6a7d657af3bf5d40269afaecc71af919fbb62a732a1f470d4d2aafe`。
+- e96e812b/tree91420337 的质量36622907866已通过，独立核验Ruff JSON为空、
+  两份stderr为空、581文件format通过；ZIP SHA256
+  `915bc4e4c855a2a71caf83f3e09877bff71bad348eeb2643258c249fc2f81300`。
+  部署36622907569实际通过9项installed-server及7项真实sshd/Git检查；
+  ZIP SHA256 `57c366c56b39edd07becd293060ec3966ce86561e7dbf8f6481afe1505dafd4e`。
+  source tree、wheel/sdist和server依赖锁摘要均已读回比对；不冒称全量测试已完成。
+- 补齐同一wheel的locked client-only安装和无dev依赖的正式selftest步骤。
+  这两项仍须在包含步骤的最终head执行，不能借上一轮安装成功直接记通过。
+- e96e812b全量运行36622907534已实际收集2518项，但八分片均失败：
+  8个receipt effect-order参数例在hosting预探测业务数据时返回500；
+  旧SQLite夹具仅提交事务而未关闭连接，严格ResourceWarning门禁报告泄漏。
+  将receipt只读effect门禁提前到hosting探测前，保持外层runtime freshness优先；
+  旧夹具显式closing并保留提交/回滚语义，SQLite连接初始化和backup目标打开
+  失败也关闭已取得连接。补回归验证stale runtime不触达路由或hosting，
+  以及连接初始化、目标打开和复制失败的完整关闭。未放宽警告或已有断言。
 
 最终头仍须通过fresh Ruff/format/compile、精确node-ID八分片互斥并集、
 conformance/实际tokenizer、真实wheel/sdist/干净安装及适用专项；新失败继续修复。

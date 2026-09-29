@@ -44,6 +44,20 @@ jobs:
           "$server_python" -m pip list --format=json > artifacts/server-packages.json
           sha256sum dist/* artifacts/server-dependencies.lock > artifacts/release-sha256.txt
           echo "MSG_REHEARSAL_PYTHON=$server_python" >> "$GITHUB_ENV"
+      - name: Install the same wheel as a locked client-only distribution
+        run: |
+          uv export --locked --no-dev --no-emit-project --format requirements-txt --output-file artifacts/client-dependencies.lock > /dev/null
+          python -m venv "$RUNNER_TEMP/msg-installed-client"
+          client_python="$RUNNER_TEMP/msg-installed-client/bin/python"
+          uv pip sync --python "$client_python" --require-hashes artifacts/client-dependencies.lock
+          uv pip install --python "$client_python" --no-deps dist/*.whl
+          uv pip check --python "$client_python"
+          "$client_python" -m pip list --format=json > artifacts/client-packages.json
+          sha256sum artifacts/client-dependencies.lock >> artifacts/release-sha256.txt
+          mkdir -p "$RUNNER_TEMP/msg-rehearsal-outside"
+          cd "$RUNNER_TEMP/msg-rehearsal-outside"
+          "$RUNNER_TEMP/msg-installed-client/bin/msg" --help > "$GITHUB_WORKSPACE/artifacts/client-help.txt"
+          "$client_python" -I "$GITHUB_WORKSPACE/scripts/check_client_install.py" --minimal-install > "$GITHUB_WORKSPACE/artifacts/client-install.json"
       - name: Rehearse startup, restart, signed clients, read-only diagnostics and worker
         run: |
           mkdir -p "$RUNNER_TEMP/msg-rehearsal-outside"
@@ -53,6 +67,17 @@ jobs:
         run: |
           cd "$RUNNER_TEMP/msg-rehearsal-outside"
           "$MSG_REHEARSAL_PYTHON" -I "$GITHUB_WORKSPACE/scripts/check_isolated_sshd.py" > "$GITHUB_WORKSPACE/artifacts/isolated-sshd.json"
+      - name: Run the installed official isolated selftest without development dependencies
+        run: |
+          cd "$RUNNER_TEMP/msg-rehearsal-outside"
+          "$MSG_REHEARSAL_PYTHON" -I -m msg.daemon selftest > "$GITHUB_WORKSPACE/artifacts/installed-selftest.json"
+          "$MSG_REHEARSAL_PYTHON" -I - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads((Path(os.environ['GITHUB_WORKSPACE']) / 'artifacts/installed-selftest.json').read_text())
+          assert report['ok'] is True and report['cleaned_up'] is True
+          assert report['checks']['market_e2e'] is True
+          PY
       - name: Record the exact source and interpreter
         if: always()
         run: |

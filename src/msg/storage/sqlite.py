@@ -9,7 +9,7 @@ import os
 import sqlite3
 import tempfile
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from pathlib import Path
 
 from msg.core.errors import Failure, require
@@ -262,8 +262,12 @@ class SqliteMetadataStore:
         conn = sqlite3.connect(
             self.path, timeout=self.busy_timeout, isolation_level=None, check_same_thread=False
         )
-        conn.execute('PRAGMA foreign_keys=ON')
-        conn.execute('PRAGMA synchronous=FULL')
+        try:
+            conn.execute('PRAGMA foreign_keys=ON')
+            conn.execute('PRAGMA synchronous=FULL')
+        except BaseException:
+            conn.close()
+            raise
         return conn
 
     async def _acquire_write_fence(self):
@@ -352,13 +356,8 @@ class SqliteMetadataStore:
         return None
 
     def backup(self, destination: Path):
-        source = self._connect()
-        target = sqlite3.connect(destination)
-        try:
+        with closing(self._connect()) as source, closing(sqlite3.connect(destination)) as target:
             source.backup(target)
-        finally:
-            target.close()
-            source.close()
 
 
 class FakeMetadataStore(SqliteMetadataStore):

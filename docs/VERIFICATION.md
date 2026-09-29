@@ -7,14 +7,22 @@
 项目要求 Python 3.15。`tests/` 使用 PostgreSQL；不设置 `MSG_TEST_POSTGRES_URL_TEMPLATE` 时，根目录 `conftest.py` 尝试启动临时 PostgreSQL。CI 在 `.github/workflows/ci.yml` 配置 PostgreSQL、Valkey、age、Nginx、OpenSSL 和 Git LFS，并使用八个测试分片。
 
 ```bash
-python3.15 -m pip install -e '.[dev]'
-python3.15 -m compileall -q src
-python3.15 -m pytest tests
-python3.15 -m pytest conformance
-python3.15 -m build
+uv sync --locked --extra dev --python 3.15
+uv run --locked --extra dev ruff check . --output-format json
+uv run --locked --extra dev ruff format --check .
+uv run --locked --extra dev python -W error -m compileall -q src tests conformance scripts
+uv run --locked --extra dev python -m pytest tests
+uv run --locked --extra dev python -m pytest conformance
+uv run --locked --extra dev python -m build
+uv run --locked --extra dev python scripts/check_package_artifacts.py dist
 ```
 
 完整 CI 还要求八个分片的 JUnit 测试节点互不重复且覆盖完整收集清单；不能用一组定向测试或旧提交的成功运行代替当前提交的结果。具体命令和环境以 [CI 工作流](../.github/workflows/ci.yml) 为准。
+
+安装包的独立演练见 [deployment-rehearsal 工作流](../.github/workflows/deployment-rehearsal.yml)。
+它从同一 uv.lock 导出哈希依赖锁，分别验收 client-only/server 安装和正式 selftest，
+并运行真实回环 daemon 与 OpenSSH/Git。逐 issue 的当前入口和现场材料见
+[发布验收与交接](RELEASE_ACCEPTANCE.md)，不能从隔离演练推导生产已切流。
 
 ## 部署验收
 

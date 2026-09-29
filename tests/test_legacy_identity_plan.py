@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import sqlite3
+from contextlib import closing
 from datetime import timedelta
 
 import pytest
@@ -31,7 +32,7 @@ def signed_source(tmp_path):
     path = source(tmp_path)
     root, root_public, root_id = keypair()
     key, public, uid = keypair()
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.row_factory = sqlite3.Row
         db.execute('DELETE FROM attachments')
         db.execute(
@@ -89,7 +90,7 @@ def test_verifies_public_signatures_and_never_implies_authority(tmp_path):
     assert result['private_ciphertext_imported'] is False
     assert uid not in json.dumps(summary(result))
     assert plan(path)['certificates'][0]['status'] == 'root_anchor_unknown'
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.execute('UPDATE posts SET body=?', ('tampered',))
         db.execute('INSERT INTO revocations VALUES (?,?,?,?)', ('b' * 32, 1, 'root', 'test'))
     result = plan(path, root)
@@ -145,7 +146,7 @@ async def test_root_archive_creates_only_private_nonlogin_records(installed, tmp
 
 def test_bad_certificate_signature_and_key_mismatch_fail_closed(tmp_path):
     path, root, _ = signed_source(tmp_path)
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.execute('UPDATE certificates SET signature=?', (base64.b64encode(b'x' * 64).decode(),))
         db.execute('UPDATE posts SET author_id=?', ('0' * 64,))
     result = plan(path, root)

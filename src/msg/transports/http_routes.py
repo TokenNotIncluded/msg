@@ -732,6 +732,13 @@ def create_app(service):
                 and 'x-method-override' not in request.headers,
                 'method_not_allowed',
             )
+            receipt_alias = re.fullmatch(r'/@[^/]+/receipts(?:/(.*))?', request.url.path)
+            if receipt_alias and request.method in {'GET', 'HEAD'}:
+                # Hosting probes this namespace before the ordinary router. Reject
+                # changed receipt effects before that probe can query a subject.
+                tail = (receipt_alias.group(1) or '').strip('/')
+                operation = 'communication.receipt_' + ('list' if tail in {'', 'json'} else 'get')
+                require(service.registry.operation(operation).effect == 'read', 'effect_mismatch')
             if request.url.path.startswith(('/@', '/&')):
                 from msg.extensions.hosting import serve_hosted
 

@@ -1,5 +1,6 @@
 import hashlib
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
@@ -15,7 +16,7 @@ from msg.storage.legacy_resource_import import PURPOSE, approval_payload, import
 
 def source(tmp_path):
     path = tmp_path / 'old.db'
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.executescript((Path(__file__).parent / 'fixtures/legacy_sqlite_0221.sql').read_text())
         db.execute("INSERT INTO boards VALUES ('main','old board',0,1.0)")
         db.execute("INSERT INTO boards VALUES ('meta','reserved v4 name',0,1.0)")
