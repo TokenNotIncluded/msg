@@ -11,6 +11,16 @@ BUILTINS = (
 )
 
 
+def validate_plugins(plugins):
+    """Validate configured names before importing any installed plugin."""
+    require(isinstance(plugins, (list, tuple)) and
+            all(isinstance(name, str) for name in plugins), 'invalid_plugin_list')
+    require(len(set(plugins)) == len(plugins), 'invalid_plugin_list')
+    require(set(plugins) <= set(BUILTINS), 'unknown_plugin')
+    require('identity' in plugins, 'identity_plugin_required')
+    return tuple(plugins)
+
+
 def install_registry(context, plugins):
     """Register installed code only; the context determines available capabilities.
 
@@ -19,8 +29,7 @@ def install_registry(context, plugins):
     No storage connection, runtime secret or business operation is needed here.
     """
     from msg.security.capabilities import install_capabilities
-    configured = set(plugins)
-    require(configured <= set(BUILTINS), 'unknown_plugin')
+    configured = set(validate_plugins(plugins))
     for name in BUILTINS:
         if name in configured:
             importlib.import_module('msg.plugins.' + name).install(context)

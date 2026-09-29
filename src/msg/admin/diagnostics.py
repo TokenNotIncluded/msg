@@ -65,13 +65,16 @@ class ReadOnlyStore:
             return await callback(session)
 
 
-def feature_results(features, observations, field):
+def feature_results(features, observations, field, *, enabled_plugins=None):
     """Link manifest entries to checks actually run; never synthesize a pass."""
+    from msg.plugins.features import FEATURE_SOURCES
     result={}
     for feature in features:
         feature_id=feature['feature_id']
         name=feature[field]
-        if not feature['enabled_by_default']:
+        if (not feature['enabled_by_default'] or
+                (enabled_plugins is not None and
+                 FEATURE_SOURCES[feature_id][0] not in enabled_plugins)):
             result[feature_id]={'status':'disabled','check':name}
         elif name is None:
             result[feature_id]={'status':'skip','check':None}
@@ -373,7 +376,8 @@ async def _doctor(config_dir,clock):
             continue
         try:success(name,**inspect_feature(app))
         except Failure as exc:failed(name,exc.code)
-    features=feature_results(feature_manifest(),checks,'doctor_check')
+    features=feature_results(feature_manifest(),checks,'doctor_check',
+                             enabled_plugins=settings.server.plugins)
     return {'ok':all(c['ok'] for c in checks.values()) and
             all(row['status']!='fail' for row in features.values()),
             'root_id':ROOT_SUBJECT,'checks':checks,'features':features,'warnings':warnings}

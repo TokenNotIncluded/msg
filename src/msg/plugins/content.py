@@ -794,7 +794,7 @@ def install(app):
         tx.execute('DELETE FROM projections WHERE resource_id=?',(resource.id,),write=True)
         from msg.plugins.communication import event_id
         job=EffectJob(id=new_id('job'),event_id=event_id(request,ctx.principal.subject),kind='gc.resource',dedupe_key='purge:'+ctx.principal.subject+':'+request.request_id,
-            principal=ctx.principal,operation=request.operation,arguments={'id':resource.id,'revisions':wire(revisions)},
+            principal=ctx.principal,operation=request.operation,arguments={'contract_version':request.contract_version,'id':resource.id,'revisions':wire(revisions)},
             state='pending',attempts=0,next_attempt_at=ctx.now,lease_until=None)
         await tx.enqueue(job)
         return output_for(updated,state='purged',physical_cleanup=job.id,backup_scope='backups_require_separate_retention')

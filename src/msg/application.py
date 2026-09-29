@@ -138,6 +138,8 @@ class Application:
                                      revision=resource.revision,fields=fields)
 
     async def _event_notifications(self, session, event):
+        if 'communication' not in self.settings.server.plugins:
+            return
         from msg.plugins.communication import enqueue_domain_webhooks
         await enqueue_domain_webhooks(self,session,event)
 

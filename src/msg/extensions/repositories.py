@@ -294,7 +294,7 @@ def register(app,op):
         id,eid=new_id('job'),event_id(request,ctx.principal.subject)
         job=EffectJob(id=id,event_id=eid,kind='git.receive',dedupe_key='git-http:'+eid,
             principal=ctx.principal,operation=request.operation,
-            arguments={'id':rid,'request_id':request.request_id},state='running',attempts=1,
+            arguments={'contract_version':request.contract_version,'id':rid,'request_id':request.request_id},state='running',attempts=1,
             next_attempt_at=ctx.now,lease_until=ctx.now+timedelta(seconds=600))
         await tx.enqueue(job)
         return HandlerOutput(resources=(ResourceRef(id=rid),),data={'job_id':id})
@@ -310,7 +310,7 @@ def register(app,op):
         require(len({v['ref'] for v in request.arguments['changes']})==len(request.arguments['changes']),'duplicate_git_ref')
         eid=event_id(request,ctx.principal.subject)
         job=EffectJob(id=new_id('job'),event_id=eid,kind='git.push',dedupe_key='git:'+eid,principal=ctx.principal,
-            operation=request.operation,arguments={'id':rid,'bundle':wire(source),'changes':request.arguments['changes'],
+            operation=request.operation,arguments={'contract_version':request.contract_version,'id':rid,'bundle':wire(source),'changes':request.arguments['changes'],
                 'force':request.arguments.get('force',False),'request_id':request.request_id},state='pending',attempts=0,
             next_attempt_at=ctx.now,lease_until=None)
         await tx.enqueue(job)

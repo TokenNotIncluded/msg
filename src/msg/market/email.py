@@ -33,7 +33,7 @@ async def verification_message(app, tx, ctx, request, order):
         **chosen, 'challenge_id':challenge_id, 'state':'pending'}})
     await tx.enqueue(EffectJob(id=new_id('job'),event_id=challenge_id,kind='market_email_verify',
         dedupe_key='market-verify:'+challenge_id,principal=ctx.principal,
-        operation=request.operation,arguments={'challenge_id':challenge_id,'token':token},
+        operation=request.operation,arguments={'contract_version':request.contract_version,'challenge_id':challenge_id,'token':token},
         state='pending',attempts=0,next_attempt_at=ctx.now,lease_until=None))
 
 

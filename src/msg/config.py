@@ -227,10 +227,11 @@ def load_settings(config_dir=Path('/etc/msgd')):
             recipient=item['recipient'],fingerprint=encryption_key_id(public),
             description=item.get('description'),policy_ref=item.get('policy_ref')))
     require(len({item.id for item in custodians})==len(custodians),'duplicate_recovery_custodian')
-    require(set(data.get('plugins',{}))<={'enabled'},'unknown_plugin_configuration')
-    plugins=tuple(data.get('plugins',{}).get('enabled',('identity','content','discussion','communication','discovery','achievements','recovery','sharing','money','offers','store','bounty','orders','delivery','transfer','extensions','system','batch')))
-    require(all(isinstance(name,str) for name in plugins) and len(set(plugins))==len(plugins),'invalid_plugin_list')
-    require('identity' in plugins,'identity_plugin_required')
+    from msg.plugins import BUILTINS, validate_plugins
+    plugin_config=data.get('plugins',{})
+    require(isinstance(plugin_config,dict) and set(plugin_config)<={'enabled'},
+            'unknown_plugin_configuration')
+    plugins=validate_plugins(plugin_config.get('enabled',BUILTINS))
     tools=data.get('tools',{})
     require(set(tools)<={'isolation','timeout_ms','max_response_bytes','methods','ports'},'unknown_tool_configuration')
     require(tools.get('isolation','bubblewrap')=='bubblewrap','unsafe_tool_worker')

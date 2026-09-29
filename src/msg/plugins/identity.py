@@ -1595,7 +1595,7 @@ def install(app):
         if app.settings.server.mail is not None:
             from msg.plugins.communication import event_id
             job=EffectJob(id=new_id('job'),event_id=event_id(request,subject.resource_id),kind='mail',dedupe_key='email-verify:'+subject.resource_id+':'+request.request_id,
-                principal=ctx.principal,operation=request.operation,arguments={'recipient':address,'recipient_subject':subject.resource_id,'verification':True,'subject':'Verify msg email',
+                principal=ctx.principal,operation=request.operation,arguments={'contract_version':request.contract_version,'recipient':address,'recipient_subject':subject.resource_id,'verification':True,'subject':'Verify msg email',
                 'text':'Verify with msg call identity.email_verify using JSON token: '+b64(token)},state='pending',attempts=0,next_attempt_at=ctx.now,lease_until=None)
             await tx.enqueue(job)
         return HandlerOutput(data={'verified':False,'delivery':'queued' if app.settings.server.mail else 'mail_disabled'})

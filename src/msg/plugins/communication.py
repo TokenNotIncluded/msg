@@ -495,7 +495,7 @@ def install(app):
                 require_webhook_capacity(tx)
                 await tx.enqueue(EffectJob(id=new_id('job'),event_id=eid,kind='webhook',
                     dedupe_key=f'{eid}:{recipient}:webhook',principal=ctx.principal,
-                    operation=request.operation,arguments={'recipient_subject':recipient,
+                    operation=request.operation,arguments={'contract_version':request.contract_version,'recipient_subject':recipient,
                         'message_id':record['id'],'endpoint_generation':row[1]},
                     state='pending',attempts=0,next_attempt_at=ctx.now,lease_until=None))
         # Notification is an external projection; it never includes private body content.
@@ -506,7 +506,7 @@ def install(app):
                 if email.verified_at and 'communication.send' in email.enabled_events:
                     await tx.enqueue(EffectJob(id=new_id('job'),event_id=eid,kind='mail',
                         dedupe_key=f'{eid}:{recipient}:mail',principal=ctx.principal,operation=request.operation,
-                        arguments={'recipient':email.address,'recipient_subject':recipient,'subject':'New msg reference',
+                        arguments={'contract_version':request.contract_version,'recipient':email.address,'recipient_subject':recipient,'subject':'New msg reference',
                             'text':app.settings.service_url+'/_id/'+ref.id},state='pending',attempts=0,
                         next_attempt_at=ctx.now,lease_until=None))
         return HandlerOutput(resources=(ref,),data={'message_id':record['id'],'recipient':recipient})

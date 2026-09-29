@@ -93,6 +93,9 @@ class Registry:
     def add(self,manifest):
         from msg.plugins.features import validate_feature_claims
         validate_feature_claims(manifest)
+        # No runtime migration executor is supported. Never accept executable
+        # declarations and silently pretend the release applied them.
+        require(manifest.migrations==(),'unsupported_plugin_migration')
         require(not self._frozen,'registry_frozen')
         require(manifest.name not in self._plugins,'duplicate_plugin')
         require(all(d in self._plugins for d in manifest.dependencies),'missing_plugin_dependency')

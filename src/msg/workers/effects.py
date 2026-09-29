@@ -362,6 +362,11 @@ class EffectWorker:
         if not execute:
             return True
         try:
+            # A queued effect must not outlive its installed operation contract.
+            # Legacy jobs predate version recording and used the v1 worker path.
+            version=job.arguments.get('contract_version',1)
+            require(type(version) is int and version>=1,'invalid_job_contract_version')
+            self.app.registry.operation(job.operation,version)
             if job.kind == 'tool':
                 self.app.settings.server.staging_dir.mkdir(parents=True, exist_ok=True)
                 with tempfile.TemporaryDirectory(prefix='effect-', dir=self.app.settings.server.staging_dir) as temp:

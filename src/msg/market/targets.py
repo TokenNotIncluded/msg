@@ -98,7 +98,7 @@ async def enqueue_notification(app, tx, ctx, request, order):
         return
     job = EffectJob(id=new_id('job'), event_id='delivery:'+order['id'], kind='market_mail',
         dedupe_key=dedupe, principal=principal,
-        operation='orders.buy', arguments={'order_id': order['id'], 'endpoint_id': chosen['endpoint_id']},
+        operation='orders.buy', arguments={'contract_version': locked['version'], 'order_id': order['id'], 'endpoint_id': chosen['endpoint_id']},
         state='pending', attempts=0, next_attempt_at=ctx.now, lease_until=None)
     await tx.enqueue(job)
     target = {**order['delivery_target'], 'email': {**chosen, 'state': 'queued'}}

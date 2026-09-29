@@ -135,7 +135,7 @@ def register(app,op):
         require(not ('body' in args and 'body_ref' in args),'ambiguous_request_body')
         eid=event_id(request,ctx.principal.subject)
         job=EffectJob(id=new_id('job'),event_id=eid,kind='tool',dedupe_key='tool:'+eid,principal=ctx.principal,
-            operation=request.operation,arguments={'tool':wire(tool.resource),'input':wire(args),
+            operation=request.operation,arguments={'contract_version':request.contract_version,'tool':wire(tool.resource),'input':wire(args),
                 'policies':wire(policies),'request_id':request.request_id},state='pending',attempts=0,
                 next_attempt_at=ctx.now,lease_until=None)
         await tx.enqueue(job)
