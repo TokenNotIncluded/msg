@@ -74,7 +74,8 @@ SEARCH_V2_SEGMENTS={'scope':'s','terms':'t','mode':'m','field':'f','order':'o',
                     'facets':'fc'}
 SEARCH_V3_SEGMENTS={**SEARCH_V2_SEGMENTS,'source_kind':'sk','relation_type':'rt'}
 SEARCH_V4_SEGMENTS={**SEARCH_V3_SEGMENTS,'suggest':'sg'}
-SEARCH_V5_SEGMENTS={**SEARCH_V4_SEGMENTS,'revision':'rv','source_version':'sv'}
+SEARCH_V5_SEGMENTS={**SEARCH_V4_SEGMENTS,'revision':'rv','source_version':'sv',
+                    'relation_to':'to','relation_from':'fr','has_replies':'hr','has_references':'hf'}
 GREP_V1_SEGMENTS={'scope':'s','pattern':'t','regex':'r','glob':'g',
                   'exclude_glob':'x','case_sensitive':'i','before':'b','after':'a',
                   'max_matches':'m','max_files':'f','files_with_matches':'w',
@@ -303,7 +304,8 @@ def compile_lexical_search(query):
             'owner','author','tag','state','created_after','created_before',
             'updated_after','updated_before','has_attachment','order','limit',
             'cursor','snippet','explain','fields','facets','source_kind',
-            'relation_type','suggest','revision','source_version','depth','recursive'},
+            'relation_type','suggest','revision','source_version','relation_to','relation_from',
+            'has_replies','has_references','depth','recursive'},
             'unknown_query_parameter')
     if 'cursor' in query:
         require(set(query)=={'cursor'},'cursor_query_mismatch')
@@ -321,7 +323,7 @@ def compile_lexical_search(query):
                     (0<=int(args[name])<=5 if name=='depth' else 1<=int(args[name])<=100),
                     'query_cost_exceeded')
             args[name]=int(args[name])
-    for name in ('snippet','has_attachment','recursive','suggest'):
+    for name in ('snippet','has_attachment','recursive','suggest','has_replies','has_references'):
         if name in args:
             require(args[name] in {'0','1'},'invalid_search_flag')
             args[name]=args[name]=='1'
@@ -711,7 +713,7 @@ def create_app(service):
                                     'cursor_kind_mismatch')
                             if operation=='discovery.lexical_search':
                                 saved_args=query.get('arguments',{})
-                                contract_version=(5 if {'revision','source_version'}&saved_args.keys() else
+                                contract_version=(5 if {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&saved_args.keys() else
                                     4 if 'suggest' in saved_args else
                                     3 if any(name in saved_args for name in
                                     ('source_kind','relation_type')) else
@@ -841,7 +843,8 @@ def create_app(service):
                 lexical=lexical_path or (not is_index and
                     bool(set(query)&{'terms','exact','not_terms','scope','mode','field','order',
                                       'snippet','explain','has_attachment','facets',
-                                      'source_kind','relation_type','suggest','revision','source_version'}))
+                                      'source_kind','relation_type','suggest','revision','source_version',
+                                      'relation_to','relation_from','has_replies','has_references'}))
                 if lexical:
                     args=compile_lexical_search(query)
                     operation='discovery.lexical_search'
@@ -885,7 +888,7 @@ def create_app(service):
                     packet=request_for(operation,args,service.settings.service_url,
                                        source='manual',
                                        contract_version=(5 if lexical and (lexical_path_v5 or
-                                           {'revision','source_version'}&args.keys()) else
+                                           {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&args.keys()) else
                                            4 if lexical and (lexical_path_v4 or
                                            'suggest' in args) else
                                            3 if lexical and (lexical_path_v3 or

@@ -784,7 +784,8 @@ def install(app):
 
     lexical_schema_v5={**lexical_schema_v4,
                        'properties':{**lexical_schema_v4['properties'],
-                           'revision':IDENTIFIER,
+                           'revision':IDENTIFIER,'relation_to':IDENTIFIER,'relation_from':IDENTIFIER,
+                           'has_replies':BOOLEAN,'has_references':BOOLEAN,
                            'source_version':{'type':'integer','minimum':1,'maximum':2147483647}}}
 
     @op('discovery.lexical_search',lexical_schema_v5,effect='read',version=5)
@@ -807,7 +808,7 @@ def install(app):
             a={**saved['arguments'],'cursor':a['cursor']}
         # A cursor or sealed QueryRef carries arguments from an earlier call.
         # Keep those arguments inside the version selected for this call too.
-        require(not (request.contract_version<5 and {'revision','source_version'}&a.keys()) and
+        require(not (request.contract_version<5 and {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&a.keys()) and
                 not (request.contract_version<4 and 'suggest' in a) and
                 not (request.contract_version<3 and
                      {'source_kind','relation_type'}&a.keys()) and
@@ -854,6 +855,12 @@ def install(app):
         if a.get('suggest'):
             require(2<=len(suggest_prefix)<=32,'query_cost_exceeded')
         scanned=0
+        relation_scanned=0
+        endpoint_visibility={}
+        async def endpoint_visible(rid):
+            if rid not in endpoint_visibility:
+                endpoint_visibility[rid]=await visible(app,ctx,request,tx,rid)
+            return endpoint_visibility[rid]
         # Restrict the SQL candidate set before applying the work budget. A
         # global LIMIT lets unrelated (or unreadable) rows starve a small scope.
         owner_scope=scope_resource.type in {'user','organization'}
@@ -906,12 +913,48 @@ def install(app):
             if a.get('source_kind') and (revision is None or
                                          revision.source_kind!=a['source_kind']):
                 continue
-            if a.get('relation_type') and (revision is None or not any(
+            if request.contract_version>=5:
+                outgoing=[]
+                if {'relation_to','relation_type','has_attachment'}&a.keys():
+                    for relation in revision.relations if revision else ():
+                        relation_scanned+=1
+                        require(relation_scanned<=4096 and time.monotonic()<ctx.deadline_monotonic,
+                                'query_cost_exceeded')
+                        if await endpoint_visible(relation.target.id):
+                            outgoing.append(relation)
+                incoming=[]
+                if {'relation_from','has_replies','has_references'}&a.keys():
+                    rows=tx.rows('''SELECT rel.source_id,rel.type FROM relations rel
+                        JOIN resources r ON r.id=rel.source_id AND r.revision=rel.revision_id
+                        WHERE rel.target_id=? AND r.state='active' AND r.created_at<=?
+                        ORDER BY rel.source_id,rel.type LIMIT 2049''',(resource.id,wire(snapshot)))
+                    for source,kind in rows:
+                        relation_scanned+=1
+                        require(relation_scanned<=4096 and len(rows)<=2048 and
+                                time.monotonic()<ctx.deadline_monotonic,'query_cost_exceeded')
+                        if await endpoint_visible(source):
+                            incoming.append((source,kind))
+                kind=a.get('relation_type')
+                if a.get('relation_to') and not any(rel.target.id==a['relation_to'] and
+                        (kind is None or rel.type==kind) for rel in outgoing):
+                    continue
+                if a.get('relation_from') and not any(source==a['relation_from'] and
+                        (kind is None or relkind==kind) for source,relkind in incoming):
+                    continue
+                if kind and not a.get('relation_from') and not any(rel.type==kind for rel in outgoing):
+                    continue
+                if 'has_replies' in a and any(kind=='reply_to' for _,kind in incoming)!=a['has_replies']:
+                    continue
+                if 'has_references' in a and bool(incoming)!=a['has_references']:
+                    continue
+                if 'has_attachment' in a and any(rel.type=='attachment' for rel in outgoing)!=a['has_attachment']:
+                    continue
+            elif a.get('relation_type') and (revision is None or not any(
                     relation.type==a['relation_type'] for relation in revision.relations)):
                 continue
             if author and (revision is None or revision.author!=author):
                 continue
-            if a.get('has_attachment') is not None and bool(revision and any(
+            if request.contract_version<5 and a.get('has_attachment') is not None and bool(revision and any(
                     relation.type=='attachment' for relation in revision.relations))!=a['has_attachment']:
                 continue
             name=resource.name

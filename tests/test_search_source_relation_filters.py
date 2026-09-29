@@ -30,6 +30,7 @@ async def test_v3_query_string_path_and_sealed_ref_share_filters(installed, vers
     descriptor_args={'scope':'/main','terms':'v3needle','relation_type':'reply_to'}
     if version==5:
         descriptor_args['revision']=reply.resources[0].revision
+        descriptor_args['relation_to']=root.resources[0].id
     descriptor=canonical({'version':1,'kind':'search','arguments':descriptor_args})
     opened=await call(app,'transfer.open',{'direction':'upload','size':len(descriptor),
         'digest':digest(descriptor),'media_type':'application/vnd.msg.read-query+json'},
@@ -208,3 +209,48 @@ async def test_v5_revision_filter_does_not_reveal_private_resource(installed):
     assert wire(denied.data['facets']) == {'type': []}
     allowed = await call(app, 'discovery.lexical_search', args, key=key, subject=subject, contract_version=5)
     assert allowed.status == 'ok' and [item['id'] for item in allowed.data['items']] == [rid]
+
+
+@pytest.mark.asyncio
+async def test_v5_directional_relations_and_presence_recheck_both_endpoints(installed):
+    app, _ = installed
+    key, subject, _ = await register(app, 'directional-search-owner')
+    root = await call(app, 'content.post_create', {'parent': '/main', 'body': 'directionneedle root'},
+                      key=key, subject=subject)
+    reply = await call(app, 'discussion.reply', {'target': {'id': root.resources[0].id},
+                       'body': 'directionneedle reply'}, key=key, subject=subject)
+    assert root.status == reply.status == 'ok'
+    root_id, reply_id = root.resources[0].id, reply.resources[0].id
+    base = {'scope': '/main', 'terms': 'directionneedle', 'facets': ['type']}
+    async def find(extra, *, signed=False):
+        result = await call(app, 'discovery.lexical_search', {**base, **extra}, contract_version=5,
+                            key=key if signed else None, subject=subject if signed else None)
+        assert result.status == 'ok', wire(result)
+        return [item['id'] for item in result.data['items']]
+    assert await find({'relation_to': root_id, 'relation_type': 'reply_to'}) == [reply_id]
+    assert await find({'relation_from': reply_id, 'relation_type': 'reply_to'}) == [root_id]
+    assert await find({'has_replies': True}) == [root_id]
+    assert await find({'has_references': True}) == [root_id]
+    assert await find({'has_replies': False}) == [reply_id]
+    private = await call(app, 'content.chmod', {'id': reply_id, 'mode': '0600'},
+                         key=key, subject=subject, expected=((reply_id, reply.data['generation']),))
+    assert private.status == 'ok', wire(private)
+    assert await find({'relation_from': reply_id}) == []
+    assert await find({'has_replies': True}) == []
+    assert await find({'has_references': True}) == []
+    assert await find({'has_replies': True}, signed=True) == [root_id]
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
+                                 base_url=app.settings.service_url) as http:
+        query = await http.get('/_search', params={**base, 'facets': 'type', 'has_replies': '1'})
+        path = await http.get('/_s/q/5/s/%2Fmain/t/directionneedle/fc/type/hr/1')
+        assert query.status_code == path.status_code == 200, (query.text, path.text)
+        assert query.content == path.content
+    # Readable source cannot reveal its now-private target through a predicate.
+    hidden = await call(app, 'content.chmod', {'id': root_id, 'mode': '0600'},
+                        key=key, subject=subject, expected=((root_id, root.data['generation']),))
+    assert hidden.status == 'ok', wire(hidden)
+    public_reply = await call(app, 'content.chmod', {'id': reply_id, 'mode': '0644'},
+                              key=key, subject=subject, expected=((reply_id, private.data['generation']),))
+    assert public_reply.status == 'ok', wire(public_reply)
+    assert await find({'relation_to': root_id}) == []
+    assert await find({'relation_to': root_id}, signed=True) == [reply_id]

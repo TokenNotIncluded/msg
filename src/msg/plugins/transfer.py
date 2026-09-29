@@ -44,7 +44,7 @@ async def sealed_read_query(app,ctx,request,tx,transfer):
             'cursor' not in args,'invalid_query_ref')
     operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
     contract_version=(read_query_version(args) if kind=='read' else
-        5 if kind=='search' and {'revision','source_version'}&args.keys() else
+        5 if kind=='search' and {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&args.keys() else
         4 if kind=='search' and 'suggest' in args else
         3 if kind=='search' and any(name in args for name in
         ('source_kind','relation_type')) else 2 if kind=='search' and 'facets' in args else 1)
@@ -196,7 +196,7 @@ def install(app):
         require(query.get('query_kind')==kind,'query_ref_digest_mismatch')
         operation='discovery.read_query' if kind=='read' else 'discovery.lexical_search'
         contract_version=(read_query_version(args) if kind=='read' else
-            5 if kind=='search' and {'revision','source_version'}&args.keys() else
+            5 if kind=='search' and {'revision','source_version','relation_to','relation_from','has_replies','has_references'}&args.keys() else
             4 if kind=='search' and 'suggest' in args else
             3 if kind=='search' and any(name in args for name in
             ('source_kind','relation_type')) else 2 if kind=='search' and 'facets' in args else 1)
