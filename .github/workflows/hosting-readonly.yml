@@ -1,0 +1,79 @@
+name: Hosting read-only role
+on:
+  push:
+    branches: ['fix/hosting-readonly-*']
+  pull_request:
+    paths:
+      - 'src/msg/hosting_runtime.py'
+      - 'src/msg/composition.py'
+      - 'src/msg/application.py'
+      - 'src/msg/daemon.py'
+      - 'src/msg/storage/**'
+      - 'src/msg/security/**'
+      - 'src/msg/extensions/hosting.py'
+      - 'tests/test_hosting_readonly*.py'
+      - 'deploy/msgd-hosting.service'
+      - '.github/workflows/hosting-readonly.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: hosting-readonly-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  hosting-role:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+          cache: pip
+      - name: Record tested source and runtime
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, pathlib, platform, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          pathlib.Path('artifacts/source.json').write_text(json.dumps({
+              'head': os.environ['HEAD_SHA'], 'checkout': git('rev-parse', 'HEAD'),
+              'tree': git('rev-parse', 'HEAD^{tree}'), 'python': platform.python_version(),
+              'run_id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'event': os.environ['GITHUB_EVENT_NAME'],
+          }, indent=2) + '\n')
+          PY
+      - name: Install isolated prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age git-lfs
+          python -m pip install -e '.[dev]'
+      - name: Verify read-only role and existing hosting contracts
+        run: >-
+          python -m pytest tests/test_hosting_readonly*.py
+          tests/test_hosting_same_origin.py tests/test_cli_hosting.py
+          --junitxml=artifacts/hosting.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hosting-readonly
+          path: artifacts/
