@@ -4,19 +4,42 @@ on:
     paths:
       - '.github/workflows/integration-regressions.yml'
       - 'src/msg/transports/http_routes.py'
+      - 'src/msg/transports/http.py'
+      - 'src/msg/plugins/discovery.py'
+      - 'src/msg/plugins/read_predicates.py'
+      - 'src/msg/security/quarantine.py'
+      - 'src/msg/core/executor.py'
       - 'src/msg/plugins/communication.py'
       - 'tests/test_http_effect_order.py'
+      - 'tests/test_read_entry_contract_matrix.py'
+      - 'tests/test_read_query_keyset_boundary.py'
+      - 'tests/test_recovery_runtime_generation.py'
+      - 'tests/read_only_evidence.py'
       - 'tests/test_legacy_routes_removed.py'
       - 'tests/test_webhook*.py'
   pull_request:
     paths:
       - '.github/workflows/integration-regressions.yml'
       - 'src/msg/transports/http_routes.py'
+      - 'src/msg/transports/http.py'
+      - 'src/msg/plugins/discovery.py'
+      - 'src/msg/plugins/read_predicates.py'
+      - 'src/msg/security/quarantine.py'
+      - 'src/msg/core/executor.py'
       - 'src/msg/plugins/communication.py'
       - 'tests/test_http_effect_order.py'
+      - 'tests/test_read_entry_contract_matrix.py'
+      - 'tests/test_read_query_keyset_boundary.py'
+      - 'tests/test_recovery_runtime_generation.py'
+      - 'tests/read_only_evidence.py'
       - 'tests/test_legacy_routes_removed.py'
       - 'tests/test_webhook*.py'
   workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: 'Optional full commit SHA; fail before running code if the selected ref moved'
+        required: false
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -26,6 +49,10 @@ jobs:
   regression:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        locale: ['C', 'en_US.utf8']
     services:
       postgres:
         image: postgres:16
@@ -33,6 +60,7 @@ jobs:
           POSTGRES_USER: msgtest
           POSTGRES_PASSWORD: msgtest
           POSTGRES_DB: postgres
+          POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=${{ matrix.locale }}
         ports:
           - 5432:5432
         options: >-
@@ -45,7 +73,13 @@ jobs:
         with:
           persist-credentials: false
       - name: Record exact source identity
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          TEST_DATABASE_LOCALE: ${{ matrix.locale }}
         run: |
+          if [ -n "$EXPECTED_SHA" ]; then
+            test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          fi
           mkdir -p artifacts
           python3 - <<'PY'
           import json, os, subprocess
@@ -54,12 +88,13 @@ jobs:
               return subprocess.check_output(['git', *args], text=True).strip()
           Path('artifacts/source.json').write_text(json.dumps({
               'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
-              'run_id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT']}, indent=2) + '\n')
+              'run_id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'requested_database_locale': os.environ['TEST_DATABASE_LOCALE']}, indent=2) + '\n')
           PY
       - name: Preserve reviewed public source even when tests fail
         uses: actions/upload-artifact@v4
         with:
-          name: integration-regression-source
+          name: integration-regression-source-${{ matrix.locale }}
           path: |
             artifacts/source.json
             src/
@@ -79,10 +114,29 @@ jobs:
           sudo apt-get update -qq
           sudo env NEEDRESTART_MODE=l apt-get install -y -qq age
           python -m pip install -e '.[dev]'
-      - name: Run effect-order, path and real webhook regressions
+      - name: Record and require the actual database locale
+        env:
+          EXPECTED_DATABASE_LOCALE: ${{ matrix.locale }}
+        run: |
+          python - <<'PY'
+          import json, os, platform
+          from pathlib import Path
+          import psycopg
+          dsn = os.environ['MSG_TEST_POSTGRES_URL_TEMPLATE'].format(database='postgres')
+          with psycopg.connect(dsn) as connection:
+              values = {name: connection.execute('SHOW ' + name).fetchone()[0]
+                        for name in ('server_version', 'lc_collate', 'lc_ctype', 'server_encoding')}
+          values['python'] = platform.python_version()
+          Path('artifacts/database.json').write_text(json.dumps(values, indent=2) + '\n')
+          assert values['lc_collate'] == os.environ['EXPECTED_DATABASE_LOCALE'], values
+          assert values['server_encoding'] == 'UTF8', values
+          PY
+      - name: Run recovery, keyset, effect-order, path and webhook regressions
         run: >-
           python -m pytest -q
           tests/test_http_effect_order.py tests/test_legacy_routes_removed.py
+          tests/test_read_query_keyset_boundary.py tests/test_read_entry_contract_matrix.py
+          tests/test_recovery_runtime_generation.py
           tests/test_stable_resource_views.py tests/test_canonical_post_paths.py
           tests/test_webhook_overlap.py tests/test_webhook_domain_events.py
           tests/test_webhook_delivery.py tests/test_webhook_identity.py
@@ -90,6 +144,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: integration-regression-evidence
+          name: integration-regression-evidence-${{ matrix.locale }}
           path: artifacts/
           if-no-files-found: error
