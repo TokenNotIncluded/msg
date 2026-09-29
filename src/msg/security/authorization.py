@@ -183,6 +183,9 @@ class AuthorizationService:
             # Watch revisions capture authority and stale target references; only
             # the dedicated clipped contract may expose them.
             require(resource.type != 'watch', 'permission_denied')
+            if resource.type == 'saved_query':
+                require(operation in {'query.save@1', 'query.saved_archive@1'} and
+                        principal.subject == principal.actor == resource.owner, 'permission_denied')
             await self._ceiling(principal,operation,resource.id,session)
             chain=(*await session.ancestors(resource.id),resource)
             preview=next((marker for item in chain

@@ -244,4 +244,5 @@ def install(app):
                 data['pageInfo']={**data['pageInfo'],'endCursor':short}
         return replace(output,data=data)
 
-    finish()
+    from msg.plugins.saved_queries import install as install_saved_queries
+    finish((install_saved_queries(app, op),))

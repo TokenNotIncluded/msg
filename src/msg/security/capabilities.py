@@ -43,7 +43,7 @@ BASE_FAMILIES = {
     'orders.basic': ('orders.',),
     'delivery.basic': ('delivery.',),
     'discovery.basic': ('discovery.', 'cert.get', 'job.get', 'achievement.list'),
-    'transfer.basic': ('transfer.',),
+    'transfer.basic': ('transfer.', 'query.'),
     'group.basic': ('group.',),
     'cert.request': ('cert.request', 'cert.cancel'),
     'git.basic': ('git.',),
