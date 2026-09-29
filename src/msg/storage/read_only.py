@@ -27,6 +27,15 @@ def require_readonly_role(tx):
         WHERE rolname=current_user''')
     require(role is not None and role[0] == role[1] and not any(role[2:]),
             'hosting_database_not_readonly')
+    # An owner can GRANT its own rights back after REVOKE ALL. Current ACL bits
+    # cannot establish read-only authority even when every write check is false.
+    require(tx.one('''SELECT 1 FROM (
+        SELECT datdba AS owner_id FROM pg_catalog.pg_database WHERE datname=current_database()
+        UNION ALL SELECT nspowner FROM pg_catalog.pg_namespace
+        UNION ALL SELECT relowner FROM pg_catalog.pg_class
+        UNION ALL SELECT proowner FROM pg_catalog.pg_proc
+        ) AS owned WHERE owner_id=(SELECT oid FROM pg_catalog.pg_roles
+        WHERE rolname=current_user) LIMIT 1''') is None, 'hosting_database_not_readonly')
     require(tx.one('''SELECT 1 FROM pg_catalog.pg_roles
         WHERE rolname<>current_user AND pg_has_role(oid,'MEMBER') LIMIT 1''') is None,
         'hosting_database_not_readonly')
