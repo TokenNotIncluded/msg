@@ -12,6 +12,7 @@ from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.routing import Route
+from msg.transports.http_common import BASE_HEADERS, body_bytes, json_response, error_status
 
 from msg.core.codec import canonical, decode, digest, loads, wire
 from msg.core.errors import Failure, require
@@ -27,8 +28,6 @@ from msg.transports.url_safety import require_matching_host, require_safe_reques
 from msg.transports.dictionary import (READ_QUERY_V1_SEGMENTS,READ_QUERY_V2_SEGMENTS,READ_QUERY_V1_SORT,
     READ_QUERY_V1_FIELDS,SEARCH_QUERY_V1_SEGMENTS)
 
-BASE_HEADERS={'X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer',
-              'Content-Security-Policy':"default-src 'none'; sandbox",'Cache-Control':'no-store'}
 HOME_LOGO=files('msg.data').joinpath('logo.svg').read_text(encoding='utf-8')
 HOME_FAVICON=files('msg.data').joinpath('favicon.png').read_bytes()
 HOME_HTML=('''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
@@ -374,41 +373,6 @@ def path_read_proof(encoded,operation,args,service,limit):
     return packet
 
 
-def json_response(value,status=200,headers=None):
-    return Response(canonical(value),status_code=status,media_type='application/json',headers={**BASE_HEADERS,**(headers or {})})
-
-
-def error_status(code):
-    if code=='range_not_satisfiable':return 416
-    if code in {'not_found','resource_purged','revision_not_found','csr_not_found',
-                'certificate_not_found','listing_not_found','package_not_found',
-                'bounty_not_found','order_not_found','delivery_not_found',
-                'offer_not_found'}: return 404
-    if code in {'authentication_required','invalid_token','invalid_signature','credential_revoked','credential_expired','request_expired'}: return 401
-    if code in {'permission_denied','local_only','credential_ceiling','certificate_gate','tool_certificate_required','forbidden_origin','forbidden_host','passive_client_forbidden','query_ref_principal_mismatch','cursor_principal_mismatch'}: return 403
-    if code in {'generation_conflict','revision_conflict','idempotency_conflict','chunk_conflict','constraint_conflict'}: return 409
-    if code in {'request_too_large','path_too_large','response_too_large','use_transfer','part_too_large'}: return 413
-    if code in {'method_not_allowed','effect_mismatch'}: return 405
-    if code=='secure_channel_required': return 400
-    if code in {'server_busy','issuer_not_ready','dependency_unavailable','service_restart_required','writes_paused'}: return 503
-    if code=='storage_capacity_exceeded': return 507
-    if code=='internal_error': return 500
-    return 400
-
-
-async def body_bytes(request,limit):
-    length=request.headers.get('content-length')
-    if length is not None:
-        require(length.isdecimal() and int(length)<=limit,'request_too_large')
-    body=bytearray()
-    async for data in request.stream():
-        require(len(body)+len(data)<=limit,'request_too_large')
-        body.extend(data)
-    encoding=request.headers.get('content-encoding','identity')
-    require(encoding in {'identity','gzip'},'unknown_encoding')
-    return gunzip(bytes(body),limit) if encoding=='gzip' else bytes(body)
-
-
 def describe_resource(data):
     if 'content' in data:
         content=data['content']
@@ -496,26 +460,26 @@ def create_app(service):
             native=re.fullmatch(r'(/[@&][^/]+/[^/]+\.git)/(.*)',path)
             if native:
                 require(service.registry.operation('git.refs').effect=='read','effect_mismatch')
-                from msg.extensions.repositories import NativeGitStore
+                from msg.transports.git_http import GitHTTPAdapter
                 if native.group(2).startswith('info/lfs/'):
                     require(service.registry.operation('git.lfs_read').effect=='read' and
                             service.registry.operation('git.lfs_read_batch').effect=='read',
                             'effect_mismatch')
-                    return await NativeGitStore(service).http_lfs(request,native.group(1),
+                    return await GitHTTPAdapter(service).http_lfs(request,native.group(1),
                                                                   native.group(2)[9:])
-                return await NativeGitStore(service).http(request,native.group(1),native.group(2))
+                return await GitHTTPAdapter(service).http(request,native.group(1),native.group(2))
             # git-lfs derives <remote>.git/info/lfs even when the advertised
             # push URL is /-/git/<id>; both spellings remain inside /-/.
             lfs_write=re.fullmatch(r'/-/git/([A-Za-z0-9_-]{1,128})(?:\.git)?/info/lfs/(objects(?:/batch|/[0-9a-f]{64}/[0-9]+))',path)
             if lfs_write:
                 require(raw_path==path.encode('ascii'),'not_found')
-                from msg.extensions.repositories import NativeGitStore
-                return await NativeGitStore(service).http_lfs(request,*lfs_write.groups(),write=True)
+                from msg.transports.git_http import GitHTTPAdapter
+                return await GitHTTPAdapter(service).http_lfs(request,*lfs_write.groups(),write=True)
             git_push=re.fullmatch(r'/-/git/([A-Za-z0-9_-]{1,128})/(info/refs|git-receive-pack)',path)
             if git_push:
                 require(raw_path==path.encode('ascii'),'not_found')
-                from msg.extensions.repositories import NativeGitStore
-                return await NativeGitStore(service).http_push(request,*git_push.groups())
+                from msg.transports.git_http import GitHTTPAdapter
+                return await GitHTTPAdapter(service).http_push(request,*git_push.groups())
             if path.startswith(('/!','/~','/run/j/','/run/gz/')) or path=='/mcp':
                 raise Failure('not_found')
             if request.method=='OPTIONS':
