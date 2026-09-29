@@ -1384,6 +1384,59 @@ def create_app(service):
                     require(len(payload)<=limits.max_response_bytes,'response_too_large')
                     return Response(b'' if request.method=='HEAD' else payload,
                                     media_type='application/json',headers=headers)
+                if name=='receipts':
+                    require(request.method in {'GET','HEAD'},'method_not_allowed')
+                    require(raw_path.decode('utf-8')==request.url.path and b'%' not in raw_path,
+                            'not_found')
+                    tail=(remainder or '').strip('/')
+                    listing=tail in {'','json'}
+                    if not listing:
+                        require(re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}(?:/json)?',tail)
+                                is not None,'not_found')
+                    operation='communication.receipt_'+('list' if listing else 'get')
+                    pairs=request.query_params.multi_items()
+                    require(len(pairs)==len({key for key,_ in pairs}),
+                            'duplicate_query_parameter')
+                    query=dict(pairs)
+                    require(not query or listing,'unknown_query_parameter')
+                    require(set(query)<={'limit','cursor'},'unknown_query_parameter')
+                    args={} if listing else {'request_id':tail.removesuffix('/json')}
+                    if 'limit' in query:
+                        require(query['limit'].isdecimal(),'invalid_limit')
+                        args['limit']=int(query['limit'])
+                    if 'cursor' in query: args['cursor']=query['cursor']
+                    async with service.metadata.transaction(write=False) as tx:
+                        subject_id=await tx.resolve('/@'+handle)
+                        require((await tx.resource(subject_id)).type=='user','not_found')
+                    require(service.registry.operation(operation).effect=='read',
+                            'effect_mismatch')
+                    header=request.headers.get('x-msg-request')
+                    if header:
+                        packet=path_packet(header,'j',limits.max_request_bytes)
+                        require(packet.operation==operation and
+                                canonical(packet.arguments)==canonical(args),
+                                'representation_mismatch')
+                    else:
+                        packet=request_for(operation,args,service.settings.service_url,
+                                           source='manual')
+                    result=await service.executor.execute(packet,entry='network')
+                    # Another subject's lookup must not reveal whether its own
+                    # request_id exists; the path subject is the only reader.
+                    require(result.subject is None or result.subject==subject_id,
+                            'permission_denied')
+                    if result.error:
+                        return json_response(result_wire(result),error_status(result.error.code))
+                    value=wire(result.data)
+                    value['path']='/@'+handle+'/receipts'+('/'+args['request_id'] if not listing else '')
+                    etag='"'+digest(value)[7:]+'"'
+                    headers={**BASE_HEADERS,'ETag':etag,
+                             'Cache-Control':'private, no-cache'}
+                    if request.headers.get('if-none-match')==etag:
+                        return Response(status_code=304,headers=headers)
+                    payload=canonical(value)
+                    require(len(payload)<=limits.max_response_bytes,'response_too_large')
+                    return Response(b'' if request.method=='HEAD' else payload,
+                                    media_type='application/json',headers=headers)
                 certificate_detail=(name in {'cert','certificates'} and
                                     remainder not in {None,'/','/json','/meta','/history'})
                 if name in SUBJECT_KEY_ALIASES or name in SUBJECT_OPERATION_ALIASES or certificate_detail:
