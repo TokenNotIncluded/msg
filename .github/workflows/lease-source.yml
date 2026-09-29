@@ -64,9 +64,6 @@ jobs:
                       if len(rows) < 128:
                           break
           '''
-          # The literal's continuation lines have ten extra indentation spaces.
-          lines = new.splitlines(True)
-          new = lines[0] + ''.join(line[10:] if line.startswith('          ') else line for line in lines[1:])
           result = (text[:start] + new + text[end:]).replace(
               'from datetime import timedelta\n', 'from datetime import timedelta\nimport time\n').encode()
           expected = 'ac4247f5629403942506a80c895e4018db4ec56d3a2e279a11a6fedbbef3b74d'
