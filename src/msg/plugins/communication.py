@@ -416,7 +416,7 @@ def install(app):
             require(row[1]!='rejected','dm_rejected')
             return HandlerOutput(resources=(ResourceRef(id=row[0]),),
                                  data={'conversation_id':row[0],'state':row[1],'participant_pair':[first,second]})
-        topic=await create_resource(app,ctx,request,tx,parent=ROOT_SPACE,type='topic',
+        topic=await create_resource(app,ctx,request,tx,parent=app.namespace_root,type='topic',
                                     name='dm-'+new_id('c'),mode=0o700)
         tx.set_setting('policy:'+topic.id,{'post_mode':'0600','editable':True})
         tx.execute('''INSERT INTO dm_conversations
