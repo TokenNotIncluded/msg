@@ -44,36 +44,35 @@ class HostingRegistry(Registry):
 
 
 def _require_readonly_database(tx):
-    """Reject a writer DSN, including privileges inherited through PUBLIC.
-
-    READ ONLY transactions remain necessary but are not a role security boundary:
-    a login can reset that transaction default. Check actual effective privileges.
-    """
-    flags = tx.one('SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls '
-                   'FROM pg_roles WHERE rolname=current_user')
-    require(flags is not None and not any(flags), 'hosting_database_role_not_readonly')
-    require(tx.one('SELECT 1 FROM pg_auth_members WHERE member='
-                   '(SELECT oid FROM pg_roles WHERE rolname=current_user) LIMIT 1') is None,
+    """Check effective rights, not a resettable READ ONLY transaction default."""
+    role = tx.one('SELECT oid, rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls '
+                  'FROM pg_roles WHERE rolname=current_user')
+    require(role is not None and not any(role[1:]), 'hosting_database_role_not_readonly')
+    oid = role[0]
+    # NOINHERIT alone does not prevent SET ROLE. Ownership can restore revoked ACLs.
+    require(tx.one('SELECT 1 FROM pg_auth_members WHERE member=? LIMIT 1', (oid,)) is None,
             'hosting_database_role_not_readonly')
-    require(not any(tx.one("SELECT has_database_privilege(current_database(), 'CREATE'), "
-                           "has_database_privilege(current_database(), 'TEMPORARY')")),
+    require(not any(tx.one("SELECT datdba=?, has_database_privilege(oid, 'CREATE'), "
+                           "has_database_privilege(oid, 'TEMPORARY') FROM pg_database "
+                           "WHERE datname=current_database()", (oid,))),
             'hosting_database_role_not_readonly')
-    require(tx.one("SELECT 1 FROM pg_namespace WHERE nspname NOT LIKE 'pg_%' "
-                   "AND nspname <> 'information_schema' AND has_schema_privilege(oid, 'CREATE') "
-                   "LIMIT 1") is None, 'hosting_database_role_not_readonly')
-    require(tx.one("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                   "WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' "
-                   "AND c.relkind IN ('r','p','v','m','f') "
-                   "AND has_table_privilege(c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') "
-                   "LIMIT 1") is None, 'hosting_database_role_not_readonly')
-    # CASE keeps the planner from calling the sequence-only function on indexes.
-    require(tx.one("SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace "
-                   "WHERE n.nspname NOT LIKE 'pg_%' AND CASE WHEN c.relkind='S' "
-                   "THEN has_sequence_privilege(c.oid, 'USAGE,UPDATE') ELSE FALSE END LIMIT 1") is None,
+    require(tx.one("SELECT 1 FROM pg_namespace WHERE nspowner=? OR "
+                   "has_schema_privilege(oid, 'CREATE') LIMIT 1", (oid,)) is None,
             'hosting_database_role_not_readonly')
-    require(tx.one("SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace "
-                   "WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname <> 'information_schema' "
-                   "AND p.prosecdef AND has_function_privilege(p.oid, 'EXECUTE') LIMIT 1") is None,
+    # CASE is required: PostgreSQL may otherwise evaluate a privilege function
+    # before its relkind filter. Column-only UPDATE is not a table-level grant.
+    require(tx.one("SELECT 1 FROM pg_class c WHERE CASE WHEN c.relkind IN ('r','p','v','m','f') "
+                   "THEN c.relowner=? OR "
+                   "has_table_privilege(c.oid, 'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER') OR "
+                   "has_any_column_privilege(c.oid, 'INSERT,UPDATE,REFERENCES') "
+                   "ELSE FALSE END LIMIT 1", (oid,)) is None,
+            'hosting_database_role_not_readonly')
+    require(tx.one("SELECT 1 FROM pg_class c WHERE CASE WHEN c.relkind='S' "
+                   "THEN c.relowner=? OR has_sequence_privilege(c.oid, 'USAGE,UPDATE') "
+                   "ELSE FALSE END LIMIT 1", (oid,)) is None,
+            'hosting_database_role_not_readonly')
+    require(tx.one("SELECT 1 FROM pg_proc WHERE proowner=? OR "
+                   "(prosecdef AND has_function_privilege(oid, 'EXECUTE')) LIMIT 1", (oid,)) is None,
             'hosting_database_role_not_readonly')
 
 
