@@ -104,11 +104,16 @@ async def test_status_pagination_preserves_all_ranges_across_protocols(installed
                 transport = transport_class(app.settings.service_url, http=http)
                 args = {'transfer_id': tid, 'limit': 1}
                 seen, cursors = [], set()
-                for _ in range(len(expected)):
+                for index in range(len(expected)):
                     result = await transport.call(status_packet(app, key, subject, cert, args))
                     assert result.status == 'ok', wire(result)
-                    seen.extend(tuple(item) for item in result.data[field])
-                    cursor = result.data['next_cursor']
+                    page = [tuple(item) for item in result.data[field]]
+                    assert page == [expected[index]]
+                    seen.extend(page)
+                    # Compact wire responses omit null values on the last page.
+                    cursor = result.data.get('next_cursor')
+                    expected_cursor = str(expected[index + 1][0]) if index + 1 < len(expected) else None
+                    assert cursor == expected_cursor
                     if cursor is None:
                         break
                     assert cursor not in cursors

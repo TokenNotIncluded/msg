@@ -27,12 +27,29 @@ checks and revoked-credential rejection.
 
 ## Evidence
 
-- Regression-first commit: tests and workflow only; implementation unchanged.
-- Cloud failure evidence: pending. No project tests were executed locally.
-- Implementation/final cloud evidence: pending; no success or closure claimed.
+- Regression-first head: `fa76adef7784c58483b6719057d388bf19b1526d`.
+- Cloud run: `36560714465`, job `109380655492`, Python `3.15.0rc2`.
+- Actual checkout: synthetic merge `b4c9965748d7e4761fc64e628921d63da11013ec`,
+  tree `40302bf0a10406148bb828668d1f1e11c217fd77` (identical to the head tree).
+- JUnit: 24 cases, 13 assertion failures, 11 passes, zero errors/skips.
+  Eleven failures reproduce the intended cursor boundary defects. The other two
+  are test assumptions about the final page: compact wire responses omit null
+  `next_cursor`. Corrected to accept an absent terminal cursor, while requiring
+  the exact single range and exact next cursor on every nonterminal page.
+  Those two failures are not counted as product defects.
+- Artifact: `11029760984`; independently checked ZIP SHA256:
+  `777e5c1a4940609b0dd47f23ead2c340d6db4eeba41e116ac4d88cc886da1f00`.
+- Implementation: ten lines at `TransferService.status`, after `_session` current
+  authorization. Require a nonempty ASCII decimal cursor of at most 19 digits,
+  value below 2**63 and no greater than known size; apply in terminal states too.
+  An absent cursor still starts at zero; generated numeric cursors, leading-zero
+  numeric input and the full supported int64 offset range remain unchanged.
+  Malformed supplied cursors return `invalid_cursor` without echoing the input.
+- No schemas, signed packets, handlers, storage APIs or publication paths changed.
+- Final exact-head cloud evidence: pending. No success or closure claimed.
+- No project tests were executed locally; local work only edits/inspects text and
+  independently hashes/parses the downloaded evidence.
 
-Run the focused workflow, record its exact source/tree, JUnit result and artifact
-hash, then apply bounded decimal cursor validation after current authorization.
 Returned numeric cursors and all six published transfer operations remain the
 same. Unknown-size uploads still expose received ranges rather than inventing
 missing ranges. No deployment, production data or external delivery is involved.
