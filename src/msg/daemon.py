@@ -31,6 +31,12 @@ def load_application(directory):
     return Application(load_settings(directory))
 
 
+def load_hosting(directory):
+    from msg.hosting_runtime import HostingRuntime
+    from msg.config import load_settings
+    return HostingRuntime(load_settings(directory))
+
+
 async def worker_loop(app, *, once=False):
     from msg.workers.effects import EffectWorker
     from msg.workers.maintenance import run_maintenance
@@ -208,7 +214,8 @@ def main(argv=None):
         if args.command=='ssh-session':
             from msg.extensions.ssh import forced_session
             return asyncio.run(forced_session(args.config_dir,args.credential))
-        app=load_application(args.config_dir)
+        app=(load_hosting(args.config_dir) if args.command=='hosting'
+             else load_application(args.config_dir))
         if args.command=='backup':
             from msg.admin.backups import backup
             async def save():
@@ -230,8 +237,10 @@ def main(argv=None):
             @asynccontextmanager
             async def lifespan(asgi):
                 await app.load()
-                yield
-                await app.close()
+                try:
+                    yield
+                finally:
+                    await app.close()
             asgi=hosting_app(app);asgi.router.lifespan_context=lifespan
             uvicorn.run(asgi,host=args.listen,port=args.port,access_log=False,ws='none')
         else:

@@ -170,6 +170,30 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
     require(not missing,'system_source_deleted_requires_migration',details={'paths':sorted(missing)})
 
 
+async def require_current_system_sources(tx, contents):
+    """Check an installed release without migrations, publication or repair."""
+    root = Path(system_source_root())
+    require(tx.one('SELECT COUNT(*) FROM system_sources')[0] == len(RULE_SPECS),
+            'hosting_release_not_ready')
+    for rule_id, rid, _, _, default_path, max_bytes in RULE_SPECS:
+        relative = SOURCE_PATH_OVERRIDES.get(rule_id, default_path)
+        raw = (root/relative).read_bytes()
+        header = SOURCE_HEADER.match(raw.decode('utf-8'))
+        require(header is not None and header.group(1) == rule_id, 'system_source_invalid_header')
+        version = int(header.group(2))
+        row = tx.one('SELECT source_path,rule_id,source_kind,source_version,source_digest,revision_id '
+                     'FROM system_sources WHERE resource_id=?', (rid,))
+        require(row is not None and row[:5] == ('docs/system/'+relative, rule_id, 'release',
+                                               version, digest(raw)), 'hosting_release_not_ready')
+        resource = await tx.resource(rid)
+        require(resource.revision == row[5], 'hosting_release_not_ready')
+        revision = await tx.revision(ResourceRef(id=rid, revision=resource.revision))
+        require(revision.source_kind == 'release' and revision.source_version == version and
+                revision.source_digest == digest(raw) and
+                await contents.read_bytes(revision.content, limit=max_bytes) == raw,
+                'hosting_release_not_ready')
+
+
 def manifest():
     return loads(files('msg.data').joinpath('bootstrap.json').read_bytes())
 

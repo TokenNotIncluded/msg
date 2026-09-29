@@ -1,21 +1,24 @@
 [Unit]
-Description=msg.lmm.best separate-origin static hosting
+Description=msg.lmm.best read-only static hosting
 After=network.target
 
 [Service]
 Type=simple
-User=msgd
-Group=msgd
-WorkingDirectory=/var/lib/msgd
-ExecStart=/opt/msgd/venv/bin/msgd hosting --listen 127.0.0.1 --port 8043
+User=msgd-hosting
+Group=msgd-hosting
+WorkingDirectory=/
+ExecStart=/opt/msgd/venv/bin/msgd --config-dir /etc/msgd-hosting hosting --listen 127.0.0.1 --port 8043
 Restart=on-failure
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/msgd
-InaccessiblePaths=/var/lib/msgd-root /etc/msgd/root
+ReadOnlyPaths=/etc/msgd-hosting /var/lib/msgd/git/content /var/lib/msgd/blobs/sha256
+InaccessiblePaths=/var/lib/msgd-root /etc/msgd /var/lib/msgd/service -/var/lib/msgd/transfers -/var/lib/msgd/git/repos
+CapabilityBoundingSet=
+RestrictSUIDSGID=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target

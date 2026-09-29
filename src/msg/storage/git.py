@@ -218,22 +218,36 @@ class LFSObjectStore:
 
 class GitContentStore:
     def __init__(self,path: Path, *, binary_dir: Path | None = None,
-                 staging_dir: Path | None = None):
+                 staging_dir: Path | None = None, read_only: bool = False):
+        self.read_only=read_only
         self.path=Path(path)
         self.repo=self.path/'private.git'
         self.index=self.path/'index'
         self.binary=Path(binary_dir) if binary_dir is not None else self.path/'binary'
         self.staging=Path(staging_dir) if staging_dir is not None else self.path/'staging'
-        for p in (self.path,self.index,self.binary,self.staging):
-            p.mkdir(parents=True,exist_ok=True)
-        if not self.repo.exists():
-            subprocess.run(['git','init','--bare',str(self.repo)],check=True,capture_output=True)
+        if read_only:
+            require(all(p.is_dir() and not p.is_symlink()
+                        for p in (self.path,self.repo,self.index,self.binary)),
+                    'content_store_not_initialized')
+        else:
+            for p in (self.path,self.index,self.binary,self.staging):
+                p.mkdir(parents=True,exist_ok=True)
+            if not self.repo.exists():
+                subprocess.run(['git','init','--bare',str(self.repo)],check=True,capture_output=True)
         self.env={"PATH":os.environ.get('PATH','/usr/bin:/bin'),"LANG":"C.UTF-8",
                   "HOME":str(self.path),"GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":"/dev/null",
                   "GIT_AUTHOR_NAME":"msg","GIT_AUTHOR_EMAIL":"msg@localhost",
                   "GIT_COMMITTER_NAME":"msg","GIT_COMMITTER_EMAIL":"msg@localhost"}
+        if read_only:
+            # The dedicated reader does not own this administrator-selected repo.
+            # Trust only this exact path, never every Git directory on the host.
+            self.env.update(GIT_OPTIONAL_LOCKS='0', GIT_CONFIG_COUNT='1',
+                            GIT_CONFIG_KEY_0='safe.directory', GIT_CONFIG_VALUE_0=str(self.repo))
 
     def _run(self,*args,input=None,stdin=None):
+        require(not self.read_only or (len(args)==3 and args[:2]==('rev-parse','--verify')
+                and args[2].startswith('refs/pins/') and input is None and stdin is None),
+                'read_only_role')
         result=subprocess.run(['git','--git-dir',str(self.repo),'-c','core.fsync=all',
                                '-c','core.logAllRefUpdates=false',*args],
                               input=input,stdin=stdin,capture_output=True,env=self.env,timeout=120)
@@ -253,6 +267,7 @@ class GitContentStore:
         return loads(path.read_bytes())
 
     async def put(self,chunks,media_type,expected_digest=None):
+        require(not self.read_only,'read_only_role')
         hasher=hashlib.sha256()
         size=0
         fd,name=tempfile.mkstemp(dir=self.staging)
@@ -334,6 +349,7 @@ class GitContentStore:
         return b''.join([chunk async for chunk in self.read(blob)])
 
     async def _update_pin_ref(self, *args):
+        require(not self.read_only,'read_only_role')
         # Cancelling to_thread does not stop Git. Finish the mutation before the
         # metadata transaction can compensate it or release its writer fence.
         pending = asyncio.create_task(asyncio.to_thread(self._run, *args))
@@ -354,6 +370,7 @@ class GitContentStore:
             raise
 
     async def pin(self,blob,lease_id):
+        require(not self.read_only,'read_only_role')
         entry=self._entry(blob)
         name=hashlib.sha256(lease_id.encode()).hexdigest()
         if entry['kind']=='git':
@@ -362,6 +379,7 @@ class GitContentStore:
             durable_write(self.path/'pins'/name/self._key(blob),b'1\n')
 
     async def unpin(self,blob,lease_id):
+        require(not self.read_only,'read_only_role')
         entry=self._entry(blob)
         name=hashlib.sha256(lease_id.encode()).hexdigest()
         if entry['kind']=='git':
@@ -381,6 +399,7 @@ class GitContentStore:
 
     async def commit_revision(self,topic_id,revision):
         """Create and protect one resource revision before the PostgreSQL pointer commits."""
+        require(not self.read_only,'read_only_role')
         entry=self._entry(revision.content)
         def commit():
             manifest=self._run('hash-object','-w','--stdin',input=canonical(revision))
