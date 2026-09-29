@@ -897,6 +897,8 @@ def install(app):
     install_following(app, op)
     from msg.plugins.watches import install as install_watches
     install_watches(app, op)
+    from msg.plugins.receipts import install as install_receipts
+    install_receipts(app, op)
     finish((ResourceTypeSpec(name='watch',version=1,container=False,content_schema=None,
                              operations=frozenset(),relations=frozenset()),
             ResourceTypeSpec(name='claim',version=1,container=False,content_schema=None,
