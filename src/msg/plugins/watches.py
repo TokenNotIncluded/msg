@@ -1,15 +1,17 @@
 """Resource-backed target watches, projected by the existing Event transaction."""
 import time
+from dataclasses import replace
 from datetime import timedelta
 
-from msg.core.codec import canonical, decode, loads, parse_time, wire
+from msg.core.codec import canonical, decode, digest, loads, parse_time, wire
 from msg.core.errors import Failure, require
 from msg.core.models import ExecutionContext, HandlerOutput, Principal, ResourceRef
 from msg.core.requests import request_for
 from msg.plugins.common import check_access, create_resource, new_id, operation_id, resolve, revise_resource
-from msg.plugins.schemas import IDENTIFIER, STRING, obj
+from msg.plugins.schemas import IDENTIFIER, STRING, REF, obj
 
 EVENT_TYPES = ('content.post_create', 'content.post_edit', 'discussion.reply', 'content.archive')
+QUERY_EVENT_TYPES = (*EVENT_TYPES, 'content.tags_set', 'content.move', 'content.chown')
 
 
 async def record(app, tx, rid):
@@ -19,7 +21,7 @@ async def record(app, tx, rid):
     return resource, loads(await app.contents.read_bytes(revision.content))
 
 
-async def create(app, ctx, request, tx, target, *, legacy=False):
+async def create(app, ctx, request, tx, target, *, legacy=False, query_ref=None, query_binding=None):
     subject = ctx.principal.subject
     require(subject is not None, 'authentication_required')
     await app.authorizer.require_base(ctx.principal, operation_id(request), subject, tx)
@@ -34,11 +36,11 @@ async def create(app, ctx, request, tx, target, *, legacy=False):
             if saved.get('legacy') and saved['target'] == target and saved['status'] == 'active':
                 return resource, saved
     rid = new_id('watch')
-    saved = {'id': rid, 'subject': subject, 'target': target, 'query_ref': None,
+    saved = {'id': rid, 'subject': subject, 'target': target, 'query_ref': wire(query_ref) if query_ref else None,
              'event_types': list(EVENT_TYPES) if legacy else request.arguments['event_types'],
              'delivery': 'inbox', 'created_at': wire(ctx.now), 'expires_at': expires,
              'status': 'active', 'legacy': legacy, 'principal': wire(ctx.principal),
-             'operation': operation_id(request)}
+             'operation': operation_id(request), 'query_binding': query_binding}
     resource = await create_resource(app, ctx, request, tx, parent=subject, type='watch',
                                     name=rid, resource_id=rid, mode=0o600,
                                     body=canonical(saved), media_type='application/json')
@@ -61,10 +63,30 @@ async def legacy(app, ctx, request, tx, target, enabled):
                 await cancel(app, ctx, request, tx, resource, saved)
 
 
+async def query_contract(app, ctx, request, tx, ref):
+    from msg.plugins.saved_queries import load_saved_query
+    from msg.core.tags import normalize_tag
+    query = await load_saved_query(app, ctx, request, tx, ref)
+    require(query['operation'] == 'discovery.read_query' and query['contract_version'] == 1,
+            'watch_query_unsupported')
+    args = dict(query['arguments'])
+    require('parent' in args and set(args) <= {'parent', 'type', 'author', 'state', 'tag'},
+            'watch_query_unsupported')
+    args['parent'] = await resolve(tx, args['parent'])
+    if 'author' in args:
+        args['author'] = await resolve(tx, args['author'])
+    if 'tag' in args:
+        args['tag'] = normalize_tag(args['tag'])
+    read = replace(request, operation=query['operation'], contract_version=query['contract_version'])
+    app.registry.operation(read.operation, read.contract_version)
+    await check_access(app, ctx, read, tx, args['parent'], 'list')
+    return query, args, read
+
+
 async def enqueue(app, tx, event):
     from msg.security.quarantine import active
     from msg.workers.effects import current_principal
-    if active(tx) or event.type not in EVENT_TYPES:
+    if active(tx) or event.type not in QUERY_EVENT_TYPES:
         return
     for (rid,) in tx.rows("SELECT id FROM resources WHERE type='watch' AND state='active' ORDER BY id"):
         resource, saved = await record(app, tx, rid)
@@ -81,10 +103,25 @@ async def enqueue(app, tx, event):
             ctx = ExecutionContext(request_id=event.id, principal=principal, entry='worker',
                                    now=app.clock(), deadline_monotonic=time.monotonic()+30)
             await check_access(app, ctx, request, tx, saved['target'], 'read')
+            query = None
+            if saved.get('query_ref'):
+                query, args, read = await query_contract(app, ctx, request, tx, decode(ResourceRef, saved['query_ref']))
+                require(args['parent'] == saved['target'] and digest(args) == saved.get('query_binding'),
+                        'watch_query_scope_changed')
+                from msg.plugins.read_predicates import read_predicates
+                filters, parameters = await read_predicates(app, tx, args, args['parent'])
             for ref in event.resources:
-                ancestors = await tx.ancestors(ref.id)
-                if ref.id != saved['target'] and not any(a.id == saved['target'] for a in ancestors):
-                    continue
+                if query is not None:
+                    if not tx.one('SELECT 1 FROM resources r WHERE r.id=? AND ' + ' AND '.join(filters),
+                                  (ref.id, *parameters)):
+                        continue
+                    await check_access(app, ctx, read, tx, ref.id, 'read')
+                    source_ctx = replace(ctx, principal=query['principal'])
+                    await check_access(app, source_ctx, read, tx, ref.id, 'read')
+                else:
+                    ancestors = await tx.ancestors(ref.id)
+                    if ref.id != saved['target'] and not any(a.id == saved['target'] for a in ancestors):
+                        continue
                 await check_access(app, ctx, request, tx, ref.id, 'read')
                 if tx.one('SELECT 1 FROM messages WHERE event_id=? AND recipient=? AND resource=?', (event.id, saved['subject'], ref.id)):
                     continue
@@ -109,6 +146,18 @@ def install(app, op):
         resource, saved = await create(app, ctx, request, tx, target)
         return HandlerOutput(data={'id': resource.id, 'status': saved['status']})
 
+    @op('communication.watch_create', obj({'query_ref': REF,
+        'event_types': {'type': 'array', 'items': {'enum': list(QUERY_EVENT_TYPES)}, 'minItems': 1,
+                        'maxItems': len(QUERY_EVENT_TYPES), 'uniqueItems': True},
+        'delivery': {'enum': ['inbox']}, 'expires_at': STRING},
+        ('query_ref', 'event_types', 'delivery')), version=2, signature=True)
+    async def watch_query_create(ctx, request, tx):
+        ref = decode(ResourceRef, request.arguments['query_ref'])
+        require(ref.revision is not None, 'watch_query_revision_required')
+        _, args, _ = await query_contract(app, ctx, request, tx, ref)
+        resource, saved = await create(app, ctx, request, tx, args['parent'], query_ref=ref, query_binding=digest(args))
+        return HandlerOutput(data={'id': resource.id, 'status': saved['status']})
+
     async def owned(ctx, request, tx, rid):
         resource, saved = await record(app, tx, await resolve(tx, rid))
         require(ctx.principal.subject == resource.owner == saved['subject'], 'permission_denied')
@@ -116,11 +165,18 @@ def install(app, op):
         return resource, saved
 
     async def public(ctx, request, tx, saved):
-        result = {k: v for k, v in saved.items() if k not in {'principal', 'operation', 'legacy'}}
+        result = {k: v for k, v in saved.items() if k not in {'principal', 'operation', 'legacy', 'query_binding'}}
         try:
             await check_access(app, ctx, request, tx, saved['target'], 'read')
         except Failure:
             result.pop('target', None)
+            result.pop('query_ref', None)
+        if saved.get('query_ref'):
+            try:
+                await query_contract(app, ctx, request, tx, decode(ResourceRef, saved['query_ref']))
+            except Failure:
+                result.pop('query_ref', None)
+                result.pop('target', None)
         if saved['expires_at'] and ctx.now >= parse_time(saved['expires_at']) and saved['status'] == 'active':
             result['status'] = 'expired'
         return result
