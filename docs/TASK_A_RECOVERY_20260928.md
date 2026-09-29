@@ -39,7 +39,7 @@ Refs #64, #65, #68, #69, #70, #84, #85；接续 #112，不关闭现场验收项�
 同序号内容变化会被精确 pin 拒绝；跨水位的已重放前缀不一致会拒绝。
 
 支持 credential、certificate、ShareGrant v1/v2、ShareLink 撤销，普通 Membership 与 TopicMembership 移除，
-IdentityKey/EncryptionSubkey 退役，以及指定账号在线 vault 销毁。只收缩现存权限：不新增身份、授权、
+IdentityKey/EncryptionSubkey 退役，以及指定账号在线 vault 销毁。 `topic_ban.apply` 同时将旧快照里的话题成员降为 member/removed，与正常禁言一致；后续 `topic_ban.lift` 不恢复旧成员资格或 admin 角色。只收缩现存权限：不新增身份、授权、
 密钥、财务交易、外发 job 或任何历史正文；证书的原始签署 body 不改。
 `g_public` 是虚拟成员关系，不能通过修改一条 Membership 假装移除，明确拒绝该事实。
 

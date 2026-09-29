@@ -354,3 +354,31 @@ def test_packaged_schema_and_example_match_the_replay_contract():
     with pytest.raises(Failure, match='^recovery_checkpoint_pin_required$'):
         verify_checkpoint(example['packet'], pin=None)
     assert list(validator.iter_errors({}))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('lift', [False, True])
+async def test_replayed_ban_removes_restored_admin_even_after_lift(restored, checkpoint, lift):
+    from msg.core.models import Resource
+    body, pin, signed = checkpoint
+    resource = Resource(id='t_old_admin', type='topic', type_version=1, name='old-admin',
+        parent=None, owner='u_owner', group='g_public', mode=0o700, generation=1,
+        revision=None, state='active', created_at=NOW, created_by='u_owner',
+        modified_at=NOW, modified_by='u_owner')
+    async with restored.transaction(write=True) as tx:
+        await tx.insert(resource)
+        tx.execute('INSERT INTO topic_memberships VALUES (?,?,?,?,?,NULL)',
+                   (resource.id, 'u_owner', 'admin', 'active', wire(NOW)), write=True)
+    kinds = ['topic_ban.apply'] + (['topic_ban.lift'] if lift else [])
+    facts = [{'sequence': i, 'kind': kind, 'subject': 'u_owner',
+              'target': resource.id, 'at': wire(NOW)} for i, kind in enumerate(kinds, 1)]
+    body = dict(body, entries=facts, sequence=len(facts))
+    pin = replace(pin, digest=digest(body), sequence=len(facts))
+    for _ in range(2):
+        await replay(restored, signed(body), pin=pin)
+        async with restored.transaction(write=False) as tx:
+            assert tx.one('SELECT role,status FROM topic_memberships WHERE topic=? AND subject=?',
+                          (resource.id, 'u_owner')) == ('member', 'removed')
+            assert tx.one('SELECT status FROM topic_bans WHERE topic=? AND subject=?',
+                          (resource.id, 'u_owner')) == ('lifted' if lift else 'active',)
+            assert active(tx)

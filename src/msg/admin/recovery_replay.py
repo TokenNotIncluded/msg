@@ -165,6 +165,15 @@ async def _apply(tx, fact):
     if kind == 'topic_ban.apply':
         require(tx.one('SELECT id FROM resources WHERE id=?', (target,)) is not None,
                 'recovery_fact_missing')
+        # A live ban removes membership as well as denying topic participation.
+        # Preserve that effect when replaying an old snapshot, including when a
+        # later fact lifts the ban: lifting never restores an old admin role.
+        member = tx.one('SELECT role,status FROM topic_memberships WHERE topic=? AND subject=?',
+                        (target, subject))
+        member_changed = member is not None and member != ('member', 'removed')
+        if member_changed:
+            tx.execute("UPDATE topic_memberships SET role='member',status='removed' "
+                       'WHERE topic=? AND subject=?', (target, subject), write=True)
         row = tx.one('SELECT status,expires_at FROM topic_bans WHERE topic=? AND subject=?', (target, subject))
         if row is None:
             tx.execute('''INSERT INTO topic_bans
@@ -178,7 +187,7 @@ async def _apply(tx, fact):
             tx.execute("UPDATE topic_bans SET status='active',expires_at=NULL WHERE topic=? AND subject=?",
                        (target, subject), write=True)
             return True
-        return False
+        return member_changed
     if kind == 'topic_ban.lift':
         row = tx.one('SELECT status FROM topic_bans WHERE topic=? AND subject=?', (target, subject))
         require(row is not None, 'recovery_fact_missing')
