@@ -1,7 +1,10 @@
 """Pinned target and saved-query watches on the existing Event transaction."""
 import time
+import logging
+import re
 from dataclasses import replace
 from datetime import timedelta
+from pathlib import Path
 
 from msg.core.codec import canonical, decode, digest, loads, parse_time, wire
 from msg.core.errors import Failure, require
@@ -12,13 +15,58 @@ from msg.plugins.schemas import IDENTIFIER, STRING, REF, obj
 
 EVENT_TYPES = ('content.post_create', 'content.post_edit', 'discussion.reply', 'content.archive')
 QUERY_EVENT_TYPES = (*EVENT_TYPES, 'content.tags_set', 'content.move', 'content.chown')
+log = logging.getLogger(__name__)
+RECORD_CORRUPTION = frozenset({'content_missing', 'content_truncated', 'content_size_mismatch',
+    'content_digest_mismatch', 'invalid_json', 'duplicate_json_key', 'non_finite_float',
+    'revision_not_found', 'watch_record_invalid', 'watch_content_invalid', 'use_transfer'})
 
 
 async def record(app, tx, rid):
     resource = await tx.resource(rid)
     require(resource.type == 'watch', 'watch_not_found')
     revision = await tx.revision(ResourceRef(id=rid))
-    return resource, loads(await app.contents.read_bytes(revision.content))
+    try:
+        raw = await app.contents.read_bytes(revision.content)
+    except FileNotFoundError as exc:
+        # A missing Git executable or unrelated file is an operational error.
+        missing = Path(exc.filename) if exc.filename else None
+        if missing is None or not any(missing.is_relative_to(root) for root in
+                                      (app.contents.index, app.contents.binary)):
+            raise
+        raise Failure('content_missing') from exc
+    except (KeyError, TypeError) as exc:
+        # Malformed content-index JSON can fail before payload decoding.
+        raise Failure('watch_content_invalid') from exc
+    require(digest(raw) == revision.content.digest, 'content_digest_mismatch')
+    saved = loads(raw)
+    # Parsing is confined to stored watch data; database and filesystem I/O
+    # failures are deliberately outside this conversion boundary.
+    try:
+        require(type(saved) is dict and {'id', 'subject', 'target', 'query_ref',
+            'event_types', 'delivery', 'created_at', 'expires_at', 'status', 'legacy',
+            'principal', 'operation'} <= saved.keys(), 'watch_record_invalid')
+        require(saved['id'] == rid and saved['subject'] == resource.owner and
+                type(saved['target']) is str and saved['status'] in ('active', 'cancelled') and
+                saved['delivery'] == 'inbox' and type(saved['legacy']) is bool,
+                'watch_record_invalid')
+        require(type(saved['event_types']) is list and bool(saved['event_types']) and
+                all(type(item) is str and item in QUERY_EVENT_TYPES for item in saved['event_types']),
+                'watch_record_invalid')
+        require(type(saved['operation']) is str and
+                re.fullmatch(r'communication\.watch(?:_create)?@[1-9][0-9]*', saved['operation']) is not None,
+                'watch_record_invalid')
+        parse_time(saved['created_at'])
+        if saved['expires_at'] is not None:
+            parse_time(saved['expires_at'])
+        principal = decode(Principal, saved['principal'])
+        require(principal.subject == resource.owner, 'watch_record_invalid')
+        if saved['query_ref'] is not None:
+            ref = decode(ResourceRef, saved['query_ref'])
+            require(ref.revision is not None and type(saved.get('query_binding')) is str,
+                    'watch_record_invalid')
+    except Failure as exc:
+        raise Failure('watch_record_invalid') from exc
+    return resource, saved
 
 
 async def create(app, ctx, request, tx, target, *, legacy=False, query_ref=None, query_binding=None):
@@ -93,7 +141,14 @@ async def enqueue(app, tx, event):
     if active(tx) or event.type not in QUERY_EVENT_TYPES:
         return
     for (rid,) in tx.rows("SELECT id FROM resources WHERE type='watch' AND state='active' ORDER BY id"):
-        resource, saved = await record(app, tx, rid)
+        try:
+            resource, saved = await record(app, tx, rid)
+        except Failure as exc:
+            if exc.code not in RECORD_CORRUPTION:
+                raise
+            log.warning('watch_projection_corrupt watch_digest=%s error_code=%s', digest(rid), exc.code,
+                        extra={'watch_digest': digest(rid), 'error_code': exc.code})
+            continue
         if saved['status'] != 'active' or event.type not in saved['event_types']:
             continue
         if saved['expires_at'] and app.clock() >= parse_time(saved['expires_at']):
