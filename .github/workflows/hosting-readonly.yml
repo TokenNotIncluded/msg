@@ -28,7 +28,7 @@ jobs:
           POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
-          --health-cmd 'pg_isready -U msgtest'
+          --health-cmd "pg_isready -U msgtest"
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
@@ -52,13 +52,14 @@ jobs:
         run: |
           mkdir -p artifacts
           python - <<'PY'
-          import json, os, platform, subprocess
+          import json, os, platform, shutil, subprocess
           from pathlib import Path
           git=lambda *args: subprocess.check_output(['git',*args],text=True).strip()
           Path('artifacts/source.json').write_text(json.dumps({
               'head':os.environ['HEAD_SHA'], 'checkout':git('rev-parse','HEAD'),
               'tree':git('rev-parse','HEAD^{tree}'), 'python':platform.python_version(),
               'run_id':os.environ['GITHUB_RUN_ID'], 'attempt':os.environ['GITHUB_RUN_ATTEMPT']},indent=2))
+          shutil.copyfile('tests/test_hosting_runtime.py','artifacts/test_hosting_runtime.py')
           PY
       - name: Exercise isolated hosting and retain established web regressions
         run: >-
