@@ -160,6 +160,8 @@ async def serve_hosted(service,request):
         return None
     site_path='/'+parts[0]+'/'+parts[1]
     try:
+        marker=service.settings.config_dir/'recovery-drill.json'
+        require(not marker.exists() and not marker.is_symlink(),'recovery_quarantined')
         async with service.metadata.transaction(write=False) as tx:
             try:
                 rid=await tx.resolve(site_path)

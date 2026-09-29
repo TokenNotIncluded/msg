@@ -11,30 +11,19 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-        with:
-          fetch-depth: 2
-      - name: Apply only the reviewed patch to its exact red-test parent
+      - name: Fix the verified PostgreSQL import without altering product CI
         run: |
           set -eu
-          cp .ci/hosting-161.patch "$RUNNER_TEMP/hosting-161.patch"
-          cp .ci/hosting-161-base.sha256 "$RUNNER_TEMP/hosting-161-base.sha256"
-          # Normalize five transfer-escaped diff headers, then require the
-          # independently computed original patch digest before applying it.
-          sed -i -e 's/^+diff --git /diff --git /' -e 's/^+new file mode /new file mode /' -e 's/^+--- /--- /' -e 's/^++++ b\//+++ b\//' -e 's/^+@@ /@@ /' "$RUNNER_TEMP/hosting-161.patch"
-          echo 'ecec72c96b5fc832552f4f58d7afbdd8606cbc21aa110aef34261ddb4b87cb1c' "$RUNNER_TEMP/hosting-161.patch" | sha256sum --check
-          git checkout --detach 00ba8f79cb25316bc33690f5fde96e2546176b21
-          sha256sum --check "$RUNNER_TEMP/hosting-161-base.sha256"
-          git apply --index --whitespace=error-all "$RUNNER_TEMP/hosting-161.patch"
-          git diff --cached --check
-          git diff --cached --stat
+          git fetch origin 0f0e13d1fe7d152a9034b4028ae2e1e7e2d06966
+          git checkout --detach 0f0e13d1fe7d152a9034b4028ae2e1e7e2d06966
+          echo '18ecf03d6566b811894865d8ff17c23bb653a87958b5b3d779e64eb6ba8f1ab2  src/msg/storage/postgres.py' | sha256sum --check
+          sed -i 's/^from msg.core.errors import Failure$/from msg.core.errors import Failure, require/' src/msg/storage/postgres.py
+          grep -Fx 'from msg.core.errors import Failure, require' src/msg/storage/postgres.py
+          git diff --check
+          git add src/msg/storage/postgres.py
           git config user.name 'msg maintenance CI'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'refactor: isolate read-only hosting without writer credentials or startup mutations'
+          git commit -m 'fix: import the PostgreSQL read-only role guard'
           test -z "$(git status --porcelain)"
           git push origin HEAD:refs/heads/ci/hosting-161-source-00ba8f7
-          mkdir -p "$RUNNER_TEMP/hosting-source"
-          printf '{"commit":"%s","tree":"%s","parent":"00ba8f79cb25316bc33690f5fde96e2546176b21"}\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" > "$RUNNER_TEMP/hosting-source/source.json"
-      - uses: actions/upload-artifact@v4
-        with:
-          name: hosting-materialized-source
-          path: ${{ runner.temp }}/hosting-source/
+          git log -1 --format='%H %T %P'

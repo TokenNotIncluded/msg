@@ -540,7 +540,10 @@ class PostgresSession(RelationalSession):
 class PostgresMetadataStore:
     """One connection per transaction; no mutable process-local authority state."""
 
-    def __init__(self, dsn: str, *, signal=None, initialize: bool = True):
+    def __init__(self, dsn: str, *, signal=None, initialize: bool = True,
+                 read_only: bool = False):
+        require(not read_only or (not initialize and signal is None), 'read_only_role')
+        self.read_only = read_only
         self.dsn = dsn
         self.signal = signal
         self._current = contextvars.ContextVar('msg_pg_transaction_' + uuid.uuid4().hex, default=None)
@@ -575,6 +578,7 @@ class PostgresMetadataStore:
 
     @asynccontextmanager
     async def transaction(self, *, write):
+        require(not self.read_only or not write, 'read_only_role')
         existing = self._current.get()
         if existing is not None:
             existing.check(write)
@@ -651,6 +655,7 @@ class PostgresMetadataStore:
         The caller holds the store's write transaction while copying content trees.
         Credentials travel via the child environment, never command arguments.
         """
+        require(not self.read_only, 'read_only_role')
         destination = Path(destination)
         fields = conninfo_to_dict(self.dsn)
         password = fields.pop('password', None)
