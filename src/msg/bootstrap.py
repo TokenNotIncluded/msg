@@ -33,6 +33,12 @@ RULE_PATHS={rule_id:('/AGENTS.md' if rid=='r_agents' else
 # Release maintainers declare a relocation in both maps in the same change.
 SOURCE_PATH_OVERRIDES={}
 SOURCE_MIGRATIONS={}
+# Release-only pins: rule_id -> {source_path: relative .md path, version: int,
+# digest: sha256:<hex>}. Remove active links/operation dependencies in the same
+# release; keep RULE_SPECS identity and this pin so upgrades preserve history.
+# Retirement archives existing resources; fresh installs invent no old revision.
+# No current rule is retired. A pin mismatch requires an explicit staged upgrade.
+SOURCE_RETIREMENTS={}
 
 
 def system_source_root():
@@ -42,15 +48,36 @@ def system_source_root():
 
 
 async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_root=ROOT_SPACE,
-                              source_paths=None,migrations=None):
+                              source_paths=None,migrations=None,retirements=None,registry=None):
     """Sync each release-owned document independently; never delete a source implicitly."""
     root=Path(source_root or system_source_root())
     source_paths=dict(SOURCE_PATH_OVERRIDES if source_paths is None else source_paths)
     migrations=dict(SOURCE_MIGRATIONS if migrations is None else migrations)
     require(set(source_paths)<=RULE_PATHS.keys() and set(migrations)<=RULE_PATHS.keys(),
             'unknown_rule_id')
+    retirements=dict(SOURCE_RETIREMENTS if retirements is None else retirements)
+    require(set(retirements)<=RULE_PATHS.keys()-{'msg.bootstrap','msg.rules.index'},
+            'system_source_invalid_retirement')
+    require(not set(retirements)&(source_paths.keys()|migrations.keys()),
+            'system_source_invalid_retirement')
+    for rule_id,pin in retirements.items():
+        require(isinstance(pin,dict) and set(pin)=={'source_path','version','digest'} and
+                isinstance(pin['source_path'],str) and
+                pin['source_path']==Path(pin['source_path']).as_posix() and
+                not Path(pin['source_path']).is_absolute() and
+                '..' not in Path(pin['source_path']).parts and
+                pin['source_path'].endswith('.md') and
+                type(pin['version']) is int and pin['version']>0 and
+                isinstance(pin['digest'],str) and
+                re.fullmatch(r'sha256:[0-9a-f]{64}',pin['digest']) is not None,
+                'system_source_invalid_retirement',rule_id)
+    if retirements:
+        require(registry is not None and all(not set(spec.requires_rules)&retirements.keys()
+                for spec in registry.operations()),'system_source_retirement_referenced')
     specs=[]
     for rule_id,rid,parent,name,default_path,max_bytes in RULE_SPECS:
+        if rule_id in retirements:
+            continue
         relative=source_paths.get(rule_id,default_path)
         require(isinstance(relative,str) and relative.endswith('.md') and
                 relative==Path(relative).as_posix() and
@@ -72,6 +99,7 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
         rule_id=match.group(1)
         require(rule_id in RULE_PATHS,'unknown_rule_id',relative)
         require(rule_id not in observed,'duplicate_rule_id',rule_id)
+        require(rule_id not in retirements,'system_source_retirement_source_present',rule_id)
         observed[rule_id]=relative
     require(not expected-actual,'system_source_deleted_requires_migration',
             details={'paths':sorted(expected-actual)})
@@ -101,10 +129,35 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
                 'dangling_requires_rules',rule_id)
         require(len(required)<=1,'duplicate_requires_rules',rule_id)
         dependencies=tuple(part.strip() for part in required[0].split(',')) if required else ()
+        require(not set(dependencies)&retirements.keys() and not any(
+                re.search(re.escape(RULE_PATHS[retired])+r'(?=[/#?\s)\]<>]|$)',source_text)
+                for retired in retirements),'system_source_retirement_referenced')
         require(all(dep in RULE_PATHS and dep!=rule_id for dep in dependencies) and
                 len(set(dependencies))==len(dependencies),'dangling_requires_rules',rule_id)
         prepared.append((relative,rid,parent,name,rule_id,version,raw,change_note))
-    require(rule_ids==RULE_PATHS.keys(),'system_source_inventory_mismatch')
+    require(rule_ids==RULE_PATHS.keys()-retirements.keys(),'system_source_inventory_mismatch')
+    retired=[]
+    for rule_id,pin in retirements.items():
+        spec=next(spec for spec in RULE_SPECS if spec[0]==rule_id)
+        rid=spec[1]
+        old=tx.one('''SELECT source_path,source_version,source_digest,revision_id,source_kind,rule_id
+            FROM system_sources WHERE resource_id=?''',(rid,))
+        if old is None:
+            require(tx.one('SELECT id FROM resources WHERE id=?',(rid,)) is None,
+                    'system_source_retirement_mismatch',rule_id)
+            continue  # A fresh install has no historical revision to archive.
+        require(tuple(old[:3])==('docs/system/'+pin['source_path'],pin['version'],pin['digest'])
+                and old[4] in {'release','release_retired'} and old[5]==rule_id,
+                'system_source_retirement_mismatch',rule_id)
+        resource=await tx.resource(rid)
+        require((resource.type,resource.parent,resource.name,resource.owner,resource.group,
+                 resource.mode)==('file',spec[2],spec[3],ROOT_SUBJECT,PUBLIC_GROUP,0o444),
+                'bootstrap_drift',rid)
+        require(resource.revision==old[3],'system_source_pointer_drift')
+        require(resource.state in {'active','archived'} and
+                (old[4]!='release_retired' or resource.state=='archived'),
+                'system_source_retirement_mismatch',rule_id)
+        retired.append((resource,old[0]))
     for rule_id,move in migrations.items():
         require(isinstance(move,(list,tuple)) and len(move)==2 and
                 all(isinstance(p,str) for p in move) and
@@ -128,9 +181,10 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
             dict(id=rid,type='file',name=name,parent=parent,
                  owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode='0444'),now)
         source_digest=digest(raw)
-        old=tx.one('''SELECT source_path,rule_id,source_version,source_digest,revision_id
+        old=tx.one('''SELECT source_path,rule_id,source_version,source_digest,revision_id,source_kind
             FROM system_sources WHERE resource_id=?''',(rid,))
         if old is not None:
+            require(old[5]!='release_retired','system_source_retirement_required',rule_id)
             require(old[1]==rule_id,'system_source_identity_drift')
             if old[0]!=source_path:
                 require(migrations.get(rule_id)==(old[0].removeprefix('docs/system/'),relative),
@@ -167,6 +221,13 @@ async def sync_system_sources(tx,contents,now, *, source_root=None,namespace_roo
             tx.execute('''UPDATE system_sources SET source_path=?,source_kind='release',source_version=?,
                 source_digest=?,revision_id=? WHERE resource_id=?''',
                 (source_path,version,source_digest,revision_id,rid),write=True)
+    for resource,source_path in retired:
+        desired.add(source_path)
+        if resource.state!='archived':
+            await tx.replace(replace(resource,state='archived',generation=resource.generation+1,
+                modified_at=now,modified_by=ROOT_SUBJECT),resource.generation)
+        tx.execute("UPDATE system_sources SET source_kind='release_retired' WHERE resource_id=?",
+                   (resource.id,),write=True)
     missing={path for (path,) in tx.rows('SELECT source_path FROM system_sources')} - desired
     require(not missing,'system_source_deleted_requires_migration',details={'paths':sorted(missing)})
 
@@ -294,7 +355,7 @@ async def bootstrap(store,contents,registry,now, *, selftest_run_id=None):
         for key,schema in registry._schemas.items():
             await seed_resource(tx,contents,dict(id=key,type='file',name=key.removeprefix('schema:'),parent='t_schema',
                 owner=ROOT_SUBJECT,group=PUBLIC_GROUP,mode='0444'),now,canonical(schema),'application/json')
-        await sync_system_sources(tx,contents,now,namespace_root=namespace_root)
+        await sync_system_sources(tx,contents,now,namespace_root=namespace_root,registry=registry)
         tx.set_setting('bootstrap',{'version':definition['version'],'digest':digest(definition)})
 
 

@@ -124,13 +124,13 @@ class Registry:
                      if row['feature_id'] in claims)
 
     def freeze(self):
-        from msg.bootstrap import feature_manifest
+        from msg.bootstrap import RULE_PATHS,SOURCE_RETIREMENTS,feature_manifest
         feature_manifest()
-        from msg.bootstrap import RULE_PATHS
         require('identity' in self._plugins,'identity_plugin_required')
         for spec in self._operations.values():
             require(spec.requires_rules and len(set(spec.requires_rules))==len(spec.requires_rules)
-                    and all(rule_id in RULE_PATHS for rule_id in spec.requires_rules),
+                    and all(rule_id in RULE_PATHS and rule_id not in SOURCE_RETIREMENTS
+                            for rule_id in spec.requires_rules),
                     'dangling_requires_rules')
             require(spec.input_schema.id in self._schemas and spec.output_schema.id in self._schemas,'missing_schema')
         operation_ids={f'{s.name}@{s.version}' for s in self._operations.values()}

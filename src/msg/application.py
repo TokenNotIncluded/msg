@@ -105,7 +105,8 @@ class Application:
                 # Recheck under the writer lock; loading a restore must not
                 # mutate release resources before recovery has been accepted.
                 if not quarantine_active(tx):
-                    await sync_system_sources(tx,self.contents,self.clock(),namespace_root=self.namespace_root)
+                    await sync_system_sources(tx,self.contents,self.clock(),namespace_root=self.namespace_root,
+                                              registry=self.registry)
                 else:
                     quarantined=True
         self.authenticator=AuthenticationService(self.registry,self.certificates,self.settings.service_url,self.clock,
