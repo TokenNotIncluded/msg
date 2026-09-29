@@ -10,8 +10,16 @@ from msg.core.registry import Registry
 
 
 def plugin(name='identity', **changes):
-    return PluginManifest(name=name, version='1', dependencies=(), resource_types=(),
-                          capabilities=(), operations=(), migrations=(), **changes)
+    return PluginManifest(
+        name=name,
+        version='1',
+        dependencies=(),
+        resource_types=(),
+        capabilities=(),
+        operations=(),
+        migrations=(),
+        **changes,
+    )
 
 
 def test_legacy_manifest_keeps_empty_feature_claims():
@@ -19,8 +27,11 @@ def test_legacy_manifest_keeps_empty_feature_claims():
 
 
 def test_bootstrap_rejects_unknown_feature_and_wrong_check_owner():
-    for changes in ({'feature_id': 'unowned'}, {'doctor_check': 'import:evil'},
-                    {'selftest_case': 'root_network_rejected'}):
+    for changes in (
+        {'feature_id': 'unowned'},
+        {'doctor_check': 'import:evil'},
+        {'selftest_case': 'root_network_rejected'},
+    ):
         definition = deepcopy(manifest())
         definition['features'][0].update(changes)
         with pytest.raises(Failure, match='feature_source_mismatch'):
@@ -42,7 +53,7 @@ def test_plugin_defaults_resolve_from_bootstrap_and_are_isolated():
     registry.add(plugin())
     registry.add(replace(plugin('money', feature_ids=('money',)), dependencies=('identity',)))
     registry.freeze()
-    row, = registry.features('money')
+    (row,) = registry.features('money')
     assert row == next(row for row in feature_manifest() if row['feature_id'] == 'money')
     row['default_config']['banks'].append('mutated')
     assert registry.features('money')[0]['default_config']['banks'] == []
@@ -73,6 +84,7 @@ def test_features_do_not_bypass_plugin_dependencies():
 async def test_installed_manifests_link_entire_inventory(installed):
     app, _ = installed
     from msg.plugins.features import FEATURE_SOURCES
+
     rows = [row for name in app.registry._plugins for row in app.registry.features(name)]
     assert len(rows) == len(FEATURE_SOURCES)
     assert {row['feature_id'] for row in rows} == set(FEATURE_SOURCES)

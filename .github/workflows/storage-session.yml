@@ -77,7 +77,7 @@ jobs:
           tests/test_ledger_migration_references.py tests/test_recovery_safety_units.py
           tests/test_recovery_metadata.py
           --junitxml=artifacts/storage-session.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: storage-session-evidence

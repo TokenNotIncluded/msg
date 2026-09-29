@@ -4,8 +4,8 @@ These are diagnostic result keys, never import paths or executable resource data
 One plugin can own several independently reported features. Dependencies remain
 owned by PluginManifest and are checked by Registry.add before registration.
 """
-from msg.core.errors import require
 
+from msg.core.errors import require
 
 FEATURE_SOURCES = {
     'content_editing': ('file', 'content_editing', 'content_editing'),
@@ -42,17 +42,24 @@ def feature_ids(plugin_name):
 
 
 def validate_feature_sources(rows):
-    require({row['feature_id'] for row in rows} == set(FEATURE_SOURCES),
-            'feature_source_mismatch')
+    require({row['feature_id'] for row in rows} == set(FEATURE_SOURCES), 'feature_source_mismatch')
     for row in rows:
-        require((row['doctor_check'], row['selftest_case']) ==
-                FEATURE_SOURCES[row['feature_id']][1:], 'feature_source_mismatch')
+        require(
+            (row['doctor_check'], row['selftest_case']) == FEATURE_SOURCES[row['feature_id']][1:],
+            'feature_source_mismatch',
+        )
 
 
 def validate_feature_claims(manifest):
     claims = manifest.feature_ids
-    require(isinstance(claims, tuple) and all(isinstance(key, str) for key in claims),
-            'feature_source_mismatch')
-    require(len(set(claims)) == len(claims) and
-            all(key in FEATURE_SOURCES and FEATURE_SOURCES[key][0] == manifest.name
-                for key in claims), 'feature_source_mismatch')
+    require(
+        isinstance(claims, tuple) and all(isinstance(key, str) for key in claims),
+        'feature_source_mismatch',
+    )
+    require(
+        len(set(claims)) == len(claims)
+        and all(
+            key in FEATURE_SOURCES and FEATURE_SOURCES[key][0] == manifest.name for key in claims
+        ),
+        'feature_source_mismatch',
+    )

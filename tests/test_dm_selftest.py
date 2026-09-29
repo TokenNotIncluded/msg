@@ -1,4 +1,5 @@
 """The production diagnostic uses real signed requests only in an isolated root."""
+
 from types import SimpleNamespace
 
 import pytest
@@ -19,9 +20,13 @@ async def test_private_dm_selftest_refuses_live_installation():
 
 @pytest.mark.asyncio
 async def test_private_dm_selftest_uses_real_isolated_clients(tmp_path, pg_dsn):
-    app = Application(write_example(tmp_path / 'etc', tmp_path / 'data',
-        'https://selftest.invalid', postgres_dsn=pg_dsn), clock=lambda: NOW,
-        selftest_run_id='a' * 32)
+    app = Application(
+        write_example(
+            tmp_path / 'etc', tmp_path / 'data', 'https://selftest.invalid', postgres_dsn=pg_dsn
+        ),
+        clock=lambda: NOW,
+        selftest_run_id='a' * 32,
+    )
     try:
         csr, root = await _provision(app, 'isolated-dm-test-passphrase')
         await _approve_csr(app, csr, root, expected_digest=None, operator='isolated-test')

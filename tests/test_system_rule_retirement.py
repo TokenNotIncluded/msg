@@ -1,15 +1,16 @@
 """Release-only retirement preserves history and refuses dangling dependencies."""
-import shutil
+
 import re
+import shutil
 from dataclasses import replace
 
 import pytest
+from test_service import NOW, call, register
 
 from msg.bootstrap import sync_system_sources, system_source_root
 from msg.core.codec import wire
 from msg.core.errors import Failure
 from msg.core.models import ResourceRef
-from test_service import NOW, call, register
 
 
 async def retirement(app, tmp_path):
@@ -19,19 +20,31 @@ async def retirement(app, tmp_path):
     for path in source.rglob('*.md'):
         text = path.read_text()
         if '/_rules/recovery' in text:
-            text = re.sub(r'version: (\d+)', lambda match: 'version: ' + str(int(match[1])+1),
-                          text, count=1)
-            path.write_text('\n'.join(line for line in text.splitlines()
-                                      if '/_rules/recovery' not in line) + '\n')
+            text = re.sub(
+                r'version: (\d+)', lambda match: 'version: ' + str(int(match[1]) + 1), text, count=1
+            )
+            path.write_text(
+                '\n'.join(line for line in text.splitlines() if '/_rules/recovery' not in line)
+                + '\n'
+            )
     async with app.metadata.transaction(write=False) as tx:
-        row = tx.one('SELECT source_path,source_version,source_digest FROM system_sources '
-                     'WHERE rule_id=?', ('msg.recovery',))
-    return source, {'msg.recovery': {'source_path': row[0].removeprefix('docs/system/'),
-                                    'version': row[1], 'digest': row[2]}}
+        row = tx.one(
+            'SELECT source_path,source_version,source_digest FROM system_sources WHERE rule_id=?',
+            ('msg.recovery',),
+        )
+    return source, {
+        'msg.recovery': {
+            'source_path': row[0].removeprefix('docs/system/'),
+            'version': row[1],
+            'digest': row[2],
+        }
+    }
 
 
 @pytest.mark.asyncio
-async def test_declared_retirement_preserves_history_is_idempotent_and_read_only(installed, tmp_path, monkeypatch):
+async def test_declared_retirement_preserves_history_is_idempotent_and_read_only(
+    installed, tmp_path, monkeypatch
+):
     app, _ = installed
     source, declaration = await retirement(app, tmp_path)
     async with app.metadata.transaction(write=False) as tx:
@@ -40,16 +53,25 @@ async def test_declared_retirement_preserves_history_is_idempotent_and_read_only
         original = await app.contents.read_bytes(revision.content)
     for _ in range(2):
         async with app.metadata.transaction(write=True) as tx:
-            await sync_system_sources(tx, app.contents, NOW, source_root=source,
-                                      retirements=declaration, registry=app.registry)
+            await sync_system_sources(
+                tx,
+                app.contents,
+                NOW,
+                source_root=source,
+                retirements=declaration,
+                registry=app.registry,
+            )
         async with app.metadata.transaction(write=False) as tx:
             after = await tx.resource(before.id)
             assert after.state == 'archived'
             assert (after.revision, after.generation) == (before.revision, before.generation + 1)
-            assert wire(await tx.revision(ResourceRef(id=before.id, revision=before.revision))) == wire(revision)
+            assert wire(
+                await tx.revision(ResourceRef(id=before.id, revision=before.revision))
+            ) == wire(revision)
             assert await app.contents.read_bytes(revision.content) == original
     import msg.bootstrap as bootstrap
     from msg.application import Application
+
     monkeypatch.setattr(bootstrap, 'SOURCE_RETIREMENTS', declaration)
     monkeypatch.setattr(bootstrap, 'system_source_root', lambda: source)
     reloaded = Application(app.settings, clock=lambda: NOW)
@@ -65,7 +87,10 @@ async def test_declared_retirement_preserves_history_is_idempotent_and_read_only
     key, subject, _ = await register(app, 'retirement-writer')
     for operation, args in (
         ('content.chmod', {'id': before.id, 'mode': '0777'}),
-        ('content.post_edit', {'id': before.id, 'expected_revision': before.revision, 'body': 'replace'}),
+        (
+            'content.post_edit',
+            {'id': before.id, 'expected_revision': before.revision, 'body': 'replace'},
+        ),
     ):
         result = await call(app, operation, args, key=key, subject=subject)
         assert result.error.code == 'system_managed_resource', wire(result)
@@ -76,12 +101,21 @@ async def test_declared_retirement_preserves_history_is_idempotent_and_read_only
 async def test_retirement_must_pin_current_release_metadata(installed, tmp_path, mismatch):
     app, _ = installed
     source, declaration = await retirement(app, tmp_path)
-    declaration['msg.recovery'][mismatch] = {'version': 999, 'digest': 'sha256:' + '0' * 64,
-                                            'source_path': 'rules/wrong.md'}[mismatch]
+    declaration['msg.recovery'][mismatch] = {
+        'version': 999,
+        'digest': 'sha256:' + '0' * 64,
+        'source_path': 'rules/wrong.md',
+    }[mismatch]
     with pytest.raises(Failure, match='^system_source_retirement_mismatch$'):
         async with app.metadata.transaction(write=True) as tx:
-            await sync_system_sources(tx, app.contents, NOW, source_root=source,
-                                      retirements=declaration, registry=app.registry)
+            await sync_system_sources(
+                tx,
+                app.contents,
+                NOW,
+                source_root=source,
+                retirements=declaration,
+                registry=app.registry,
+            )
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.resource('r_rule_recovery')).state == 'active'
 
@@ -94,7 +128,9 @@ async def test_retirement_rejects_active_dependencies(installed, tmp_path, depen
     registry = app.registry
     if dependency == 'operation':
         key = ('discovery.get', 1)
-        registry._operations[key] = replace(registry.operation(*key), requires_rules=('msg.recovery',))
+        registry._operations[key] = replace(
+            registry.operation(*key), requires_rules=('msg.recovery',)
+        )
     elif dependency == 'index':
         with (source / 'rules/_index.md').open('a') as handle:
             handle.write('\n[Recovery](/_rules/recovery)\n')
@@ -105,14 +141,22 @@ async def test_retirement_rejects_active_dependencies(installed, tmp_path, depen
         registry = None
     with pytest.raises(Failure, match='^system_source_retirement_referenced$'):
         async with app.metadata.transaction(write=True) as tx:
-            await sync_system_sources(tx, app.contents, NOW, source_root=source,
-                                      retirements=declaration, registry=registry)
+            await sync_system_sources(
+                tx,
+                app.contents,
+                NOW,
+                source_root=source,
+                retirements=declaration,
+                registry=registry,
+            )
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.resource('r_rule_recovery')).state == 'active'
 
 
 @pytest.mark.asyncio
-async def test_fresh_install_does_not_invent_retired_history(installed, tmp_path, pg_dsn, monkeypatch):
+async def test_fresh_install_does_not_invent_retired_history(
+    installed, tmp_path, pg_dsn, monkeypatch
+):
     import msg.bootstrap as bootstrap
     from msg.admin.root import _provision
     from msg.application import Application
@@ -121,21 +165,27 @@ async def test_fresh_install_does_not_invent_retired_history(installed, tmp_path
     source, declaration = await retirement(installed[0], tmp_path)
     monkeypatch.setattr(bootstrap, 'SOURCE_RETIREMENTS', declaration)
     monkeypatch.setattr(bootstrap, 'system_source_root', lambda: source)
-    app = Application(write_example(tmp_path / 'fresh-config', tmp_path / 'fresh-data',
-                                   postgres_dsn=pg_dsn), clock=lambda: NOW)
+    app = Application(
+        write_example(tmp_path / 'fresh-config', tmp_path / 'fresh-data', postgres_dsn=pg_dsn),
+        clock=lambda: NOW,
+    )
     try:
         await _provision(app, 'test-retirement-passphrase')
         async with app.metadata.transaction(write=False) as tx:
             assert tx.one('SELECT id FROM resources WHERE id=?', ('r_rule_recovery',)) is None
-            assert tx.one('SELECT resource_id FROM system_sources WHERE rule_id=?', ('msg.recovery',)) is None
+            assert (
+                tx.one('SELECT resource_id FROM system_sources WHERE rule_id=?', ('msg.recovery',))
+                is None
+            )
             assert tx.one('SELECT id FROM resources WHERE id=?', ('r_rule_security',)) is not None
     finally:
         await app.close()
 
 
 def test_registry_freeze_rejects_dependency_on_release_retired_rule(monkeypatch):
-    import msg.bootstrap as bootstrap
     from test_registry_operation_rules import assemble
+
+    import msg.bootstrap as bootstrap
 
     monkeypatch.setattr(bootstrap, 'SOURCE_RETIREMENTS', {'msg.recovery': {}})
     registry = assemble('recovery.custom', requires_rules=('msg.recovery',))
@@ -149,26 +199,38 @@ async def test_retirement_cannot_implicitly_reactivate_archived_source(installed
     app, _ = installed
     source, declaration = await retirement(app, tmp_path)
     async with app.metadata.transaction(write=True) as tx:
-        await sync_system_sources(tx, app.contents, NOW, source_root=source,
-                                  retirements=declaration, registry=app.registry)
+        await sync_system_sources(
+            tx,
+            app.contents,
+            NOW,
+            source_root=source,
+            retirements=declaration,
+            registry=app.registry,
+        )
     shutil.copyfile(system_source_root() / 'rules/recovery.md', source / 'rules/recovery.md')
     with pytest.raises(Failure, match='^system_source_retirement_required$'):
         async with app.metadata.transaction(write=True) as tx:
-            await sync_system_sources(tx, app.contents, NOW, source_root=source,
-                                      registry=app.registry)
+            await sync_system_sources(
+                tx, app.contents, NOW, source_root=source, registry=app.registry
+            )
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.resource('r_rule_recovery')).state == 'archived'
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(('change', 'code'), [
-    ('unknown', 'system_source_invalid_retirement'),
-    ('mandatory', 'system_source_invalid_retirement'),
-    ('malformed', 'system_source_invalid_retirement'),
-    ('source_present', 'system_source_retirement_source_present'),
-    ('pointer_drift', 'system_source_pointer_drift'),
-])
-async def test_retirement_refuses_invalid_declarations_or_source_drift(installed, tmp_path, change, code):
+@pytest.mark.parametrize(
+    ('change', 'code'),
+    [
+        ('unknown', 'system_source_invalid_retirement'),
+        ('mandatory', 'system_source_invalid_retirement'),
+        ('malformed', 'system_source_invalid_retirement'),
+        ('source_present', 'system_source_retirement_source_present'),
+        ('pointer_drift', 'system_source_pointer_drift'),
+    ],
+)
+async def test_retirement_refuses_invalid_declarations_or_source_drift(
+    installed, tmp_path, change, code
+):
     app, _ = installed
     source, declaration = await retirement(app, tmp_path)
     if change == 'unknown':
@@ -182,9 +244,17 @@ async def test_retirement_refuses_invalid_declarations_or_source_drift(installed
     elif change == 'pointer_drift':
         async with app.metadata.transaction(write=True) as tx:
             resource = await tx.resource('r_rule_recovery')
-            await tx.replace(replace(resource, revision=None, generation=resource.generation+1),
-                             resource.generation)
+            await tx.replace(
+                replace(resource, revision=None, generation=resource.generation + 1),
+                resource.generation,
+            )
     with pytest.raises(Failure, match='^' + code + '$'):
         async with app.metadata.transaction(write=True) as tx:
-            await sync_system_sources(tx, app.contents, NOW, source_root=source,
-                                      retirements=declaration, registry=app.registry)
+            await sync_system_sources(
+                tx,
+                app.contents,
+                NOW,
+                source_root=source,
+                retirements=declaration,
+                registry=app.registry,
+            )

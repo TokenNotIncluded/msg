@@ -3,6 +3,7 @@
 Receipts are the signed results the executor already committed; this view adds
 no receipt state, table or writable resource. Stored bytes are never rewritten.
 """
+
 from msg.core.codec import decode, digest, loads
 from msg.core.errors import Failure, require
 from msg.core.models import HandlerOutput, ResourceRef
@@ -37,9 +38,14 @@ async def _project(app, ctx, request, tx, raw):
             resources.append(value)
     # data/output may carry delivered credentials or other presentation-only
     # material, so they are deliberately not part of this projection.
-    item = {'request_id': saved['request_id'], 'operation': saved['operation'],
-            'status': saved['status'], 'committed_at': saved.get('committed_at'),
-            'resources': resources, 'signed': saved.get('receipt') is not None}
+    item = {
+        'request_id': saved['request_id'],
+        'operation': saved['operation'],
+        'status': saved['status'],
+        'committed_at': saved.get('committed_at'),
+        'resources': resources,
+        'signed': saved.get('receipt') is not None,
+    }
     error = saved.get('error')
     if error:
         item['error_code'] = error['code']
@@ -47,8 +53,11 @@ async def _project(app, ctx, request, tx, raw):
 
 
 def install(app, op):
-    @op('communication.receipt_list', obj({'limit': {'type': 'integer', 'minimum': 1, 'maximum': 200},
-                                           'cursor': STRING}), effect='read')
+    @op(
+        'communication.receipt_list',
+        obj({'limit': {'type': 'integer', 'minimum': 1, 'maximum': 200}, 'cursor': STRING}),
+        effect='read',
+    )
     async def receipt_list(ctx, request, tx):
         subject = await _subject(app, ctx, request, tx)
         binding = digest({'subject': subject})
@@ -56,21 +65,30 @@ def install(app, op):
         after = app.cursors.decode(cursor, request.operation, binding) if cursor else ''
         require(type(after) is str, 'invalid_cursor')
         limit = request.arguments.get('limit', 50)
-        rows = tx.rows('SELECT request_id,body FROM results WHERE subject=? AND request_id>? '
-                       'ORDER BY request_id LIMIT ?', (subject, after, limit + 1))
+        rows = tx.rows(
+            'SELECT request_id,body FROM results WHERE subject=? AND request_id>? '
+            'ORDER BY request_id LIMIT ?',
+            (subject, after, limit + 1),
+        )
         items = [await _project(app, ctx, request, tx, raw) for _, raw in rows[:limit]]
         data = {'items': items}
         if len(rows) > limit:
             token = app.cursors.encode(request.operation, binding, rows[limit - 1][0])
-            data.update(cursor=token,
-                        next=next_link(app, request.operation, {**request.arguments, 'cursor': token}),
-                        next_requires_auth=True)
+            data.update(
+                cursor=token,
+                next=next_link(app, request.operation, {**request.arguments, 'cursor': token}),
+                next_requires_auth=True,
+            )
         return HandlerOutput(data=data)
 
-    @op('communication.receipt_get', obj({'request_id': REQUEST_ID}, ('request_id',)), effect='read')
+    @op(
+        'communication.receipt_get', obj({'request_id': REQUEST_ID}, ('request_id',)), effect='read'
+    )
     async def receipt_get(ctx, request, tx):
         subject = await _subject(app, ctx, request, tx)
-        row = tx.one('SELECT body FROM results WHERE subject=? AND request_id=?',
-                     (subject, request.arguments['request_id']))
+        row = tx.one(
+            'SELECT body FROM results WHERE subject=? AND request_id=?',
+            (subject, request.arguments['request_id']),
+        )
         require(row is not None, 'not_found')
         return HandlerOutput(data={'receipt': await _project(app, ctx, request, tx, row[0])})

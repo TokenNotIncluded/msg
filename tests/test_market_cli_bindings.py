@@ -1,4 +1,5 @@
 """Market shortcuts resolve actual Registry operations, not a permissive mock."""
+
 import pytest
 from read_only_evidence import business_snapshot
 from test_market_arbitration import configured, reasoned_base, vote
@@ -19,9 +20,16 @@ class ExecutorClient:
         self.app, self.key, self.subject = app, key, subject
 
     async def call(self, operation, params, **options):
-        return await call(self.app, operation, params, key=self.key, subject=self.subject,
-                          rid=options.get('request_id'), expected=options.get('expected', ()),
-                          contract_version=options.get('contract_version', 1))
+        return await call(
+            self.app,
+            operation,
+            params,
+            key=self.key,
+            subject=self.subject,
+            rid=options.get('request_id'),
+            expected=options.get('expected', ()),
+            contract_version=options.get('contract_version', 1),
+        )
 
 
 async def command(client, *argv):
@@ -57,8 +65,12 @@ async def test_pay_shortcut_uses_real_funding_and_idempotency(installed):
     created = await command(client, 'orders', 'create', canonical(_intent(listing)).decode())
     assert created.status == 'ok', wire(created)
     order = created.data['order']
-    params = {'order_id': order['id'], 'order_digest': order['order_digest'],
-              'currency_id': 'primary', 'total_price_minor': order['total_price_minor']}
+    params = {
+        'order_id': order['id'],
+        'order_digest': order['order_digest'],
+        'currency_id': 'primary',
+        'total_price_minor': order['total_price_minor'],
+    }
     argv = ('orders', 'pay', canonical(params).decode(), '--request-id', 'cli-fund')
     result = await command(client, *argv)
     assert result.status == 'ok', wire(result)
@@ -71,22 +83,32 @@ async def test_pay_shortcut_uses_real_funding_and_idempotency(installed):
 @pytest.mark.asyncio
 async def test_dispute_shortcut_preserves_reason_and_uses_real_operation(installed):
     app, root = installed
-    _sk, _seller, buyer_key, buyer, listing, _package = await market(app, root, mode='service', kind='service')
-    purchased = await call(app, 'orders.buy', _intent(listing), key=buyer_key,
-                           subject=buyer, contract_version=3)
+    _sk, _seller, buyer_key, buyer, listing, _package = await market(
+        app, root, mode='service', kind='service'
+    )
+    purchased = await call(
+        app, 'orders.buy', _intent(listing), key=buyer_key, subject=buyer, contract_version=3
+    )
     assert purchased.status == 'ok', wire(purchased)
     client = ExecutorClient(app, buyer_key, buyer)
-    result = await command(client, 'orders', 'dispute', canonical({
-        'order_id': purchased.data['order']['id'], 'reason': 'quality'}).decode())
+    result = await command(
+        client,
+        'orders',
+        'dispute',
+        canonical({'order_id': purchased.data['order']['id'], 'reason': 'quality'}).decode(),
+    )
     assert result.status == 'ok', wire(result)
-    case = await call(app, 'orders.dispute_get', {'case_id': result.data['case_id']},
-                      key=buyer_key, subject=buyer)
+    case = await call(
+        app, 'orders.dispute_get', {'case_id': result.data['case_id']}, key=buyer_key, subject=buyer
+    )
     assert case.status == 'ok' and case.data['case']['reason'] == 'quality', wire(case)
 
 
 @pytest.mark.asyncio
 async def test_resolve_shortcut_requires_a_real_signed_quorum_decision(installed):
-    app, _root, members, _sk, _seller, buyer_key, buyer, _order, opened = await configured(installed)
+    app, _root, members, _sk, _seller, buyer_key, buyer, _order, opened = await configured(
+        installed
+    )
     case_id = opened['case_id']
     base = await reasoned_base(app, members[opened['panel'][0]], opened['panel'][0], case_id)
     for uid in opened['panel'][:2]:
@@ -96,10 +118,14 @@ async def test_resolve_shortcut_requires_a_real_signed_quorum_decision(installed
     assert proposal is not None
     args = {'case_id': case_id, 'decision_id': proposal['id']}
     client = ExecutorClient(app, buyer_key, buyer)
-    result = await command(client, 'orders', 'resolve', canonical(args).decode(), '--request-id', 'cli-execute')
+    result = await command(
+        client, 'orders', 'resolve', canonical(args).decode(), '--request-id', 'cli-execute'
+    )
     assert result.status == 'ok', wire(result)
     before = await business_snapshot(app)
-    replay = await command(client, 'orders', 'resolve', canonical(args).decode(), '--request-id', 'cli-execute')
+    replay = await command(
+        client, 'orders', 'resolve', canonical(args).decode(), '--request-id', 'cli-execute'
+    )
     assert replay.status == 'ok' and replay.replayed and replay.data == result.data
     assert await business_snapshot(app) == before
 
@@ -117,11 +143,15 @@ async def test_contract_shortcut_reads_the_existing_locked_contract(installed):
     assert result.data['order']['order_digest'] == order['order_digest']
     async with app.metadata.transaction(write=False) as tx:
         body, committed_digest = tx.one(
-            'SELECT body,digest FROM order_contracts WHERE order_id=?', (order['id'],))
+            'SELECT body,digest FROM order_contracts WHERE order_id=?', (order['id'],)
+        )
     locked = loads(body)
     assert digest(locked) == committed_digest == order['order_digest']
-    assert wire(result.data['contract']) == {key: value for key, value in locked.items()
-                                           if key not in {'buyer_principal', 'handle_snapshot'}}
+    assert wire(result.data['contract']) == {
+        key: value
+        for key, value in locked.items()
+        if key not in {'buyer_principal', 'handle_snapshot'}
+    }
     assert await business_snapshot(app) == before
 
 
@@ -130,25 +160,38 @@ async def test_package_shortcut_binds_actual_id_and_preserves_seller_privacy(ins
     app, root = installed
     seller_key, seller, buyer_key, buyer, _listing, package = await market(app, root)
     before = await business_snapshot(app)
-    result = await command(ExecutorClient(app, seller_key, seller), 'store', 'package', package['id'])
+    result = await command(
+        ExecutorClient(app, seller_key, seller), 'store', 'package', package['id']
+    )
     assert result.status == 'ok', wire(result)
     assert result.data['package']['id'] == package['id']
     assert result.data['package']['digest'] == package['digest']
-    outsider = await command(ExecutorClient(app, buyer_key, buyer), 'store', 'package', package['id'])
+    outsider = await command(
+        ExecutorClient(app, buyer_key, buyer), 'store', 'package', package['id']
+    )
     assert outsider.status == 'error' and outsider.error.code == 'package_not_found', wire(outsider)
     assert await business_snapshot(app) == before
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('version', [1, 2, 3])
-async def test_explicit_buy_version_preserves_old_inputs_and_settlement_semantics(installed, version):
+async def test_explicit_buy_version_preserves_old_inputs_and_settlement_semantics(
+    installed, version
+):
     app, root = installed
     _seller_key, _seller, buyer_key, buyer, listing, package = await market(app, root)
     params = _intent(listing)
     if version == 2:
         params['package_digest'] = package['digest']
-    argv = ('orders', 'buy', canonical(params).decode(), '--contract-version', str(version),
-            '--request-id', 'cli-versioned-buy')
+    argv = (
+        'orders',
+        'buy',
+        canonical(params).decode(),
+        '--contract-version',
+        str(version),
+        '--request-id',
+        'cli-versioned-buy',
+    )
     client = ExecutorClient(app, buyer_key, buyer)
     result = await command(client, *argv)
     assert result.status == 'ok', wire(result)
@@ -166,23 +209,45 @@ async def test_redeem_defaults_to_native_order_and_preserves_explicit_legacy_ver
     app, root = installed
     key, owner, quote, _fields = await setup_offer(app, root)
     client = ExecutorClient(app, key, owner)
-    native = await command(client, 'money', 'redeem', canonical(quote).decode(),
-                           '--request-id', 'cli-native')
+    native = await command(
+        client, 'money', 'redeem', canonical(quote).decode(), '--request-id', 'cli-native'
+    )
     assert native.status == 'ok' and native.data['order']['contract_version'] == 5, wire(native)
-    replay = await command(client, 'money', 'redeem', canonical(quote).decode(),
-                           '--request-id', 'cli-native')
+    replay = await command(
+        client, 'money', 'redeem', canonical(quote).decode(), '--request-id', 'cli-native'
+    )
     assert replay.replayed and replay.data == native.data
-    pending = await command(client, 'money', 'redeem', canonical({**quote, 'defer': True}).decode(),
-                            '--contract-version', '2', '--request-id', 'cli-pending')
+    pending = await command(
+        client,
+        'money',
+        'redeem',
+        canonical({**quote, 'defer': True}).decode(),
+        '--contract-version',
+        '2',
+        '--request-id',
+        'cli-pending',
+    )
     assert pending.status == 'ok' and pending.data['purchase']['state'] == 'pending', wire(pending)
-    immediate = await command(client, 'money', 'redeem', canonical(quote).decode(),
-                              '--contract-version', '1', '--request-id', 'cli-immediate')
-    assert immediate.status == 'ok' and immediate.data['purchase']['state'] == 'settled', wire(immediate)
+    immediate = await command(
+        client,
+        'money',
+        'redeem',
+        canonical(quote).decode(),
+        '--contract-version',
+        '1',
+        '--request-id',
+        'cli-immediate',
+    )
+    assert immediate.status == 'ok' and immediate.data['purchase']['state'] == 'settled', wire(
+        immediate
+    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('version', ['0', '-1', str(2**31)])
-async def test_out_of_range_version_is_rejected_before_client_or_business_writes(installed, version):
+async def test_out_of_range_version_is_rejected_before_client_or_business_writes(
+    installed, version
+):
     app, _root = installed
     before = await business_snapshot(app)
     # No client at all: the local option guard must precede any client call.
@@ -191,11 +256,11 @@ async def test_out_of_range_version_is_rejected_before_client_or_business_writes
     assert await business_snapshot(app) == before
 
 
-
 @pytest.mark.asyncio
 async def test_redeem_cli_rejects_unimported_offer_and_changed_pinned_intent(installed):
-    from msg.admin.offer_import import apply_import, preview_import
     from test_offer_import import legacy
+
+    from msg.admin.offer_import import apply_import, preview_import
 
     app, root = installed
     key, owner, quote = await legacy(app, root)
@@ -209,7 +274,9 @@ async def test_redeem_cli_rejects_unimported_offer_and_changed_pinned_intent(ins
     await apply_import(app, root, plan, operator='test')
     before = await business_snapshot(app)
     with pytest.raises(Failure, match='^offer_intent_changed$'):
-        await command(client, 'money', 'redeem', canonical({**quote, 'total_price_minor': 9}).decode())
+        await command(
+            client, 'money', 'redeem', canonical({**quote, 'total_price_minor': 9}).decode()
+        )
     assert await business_snapshot(app) == before
     result = await command(client, 'money', 'redeem', canonical(quote).decode())
     assert result.status == 'ok', wire(result)

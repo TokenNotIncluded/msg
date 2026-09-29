@@ -1,0 +1,103 @@
+name: Deployment rehearsal
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: deployment-rehearsal-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  installed-server:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install isolated rehearsal prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq postgresql-16 postgresql-client-16 openssh-server age git-lfs bubblewrap apparmor-profiles
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          sudo install -d -m 0755 /run/sshd
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+      - name: Build and install the exact wheel with locked server dependencies
+        run: |
+          mkdir -p artifacts
+          uv run --locked --extra dev python -m build
+          uv run --locked --extra dev python scripts/check_package_artifacts.py dist
+          uv export --locked --extra server --no-dev --no-emit-project --format requirements-txt --output-file artifacts/server-dependencies.lock
+          python -m venv "$RUNNER_TEMP/msg-installed-server"
+          server_python="$RUNNER_TEMP/msg-installed-server/bin/python"
+          uv pip sync --python "$server_python" --require-hashes artifacts/server-dependencies.lock
+          uv pip install --python "$server_python" --no-deps dist/*.whl
+          uv pip check --python "$server_python"
+          "$server_python" -m pip list --format=json > artifacts/server-packages.json
+          sha256sum dist/* artifacts/server-dependencies.lock > artifacts/release-sha256.txt
+          echo "MSG_REHEARSAL_PYTHON=$server_python" >> "$GITHUB_ENV"
+      - name: Install the same wheel as a locked client-only distribution
+        run: |
+          uv export --locked --no-dev --no-emit-project --format requirements-txt --output-file artifacts/client-dependencies.lock > /dev/null
+          python -m venv "$RUNNER_TEMP/msg-installed-client"
+          client_python="$RUNNER_TEMP/msg-installed-client/bin/python"
+          uv pip sync --python "$client_python" --require-hashes artifacts/client-dependencies.lock
+          uv pip install --python "$client_python" --no-deps dist/*.whl
+          uv pip check --python "$client_python"
+          "$client_python" -m pip list --format=json > artifacts/client-packages.json
+          sha256sum artifacts/client-dependencies.lock >> artifacts/release-sha256.txt
+          mkdir -p "$RUNNER_TEMP/msg-rehearsal-outside"
+          cd "$RUNNER_TEMP/msg-rehearsal-outside"
+          "$RUNNER_TEMP/msg-installed-client/bin/msg" --help > "$GITHUB_WORKSPACE/artifacts/client-help.txt"
+          "$client_python" -I "$GITHUB_WORKSPACE/scripts/check_client_install.py" --minimal-install > "$GITHUB_WORKSPACE/artifacts/client-install.json"
+      - name: Rehearse startup, restart, signed clients, read-only diagnostics and worker
+        run: |
+          mkdir -p "$RUNNER_TEMP/msg-rehearsal-outside"
+          cd "$RUNNER_TEMP/msg-rehearsal-outside"
+          "$MSG_REHEARSAL_PYTHON" -I "$GITHUB_WORKSPACE/scripts/check_installed_server.py" > "$GITHUB_WORKSPACE/artifacts/installed-server.json"
+      - name: Exercise real isolated OpenSSH and Git revocation boundaries
+        run: |
+          cd "$RUNNER_TEMP/msg-rehearsal-outside"
+          "$MSG_REHEARSAL_PYTHON" -I "$GITHUB_WORKSPACE/scripts/check_isolated_sshd.py" > "$GITHUB_WORKSPACE/artifacts/isolated-sshd.json"
+      - name: Run the installed official isolated selftest without development dependencies
+        run: |
+          cd "$RUNNER_TEMP/msg-rehearsal-outside"
+          "$MSG_REHEARSAL_PYTHON" -I -m msg.daemon selftest > "$GITHUB_WORKSPACE/artifacts/installed-selftest.json"
+          "$MSG_REHEARSAL_PYTHON" -I - <<'PY'
+          import json, os
+          from pathlib import Path
+          report = json.loads((Path(os.environ['GITHUB_WORKSPACE']) / 'artifacts/installed-selftest.json').read_text())
+          assert report['ok'] is True and report['cleaned_up'] is True
+          assert report['checks']['market_e2e'] is True
+          PY
+      - name: Record the exact source and interpreter
+        if: always()
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, platform, subprocess
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          Path('artifacts/source.json').write_text(json.dumps({
+              'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
+              'run_id': os.environ['GITHUB_RUN_ID'], 'python': platform.python_version(),
+              'scope': 'disposable installed wheel; no production access',
+          }, indent=2) + '\n')
+          PY
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: deployment-rehearsal
+          path: |
+            artifacts/
+            dist/
+          if-no-files-found: error

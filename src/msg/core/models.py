@@ -1,14 +1,22 @@
 from __future__ import annotations
 
+from collections.abc import (
+    AsyncIterator as AsyncIterator,
+    Awaitable as Awaitable,
+    Callable as Callable,
+    Mapping as Mapping,
+)
+from contextlib import AbstractAsyncContextManager as AbstractAsyncContextManager
+from dataclasses import field as field
+from datetime import datetime as datetime
+from pathlib import Path as Path
+from types import MappingProxyType as MappingProxyType
+from typing import TYPE_CHECKING, Literal as Literal, NewType as NewType, Protocol as Protocol
 
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from contextlib import AbstractAsyncContextManager
-from dataclasses import field
 from .codec import record as dataclass
-from datetime import datetime
-from pathlib import Path
-from types import MappingProxyType
-from typing import Literal, NewType, Protocol
+
+if TYPE_CHECKING:
+    from .contracts import MetadataSession
 
 
 ResourceId = NewType('ResourceId', str)
@@ -16,10 +24,7 @@ RevisionId = NewType('RevisionId', str)
 RequestId = NewType('RequestId', str)
 type ID = str
 type Digest = str
-type Json = (
-    None | bool | int | float | str | tuple[Json, ...]
-    | Mapping[str, Json]
-)
+type Json = None | bool | int | float | str | tuple[Json, ...] | Mapping[str, Json]
 type JsonMap = Mapping[str, Json]
 type Entry = Literal['network', 'local_admin', 'worker']
 type ResourceState = Literal['active', 'archived', 'purged']
@@ -88,17 +93,22 @@ class Revision:
     manifest_digest: Digest
     signature: Signature | None = None
     change_note: str | None = field(default=None, metadata={'omit_if_none': True})
-    source_kind: Literal['release','user','operation'] | None = field(
-        default=None, metadata={'omit_if_none': True})
+    source_kind: Literal['release', 'user', 'operation'] | None = field(
+        default=None, metadata={'omit_if_none': True}
+    )
     source_version: int | None = field(default=None, metadata={'omit_if_none': True})
     source_digest: Digest | None = field(default=None, metadata={'omit_if_none': True})
-    signature_source: Literal['custodial'] | None = field(default=None,metadata={'omit_if_none':True})
+    signature_source: Literal['custodial'] | None = field(
+        default=None, metadata={'omit_if_none': True}
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Page[T]:
     items: tuple[T, ...]
     next_cursor: str | None = None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Subject:
     resource_id: ResourceId
@@ -238,6 +248,8 @@ class Principal:
     method: Literal['anonymous', 'signature', 'token', 'ssh', 'local']
     certificates: tuple[ResourceId, ...]
     ceiling: tuple[CapabilityGrant, ...]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OperationRequest:
     request_id: RequestId
@@ -310,8 +322,19 @@ class AccessRequirement:
     resource_id: ResourceId
     operation: str
     check: Literal[
-        'read', 'write', 'list', 'traverse', 'create', 'remove',
-        'chmod', 'chgrp', 'chown', 'manage', 'certgate', 'tool_use', 'purge'
+        'read',
+        'write',
+        'list',
+        'traverse',
+        'create',
+        'remove',
+        'chmod',
+        'chgrp',
+        'chown',
+        'manage',
+        'certgate',
+        'tool_use',
+        'purge',
     ]
 
 
@@ -349,12 +372,10 @@ class OperationSpec:
     entries: frozenset[Entry]
     require_signature: bool
     requirements: Callable[
-        [OperationRequest, MetadataSession],
-        Awaitable[tuple[AccessRequirement, ...]]
+        [OperationRequest, MetadataSession], Awaitable[tuple[AccessRequirement, ...]]
     ]
     handler: Callable[
-        [ExecutionContext, OperationRequest, MetadataSession],
-        Awaitable[HandlerOutput]
+        [ExecutionContext, OperationRequest, MetadataSession], Awaitable[HandlerOutput]
     ]
     requires_rules: tuple[str, ...] = ('msg.protocol',)
 
@@ -425,6 +446,8 @@ class EffectJob:
     next_attempt_at: datetime
     lease_until: datetime | None
     result: ResourceRef | None = None
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class FieldSpec:
     name: str
@@ -432,9 +455,7 @@ class FieldSpec:
     required: bool
     default_json: bytes | None = None  # None=无默认，b'null'=默认null
     choices: tuple[str, ...] = ()
-    constraints: JsonMap = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    constraints: JsonMap = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

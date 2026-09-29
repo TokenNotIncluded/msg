@@ -26,6 +26,14 @@ service_keys = "/var/lib/msgd/service"
 
 服务端必须安装 `server` extra；裸 wheel 只含客户端依赖，不能用于 `msgd`。固定通过验收的源码提交、wheel SHA-256、Python 精确版本及服务依赖锁，不能在目标机重新解析一套未测依赖。用应用独立的 Python 3.15 和 venv，保留系统 Python、旧服务 venv 和数据用于回滚。若采用预发行 Python，记录完整版本并在同一版本验收。
 
+优先使用已通过最终 CI 的 `deployment-rehearsal` 产物：`dist/` 下的 wheel/sdist、
+`artifacts/server-dependencies.lock`、`client-dependencies.lock`、
+`release-sha256.txt` 与 `source.json`。这两份依赖锁来自同一 `uv.lock`，不含项目本身；
+分别在全新 server/client venv 中执行 `uv pip sync --require-hashes`，核验 wheel 摘要后
+执行 `uv pip install --no-deps` 安装该 wheel，再执行 `uv pip check`。不要用裸 wheel
+触发未测依赖重新解析，也不要把 client-only venv 用于服务器。产物范围及现场闸门见
+[发布验收入口](RELEASE_ACCEPTANCE.md)。
+
 例如，先在与目标平台和解释器一致的构建/验收环境中，用实际 wheel 路径生成并测试锁文件（示例文件名须替换）：
 
 ```bash
@@ -33,7 +41,7 @@ service_keys = "/var/lib/msgd/service"
 sudo install -d -m 0755 /opt/msgd
 sudo /absolute/path/to/verified/python3.15 -m venv /opt/msgd/venv
 # 下面的锁生成只在验收环境运行；目录需由构建操作者可写。
-printf '%s\n' 'msg-lmm-best[server] @ file:///protected/staged/msg_lmm_best-1.0.0a1-py3-none-any.whl' > /protected/staged/server.in
+printf '%s\n' 'msgctl[server] @ file:///protected/staged/msgctl-0.1.0a1-py3-none-any.whl' > /protected/staged/server.in
 uv pip compile --python /opt/msgd/venv/bin/python --generate-hashes \
   /protected/staged/server.in --output-file /protected/staged/server.lock
 sudo uv pip sync --python /opt/msgd/venv/bin/python --require-hashes /protected/staged/server.lock

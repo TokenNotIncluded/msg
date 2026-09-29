@@ -1,20 +1,21 @@
 """The runner owns local output; only the worker may publish a ResourceRef."""
+
 from __future__ import annotations
 
 import ast
-from dataclasses import FrozenInstanceError, fields
 import inspect
+from dataclasses import FrozenInstanceError, fields
 from pathlib import Path
 from typing import get_type_hints
 
 import pytest
+from test_authorization import approve, scoped
+from test_service import call, register
 
 from msg.core.errors import Failure
 from msg.core.models import JsonMap, NetworkPolicy, ResourceRef, ToolSpec
 from msg.workers.effects import EffectWorker
 from msg.workers.sandbox import BubblewrapRunner
-from test_service import call, register
-from test_authorization import approve, scoped
 
 
 def test_tool_result_has_one_neutral_owner_and_compatible_export(tmp_path):
@@ -41,8 +42,13 @@ def test_actual_worker_dependency_is_the_declared_callable_port():
 def test_default_runner_and_port_have_the_same_input_and_local_output_types():
     from msg.core.tool_execution import ToolResult, ToolRunner
 
-    expected = {'tool': ToolSpec, 'arguments': JsonMap,
-                'policies': tuple[NetworkPolicy, ...], 'directory': Path, 'return': ToolResult}
+    expected = {
+        'tool': ToolSpec,
+        'arguments': JsonMap,
+        'policies': tuple[NetworkPolicy, ...],
+        'directory': Path,
+        'return': ToolResult,
+    }
     assert get_type_hints(ToolRunner.__call__) == expected
     assert get_type_hints(BubblewrapRunner.__call__) == expected
     assert inspect.iscoroutinefunction(BubblewrapRunner.__call__)
@@ -69,8 +75,12 @@ def test_sandbox_does_not_import_its_worker_or_application_composition():
         elif isinstance(node, ast.Import):
             dependencies.extend(alias.name for alias in node.names)
     assert 'msg.core.tool_execution' in dependencies
-    assert not any(name == 'msg.workers.effects' or name.startswith('msg.workers.effects.')
-                   or name == 'msg.application' for name in dependencies)
+    assert not any(
+        name == 'msg.workers.effects'
+        or name.startswith('msg.workers.effects.')
+        or name == 'msg.application'
+        for name in dependencies
+    )
 
 
 async def test_default_runner_still_refuses_missing_mandatory_sandbox(monkeypatch, tmp_path):
@@ -91,14 +101,20 @@ async def test_injected_port_cannot_publish_a_resource_itself(installed, invalid
     cap = scoped(app, 'tool.use', 'tool_dns', app.registry.capability('tool.use').operations)
     certificate = await approve(app, root, subject, key, (cap,))
     certs = (certificate.resource_id,)
-    request = await call(app, 'tool.run',
+    request = await call(
+        app,
+        'tool.run',
         {'id': '/tools/dns', 'arguments': {'name': 'example.org', 'type': 'A'}},
-        key=key, subject=subject, certs=certs)
+        key=key,
+        subject=subject,
+        certs=certs,
+    )
     assert request.status == 'accepted'
     invocations = []
 
-    async def runner(tool: ToolSpec, arguments: JsonMap,
-                     policies: tuple[NetworkPolicy, ...], directory: Path) -> ToolResult:
+    async def runner(
+        tool: ToolSpec, arguments: JsonMap, policies: tuple[NetworkPolicy, ...], directory: Path
+    ) -> ToolResult:
         assert tool.executor_key == 'dns'
         assert arguments['name'] == 'example.org'
         assert isinstance(policies, tuple) and policies

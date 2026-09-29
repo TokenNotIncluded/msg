@@ -1,8 +1,81 @@
 from __future__ import annotations
 
-from .models import *
+from typing import Literal as Literal
+
+from .models import (
+    ID as ID,
+    AbstractAsyncContextManager as AbstractAsyncContextManager,
+    AccessRequirement as AccessRequirement,
+    AsyncIterator as AsyncIterator,
+    AuditEvent as AuditEvent,
+    Awaitable as Awaitable,
+    BlobRef as BlobRef,
+    BootstrapManifest as BootstrapManifest,
+    ByteRange as ByteRange,
+    Callable as Callable,
+    CapabilityGrant as CapabilityGrant,
+    CapabilitySpec as CapabilitySpec,
+    Certificate as Certificate,
+    CertificateRequest as CertificateRequest,
+    CertificateRequestState as CertificateRequestState,
+    ClientConfig as ClientConfig,
+    Credential as Credential,
+    Digest as Digest,
+    EffectJob as EffectJob,
+    EmailSettings as EmailSettings,
+    Entry as Entry,
+    Event as Event,
+    ExecutionContext as ExecutionContext,
+    FieldSpec as FieldSpec,
+    HandlerOutput as HandlerOutput,
+    IssuancePolicy as IssuancePolicy,
+    Json as Json,
+    JsonMap as JsonMap,
+    MailConfig as MailConfig,
+    Mapping as Mapping,
+    MappingProxyType as MappingProxyType,
+    Membership as Membership,
+    NetworkPolicy as NetworkPolicy,
+    NewType as NewType,
+    OperationError as OperationError,
+    OperationFailure as OperationFailure,
+    OperationRequest as OperationRequest,
+    OperationResult as OperationResult,
+    OperationSpec as OperationSpec,
+    Organization as Organization,
+    Page as Page,
+    Path as Path,
+    PluginManifest as PluginManifest,
+    Principal as Principal,
+    Protocol as Protocol,
+    Relation as Relation,
+    RequestId as RequestId,
+    RequestProof as RequestProof,
+    Resource as Resource,
+    ResourceId as ResourceId,
+    ResourceRef as ResourceRef,
+    ResourceState as ResourceState,
+    ResourceTypeSpec as ResourceTypeSpec,
+    Revision as Revision,
+    RevisionId as RevisionId,
+    Scope as Scope,
+    ServerConfig as ServerConfig,
+    Signature as Signature,
+    SignatureProof as SignatureProof,
+    Subject as Subject,
+    TemplateSpec as TemplateSpec,
+    TokenProof as TokenProof,
+    ToolSpec as ToolSpec,
+    TransferChunk as TransferChunk,
+    TransferSession as TransferSession,
+    TransportLimits as TransportLimits,
+    dataclass as dataclass,
+    datetime as datetime,
+    field as field,
+)
 from .query import QuerySession
 from .tool_execution import ToolRunner
+
 
 class MetadataSession(QuerySession, Protocol):
     def on_rollback(self, effect: Callable[[], Awaitable[None]]) -> None: ...
@@ -15,22 +88,16 @@ class MetadataSession(QuerySession, Protocol):
         self, parent: ResourceId, cursor: str | None, limit: int
     ) -> Page[Resource]: ...
     async def revision(self, ref: ResourceRef) -> Revision: ...
-    async def history(
-        self, id: ResourceId, cursor: str | None, limit: int
-    ) -> Page[Revision]: ...
+    async def history(self, id: ResourceId, cursor: str | None, limit: int) -> Page[Revision]: ...
     async def insert(self, resource: Resource) -> None: ...
-    async def replace(
-        self, resource: Resource, expected_generation: int
-    ) -> None: ...
+    async def replace(self, resource: Resource, expected_generation: int) -> None: ...
     async def append_revision(self, revision: Revision) -> None: ...
     async def subject(self, id: ResourceId) -> Subject: ...
     async def organization(self, id: ResourceId) -> Organization: ...
     async def credential(self, id: ID) -> Credential: ...
     async def certificate(self, id: ResourceId) -> Certificate: ...
     async def certificate_revoked(self, id: ResourceId) -> bool: ...
-    async def memberships(
-        self, subject: ResourceId
-    ) -> tuple[Membership, ...]: ...
+    async def memberships(self, subject: ResourceId) -> tuple[Membership, ...]: ...
     async def request_result(
         self, subject: ResourceId, id: RequestId, digest: Digest
     ) -> OperationResult | None: ...
@@ -38,37 +105,25 @@ class MetadataSession(QuerySession, Protocol):
         self, subject: ResourceId, digest: Digest, result: OperationResult
     ) -> None: ...
     async def update_identity(
-        self, record: Subject | Organization | Membership | EmailSettings,
-        expected_generation: int
+        self, record: Subject | Organization | Membership | EmailSettings, expected_generation: int
     ) -> None: ...
-    async def save_credential(
-        self, credential: Credential, expected_auth_version: int
-    ) -> None: ...
+    async def save_credential(self, credential: Credential, expected_auth_version: int) -> None: ...
     async def csr(self, id: ResourceId) -> CertificateRequest: ...
-    async def csr_state(
-        self, id: ResourceId
-    ) -> CertificateRequestState: ...
-    async def save_csr(
-        self, request: CertificateRequest
-    ) -> None: ...
+    async def csr_state(self, id: ResourceId) -> CertificateRequestState: ...
+    async def save_csr(self, request: CertificateRequest) -> None: ...
     async def transition_csr(
         self, state: CertificateRequestState, expected_generation: int
     ) -> None: ...
-    async def revoke_certificate(
-        self, id: ResourceId, event: AuditEvent
-    ) -> None: ...
+    async def revoke_certificate(self, id: ResourceId, event: AuditEvent) -> None: ...
     async def register_certificate(
-        self, certificate: Certificate, csr_id: ResourceId,
-        expected_generation: int
+        self, certificate: Certificate, csr_id: ResourceId, expected_generation: int
     ) -> None: ...
     async def transfer(self, id: ID) -> TransferSession: ...
     async def save_transfer(
         self, session: TransferSession, expected_generation: int | None
     ) -> None: ...
     async def put_chunk(self, chunk: TransferChunk) -> None: ...
-    async def missing_ranges(
-        self, id: ID, cursor: str | None, limit: int
-    ) -> Page[ByteRange]: ...
+    async def missing_ranges(self, id: ID, cursor: str | None, limit: int) -> Page[ByteRange]: ...
     async def append_event(self, event: Event) -> None: ...
     async def append_audit(self, event: AuditEvent) -> None: ...
     async def enqueue(self, job: EffectJob) -> None: ...
@@ -77,34 +132,31 @@ class MetadataSession(QuerySession, Protocol):
 
 
 class MetadataStore(Protocol):
-    def transaction(
-        self, *, write: bool
-    ) -> AbstractAsyncContextManager[MetadataSession]: ...
+    def transaction(self, *, write: bool) -> AbstractAsyncContextManager[MetadataSession]: ...
 
 
 class ContentStore(Protocol):
     async def put(
-        self, chunks: AsyncIterator[bytes], media_type: str,
-        expected_digest: Digest | None = None
+        self, chunks: AsyncIterator[bytes], media_type: str, expected_digest: Digest | None = None
     ) -> BlobRef: ...
-    def read(
-        self, blob: BlobRef, byte_range: ByteRange | None = None
-    ) -> AsyncIterator[bytes]: ...
+    def read(self, blob: BlobRef, byte_range: ByteRange | None = None) -> AsyncIterator[bytes]: ...
     async def pin(self, blob: BlobRef, lease_id: ID) -> None: ...
     async def unpin(self, blob: BlobRef, lease_id: ID) -> None: ...
 
 
 class Authenticator(Protocol):
     async def authenticate(
-        self, request: OperationRequest, session: MetadataSession,
-        *, entry: Entry
+        self, request: OperationRequest, session: MetadataSession, *, entry: Entry
     ) -> Principal: ...
 
 
 class Authorizer(Protocol):
     async def require(
-        self, context: ExecutionContext, request: OperationRequest,
-        checks: tuple[AccessRequirement, ...], session: MetadataSession
+        self,
+        context: ExecutionContext,
+        request: OperationRequest,
+        checks: tuple[AccessRequirement, ...],
+        session: MetadataSession,
     ) -> tuple[ResourceRef, ...]: ...
 
 

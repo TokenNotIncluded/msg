@@ -1,4 +1,5 @@
 """Work-list deadlines are enforced before scanning and before projecting rows."""
+
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -23,12 +24,16 @@ async def test_expired_work_list_budget_never_projects_content(installed, monkey
     projection = AsyncMock(side_effect=AssertionError('expired request projected work content'))
     async with readonly_evidence(app, monkeypatch):
         with monkeypatch.context() as patch:
-            patch.setattr(collaboration_resources, 'time',
-                          SimpleNamespace(monotonic=lambda: next(readings, float('inf'))))
+            patch.setattr(
+                collaboration_resources,
+                'time',
+                SimpleNamespace(monotonic=lambda: next(readings, float('inf'))),
+            )
             patch.setattr(collaboration_resources, '_project', projection)
             async with observe_batches(app, monkeypatch) as (batches, violations):
-                result = await call(app, 'communication.' + kind + '_list', {'limit': 1},
-                                    key=key, subject=subject)
+                result = await call(
+                    app, 'communication.' + kind + '_list', {'limit': 1}, key=key, subject=subject
+                )
                 assert not violations, repr(violations)
                 assert result.status == 'error' and result.error.code == 'query_cost_exceeded'
                 assert len(batches) == (0 if stage == 'before_query' else 1)

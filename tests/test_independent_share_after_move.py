@@ -1,4 +1,5 @@
 """A live independent grant survives stacked changes to another source."""
+
 import pytest
 from test_authorization_sources import grant, private_post
 from test_service import register
@@ -14,7 +15,9 @@ async def test_existing_direct_share_survives_move_leave_and_parent_revocation(i
     middle = await register(app, 'stacked-middle')
     independent = await register(app, 'stacked-independent')
     derived_only = await register(app, 'stacked-derived-only')
-    group = ok(await invoke(app, owner, 'group.create', {'name': 'stacked-sources'})).resources[0].id
+    group = (
+        ok(await invoke(app, owner, 'group.create', {'name': 'stacked-sources'})).resources[0].id
+    )
     ok(await invoke(app, owner, 'group.invite', {'group': group, 'subject': middle[1]}))
     ok(await invoke(app, middle, 'group.join', {'group': group}))
     rid, revision = await private_post(app, owner)
@@ -39,15 +42,32 @@ async def test_existing_direct_share_survives_move_leave_and_parent_revocation(i
 
     await check(independent, True)
     await check(derived_only, True)
-    destination = ok(await invoke(app, owner, 'content.topic_create',
-                                 {'parent': '/main', 'name': 'private-destination'}))
+    destination = ok(
+        await invoke(
+            app, owner, 'content.topic_create', {'parent': '/main', 'name': 'private-destination'}
+        )
+    )
     directory = destination.resources[0].id
-    ok(await invoke(app, owner, 'content.chmod', {'id': directory, 'mode': '0700'},
-                    expected=((directory, destination.data['generation']),)))
+    ok(
+        await invoke(
+            app,
+            owner,
+            'content.chmod',
+            {'id': directory, 'mode': '0700'},
+            expected=((directory, destination.data['generation']),),
+        )
+    )
     async with app.metadata.transaction(write=False) as tx:
         generation = (await tx.resource(rid)).generation
-    ok(await invoke(app, owner, 'content.move', {'id': rid, 'parent': directory},
-                    expected=((rid, generation),)))
+    ok(
+        await invoke(
+            app,
+            owner,
+            'content.move',
+            {'id': rid, 'parent': directory},
+            expected=((rid, generation),),
+        )
+    )
     await check(independent, True)
     await check(derived_only, True)
 

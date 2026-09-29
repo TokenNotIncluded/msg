@@ -1,14 +1,21 @@
 """URL and compression boundaries; common wire contracts live in core.packet."""
+
 from __future__ import annotations
+
 import zlib
-from msg.core.codec import unb64
-from msg.core.errors import require, Failure
-from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
-from msg.core.models import OperationRequest, TokenProof
+
+from msg.core.codec import unb64 as unb64
+from msg.core.errors import Failure as Failure, require as require
+from msg.core.models import OperationRequest as OperationRequest, TokenProof as TokenProof
 from msg.core.packet import (
-    REQUEST_SCHEMA, RESULT_SCHEMA, decode_packet, decode_result, safe_error_code,
+    REQUEST_SCHEMA as REQUEST_SCHEMA,
+    RESULT_SCHEMA as RESULT_SCHEMA,
+    decode_packet as decode_packet,
+    decode_result as decode_result,
+    safe_error_code as safe_error_code,
 )
-from msg.transports.url_safety import contains_secret_fields
+from msg.core.requests import SECRET_DELIVERY_MIN_VERSION as SECRET_DELIVERY_MIN_VERSION
+from msg.transports.url_safety import contains_secret_fields as contains_secret_fields
 
 
 def require_url_safe_packet(packet: OperationRequest) -> None:
@@ -24,19 +31,19 @@ def require_url_safe_packet(packet: OperationRequest) -> None:
     require(not contains_secret_fields(packet.arguments), 'secure_channel_required')
 
 
-def gunzip(raw,limit):
-    inflater=zlib.decompressobj(wbits=31)
+def gunzip(raw, limit):
+    inflater = zlib.decompressobj(wbits=31)
     try:
-        result=inflater.decompress(raw,limit+1)
-        require(len(result)<=limit and not inflater.unconsumed_tail,'request_too_large')
-        result+=inflater.flush(limit+1-len(result))
-        require(len(result)<=limit and inflater.eof and not inflater.unused_data,'invalid_gzip')
+        result = inflater.decompress(raw, limit + 1)
+        require(len(result) <= limit and not inflater.unconsumed_tail, 'request_too_large')
+        result += inflater.flush(limit + 1 - len(result))
+        require(len(result) <= limit and inflater.eof and not inflater.unused_data, 'invalid_gzip')
         return result
     except zlib.error as exc:
         raise Failure('invalid_gzip') from exc
 
 
-def path_packet(encoded,encoding,limit):
-    raw=unb64(encoded,limit=limit)
-    require(encoding in {'j','gz'},'unknown_encoding')
-    return decode_packet(gunzip(raw,limit) if encoding=='gz' else raw,limit)
+def path_packet(encoded, encoding, limit):
+    raw = unb64(encoded, limit=limit)
+    require(encoding in {'j', 'gz'}, 'unknown_encoding')
+    return decode_packet(gunzip(raw, limit) if encoding == 'gz' else raw, limit)

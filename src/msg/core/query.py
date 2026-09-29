@@ -10,6 +10,7 @@ PostgreSQL lock/deadlock timeouts are retryable server_busy; adapter-specific
 programming errors still abort the transaction. No commit or connection port
 is exposed. Driver and database protections remain the authority for SQL.
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator, Mapping, Sequence
@@ -21,8 +22,14 @@ type SqlValue = None | bool | int | float | str | bytes | Decimal
 type SqlRow = tuple[SqlValue, ...]
 type SqlParameters = Sequence[SqlValue]
 type SettingValue = (
-    None | bool | int | float | str | list[SettingValue]
-    | tuple[SettingValue, ...] | Mapping[str, SettingValue]
+    None
+    | bool
+    | int
+    | float
+    | str
+    | list[SettingValue]
+    | tuple[SettingValue, ...]
+    | Mapping[str, SettingValue]
 )
 
 
@@ -36,8 +43,9 @@ class QueryResult(Protocol):
 
 @runtime_checkable
 class QuerySession(Protocol):
-    def execute(self, sql: str, parameters: SqlParameters = (), *,
-                write: bool = False) -> QueryResult: ...
+    def execute(
+        self, sql: str, parameters: SqlParameters = (), *, write: bool = False
+    ) -> QueryResult: ...
     def one(self, sql: str, parameters: SqlParameters = ()) -> SqlRow | None: ...
     def rows(self, sql: str, parameters: SqlParameters = ()) -> list[SqlRow]: ...
     def setting(self, key: str, default: SettingValue = None) -> SettingValue: ...

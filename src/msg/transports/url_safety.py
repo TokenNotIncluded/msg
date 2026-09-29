@@ -5,6 +5,7 @@ business arguments. Ordinary data (including percent literals and quoted /)
 still reaches its original parser. Only explicit credential field names and
 legacy credential slots are classified; arbitrary text is not a secret scanner.
 """
+
 from __future__ import annotations
 
 import re
@@ -15,8 +16,17 @@ from msg.core.errors import Failure, require
 
 MAX_DECODE_LAYERS = 8
 _SECRET_NAMES = frozenset({
-    'token', 'accesstoken', 'refreshtoken', 'recoverysecret', 'newrecoverysecret',
-    'privatekey', 'secret', 'clientsecret', 'bootstrapclaim', 'password', 'apikey',
+    'token',
+    'accesstoken',
+    'refreshtoken',
+    'recoverysecret',
+    'newrecoverysecret',
+    'privatekey',
+    'secret',
+    'clientsecret',
+    'bootstrapclaim',
+    'password',
+    'apikey',
     'authorization',
 })
 _BAD_ESCAPE = re.compile(rb'%(?![0-9a-fA-F]{2})')
@@ -82,20 +92,24 @@ def require_safe_request_target(raw_path: bytes, query: bytes = b'', *, maximum:
         require(b'\\' not in layer and b'\x00' not in layer, 'invalid_path')
         segments = layer.split(b'/')
         if len(segments) >= 5 and segments[:3] == [b'', b'-', b'g']:
-            require(segments[4].lower() not in {b'token', b'bootstrap'},
-                    'secure_channel_required')
+            require(segments[4].lower() not in {b'token', b'bootstrap'}, 'secure_channel_required')
         # A labelled assignment in a path is not a permitted secret channel.
         for segment in segments:
             if b'=' in segment:
-                require(not is_secret_field(segment.partition(b'=')[0]),
-                        'secure_channel_required')
+                require(not is_secret_field(segment.partition(b'=')[0]), 'secure_channel_required')
         if layer == b'/-' or layer.startswith(b'/-/'):
             original = raw_path.split(b'/')
-            ambiguous |= (not (raw_path == b'/-' or raw_path.startswith(b'/-/')) or
-                          any(part in {b'.', b'..'} for part in segments) or
-                          any(b'%' in part for part in original[2:4]) or
-                          (len(original) > 4 and original[2] in {b'g', b'p'} and
-                           b'.' in original[3] and b'%' in original[4]))
+            ambiguous |= (
+                not (raw_path == b'/-' or raw_path.startswith(b'/-/'))
+                or any(part in {b'.', b'..'} for part in segments)
+                or any(b'%' in part for part in original[2:4])
+                or (
+                    len(original) > 4
+                    and original[2] in {b'g', b'p'}
+                    and b'.' in original[3]
+                    and b'%' in original[4]
+                )
+            )
     require(not ambiguous, 'not_found')
 
 
@@ -109,15 +123,21 @@ def require_safe_relative_url(path: str, *, maximum: int) -> None:
 
 def require_matching_host(values: list[str], expected: SplitResult) -> None:
     """Check Host syntax before a URL parser can discard delimiters or controls."""
-    require(len(values) == 1 and re.fullmatch(
-        r'(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?', values[0])
-        is not None, 'forbidden_host')
+    require(
+        len(values) == 1
+        and re.fullmatch(r'(?:[A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(?::[0-9]{1,5})?', values[0])
+        is not None,
+        'forbidden_host',
+    )
     try:
         supplied = urlsplit('//' + values[0])
         port = supplied.port
         default = 443 if expected.scheme == 'https' else 80
-        require((port is None or port > 0) and supplied.hostname == expected.hostname and
-                (port if port is not None else default) == (expected.port or default),
-                'forbidden_host')
+        require(
+            (port is None or port > 0)
+            and supplied.hostname == expected.hostname
+            and (port if port is not None else default) == (expected.port or default),
+            'forbidden_host',
+        )
     except ValueError:
         raise Failure('forbidden_host') from None

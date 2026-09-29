@@ -380,52 +380,64 @@ wheels = [
 ]
 
 [[package]]
-name = "msg-lmm-best"
+name = "msgctl"
 version = "0.1.0a1"
 source = { editable = "." }
 dependencies = [
-    { name = "aiohttp" },
     { name = "cryptography" },
-    { name = "dnspython" },
-    { name = "graphql-core" },
     { name = "httpx" },
     { name = "jsonschema" },
+    { name = "referencing" },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "aiohttp" },
+    { name = "build" },
+    { name = "dnspython" },
+    { name = "graphql-core" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "ruff" },
+    { name = "starlette" },
+    { name = "tiktoken" },
+    { name = "uvicorn" },
+    { name = "valkey" },
+]
+server = [
+    { name = "aiohttp" },
+    { name = "dnspython" },
+    { name = "graphql-core" },
     { name = "psycopg", extra = ["binary"] },
     { name = "starlette" },
     { name = "uvicorn" },
     { name = "valkey" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "build" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
-    { name = "tiktoken" },
-]
-
 [package.metadata]
 requires-dist = [
-    { name = "aiohttp", specifier = ">=3.13,<4" },
+    { name = "aiohttp", marker = "extra == 'server'", specifier = ">=3.13,<4" },
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
     { name = "cryptography", specifier = ">=46,<52" },
-    { name = "dnspython", specifier = ">=2.8,<3" },
-    { name = "graphql-core", specifier = ">=3.2.7,<3.3" },
+    { name = "dnspython", marker = "extra == 'server'", specifier = ">=2.8,<3" },
+    { name = "graphql-core", marker = "extra == 'server'", specifier = ">=3.2.7,<3.3" },
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "jsonschema", specifier = ">=4.25,<5" },
-    { name = "psycopg", extras = ["binary"], specifier = ">=3.3,<4" },
+    { name = "msgctl", extras = ["server"], marker = "extra == 'dev'" },
+    { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.3,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.1" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.14" },
-    { name = "starlette", specifier = ">=0.50,<2" },
+    { name = "referencing", specifier = ">=0.36,<1" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.16.9" },
+    { name = "starlette", marker = "extra == 'server'", specifier = ">=0.50,<2" },
     { name = "tiktoken", marker = "extra == 'dev'", specifier = ">=0.12" },
-    { name = "uvicorn", specifier = ">=0.38,<1" },
-    { name = "valkey", specifier = ">=6.1,<7" },
+    { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.38,<1" },
+    { name = "valkey", marker = "extra == 'server'", specifier = ">=6.1,<7" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["server", "dev"]
 
 [[package]]
 name = "multidict"

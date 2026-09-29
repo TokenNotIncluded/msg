@@ -1,11 +1,12 @@
 """The Git diagnostic executes real isolated protocols and refuses live apps."""
+
 from types import SimpleNamespace
 
 import pytest
+from test_service import call, register
 
 from msg.admin.git_check import check_git
 from msg.core.errors import Failure
-from test_service import call, register
 
 
 async def test_git_selftest_requires_disposable_namespace():

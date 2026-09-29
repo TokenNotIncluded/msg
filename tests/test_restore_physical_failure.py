@@ -1,4 +1,5 @@
 """A post-import filesystem failure cannot expose restored snapshot authority."""
+
 from pathlib import Path
 
 import psycopg
@@ -9,7 +10,9 @@ from msg.core.codec import loads
 
 
 @pytest.mark.asyncio
-async def test_restore_move_failure_keeps_committed_database_quarantined(installed, tmp_path, pg_dsn, monkeypatch):
+async def test_restore_move_failure_keeps_committed_database_quarantined(
+    installed, tmp_path, pg_dsn, monkeypatch
+):
     app, _ = installed
     archive = tmp_path / 'physical-failure.zip'
     await backups.backup(app, archive)
@@ -17,11 +20,13 @@ async def test_restore_move_failure_keeps_committed_database_quarantined(install
     data = tmp_path / 'restore-data'
     original_move = backups.shutil.move
     moves = []
+
     def interrupted_move(source, destination, *args, **kwargs):
         moves.append(Path(source).name)
         if Path(source).name == 'blobs':
             raise OSError('injected restore blob move failure')
         return original_move(source, destination, *args, **kwargs)
+
     monkeypatch.setattr(backups.shutil, 'move', interrupted_move)
     with pytest.raises(OSError, match='injected restore blob move failure'):
         backups.restore(archive, config, data, postgres_dsn=pg_dsn)
@@ -35,8 +40,11 @@ async def test_restore_move_failure_keeps_committed_database_quarantined(install
     # already active. Losing the config marker cannot promote this partial restore.
     with psycopg.connect(pg_dsn) as connection:
         assert connection.execute('SELECT COUNT(*) FROM resources').fetchone()[0] > 0
-        values = dict(connection.execute(
-            "SELECT key,value FROM settings WHERE key IN ('recovery_quarantine','runtime_config')"))
+        values = dict(
+            connection.execute(
+                "SELECT key,value FROM settings WHERE key IN ('recovery_quarantine','runtime_config')"
+            )
+        )
     quarantine = loads(values['recovery_quarantine'])
     runtime = loads(values['runtime_config'])
     assert quarantine['authority'] == 'health_only'

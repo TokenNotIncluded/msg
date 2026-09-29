@@ -14,7 +14,7 @@ import valkey
 
 
 class ValkeyOutboxSignal:
-    def __init__(self, url: str, *, channel: str = "msgd:effects") -> None:
+    def __init__(self, url: str, *, channel: str = 'msgd:effects') -> None:
         self.client = valkey.Valkey.from_url(url, socket_timeout=1, socket_connect_timeout=1)
         self.channel = channel
 
@@ -40,6 +40,6 @@ class ValkeyOutboxSignal:
                 if remaining <= 0:
                     break
                 message = subscriber.get_message(timeout=remaining)
-                if message and message.get("type") == "message":
+                if message and message.get('type') == 'message':
                     return True
         return False

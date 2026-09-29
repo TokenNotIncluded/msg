@@ -20,6 +20,15 @@ wrapper and Root directory, and destroys the disposable installation/database.
 The script is deliberately separate from ordinary pytest: it requires sudo and
 real OpenSSH and fails if they are unavailable.
 
+The release workflow now runs this script with the installed wheel outside the
+checkout on Ubuntu 24.04. Its dedicated daemon uses `UsePAM yes`, matching
+`deploy/sshd_config`, so the host PAM account/session policy applies while
+authentication remains public-key only. It does not unlock or modify the service
+account. `StrictModes yes` is explicit, and a direct dynamic key lookup is checked
+before connecting. The disposable daemon logs authentication diagnostics using
+test keys only; this does not change the deployed logging policy. The artifact
+records the actual Python/OpenSSH versions and the source tree.
+
 ## Real local checks
 
 - Registered SSH possession proof and capability ceiling; dynamic

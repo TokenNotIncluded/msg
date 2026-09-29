@@ -1,4 +1,5 @@
 """The /-/ namespace is the only HTTP entry point that may execute operations."""
+
 from datetime import timedelta
 
 import httpx
@@ -15,14 +16,23 @@ from msg.transports.http import create_app
 async def test_post_and_path_get_execute_only_under_protocol_namespace(installed):
     app, _ = installed
     key, uid, _ = await register(app, 'protocol-agent')
-    packet = request_for('content.post_create', {'parent': '/main', 'body': 'routed post'},
-                         app.settings.service_url, signer=key, subject=uid,
-                         request_id='protocol-post', expires_at=NOW + timedelta(seconds=90))
+    packet = request_for(
+        'content.post_create',
+        {'parent': '/main', 'body': 'routed post'},
+        app.settings.service_url,
+        signer=key,
+        subject=uid,
+        request_id='protocol-post',
+        expires_at=NOW + timedelta(seconds=90),
+    )
     old_path = '/!content.post_create/run/j/' + b64(canonical(packet))
     new_path = '/-/g/content.post_create/j/' + b64(canonical(packet))
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
-        assert (await http.post('/!content.post_create', content=canonical(packet))).status_code == 404
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
+        assert (
+            await http.post('/!content.post_create', content=canonical(packet))
+        ).status_code == 404
         assert (await http.get(old_path)).status_code == 404
         assert (await http.post('/main', content=canonical(packet))).status_code == 405
         assert (await http.head(new_path)).status_code == 200
@@ -47,11 +57,19 @@ async def test_post_and_path_get_execute_only_under_protocol_namespace(installed
 @pytest.mark.asyncio
 async def test_mcp_moves_into_protocol_namespace_and_resource_queries_remain_reads(installed):
     app, _ = installed
-    message = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
-               'params': {'protocolVersion': '2025-11-25', 'capabilities': {},
-                          'clientInfo': {'name': 'test', 'version': '1'}}}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
+    message = {
+        'jsonrpc': '2.0',
+        'id': 1,
+        'method': 'initialize',
+        'params': {
+            'protocolVersion': '2025-11-25',
+            'capabilities': {},
+            'clientInfo': {'name': 'test', 'version': '1'},
+        },
+    }
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
         assert (await http.post('/mcp', json=message)).status_code == 404
         assert (await http.post('/~discovery.get', content=b'{}')).status_code == 404
         response = await http.post('/-/mcp', json=message)
@@ -69,13 +87,16 @@ async def test_short_code_dictionary_and_percent_encoded_direct_read(installed):
     dictionary = build_dictionary(app.registry)
     read_code = dictionary.code_for('operation', 'discovery.get@1')
     write_code = dictionary.code_for('operation', 'content.post_create@1')
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
         listing = await http.get('/-/d')
         assert listing.status_code == 200, listing.text
         assert listing.headers['etag'] == dictionary.index_etag
         assert listing.json() == dictionary.index_document
-        assert (await http.get('/-/d', headers={'If-None-Match': dictionary.index_etag})).status_code == 304
+        assert (
+            await http.get('/-/d', headers={'If-None-Match': dictionary.index_etag})
+        ).status_code == 304
         namespace = await http.get('/-/d/content')
         assert namespace.status_code == 200, namespace.text
         assert namespace.json()['operations']
@@ -83,8 +104,11 @@ async def test_short_code_dictionary_and_percent_encoded_direct_read(installed):
         operation = await http.get('/-/d/content.post_create')
         assert operation.status_code == 200, operation.text
         assert [op['name'] for op in operation.json()['operations']] == ['content.post_create']
-        assert (await http.get('/-/d/content.post_create',
-                               headers={'If-None-Match': operation.headers['etag']})).status_code == 304
+        assert (
+            await http.get(
+                '/-/d/content.post_create', headers={'If-None-Match': operation.headers['etag']}
+            )
+        ).status_code == 304
         schema = await http.get('/-/schema')
         assert schema.status_code == 200, schema.text
         assert schema.headers['etag'] == dictionary.schema_etag
@@ -99,8 +123,7 @@ async def test_short_code_dictionary_and_percent_encoded_direct_read(installed):
             assert invalid.status_code == 400, invalid.text
             assert invalid.json()['error']['code'] == 'invalid_path'
         limit_field = dictionary.code_for('field', 'discovery.get@1:limit')
-        repeated = await http.get(
-            f'/-/g/{read_code}/%2Fmain/{limit_field}/1/{limit_field}/2')
+        repeated = await http.get(f'/-/g/{read_code}/%2Fmain/{limit_field}/1/{limit_field}/2')
         assert repeated.status_code == 400, repeated.text
         assert repeated.json()['error']['code'] == 'invalid_path_argument'
 
@@ -109,17 +132,31 @@ async def test_short_code_dictionary_and_percent_encoded_direct_read(installed):
 async def test_direct_read_binds_signed_header_to_path_arguments(installed):
     app, _ = installed
     key, uid, _ = await register(app, 'direct-private')
-    created = await call(app, 'content.post_create', {'parent': '/main', 'body': 'private'},
-                         key=key, subject=uid)
+    created = await call(
+        app, 'content.post_create', {'parent': '/main', 'body': 'private'}, key=key, subject=uid
+    )
     rid = created.resources[0].id
-    await call(app, 'content.chmod', {'id': rid, 'mode': '0600'}, key=key, subject=uid,
-               expected=((rid, created.data['generation']),))
+    await call(
+        app,
+        'content.chmod',
+        {'id': rid, 'mode': '0600'},
+        key=key,
+        subject=uid,
+        expected=((rid, created.data['generation']),),
+    )
     code = build_dictionary(app.registry).code_for('operation', 'discovery.get@1')
-    packet = request_for('discovery.get', {'id': rid}, app.settings.service_url,
-                         signer=key, subject=uid, expires_at=NOW + timedelta(seconds=90))
+    packet = request_for(
+        'discovery.get',
+        {'id': rid},
+        app.settings.service_url,
+        signer=key,
+        subject=uid,
+        expires_at=NOW + timedelta(seconds=90),
+    )
     headers = {'X-Msg-Request': b64(canonical(packet))}
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url='http://testserver') as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url='http://testserver'
+    ) as http:
         assert (await http.get(f'/-/g/{code}/{rid}')).status_code == 403
         result = await http.get(f'/-/g/{code}/{rid}', headers=headers)
         assert result.status_code == 200, result.text

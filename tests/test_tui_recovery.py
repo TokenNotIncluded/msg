@@ -1,19 +1,25 @@
 """Terminal layout and reconnect failures cannot retain selectable stale data."""
+
+import unicodedata
 from io import StringIO
 from types import SimpleNamespace
-import unicodedata
 
 import pytest
+from test_tui import FakeClient
 
 from msg.core.errors import Failure
 from msg.tui import TerminalUI
-from test_tui import FakeClient
 
 
 def cells(text):
-    return sum(0 if unicodedata.combining(char) else
-               2 if unicodedata.east_asian_width(char) in {'W', 'F'} else 1
-               for char in text)
+    return sum(
+        0
+        if unicodedata.combining(char)
+        else 2
+        if unicodedata.east_asian_width(char) in {'W', 'F'}
+        else 1
+        for char in text
+    )
 
 
 def test_terminal_preserves_document_lines_and_blank_paragraphs():
@@ -36,11 +42,15 @@ async def test_disconnect_clears_page_and_explicit_retry_rechecks_current_author
         async def call(self, operation, arguments):
             self.calls.append((operation, arguments))
             if len(self.calls) == 1:
-                return SimpleNamespace(status='ok', data={'items': [{'id': 'private'}],
-                                                         'cursor': 'cursor-one'})
+                return SimpleNamespace(
+                    status='ok', data={'items': [{'id': 'private'}], 'cursor': 'cursor-one'}
+                )
             if len(self.calls) == 2:
-                raise Failure('transport_uncertain', details={'url': 'https://secret.example/token'})
+                raise Failure(
+                    'transport_uncertain', details={'url': 'https://secret.example/token'}
+                )
             return SimpleNamespace(status='error', error=SimpleNamespace(code='permission_denied'))
+
     client = Client(subject='u_me')
     output = StringIO()
     ui = TerminalUI(client, stdout=output)
@@ -66,6 +76,7 @@ async def test_retry_reloads_a_document_without_ack_or_implicit_mutation():
             if len(self.calls) == 1:
                 raise OSError('secret token must not be shown')
             return SimpleNamespace(status='ok', data={'content': 'reconnected\nsecond line'})
+
     client = Client()
     output = StringIO()
     ui = TerminalUI(client, stdout=output)
@@ -82,8 +93,10 @@ async def test_tui_additional_views_use_existing_authorized_read_contracts():
     client.responses = {
         'identity.note_list': {'items': [{'id': 'r_note', 'name': 'remember.md'}]},
         'identity.note_get': {'content': 'private note'},
-        'identity.todo_list': {'items': [{'id': 'r_todo', 'name': 'work'}],
-                               'next_after_name': 'work'},
+        'identity.todo_list': {
+            'items': [{'id': 'r_todo', 'name': 'work'}],
+            'next_after_name': 'work',
+        },
         'identity.todo_get': {'title': 'finish', 'status': 'pending'},
         'discovery.get': {'path': '/@me'},
     }
@@ -94,8 +107,10 @@ async def test_tui_additional_views_use_existing_authorized_read_contracts():
     assert ('identity.note_get', {'name': 'remember.md'}) in client.calls
     assert ('identity.todo_get', {'name': 'work'}) in client.calls
     assert ('discovery.read_query', {'parent': '/@me/files', 'limit': 20}) in client.calls
-    assert all(name not in {'discussion.ack', 'content.post_create', 'identity.todo_put'}
-               for name, _ in client.calls)
+    assert all(
+        name not in {'discussion.ack', 'content.post_create', 'identity.todo_put'}
+        for name, _ in client.calls
+    )
 
 
 @pytest.mark.asyncio
@@ -113,36 +128,66 @@ async def test_todo_next_page_uses_its_own_pagination_contract():
 
 
 @pytest.mark.asyncio
-async def test_real_tui_private_views_are_read_only_and_do_not_expose_other_subjects(installed, tmp_path):
+async def test_real_tui_private_views_are_read_only_and_do_not_expose_other_subjects(
+    installed, tmp_path
+):
     import httpx
+    from test_route_effect_matrix import database_snapshot
+    from test_service import NOW
+
     from msg.client import ClientState, MsgClient
     from msg.transports.client import HTTPTransport
     from msg.transports.http import create_app
-    from test_service import NOW
-    from test_route_effect_matrix import database_snapshot
 
     app, _ = installed
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url=app.settings.service_url) as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+
         def client(name):
-            return MsgClient(ClientState(tmp_path / name, server=app.settings.service_url),
-                             HTTPTransport(app.settings.service_url, http=http), clock=lambda: NOW)
+            return MsgClient(
+                ClientState(tmp_path / name, server=app.settings.service_url),
+                HTTPTransport(app.settings.service_url, http=http),
+                clock=lambda: NOW,
+            )
+
         owner, other = client('owner'), client('other')
         assert (await owner.register('tui-private-owner')).status == 'ok'
         assert (await other.register('tui-private-other')).status == 'ok'
         for connection, marker in ((owner, 'owner-visible'), (other, 'other-hidden')):
             for op, args in (
                 ('identity.note_put', {'name': 'daily', 'body': marker}),
-                ('identity.todo_put', {'name': 'task', 'title': marker, 'description': 'next step'}),
-                ('content.post_create', {'parent': '/@'+('tui-private-owner' if connection is owner else 'tui-private-other')+'/files',
-                                         'name': marker, 'body': marker}),
+                (
+                    'identity.todo_put',
+                    {'name': 'task', 'title': marker, 'description': 'next step'},
+                ),
+                (
+                    'content.post_create',
+                    {
+                        'parent': '/@'
+                        + ('tui-private-owner' if connection is owner else 'tui-private-other')
+                        + '/files',
+                        'name': marker,
+                        'body': marker,
+                    },
+                ),
             ):
                 result = await connection.call(op, args)
                 assert result.status == 'ok', result
         before = await database_snapshot(app)
         output = StringIO()
         ui = TerminalUI(owner, stdout=output, width=40)
-        for command in ('topics', 'groups', 'outbox', 'notes', '1', 'todos', '1', 'files', 'credentials'):
+        for command in (
+            'topics',
+            'groups',
+            'outbox',
+            'notes',
+            '1',
+            'todos',
+            '1',
+            'files',
+            'credentials',
+        ):
             await ui.command(command)
         assert await database_snapshot(app) == before
         assert '读取失败' not in output.getvalue(), output.getvalue()

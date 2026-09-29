@@ -4,6 +4,7 @@ The gate is a database fact, not a deletable config marker. No network operation
 may clear it. Absence alone means an ordinary installation; malformed, false or
 unknown values fail closed. This is containment, not a revocation replay proof.
 """
+
 from msg.core.errors import Failure, require
 
 SETTING = 'recovery_quarantine'
@@ -33,6 +34,7 @@ def _generation(session):
 
 class RuntimeGeneration:
     """Pin authority generation at startup; mismatch stays latched until restart."""
+
     def __init__(self, generation=None):
         self.generation = generation
         self.stale = False

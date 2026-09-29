@@ -1,4 +1,5 @@
 """The daemon's Uvicorn entry points disable raw-URI access logging."""
+
 import ast
 import asyncio
 import logging
@@ -21,8 +22,11 @@ def _daemon_uvicorn_access_log_values():
             continue
         if isinstance(node.func, ast.Attribute) and node.func.attr == 'run':
             if isinstance(node.func.value, ast.Name) and node.func.value.id == 'uvicorn':
-                values.append({keyword.arg: keyword.value for keyword in node.keywords
-                               if keyword.arg == 'access_log'})
+                values.append({
+                    keyword.arg: keyword.value
+                    for keyword in node.keywords
+                    if keyword.arg == 'access_log'
+                })
     return values
 
 
@@ -32,8 +36,9 @@ async def _serve_one_request(app, *, access_log, caplog):
     sock.listen(128)
     sock.setblocking(False)
     port = sock.getsockname()[1]
-    config = uvicorn.Config(app, host='127.0.0.1', port=port,
-                            access_log=access_log, log_config=None, lifespan='off')
+    config = uvicorn.Config(
+        app, host='127.0.0.1', port=port, access_log=access_log, log_config=None, lifespan='off'
+    )
     server = uvicorn.Server(config)
     task = asyncio.create_task(server.serve(sockets=[sock]))
     try:
@@ -44,12 +49,13 @@ async def _serve_one_request(app, *, access_log, caplog):
         assert server.started
         async with httpx.AsyncClient() as client:
             response = await client.get(
-                f'http://127.0.0.1:{port}/?token=QUERY_SECRET',
-                headers={'host': 'testserver'})
+                f'http://127.0.0.1:{port}/?token=QUERY_SECRET', headers={'host': 'testserver'}
+            )
             assert response.status_code == 400
             await client.get(
                 f'http://127.0.0.1:{port}/-/g/content.post_create/token/PATH_SECRET',
-                headers={'host': 'testserver'})
+                headers={'host': 'testserver'},
+            )
         await asyncio.sleep(0.02)
     finally:
         server.should_exit = True
@@ -62,9 +68,12 @@ async def _serve_one_request(app, *, access_log, caplog):
 async def test_daemon_uvicorn_access_logs_do_not_record_secret_urls(installed, caplog):
     access_log_values = _daemon_uvicorn_access_log_values()
     assert len(access_log_values) == 2
-    assert all(value.get('access_log') is not None and
-               isinstance(value['access_log'], ast.Constant) and
-               value['access_log'].value is False for value in access_log_values)
+    assert all(
+        value.get('access_log') is not None
+        and isinstance(value['access_log'], ast.Constant)
+        and value['access_log'].value is False
+        for value in access_log_values
+    )
 
     app, _ = installed
     caplog.set_level(logging.INFO, logger='uvicorn.access')

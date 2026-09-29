@@ -1,4 +1,5 @@
 """Real disposable Root storage; these tests do not claim physical-console evidence."""
+
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -38,6 +39,7 @@ async def test_history_validation_precedes_database_root_transition(installed, t
         history.chmod(0o644)
     elif unsafe == 'hardlink':
         import os
+
         os.link(history, tmp_path / 'duplicate-key')
     else:
         history.unlink()
@@ -58,16 +60,25 @@ async def test_history_validation_precedes_database_root_transition(installed, t
 async def test_concurrent_prepare_does_not_replace_an_approved_journal(installed):
     app, root = installed
     old_envelope(app, root)
+
     def attempt(_):
         try:
-            return prepare(app, Ed25519Signer.generate(), PIN,
-                           old_signer=root, operator='isolated-concurrent-test')
+            return prepare(
+                app,
+                Ed25519Signer.generate(),
+                PIN,
+                old_signer=root,
+                operator='isolated-concurrent-test',
+            )
         except Failure as exc:
             return exc.code
+
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(attempt, range(2)))
     journals = [result for result in results if isinstance(result, dict)]
     assert len(journals) == 1
     assert next(result for result in results if isinstance(result, str)) in {
-        'root_rotation_busy', 'root_rotation_pending'}
+        'root_rotation_busy',
+        'root_rotation_pending',
+    }
     assert canonical(loads(journal_path(app).read_bytes())) == canonical(journals[0])

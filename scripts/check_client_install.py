@@ -3,6 +3,7 @@
 Run with --minimal-install in a fresh wheel-only virtualenv, outside the source
 checkout. Network traffic uses httpx.MockTransport, not a remote service.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -11,15 +12,24 @@ import importlib
 import importlib.abc
 import importlib.util
 import json
-from pathlib import Path
 import stat
 import sys
 import tempfile
+from pathlib import Path
 
 SERVER_DEPENDENCIES = ('starlette', 'uvicorn', 'psycopg', 'valkey', 'aiohttp', 'dns', 'graphql')
-FORBIDDEN = ('msg.application', 'msg.core.executor', 'msg.storage', 'msg.admin',
-             'msg.workers', 'msg.security.vault', 'msg.security.custodial_migration',
-             'msg.transports.http', 'msg.transports.graphql', 'msg.transports.mcp')
+FORBIDDEN = (
+    'msg.application',
+    'msg.core.executor',
+    'msg.storage',
+    'msg.admin',
+    'msg.workers',
+    'msg.security.vault',
+    'msg.security.custodial_migration',
+    'msg.transports.http',
+    'msg.transports.graphql',
+    'msg.transports.mcp',
+)
 
 
 class ClientBoundary(importlib.abc.MetaPathFinder):
@@ -31,6 +41,7 @@ class ClientBoundary(importlib.abc.MetaPathFinder):
 
 async def check(directory):
     import httpx
+
     from msg.client import ClientState
     from msg.core.codec import canonical, loads, wire
     from msg.core.requests import request_for, signing_bytes
@@ -38,8 +49,18 @@ async def check(directory):
     from msg.transports.client import TRANSPORTS
     from msg.transports.packet import decode_packet, path_packet
 
-    for name in ('cli', 'tui', 'client_certificates', 'client_content', 'client_custodial',
-                 'client_market', 'client_recovery', 'client_secrets', 'client_tokens', 'client_upgrade'):
+    for name in (
+        'cli',
+        'tui',
+        'client_certificates',
+        'client_content',
+        'client_custodial',
+        'client_market',
+        'client_recovery',
+        'client_secrets',
+        'client_tokens',
+        'client_upgrade',
+    ):
         importlib.import_module('msg.' + name)
     state = ClientState(directory, server='https://unit.invalid')
     signer = Ed25519Signer.from_bytes(bytes(range(32)))
@@ -51,17 +72,33 @@ async def check(directory):
     for path in (state.path, state.key_path, state.age_key_path):
         assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(directory.stat().st_mode) == 0o700
-    request = request_for('content.read', {'id': 'r_test'}, state.server,
-                          subject='u_test', signer=signer, request_id='client-boundary')
+    request = request_for(
+        'content.read',
+        {'id': 'r_test'},
+        state.server,
+        subject='u_test',
+        signer=signer,
+        request_id='client-boundary',
+    )
     calls = []
 
     def respond(incoming):
         path = incoming.url.path
         if path == '/_transports':
-            return httpx.Response(200, json={'version': 1, 'target_service': state.server,
-                'operations': {'content.read': 'read'}, 'limits': {
-                    'max_request_bytes': 1048576, 'max_response_bytes': 1048576,
-                    'max_path_bytes': 8192, 'encodings': ['j', 'gz']}})
+            return httpx.Response(
+                200,
+                json={
+                    'version': 1,
+                    'target_service': state.server,
+                    'operations': {'content.read': 'read'},
+                    'limits': {
+                        'max_request_bytes': 1048576,
+                        'max_response_bytes': 1048576,
+                        'max_path_bytes': 8192,
+                        'encodings': ['j', 'gz'],
+                    },
+                },
+            )
         if path.startswith('/-/g/'):
             _, _, _, operation, encoding, encoded = path.split('/')
             packet = path_packet(encoded, encoding, 1048576)
@@ -84,24 +121,38 @@ async def check(directory):
         assert canonical(packet) == canonical(request)
         verify(signer.public_key, signing_bytes(packet), packet.proof.signature, purpose='request')
         calls.append(kind)
-        result = {'request_id': packet.request_id, 'operation': packet.operation, 'status': 'ok',
-                  'actor': 'u_test', 'subject': 'u_test', 'resources': [{'id': 'r_test'}],
-                  'data': {'content': 'signed client response'}}
+        result = {
+            'request_id': packet.request_id,
+            'operation': packet.operation,
+            'status': 'ok',
+            'actor': 'u_test',
+            'subject': 'u_test',
+            'resources': [{'id': 'r_test'}],
+            'data': {'content': 'signed client response'},
+        }
         if kind == 'graphql':
             result = {'data': {'call': result}}
         elif kind == 'mcp_http':
-            result = {'jsonrpc': '2.0', 'id': packet.request_id,
-                      'result': {'structuredContent': result}}
+            result = {
+                'jsonrpc': '2.0',
+                'id': packet.request_id,
+                'result': {'structuredContent': result},
+            }
         return httpx.Response(200, json=result)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as http:
         for name, transport in TRANSPORTS.items():
             result = await transport(state.server, http=http).call(request)
-            assert result.status == 'ok' and result.resources[0].id == 'r_test', (name, wire(result))
+            assert result.status == 'ok' and result.resources[0].id == 'r_test', (
+                name,
+                wire(result),
+            )
             assert result.data['content'] == 'signed client response'
     assert sorted(calls) == sorted(TRANSPORTS)
-    assert not any(any(name == prefix or name.startswith(prefix + '.') for prefix in FORBIDDEN)
-                   for name in sys.modules)
+    assert not any(
+        any(name == prefix or name.startswith(prefix + '.') for prefix in FORBIDDEN)
+        for name in sys.modules
+    )
     return calls
 
 
@@ -110,14 +161,23 @@ def main():
     parser.add_argument('--minimal-install', action='store_true')
     args = parser.parse_args()
     if args.minimal_install:
-        present = [name for name in SERVER_DEPENDENCIES if importlib.util.find_spec(name) is not None]
-        assert not present, 'server-only Python dependencies in client environment: ' + ', '.join(present)
+        present = [
+            name for name in SERVER_DEPENDENCIES if importlib.util.find_spec(name) is not None
+        ]
+        assert not present, 'server-only Python dependencies in client environment: ' + ', '.join(
+            present
+        )
     sys.meta_path.insert(0, ClientBoundary())
     with tempfile.TemporaryDirectory(prefix='msg-client-install-') as folder:
         calls = asyncio.run(check(Path(folder) / 'client'))
-    print(json.dumps({'status': 'ok', 'transports': sorted(calls),
-                      'server_implementation_imported': False,
-                      'minimal_install': args.minimal_install}))
+    print(
+        json.dumps({
+            'status': 'ok',
+            'transports': sorted(calls),
+            'server_implementation_imported': False,
+            'minimal_install': args.minimal_install,
+        })
+    )
 
 
 if __name__ == '__main__':

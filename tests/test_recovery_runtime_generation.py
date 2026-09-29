@@ -1,7 +1,8 @@
 """Promotion invalidates idle runtimes even if they never observed quarantine."""
+
 import httpx
 import pytest
-from test_hosting_runtime import reader_settings, runtime_class, website  # noqa: F401
+from test_hosting_runtime import reader_settings as reader_settings, runtime_class, website
 from test_service import NOW, call
 
 from msg.application import Application
@@ -28,8 +29,9 @@ async def test_idle_executor_and_http_require_restart_after_promotion(installed)
         await promote_generation(app)
         result = await call(peer, 'discovery.get', {'id': '/main'})
         assert result.status == 'error' and result.error.code == 'recovery_runtime_stale'
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(peer)),
-                                     base_url=app.settings.service_url) as http:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(peer)), base_url=app.settings.service_url
+        ) as http:
             for path in ('/', '/healthz', '/_read/t_main/json'):
                 response = await http.get(path)
                 assert response.status_code == 503
@@ -53,6 +55,7 @@ async def test_idle_workers_claim_and_timers_cannot_mutate_promoted_database(ins
         from msg.market.arbitration import resolve_cases
         from msg.market.escrow import resolve_due
         from msg.workers.leases import current_attempt
+
         for timer in (resolve_due, resolve_cases):
             with pytest.raises(Failure, match='recovery_runtime_stale'):
                 await timer(peer)
@@ -69,23 +72,30 @@ async def test_idle_workers_claim_and_timers_cannot_mutate_promoted_database(ins
 
 
 @pytest.mark.asyncio
-async def test_idle_readonly_hosting_requires_restart_without_expanding_role(installed, reader_settings):  # noqa: F811
+async def test_idle_readonly_hosting_requires_restart_without_expanding_role(
+    installed, reader_settings
+):
     app, _ = installed
     await website(app)
     reader = await runtime_class()(reader_settings, clock=lambda: NOW).load()
     from msg.extensions.hosting import hosting_app
+
     try:
         await promote_generation(app)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosting_app(reader)),
-                                     base_url=app.settings.service_url) as http:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=hosting_app(reader)),
+            base_url=app.settings.service_url,
+        ) as http:
             response = await http.get('/@readonly-host/web/')
             assert response.status_code != 200
             assert b'recovery_runtime_stale' in response.content
             assert b'<h1>published</h1>' not in response.content
         fresh = await runtime_class()(reader_settings, clock=lambda: NOW).load()
         try:
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosting_app(fresh)),
-                                         base_url=app.settings.service_url) as http:
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=hosting_app(fresh)),
+                base_url=app.settings.service_url,
+            ) as http:
                 response = await http.get('/@readonly-host/web/')
                 assert response.status_code == 200
                 assert b'<h1>published</h1>' in response.content
@@ -110,7 +120,9 @@ async def test_generation_mismatch_remains_latched_even_if_setting_reverted(inst
 
 
 @pytest.mark.asyncio
-async def test_promotion_during_load_cannot_pin_new_generation_to_old_runtime(installed, monkeypatch):
+async def test_promotion_during_load_cannot_pin_new_generation_to_old_runtime(
+    installed, monkeypatch
+):
     from contextlib import asynccontextmanager
 
     app, _ = installed

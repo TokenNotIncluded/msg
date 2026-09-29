@@ -1,4 +1,5 @@
 """Exercise one-use credential release only on the caller's isolated Test Root."""
+
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -40,8 +41,12 @@ async def check_token_delivery(app, now):
             # Both processes can restart; refreshing only the request expiry
             # does not refresh either the token lifetime or recovery deadline.
             state = ClientState(Path(directory), server=app.settings.service_url)
-            client = MsgClient(state, HTTPTransport(state.server, http=http),
-                               clock=lambda: now+timedelta(seconds=1), retries=0)
+            client = MsgClient(
+                state,
+                HTTPTransport(state.server, http=http),
+                clock=lambda: now + timedelta(seconds=1),
+                retries=0,
+            )
             replay = await client.recover_token()
             if replay.status != 'error' or replay.error.code != 'token_delivery_unavailable':
                 return False
@@ -51,4 +56,8 @@ async def check_token_delivery(app, now):
             async with app.metadata.transaction(write=False) as tx:
                 old = await tx.credential(original[0])
                 current = await tx.credential(state.token[0])
-            return old.revoked_at is not None and current.revoked_at is None and client._token_journal() == (None, None)
+            return (
+                old.revoked_at is not None
+                and current.revoked_at is None
+                and client._token_journal() == (None, None)
+            )

@@ -50,29 +50,38 @@ from msg.client import ClientState, MsgClient
 from msg.transports.client import HTTPTransport
 from msg.transports.http import create_app
 
+
 async def main():
     app = Application(load_settings(Path(os.environ['CFG'])))
     try:
         await app.load()
         state = ClientState(Path(os.environ['CLIENT']), server=app.settings.service_url)
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                   base_url=app.settings.service_url) as http:
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+        ) as http:
             client = MsgClient(state, HTTPTransport(state.server, http=http))
             registered = await client.register(os.environ['NEW_HANDLE'])
             assert registered.status == 'ok', registered.error
             print('HOLDER', state.subject)
             for name in ('legacy-content', 'legacy-git', 'legacy-identities'):
-                result = await client.call('content.topic_create', {'parent':'/main','name':name})
+                result = await client.call(
+                    'content.topic_create', {'parent': '/main', 'name': name}
+                )
                 assert result.status == 'ok', result.error
                 ref = result.resources[0]
                 async with app.metadata.transaction(write=False) as tx:
                     generation = (await tx.resource(ref.id)).generation
-                result = await client.call('content.chmod', {'id':ref.id,'mode':'0700'},
-                    expected=((ref.id, generation),))
+                result = await client.call(
+                    'content.chmod',
+                    {'id': ref.id, 'mode': '0700'},
+                    expected=((ref.id, generation),),
+                )
                 assert result.status == 'ok', result.error
                 print(name, ref.id)
     finally:
         await app.close()
+
+
 asyncio.run(main())
 ```
 
@@ -141,47 +150,70 @@ from msg.config import load_settings
 from msg.core.codec import digest
 from msg.admin.legacy_approval import write_new
 
+
 async def main():
-    snapshot = Path(os.environ['MATERIALS'])/'offline-legacy-0221.sqlite'
+    snapshot = Path(os.environ['MATERIALS']) / 'offline-legacy-0221.sqlite'
     sha = os.environ['SQLITE_SHA256']
     with snapshot.open('rb') as stream:
         assert hashlib.file_digest(stream, 'sha256').hexdigest() == sha
-    with sqlite3.connect(snapshot.resolve().as_uri()+'?mode=ro', uri=True) as db:
+    with sqlite3.connect(snapshot.resolve().as_uri() + '?mode=ro', uri=True) as db:
         db.execute('PRAGMA query_only=ON')
         candidates = [
             (table, row[0], mode)
             for table, query, mode in (
-                ('posts','SELECT id FROM posts ORDER BY id','0644'),
-                ('attachments','SELECT a.id FROM attachments a JOIN posts p ON p.id=a.post_id ORDER BY a.id','0644'),
-                ('boards','SELECT name FROM boards ORDER BY name','0755'))
+                ('posts', 'SELECT id FROM posts ORDER BY id', '0644'),
+                (
+                    'attachments',
+                    'SELECT a.id FROM attachments a JOIN posts p ON p.id=a.post_id ORDER BY a.id',
+                    '0644',
+                ),
+                ('boards', 'SELECT name FROM boards ORDER BY name', '0755'),
+            )
             for row in db.execute(query)
         ]
     app = Application(load_settings(Path(os.environ['CFG'])))
     try:
         await app.load()
         async with app.metadata.transaction(write=False) as tx:
-            report = tx.setting('legacy-import:'+sha)
+            report = tx.setting('legacy-import:' + sha)
             assert report and report['source_sha256'] == sha
             entries = []
             for table, old_id, mode in candidates:
-                rid = 'legacy_'+sha[:24]+'_'+digest((table,old_id))[7:31]
+                rid = 'legacy_' + sha[:24] + '_' + digest((table, old_id))[7:31]
                 resource = await tx.resource(rid)
                 assert resource.owner == os.environ['HOLDER'] and resource.state == 'active'
-                entries.append({'id':rid,'generation':resource.generation,'mode':mode,'source_table':table})
+                entries.append({
+                    'id': rid,
+                    'generation': resource.generation,
+                    'mode': mode,
+                    'source_table': table,
+                })
             parent = await tx.resource(os.environ['CONTENT_PARENT'])
             assert parent.owner == os.environ['HOLDER'] and parent.mode == 0o700
             for item in entries:
                 assert parent.id in {r.id for r in await tx.ancestors(item['id'])}
-            entries.append({'id':parent.id,'generation':parent.generation,'mode':'0755','source_table':'publication_parent_last'})
-        plan = {'source_sha256':sha,'holder':os.environ['HOLDER'],'entries':entries,
-                'restores':'read-only-public-candidates','review_required':True,
-                'source_code_commit':'e12eea32764656eec82452fee111e5b4fb6d8a42',
-                'classification':'application-anonymous-read-candidate',
-                'deployment_acl_review':None}
-        write_new(Path(os.environ['PUBLICATION_PLAN']),plan)
-        print({'candidate_count':len(entries)-1,'plan_digest':digest(plan)})
+            entries.append({
+                'id': parent.id,
+                'generation': parent.generation,
+                'mode': '0755',
+                'source_table': 'publication_parent_last',
+            })
+        plan = {
+            'source_sha256': sha,
+            'holder': os.environ['HOLDER'],
+            'entries': entries,
+            'restores': 'read-only-public-candidates',
+            'review_required': True,
+            'source_code_commit': 'e12eea32764656eec82452fee111e5b4fb6d8a42',
+            'classification': 'application-anonymous-read-candidate',
+            'deployment_acl_review': None,
+        }
+        write_new(Path(os.environ['PUBLICATION_PLAN']), plan)
+        print({'candidate_count': len(entries) - 1, 'plan_digest': digest(plan)})
     finally:
         await app.close()
+
+
 asyncio.run(main())
 ```
 

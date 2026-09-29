@@ -4,6 +4,7 @@ Personal entitlements stay elsewhere. These checks only stop one shared database
 or content volume from being filled by unbounded metadata, staged bytes, or
 ciphertext. They do not grant quota, delete user content, or clear quarantine.
 """
+
 from __future__ import annotations
 
 from msg.core.codec import decode, loads
@@ -51,22 +52,28 @@ def trim_purge_records(tx):
     rows = tx.rows("SELECT key, value FROM settings WHERE key LIKE 'purge_record:%'")
     if len(rows) <= MAX_PURGE_RECORDS:
         return
+
     def stamp(raw):
         value = loads(raw)
         require(isinstance(value, dict), _CAPACITY)
         return str(value.get('time') or '')
+
     ranked = sorted(rows, key=lambda row: (stamp(row[1]), row[0]))
-    for key, _value in ranked[:len(ranked) - MAX_PURGE_RECORDS]:
+    for key, _value in ranked[: len(ranked) - MAX_PURGE_RECORDS]:
         tx.execute('DELETE FROM settings WHERE key=?', (key,), write=True)
 
 
 def require_csr_capacity(tx):
-    require(_count(tx, "SELECT COUNT(*) FROM csrs WHERE state='pending'") < MAX_PENDING_CSRS, _CAPACITY)
+    require(
+        _count(tx, "SELECT COUNT(*) FROM csrs WHERE state='pending'") < MAX_PENDING_CSRS, _CAPACITY
+    )
     require(_count(tx, 'SELECT COUNT(*) FROM csrs') < MAX_CSR_ROWS, _CAPACITY)
 
 
 def require_webhook_capacity(tx):
-    active = _count(tx, "SELECT COUNT(*) FROM jobs WHERE kind='webhook' AND state IN ('pending','running')")
+    active = _count(
+        tx, "SELECT COUNT(*) FROM jobs WHERE kind='webhook' AND state IN ('pending','running')"
+    )
     require(active < MAX_QUEUED_WEBHOOKS, _CAPACITY)
     total = _count(tx, "SELECT COUNT(*) FROM jobs WHERE kind='webhook'")
     if total < MAX_WEBHOOK_ROWS:
@@ -74,11 +81,17 @@ def require_webhook_capacity(tx):
     overflow = total - MAX_WEBHOOK_ROWS + 1
     finished = tx.rows(
         "SELECT id FROM jobs WHERE kind='webhook' AND state IN ('done','failed') ORDER BY next_at, id LIMIT ?",
-        (overflow,))
+        (overflow,),
+    )
     for (job_id,) in finished:
-        tx.execute("DELETE FROM jobs WHERE id=? AND kind='webhook' AND state IN ('done','failed')",
-                   (job_id,), write=True)
-    require(_count(tx, "SELECT COUNT(*) FROM jobs WHERE kind='webhook'") < MAX_WEBHOOK_ROWS, _CAPACITY)
+        tx.execute(
+            "DELETE FROM jobs WHERE id=? AND kind='webhook' AND state IN ('done','failed')",
+            (job_id,),
+            write=True,
+        )
+    require(
+        _count(tx, "SELECT COUNT(*) FROM jobs WHERE kind='webhook'") < MAX_WEBHOOK_ROWS, _CAPACITY
+    )
 
 
 def require_result_capacity(tx):
@@ -91,8 +104,15 @@ def require_reaction_capacity(tx):
 
 def require_keystore_capacity(tx, extra_bytes):
     require(type(extra_bytes) is int and extra_bytes >= 0, _CAPACITY)
-    require(_count(tx, """SELECT COUNT(*) FROM revisions r JOIN resources s
-        ON s.id=r.resource_id WHERE s.type='keystore'""") < MAX_KEYSTORE_REVISIONS, _CAPACITY)
+    require(
+        _count(
+            tx,
+            """SELECT COUNT(*) FROM revisions r JOIN resources s
+        ON s.id=r.resource_id WHERE s.type='keystore'""",
+        )
+        < MAX_KEYSTORE_REVISIONS,
+        _CAPACITY,
+    )
     total = 0
     for (raw,) in tx.execute("""SELECT r.body FROM revisions r JOIN resources s
             ON s.id=r.resource_id WHERE s.type='keystore'"""):

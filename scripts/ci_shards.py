@@ -3,6 +3,7 @@
 Adapted from PR #104. Every runner collects the complete suite; the gate rejects
 skips, duplicate IDs, count-only substitutions and missing or failed evidence.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -18,14 +19,22 @@ def partition(nodeids, index, count):
         raise ValueError('invalid shard coordinates')
     if len(nodeids) != len(set(nodeids)):
         raise ValueError('duplicate test node ID')
-    return [node for node in nodeids
-            if int.from_bytes(hashlib.sha256(node.encode()).digest()[:8], 'big') % count == index]
+    return [
+        node
+        for node in nodeids
+        if int.from_bytes(hashlib.sha256(node.encode()).digest()[:8], 'big') % count == index
+    ]
 
 
 def evidence(nodeids, index, count):
     all_nodes = sorted(nodeids)
-    return {'version': 2, 'index': index, 'count': count, 'all': all_nodes,
-            'selected': partition(all_nodes, index, count)}
+    return {
+        'version': 2,
+        'index': index,
+        'count': count,
+        'all': all_nodes,
+        'selected': partition(all_nodes, index, count),
+    }
 
 
 def report_nodes(path):
@@ -34,8 +43,11 @@ def report_nodes(path):
         raise ValueError('JUnit result contains failed or skipped tests')
     nodes = []
     for case in root.findall('.//testcase'):
-        ids = [p.get('value') for p in case.findall('./properties/property')
-               if p.get('name') == 'msg.nodeid']
+        ids = [
+            p.get('value')
+            for p in case.findall('./properties/property')
+            if p.get('name') == 'msg.nodeid'
+        ]
         if len(ids) != 1 or not ids[0]:
             raise ValueError('JUnit result is missing an unambiguous test node ID')
         nodes.append(ids[0])
@@ -85,10 +97,12 @@ def run(index, count, directory):
                 item.user_properties.append(('msg.nodeid', item.nodeid))
             config.hook.pytest_deselected(items=rejected)
             (directory / f'shard-{index}.json').write_text(
-                json.dumps(manifest, ensure_ascii=False, indent=2) + '\n')
+                json.dumps(manifest, ensure_ascii=False, indent=2) + '\n'
+            )
 
-    return pytest.main(['tests', f'--junitxml={directory / f"tests-{index}.xml"}'],
-                       plugins=[Collector()])
+    return pytest.main(
+        ['tests', f'--junitxml={directory / f"tests-{index}.xml"}'], plugins=[Collector()]
+    )
 
 
 def main():

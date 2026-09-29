@@ -1,8 +1,9 @@
 """The read gate catches both same-count SQL mutations and pre-send effects."""
+
 import pytest
+from read_only_evidence import readonly_evidence
 
 from msg.workers.mail import SmtpSender
-from read_only_evidence import readonly_evidence
 
 
 @pytest.mark.asyncio
@@ -30,6 +31,7 @@ async def test_read_evidence_rejects_sender_before_network_access(installed, mon
 async def signalled_install(installed, monkeypatch):
     """Use the real signal interface, with a hard stop before socket access."""
     from unittest.mock import Mock
+
     from msg.storage.valkey_bus import ValkeyOutboxSignal
 
     app, _ = installed
@@ -54,7 +56,8 @@ async def test_read_evidence_accepts_idle_configured_signal(signalled_install, m
 
 @pytest.mark.asyncio
 async def test_read_evidence_detects_signal_even_when_store_swallows_failure(
-        signalled_install, monkeypatch):
+    signalled_install, monkeypatch
+):
     app, _ = signalled_install
     with pytest.raises(AssertionError, match='read attempted publication'):
         async with readonly_evidence(app, monkeypatch):

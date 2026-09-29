@@ -65,7 +65,7 @@ jobs:
           tests/test_collaboration_surfaces.py tests/test_collaboration_resources.py
           tests/test_collaboration_resource_surfaces.py
           --junitxml=artifacts/lease-list-regressions.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: lease-list-evidence

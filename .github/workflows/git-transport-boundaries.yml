@@ -67,7 +67,7 @@ jobs:
       - name: Preserve real HTTP, SSH, bundle, LFS and publication fences
         run: |
           python -m pytest tests/test_git_http_push.py tests/test_native_git_read_only.py tests/test_git_lfs.py tests/test_lfs_shared_gc_quota.py tests/test_ssh_rss.py tests/test_extensions.py tests/test_storage_layout.py tests/test_effect_completion_fencing.py tests/issue_78_80/test_lfs_integrity.py tests/issue_78_80/test_lfs_migration_contract.py --junitxml=artifacts/git-regressions.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: git-transport-boundaries-${{ github.sha }}

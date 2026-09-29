@@ -1,4 +1,5 @@
 """Schema contracts are self-contained; validation never loads files or URLs."""
+
 import urllib.request
 
 import pytest
@@ -7,16 +8,21 @@ from msg.core.errors import Failure
 from msg.core.models import ResourceRef
 from msg.core.registry import Registry
 
-
 REF = ResourceRef(id='schema_local_references')
 
 
 @pytest.mark.parametrize('keyword', ['$ref', '$dynamicRef', '$recursiveRef'])
-@pytest.mark.parametrize('reference', [
-    'https://example.invalid/schema', 'file:///tmp/msg-schema.json',
-    'ftp://example.invalid/schema', '//example.invalid/schema',
-    'other-schema.json#/$defs/value', 'urn:external:schema',
-])
+@pytest.mark.parametrize(
+    'reference',
+    [
+        'https://example.invalid/schema',
+        'file:///tmp/msg-schema.json',
+        'ftp://example.invalid/schema',
+        '//example.invalid/schema',
+        'other-schema.json#/$defs/value',
+        'urn:external:schema',
+    ],
+)
 def test_nonlocal_references_are_rejected_before_publishing(keyword, reference):
     registry = Registry()
     with pytest.raises(Failure, match='remote_schema_reference_forbidden'):
@@ -27,15 +33,18 @@ def test_nonlocal_references_are_rejected_before_publishing(keyword, reference):
     registry.validate(REF, 1)
 
 
-@pytest.mark.parametrize('schema', [
-    {'properties': {'item': {'$ref': 'file:///tmp/msg-schema.json'}}},
-    {'$defs': {'item': {'$dynamicRef': 'ftp://example.invalid/schema'}}},
-    {'allOf': [{'$ref': 'other-schema.json'}]},
-    {'items': {'$ref': '//example.invalid/schema'}},
-    {'if': {'$ref': 'urn:external:schema'}},
-    {'dependentSchemas': {'item': {'$ref': 'other-schema.json'}}},
-    {'unevaluatedProperties': {'$ref': 'other-schema.json'}},
-])
+@pytest.mark.parametrize(
+    'schema',
+    [
+        {'properties': {'item': {'$ref': 'file:///tmp/msg-schema.json'}}},
+        {'$defs': {'item': {'$dynamicRef': 'ftp://example.invalid/schema'}}},
+        {'allOf': [{'$ref': 'other-schema.json'}]},
+        {'items': {'$ref': '//example.invalid/schema'}},
+        {'if': {'$ref': 'urn:external:schema'}},
+        {'dependentSchemas': {'item': {'$ref': 'other-schema.json'}}},
+        {'unevaluatedProperties': {'$ref': 'other-schema.json'}},
+    ],
+)
 def test_nonlocal_references_in_subschemas_are_rejected(schema):
     with pytest.raises(Failure, match='remote_schema_reference_forbidden'):
         Registry().add_schema(REF, schema)
@@ -60,18 +69,21 @@ def test_local_pointer_with_http_metadata_is_not_mistaken_for_remote_reference()
 @pytest.mark.parametrize('keyword', ['$ref', '$dynamicRef'])
 def test_local_anchors_still_validate(keyword):
     registry = Registry()
-    registry.add_schema(REF, {'$defs': {'text': {'$anchor': 'text', 'type': 'string'}},
-                              keyword: '#text'})
+    registry.add_schema(
+        REF, {'$defs': {'text': {'$anchor': 'text', 'type': 'string'}}, keyword: '#text'}
+    )
     registry.validate(REF, 'value')
     with pytest.raises(Failure, match='schema_validation'):
         registry.validate(REF, 1)
 
 
 def test_reference_named_properties_and_annotation_data_are_not_schema_references():
-    schema = {'type': 'object', 'properties': {
-        '$ref': {'type': 'string'}, '$dynamicRef': {'type': 'string'}},
+    schema = {
+        'type': 'object',
+        'properties': {'$ref': {'type': 'string'}, '$dynamicRef': {'type': 'string'}},
         'default': {'$ref': 'https://example.invalid/ordinary-data'},
-        'examples': [{'$dynamicRef': 'file:///tmp/ordinary-data'}]}
+        'examples': [{'$dynamicRef': 'file:///tmp/ordinary-data'}],
+    }
     registry = Registry()
     registry.add_schema(REF, schema)
     registry.validate(REF, {'$ref': 'an ordinary string', '$dynamicRef': 'another'})

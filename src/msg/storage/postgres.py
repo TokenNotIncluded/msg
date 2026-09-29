@@ -5,11 +5,11 @@ The executor relies on serialized writers for replay, audit chaining and job
 deduplication; this lock preserves that ordering across processes and hosts.
 Connections must be direct or session-pooled, not transaction-pooled.
 """
+
 from __future__ import annotations
 
 import asyncio
 import contextvars
-import json
 import logging
 import os
 import re
@@ -19,11 +19,11 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import psycopg
-from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from msg.core.errors import Failure
 from msg.core.query import QueryResult, SqlParameters
+from msg.storage.ledger_migration import migrate_ledger_accounts as _migrate_ledger_accounts
 from msg.storage.query import SessionQueryResult
 from msg.storage.session import RelationalSession
 
@@ -451,17 +451,16 @@ CREATE INDEX IF NOT EXISTS sync_checkpoints_subject ON sync_checkpoints(subject,
 
 
 # Kept as an import alias for the existing storage constructor and callers.
-from msg.storage.ledger_migration import migrate_ledger_accounts as _migrate_ledger_accounts
 
 
 def _postgres_sql(sql: str, *, has_parameters: bool = False) -> str:
     """Translate shared SQLite SQL without altering quoted text or comments."""
     ignore = re.match(r'(?is)^(\s*)INSERT\s+OR\s+IGNORE\s+INTO\b', sql)
     if ignore:
-        sql = sql[:ignore.start()] + ignore.group(1) + 'INSERT INTO' + sql[ignore.end():]
+        sql = sql[: ignore.start()] + ignore.group(1) + 'INSERT INTO' + sql[ignore.end() :]
         ending = re.search(r'\s*;\s*$', sql)
         if ending:
-            sql = sql[:ending.start()] + ' ON CONFLICT DO NOTHING' + sql[ending.start():]
+            sql = sql[: ending.start()] + ' ON CONFLICT DO NOTHING' + sql[ending.start() :]
         else:
             sql += ' ON CONFLICT DO NOTHING'
 
@@ -485,10 +484,15 @@ def _postgres_sql(sql: str, *, has_parameters: bool = False) -> str:
                 output.append('%s')
                 position += 1
                 continue
-            elif (chunks_query and sql[position:position + 6].lower() == 'offset'
-                  and (position == 0 or not (sql[position - 1].isalnum() or sql[position - 1] == '_'))
-                  and (position + 6 == len(sql) or not (
-                      sql[position + 6].isalnum() or sql[position + 6] == '_'))):
+            elif (
+                chunks_query
+                and sql[position : position + 6].lower() == 'offset'
+                and (position == 0 or not (sql[position - 1].isalnum() or sql[position - 1] == '_'))
+                and (
+                    position + 6 == len(sql)
+                    or not (sql[position + 6].isalnum() or sql[position + 6] == '_')
+                )
+            ):
                 output.append('"offset"')
                 position += 6
                 continue
@@ -522,20 +526,25 @@ class PostgresSession(RelationalSession):
         self._connection = connection
         self.pending_effect_ids: list[str] = []
 
-    def execute(self, sql: str, parameters: SqlParameters = (), *,
-                write: bool = False) -> QueryResult:
+    def execute(
+        self, sql: str, parameters: SqlParameters = (), *, write: bool = False
+    ) -> QueryResult:
         self.check(write)
         try:
             # With an empty parameter tuple psycopg still parses literal '%' as a
             # placeholder; SQL such as LIKE 'policy:%' must be sent unchanged.
             cursor = self._connection.execute(
-                _postgres_sql(sql, has_parameters=bool(parameters)), parameters or None)
+                _postgres_sql(sql, has_parameters=bool(parameters)), parameters or None
+            )
             return SessionQueryResult(cursor, self.check)
         except psycopg.errors.IntegrityError as exc:
-            raise Failure("constraint_conflict") from exc
-        except (psycopg.errors.DeadlockDetected, psycopg.errors.LockNotAvailable,
-                psycopg.errors.QueryCanceled) as exc:
-            raise Failure("server_busy", retryable=True) from exc
+            raise Failure('constraint_conflict') from exc
+        except (
+            psycopg.errors.DeadlockDetected,
+            psycopg.errors.LockNotAvailable,
+            psycopg.errors.QueryCanceled,
+        ) as exc:
+            raise Failure('server_busy', retryable=True) from exc
 
     async def enqueue(self, job):
         await super().enqueue(job)
@@ -548,18 +557,23 @@ class PostgresMetadataStore:
     def __init__(self, dsn: str, *, signal=None, initialize: bool = True):
         self.dsn = dsn
         self.signal = signal
-        self._current = contextvars.ContextVar('msg_pg_transaction_' + uuid.uuid4().hex, default=None)
+        self._current = contextvars.ContextVar(
+            'msg_pg_transaction_' + uuid.uuid4().hex, default=None
+        )
         if initialize:
             with self._connect() as conn:
                 # Multiple daemon workers may initialize the same fresh database.
                 conn.execute('SELECT pg_advisory_xact_lock(725274758, 1886265951)')
                 conn.execute(_SCHEMA)
                 from msg.storage.market_migration import migrate_market
+
                 migrate_market(conn)
                 _migrate_ledger_accounts(conn)
                 from msg.storage.custodial_migration import migrate_custodial_vault
+
                 migrate_custodial_vault(conn)
                 from msg.storage.topic_event_migration import migrate_topic_events
+
                 migrate_topic_events(conn, postgres=True)
 
     def _connect(self):
@@ -612,6 +626,7 @@ class PostgresMetadataStore:
                     def blocking():
                         conn.execute("SET lock_timeout = '10s'")
                         conn.execute('SELECT pg_advisory_lock(725274758, 1886265951)')
+
                     task = asyncio.create_task(asyncio.to_thread(blocking))
                     try:
                         await asyncio.shield(task)
@@ -621,6 +636,7 @@ class PostgresMetadataStore:
                             await task
                         finally:
                             raise
+
                 try:
                     await acquire()
                 except (psycopg.errors.LockNotAvailable, psycopg.errors.QueryCanceled) as exc:
@@ -645,7 +661,9 @@ class PostgresMetadataStore:
             try:
                 await self.signal.publish_pending(tuple(tx.pending_effect_ids))
             except Exception:
-                logging.getLogger(__name__).exception('Valkey job signal failed; jobs remain durable')
+                logging.getLogger(__name__).exception(
+                    'Valkey job signal failed; jobs remain durable'
+                )
 
     async def close(self):
         return None
@@ -663,6 +681,18 @@ class PostgresMetadataStore:
         if password is not None:
             env['PGPASSWORD'] = password
         safe_dsn = make_conninfo(**fields)
-        subprocess.run(['pg_dump', '--format=custom', '--no-owner', '--no-acl',
-                        '--file', str(destination), '--dbname', safe_dsn],
-                       env=env, check=True, capture_output=True)
+        subprocess.run(
+            [
+                'pg_dump',
+                '--format=custom',
+                '--no-owner',
+                '--no-acl',
+                '--file',
+                str(destination),
+                '--dbname',
+                safe_dsn,
+            ],
+            env=env,
+            check=True,
+            capture_output=True,
+        )

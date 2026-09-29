@@ -1,14 +1,15 @@
 """Ordinary read views reject changed effects before resolving any resource."""
+
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
+from read_only_evidence import readonly_evidence
 
 from msg.security.quarantine import RUNTIME_GENERATION
 from msg.transports.http import create_app
-from read_only_evidence import readonly_evidence
 
 
 @asynccontextmanager
@@ -60,16 +61,27 @@ async def runtime_check_only(app, patch):
 @pytest.mark.parametrize('method', ['GET', 'HEAD'])
 async def test_non_read_views_do_not_resolve_or_execute(installed, monkeypatch, effect, method):
     app, _ = installed
-    paths = ('/main', '/missing-resource', '/main/raw', '/main/json',
-             '/main/meta', '/main/history', '/_id/missing/raw')
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url=app.settings.service_url) as http:
+    paths = (
+        '/main',
+        '/missing-resource',
+        '/main/raw',
+        '/main/json',
+        '/main/meta',
+        '/main/history',
+        '/_id/missing/raw',
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
         async with readonly_evidence(app, monkeypatch):
             with monkeypatch.context() as patch:
                 for operation in ('discovery.get', 'discovery.raw'):
                     key = (operation, 1)
-                    patch.setitem(app.registry._operations, key,
-                                  replace(app.registry._operations[key], effect=effect))
+                    patch.setitem(
+                        app.registry._operations,
+                        key,
+                        replace(app.registry._operations[key], effect=effect),
+                    )
                 async with runtime_check_only(app, patch) as runtime:
                     for path in paths:
                         response = await http.request(method, path)
@@ -83,20 +95,26 @@ async def test_non_read_views_do_not_resolve_or_execute(installed, monkeypatch, 
 
 @pytest.mark.parametrize('effect', ['transaction', 'external'])
 async def test_stale_runtime_is_checked_before_the_public_effect_gate(
-        installed, monkeypatch, effect):
+    installed, monkeypatch, effect
+):
     app, _ = installed
     async with app.metadata.transaction(write=True) as tx:
         tx.set_setting(RUNTIME_GENERATION, 'effect-order-new-generation')
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url=app.settings.service_url) as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
         async with readonly_evidence(app, monkeypatch):
             with monkeypatch.context() as patch:
                 for operation in ('discovery.get', 'discovery.raw'):
                     key = (operation, 1)
-                    patch.setitem(app.registry._operations, key,
-                                  replace(app.registry._operations[key], effect=effect))
-                operation_lookup = Mock(side_effect=AssertionError(
-                    'stale runtime reached the route effect gate'))
+                    patch.setitem(
+                        app.registry._operations,
+                        key,
+                        replace(app.registry._operations[key], effect=effect),
+                    )
+                operation_lookup = Mock(
+                    side_effect=AssertionError('stale runtime reached the route effect gate')
+                )
                 patch.setattr(app.registry, 'operation', operation_lookup)
                 async with runtime_check_only(app, patch) as runtime:
                     for path in ('/main', '/_id/missing/raw'):

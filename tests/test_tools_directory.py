@@ -1,4 +1,5 @@
 """Canonical /tools path and the certificate boundary on a fresh install."""
+
 from dataclasses import replace
 
 import pytest
@@ -29,11 +30,11 @@ async def test_new_install_tools_path_keeps_permissions_and_capability_gate(inst
     assert denied.error.code == 'tool_certificate_required', wire(denied)
     cap = scoped(app, 'tool.use', 'tool_dns', app.registry.capability('tool.use').operations)
     cert = await approve(app, root, uid, key, (cap,))
-    listing = await call(app, 'discovery.get', {'id': '/tools'}, key=key, subject=uid,
-                         certs=(cert.resource_id,))
+    listing = await call(
+        app, 'discovery.get', {'id': '/tools'}, key=key, subject=uid, certs=(cert.resource_id,)
+    )
     assert [tool['name'] for tool in listing.data['items']] == ['dns']
-    accepted = await call(app, 'tool.run', args, key=key, subject=uid,
-                          certs=(cert.resource_id,))
+    accepted = await call(app, 'tool.run', args, key=key, subject=uid, certs=(cert.resource_id,))
     assert accepted.status == 'accepted', wire(accepted)
 
 
@@ -42,20 +43,22 @@ async def test_legacy_tools_path_is_read_only_and_new_alias_still_checks_certifi
     app, root = installed
     async with app.metadata.transaction(write=True) as tx:
         current = await tx.resource('t_tools')
-        await tx.replace(replace(current, name='_tools', generation=current.generation + 1),
-                         current.generation)
+        await tx.replace(
+            replace(current, name='_tools', generation=current.generation + 1), current.generation
+        )
     await bootstrap(app.metadata, app.contents, app.registry, NOW)
     key, uid, _ = await register(app, 'legacy-tools-directory')
     cap = scoped(app, 'tool.use', 'tool_dns', app.registry.capability('tool.use').operations)
     cert = await approve(app, root, uid, key, (cap,))
-    legacy_read = await call(app, 'discovery.get', {'id': '/_tools'}, key=key, subject=uid,
-                             certs=(cert.resource_id,))
+    legacy_read = await call(
+        app, 'discovery.get', {'id': '/_tools'}, key=key, subject=uid, certs=(cert.resource_id,)
+    )
     assert [tool['name'] for tool in legacy_read.data['items']] == ['dns']
     args = {'id': '/_tools/dns', 'arguments': {'name': 'example.org', 'type': 'A'}}
-    rejected = await call(app, 'tool.run', args, key=key, subject=uid,
-                          certs=(cert.resource_id,))
+    rejected = await call(app, 'tool.run', args, key=key, subject=uid, certs=(cert.resource_id,))
     assert rejected.error.code == 'legacy_tool_path_read_only', wire(rejected)
     canonical = {**args, 'id': '/tools/dns'}
-    allowed = await call(app, 'tool.run', canonical, key=key, subject=uid,
-                         certs=(cert.resource_id,))
+    allowed = await call(
+        app, 'tool.run', canonical, key=key, subject=uid, certs=(cert.resource_id,)
+    )
     assert allowed.status == 'accepted', wire(allowed)

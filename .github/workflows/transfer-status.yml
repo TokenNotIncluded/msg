@@ -73,7 +73,7 @@ jobs:
           tests/test_transfer_status_cursors.py tests/test_transfer.py
           tests/test_transfer_endpoint.py tests/test_read_only_evidence.py
           --junitxml=artifacts/transfer-status.xml
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
           name: transfer-status-evidence

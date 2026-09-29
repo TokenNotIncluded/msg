@@ -1,19 +1,22 @@
 """Invalid local chunk sizes cannot touch resumable state or cause zero progress."""
+
 import hashlib
 
 import httpx
 import pytest
+from read_only_evidence import readonly_evidence
+from test_service import NOW
 
 from msg.client import ClientState, MsgClient
 from msg.core.codec import loads
 from msg.core.errors import Failure
 from msg.transports.client import (
-    GraphQLTransport, HTTPTransport, MCPHTTPTransport, PathGETTransport,
+    GraphQLTransport,
+    HTTPTransport,
+    MCPHTTPTransport,
+    PathGETTransport,
 )
 from msg.transports.http import create_app
-from read_only_evidence import readonly_evidence
-from test_service import NOW
-
 
 INVALID_PART_BYTES = (0, -1, False, True, 1.5, '1', None)
 TRANSPORTS = (HTTPTransport, PathGETTransport, GraphQLTransport, MCPHTTPTransport)
@@ -28,8 +31,10 @@ def local_snapshot(directory, partial):
     if partial.exists():
         paths.append(partial)
     # Hash fixture keys rather than printing their contents in assertion diffs.
-    return {str(p): (hashlib.sha256(p.read_bytes()).hexdigest(),
-                      p.stat().st_mode, p.stat().st_mtime_ns) for p in paths}
+    return {
+        str(p): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mode, p.stat().st_mtime_ns)
+        for p in paths
+    }
 
 
 async def start_interrupted_download(app, tmp_path, http, monkeypatch):
@@ -49,7 +54,7 @@ async def start_interrupted_download(app, tmp_path, http, monkeypatch):
         if packet.operation == 'transfer.part_get':
             parts += 1
             if parts == 2:
-                raise InterruptedDownload()
+                raise InterruptedDownload
         return await actual_call(packet)
 
     with monkeypatch.context() as patch:
@@ -66,12 +71,15 @@ async def start_interrupted_download(app, tmp_path, http, monkeypatch):
 
 @pytest.mark.parametrize('part_bytes', INVALID_PART_BYTES)
 async def test_resume_rejects_invalid_local_chunk_size_before_state_or_network(
-        installed, tmp_path, monkeypatch, part_bytes):
+    installed, tmp_path, monkeypatch, part_bytes
+):
     app, _ = installed
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url=app.settings.service_url) as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
         client, ref, _, destination, partial = await start_interrupted_download(
-            app, tmp_path, http, monkeypatch)
+            app, tmp_path, http, monkeypatch
+        )
         before = local_snapshot(client.state.directory, partial)
         actual_call, requests = client.transport.call, []
 
@@ -111,14 +119,18 @@ async def test_upload_rejects_invalid_local_chunk_size_before_source_access(tmp_
 
 @pytest.mark.parametrize('transport_class', TRANSPORTS)
 async def test_download_resume_with_valid_chunk_size_preserves_real_bytes(
-        installed, tmp_path, monkeypatch, transport_class):
+    installed, tmp_path, monkeypatch, transport_class
+):
     app, _ = installed
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),
-                                 base_url=app.settings.service_url) as http:
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
         client, ref, source, destination, partial = await start_interrupted_download(
-            app, tmp_path, http, monkeypatch)
-        resumed = MsgClient(client.state, transport_class(app.settings.service_url, http=http),
-                            clock=lambda: NOW)
+            app, tmp_path, http, monkeypatch
+        )
+        resumed = MsgClient(
+            client.state, transport_class(app.settings.service_url, http=http), clock=lambda: NOW
+        )
         async with readonly_evidence(app, monkeypatch):
             result = await resumed.download(ref, destination, part_bytes=1)
         assert destination.read_bytes() == source.read_bytes()
