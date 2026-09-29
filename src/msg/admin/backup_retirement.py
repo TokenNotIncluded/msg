@@ -8,11 +8,44 @@ trusted cache of a success flag.
 from __future__ import annotations
 
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import digest, loads
-from msg.core.errors import require
+import os
+from pathlib import Path
+import tempfile
+
+from msg.core.codec import canonical, digest, loads
+from msg.core.errors import Failure, require
 from msg.core.models import AuditEvent, Event, ResourceRef
 from msg.plugins.common import new_id
 from msg.security.backup_retirement import FIELDS, DOMAIN, check, root_verifier, setting_key
+
+
+def read_statement(path):
+    from msg.security.root_files import read_private
+    return loads(read_private(path, limit=1024 * 1024))
+
+
+def write_record(path, record):
+    """Publish a complete 0600 record without replacing an existing destination."""
+    path = Path(path)
+    fd, temporary = tempfile.mkstemp(prefix='.retirement-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(canonical(record))
+            stream.flush()
+            os.fsync(stream.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError as exc:
+            raise Failure('backup_retirement_destination_exists') from exc
+        os.unlink(temporary)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def unsigned_statement(value):
@@ -36,7 +69,7 @@ async def import_record(tx, record, *, now, operator):
             isinstance(body.get('old_identity_key_id'), str), 'backup_retirement_invalid')
     subject = body['subject_id']
     details = completed_migration(tx, subject, body['old_identity_key_id'])
-    attestation = check(record, await root_verifier(tx), subject, details, now=now)
+    attestation = check(record, await root_verifier(tx, now=now), subject, details, now=now)
     key = setting_key(subject, attestation.old_identity_key_id)
     previous = tx.setting(key)
     tx.set_setting(key, record)

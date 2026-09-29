@@ -23,8 +23,13 @@ from msg.security.quarantine import SETTING, active
 FORMAT = 'msg-revocation-checkpoint-v1'
 SUPPORTED_FACTS = frozenset({'credential.revoke', 'certificate.revoke', 'share_grant.revoke',
     'share_grant_v2.revoke', 'share_link.revoke', 'membership.remove',
-    'topic_membership.remove', 'topic_ban.lift', 'identity_key.retire',
+    'topic_membership.remove', 'topic_ban.apply', 'topic_ban.lift', 'identity_key.retire',
     'encryption_key.retire', 'vault.destroy'})
+PROMOTION_BLOCKED_REASONS = (
+    'quarantine_remains',
+    'supported_facts_are_deny_only',
+    'backup_retirement_not_attested',
+)
 _SHARE_TABLES = {'share_grant.revoke': 'share_grants', 'share_grant_v2.revoke': 'share_grants_v2',
                  'share_link.revoke': 'share_links'}
 _MAX_ENTRIES = 10000
@@ -157,6 +162,23 @@ async def _apply(tx, fact):
                        (target, subject), write=True)
             return True
         return False
+    if kind == 'topic_ban.apply':
+        require(tx.one('SELECT id FROM resources WHERE id=?', (target,)) is not None,
+                'recovery_fact_missing')
+        row = tx.one('SELECT status,expires_at FROM topic_bans WHERE topic=? AND subject=?', (target, subject))
+        if row is None:
+            tx.execute('''INSERT INTO topic_bans
+                (topic,subject,actor,created_at,expires_at,reason,status)
+                VALUES (?,?,?,?,NULL,?,?)''',
+                (target, subject, ROOT_SUBJECT, at, 'recovery-replay', 'active'), write=True)
+            return True
+        # This checkpoint fact has no expiry. Do not inherit one from an older
+        # snapshot and silently lift the restored deny, now or in the future.
+        if row[0] != 'active' or row[1] is not None:
+            tx.execute("UPDATE topic_bans SET status='active',expires_at=NULL WHERE topic=? AND subject=?",
+                       (target, subject), write=True)
+            return True
+        return False
     if kind == 'topic_ban.lift':
         row = tx.one('SELECT status FROM topic_bans WHERE topic=? AND subject=?', (target, subject))
         require(row is not None, 'recovery_fact_missing')
@@ -209,8 +231,9 @@ async def _replay(store, packet, *, pin, operator):
 
     Always re-apply facts, including after a repeated invocation/restart: cached
     watermarks are not evidence that an authorization row has not been restored.
-    This neither imports keys, emits effects, nor clears quarantine. topic_ban.lift
-    is the only topic-ban fact; it does not reconcile ACLs or promote production.
+    This neither imports keys, emits effects, nor clears quarantine. topic_ban.apply
+    only records an active ban, and topic_ban.lift only marks an existing ban lifted.
+    Neither reconciles ACLs nor promotes production.
     """
     require(isinstance(operator, str) and bool(operator), 'recovery_operator_required')
     body = verify_checkpoint(packet, pin=pin)
@@ -233,7 +256,9 @@ async def _replay(store, packet, *, pin, operator):
             changed += bool(await _apply(tx, fact))
         receipt = {'format': FORMAT, 'checkpoint_digest': pin.digest, 'sequence': pin.sequence,
                    'prefix_digest': digest(body['entries']), 'scope': 'supported_deny_only_facts',
-                   'promotion': 'blocked', 'backup_retired': False}
+                   'promotion': 'blocked',
+                   'promotion_blocked_reasons': list(PROMOTION_BLOCKED_REASONS),
+                   'backup_retired': False}
         if changed:
             tx.set_setting('authorization_epoch', tx.setting('authorization_epoch', 0) + 1)
         if changed or previous != receipt:

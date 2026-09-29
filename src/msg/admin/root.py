@@ -265,26 +265,28 @@ class RootAdmin:
     def sign_backup_retirement(self,source,destination):
         """Root-sign an operator's statement that listed backup sets lost one old key."""
         require_local_console(self.config_dir)
-        from msg.admin.backup_retirement import unsigned_statement
+        from msg.admin.backup_retirement import read_statement, unsigned_statement, write_record
         from msg.security.backup_retirement import sign_record
         target=Path(destination)
         require(not target.exists() and not target.is_symlink(),'backup_retirement_destination_exists')
-        body=unsigned_statement(loads(Path(source).read_bytes()))
+        body=unsigned_statement(read_statement(source))
         print(canonical({'statement':body,'digest':digest(body),
                          'claim':'listed_backup_sets_only'}).decode())
         require(input('Type ATTEST BACKUP RETIREMENT '+digest(body)+': ')==
                 'ATTEST BACKUP RETIREMENT '+digest(body),'approval_cancelled')
-        private=open_private_key(loads(root_envelope(self.config_dir).read_bytes()),getpass.getpass('Root PIN/passphrase: '))
+        from msg.security.root_files import read_private
+        envelope=loads(read_private(root_envelope(self.config_dir)))
+        private=open_private_key(envelope,getpass.getpass('Root PIN/passphrase: '))
         record=sign_record(body,Ed25519Signer.from_bytes(private))
-        durable_write(target,canonical(record),mode=0o600)
+        write_record(target,record)
         return {'status':'backup_retirement_signed','path':str(target),'digest':digest(record)}
 
     def import_backup_retirement(self,source):
         """Only this console path persists a record; reads re-verify it every time."""
         operator=require_local_console(self.config_dir)
-        from msg.admin.backup_retirement import import_record
+        from msg.admin.backup_retirement import import_record, read_statement
         app=self._app()
-        record=loads(Path(source).read_bytes())
+        record=read_statement(source)
         print(canonical({'record':record,'digest':digest(record)}).decode())
         require(input('Type IMPORT BACKUP RETIREMENT '+digest(record)+': ')==
                 'IMPORT BACKUP RETIREMENT '+digest(record),'approval_cancelled')
