@@ -1471,6 +1471,10 @@ def create_app(service):
                     path='/@'+handle+'/'+SUBJECT_RESOURCE_ALIASES[name]+(remainder or '')
             stable=parse_stable_view(path,raw_path)
             resource_path,view,revision=stable if stable is not None else parse_view(path)
+            # A public representation must be read-only before even resolving
+            # its old/migrated alias. Missing targets cannot bypass this gate.
+            initial_operation='discovery.raw' if view=='raw' else 'discovery.get'
+            require(service.registry.operation(initial_operation).effect=='read','effect_mismatch')
             redirect_target=None
             redirect_resource_id=None
             legacy_target=None
