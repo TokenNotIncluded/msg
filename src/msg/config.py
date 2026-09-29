@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from msg.core.errors import require
+from msg.config_contracts import configuration_keys, validate_sections
 from msg.core.models import MailConfig, ServerConfig, TransportLimits
 from msg.security.age_keys import public_from_recipient,encryption_key_id
 
@@ -99,9 +100,9 @@ def load_settings(config_dir=Path('/etc/msgd')):
     path=server_config_file(config_dir)
     require(path.is_file(),'configuration_missing')
     data=tomllib.loads(path.read_text())
-    require(set(data)<={'server','storage','limits','plugins','tools','recovery','identity','money','hosting'},'unknown_configuration_section')
+    validate_sections(data)
     identity=data.get('identity',{})
-    require(isinstance(identity,dict) and set(identity)<={'credential_delivery_recovery_window'},
+    require(isinstance(identity,dict) and set(identity)<=configuration_keys('identity'),
             'unknown_identity_configuration')
     window=identity.get('credential_delivery_recovery_window','15m')
     require(isinstance(window,str) and len(window)<=3 and
@@ -110,7 +111,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
     window_minutes=int(window[:-1])
     require(1<=window_minutes<=60,'invalid_credential_delivery_recovery_window')
     hosting=data.get('hosting',{})
-    require(isinstance(hosting,dict) and set(hosting)<={'base_capacity_bytes','recovery_marker','content_group_read'},
+    require(isinstance(hosting,dict) and set(hosting)<=configuration_keys('hosting'),
             'unknown_hosting_configuration')
     hosting_base=hosting.get('base_capacity_bytes',10*1024*1024)
     require(type(hosting_base) is int and 0 < hosting_base <= 1024**4,
@@ -122,7 +123,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
             Path(recovery_marker).is_absolute() and '..' not in Path(recovery_marker).parts and
             not any(ord(c)<32 for c in recovery_marker)), 'invalid_hosting_recovery_marker')
     money=data.get('money',{})
-    require(isinstance(money,dict) and set(money)<=set(MoneyConfig.__dataclass_fields__),
+    require(isinstance(money,dict) and set(money)<=configuration_keys('money'),
             'unknown_money_configuration')
     fixed={'enabled':True,'currency_id':'primary','scale':6,
            'transfer_fee':0,'allow_overdraft':False}
@@ -138,7 +139,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
     require(type(code) is str and re.fullmatch(r'[A-Z][A-Z0-9]{1,15}',code) is not None,
             'invalid_money_code')
     server=data.get('server',{})
-    require(set(server)<={'service_url','listen','port','public_web_origin','temporary_ttl','transfer_ttl'},
+    require(set(server)<=configuration_keys('server'),
             'unknown_server_configuration')
     service=server.get('service_url','https://msg.lmm.best')
     require(isinstance(service,str),'invalid_service_url')
@@ -151,7 +152,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
     for key,default in (('temporary_ttl',3600),('transfer_ttl',86400)):
         require(type(server.get(key,default)) is int and server.get(key,default)>0,'invalid_ttl')
     store=data.get('storage',{})
-    require(set(store)<={'postgres_dsn','valkey_url','content','repositories','blobs','staging','service_keys'},
+    require(set(store)<=configuration_keys('storage'),
             'unknown_storage_configuration')
     postgres_dsn=store.get('postgres_dsn')
     require(isinstance(postgres_dsn,str) and bool(postgres_dsn.strip()) and not any(ord(c)<32 for c in postgres_dsn),
@@ -194,25 +195,36 @@ def load_settings(config_dir=Path('/etc/msgd')):
                                     ('service_keys',service_keys_default))),
             'storage_paths_must_be_absolute')
     limits=data.get('limits',{})
-    require(set(limits)<={'request_bytes','response_bytes','path_bytes','part_bytes'},'unknown_limit')
+    require(set(limits)<=configuration_keys('limits'),'unknown_limit')
     for value in limits.values():
         require(type(value) is int and value>=256,'invalid_limit')
     mail_file=config_dir/'mail.toml'
     mail=None
     if mail_file.exists():
         raw=tomllib.loads(mail_file.read_text())
-        require(set(raw)<={'enabled','host','port','tls','sender','credential_file'},'unknown_mail_configuration')
+        require(set(raw)<=configuration_keys('mail'),'unknown_mail_configuration')
+        require(type(raw.get('enabled',False)) is bool,'invalid_mail_enabled')
         if raw.get('enabled',False):
+            require(isinstance(raw.get('host'),str) and bool(raw['host'].strip()) and
+                    not any(ord(c)<=32 for c in raw['host']),'invalid_mail_host')
+            require(type(raw.get('port',587)) is int and 1<=raw.get('port',587)<=65535,
+                    'invalid_mail_port')
+            require(isinstance(raw.get('sender'),str) and bool(raw['sender'].strip()) and
+                    not any(ord(c)<32 for c in raw['sender']),'invalid_mail_sender')
+            credential=raw.get('credential_file')
+            require(credential is None or (isinstance(credential,str) and
+                    Path(credential).is_absolute() and '..' not in Path(credential).parts and
+                    not any(ord(c)<32 for c in credential)),'invalid_mail_credential_file')
             require(raw.get('tls') in {'starttls','tls'},'mail_tls_required')
             mail=MailConfig(enabled=True,host=raw['host'],port=raw.get('port',587),tls=raw['tls'],sender=raw['sender'],
                 credential_file=Path(raw['credential_file']) if raw.get('credential_file') else None)
     recovery=data.get('recovery',{})
-    require(isinstance(recovery,dict) and set(recovery)<={'custodians'},'unknown_recovery_configuration')
+    require(isinstance(recovery,dict) and set(recovery)<=configuration_keys('recovery'),'unknown_recovery_configuration')
     raw_custodians=recovery.get('custodians',[])
     require(isinstance(raw_custodians,list) and len(raw_custodians)<=16,'invalid_recovery_custodians')
     custodians=[]
     for item in raw_custodians:
-        require(isinstance(item,dict) and set(item)<={'id','name','recipient','description','policy_ref'},
+        require(isinstance(item,dict) and set(item)<=configuration_keys('recovery.custodians'),
                 'unknown_recovery_custodian_field')
         require(all(name in item for name in ('id','name','recipient')),
                 'invalid_recovery_custodian')
@@ -229,11 +241,11 @@ def load_settings(config_dir=Path('/etc/msgd')):
     require(len({item.id for item in custodians})==len(custodians),'duplicate_recovery_custodian')
     from msg.plugins import BUILTINS, validate_plugins
     plugin_config=data.get('plugins',{})
-    require(isinstance(plugin_config,dict) and set(plugin_config)<={'enabled'},
+    require(isinstance(plugin_config,dict) and set(plugin_config)<=configuration_keys('plugins'),
             'unknown_plugin_configuration')
     plugins=validate_plugins(plugin_config.get('enabled',BUILTINS))
     tools=data.get('tools',{})
-    require(set(tools)<={'isolation','timeout_ms','max_response_bytes','methods','ports'},'unknown_tool_configuration')
+    require(set(tools)<=configuration_keys('tools'),'unknown_tool_configuration')
     require(tools.get('isolation','bubblewrap')=='bubblewrap','unsafe_tool_worker')
     for name,default in (('timeout_ms',10000),('max_response_bytes',4194304)):
         require(type(tools.get(name,default)) is int and tools.get(name,default)>0,'invalid_tool_limit')

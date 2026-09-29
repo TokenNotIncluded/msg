@@ -225,7 +225,9 @@ async def _doctor(config_dir,clock):
                 allow_overdraft=settings.money.allow_overdraft)
     except (Failure,ValueError,KeyError,OSError) as exc:
         failed('configuration',getattr(exc,'code','invalid_configuration'))
-        return {'ok':False,'root_id':ROOT_SUBJECT,'checks':checks}
+        from msg.admin.config_check import configuration_doctor
+        return {'ok':False,'root_id':ROOT_SUBJECT,'checks':checks,
+                'configuration_fields':configuration_doctor(checks)}
     if sys.version_info[:2]>=(3,15):success('python',version='.'.join(map(str,sys.version_info[:3])))
     else:failed('python','python_315_required',actual='.'.join(map(str,sys.version_info[:3])))
     missing=[name for name in ('cryptography','starlette','uvicorn','httpx','jsonschema','aiohttp','dns','graphql','psycopg','valkey') if find_spec(name) is None]
@@ -387,11 +389,13 @@ async def _doctor(config_dir,clock):
             continue
         try:success(name,**inspect_feature(app))
         except Failure as exc:failed(name,exc.code)
+    from msg.admin.config_check import configuration_doctor
     features=feature_results(feature_manifest(),checks,'doctor_check',
                              enabled_plugins=settings.server.plugins)
     return {'ok':all(c['ok'] for c in checks.values()) and
             all(row['status']!='fail' for row in features.values()),
-            'root_id':ROOT_SUBJECT,'checks':checks,'features':features,'warnings':warnings}
+            'root_id':ROOT_SUBJECT,'checks':checks,'features':features,'warnings':warnings,
+            'configuration_fields':configuration_doctor(checks)}
 
 
 async def _selftest_ca_chain(app,root,call,register,now):
@@ -596,7 +600,10 @@ async def selftest():
     from msg.security.capabilities import grant_for
     from msg.bootstrap import feature_manifest
     from msg.admin import recovery_replay
-    checks={}
+    from msg.admin.config_check import configuration_selftest
+    configuration_fields=configuration_selftest()
+    checks={'configuration_loading':all(row['status']=='pass'
+                                       for row in configuration_fields.values())}
     try:
         inspect_recovery_checkpoint()
         checks['recovery_checkpoint_replay']=recovery_replay.selftest()['status']=='passed'
@@ -787,4 +794,5 @@ async def selftest():
     features=feature_results(feature_manifest(),checks,'selftest_case')
     return {'ok':bool(checks) and all(value is True for value in checks.values()) and
             all(row['status']!='fail' for row in features.values()),
-            'checks':checks,'features':features,'cleaned_up':not folder.exists()}
+            'checks':checks,'features':features,'cleaned_up':not folder.exists(),
+            'configuration_fields':configuration_fields}
