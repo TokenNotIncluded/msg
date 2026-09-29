@@ -129,3 +129,20 @@ async def test_alias_reuse_between_route_resolution_and_signed_read_never_leaks_
         assert response.status_code==400,response.text
         assert response.json()['error']['code']=='resource_mismatch'
         assert 'location' not in response.headers and 'private-target-name' not in response.text
+
+
+async def test_migration_location_preserves_subject_namespace_sigil(installed):
+    app,_=installed
+    key,owner,_=await register(app,'path-sigil')
+    parent='/@path-sigil/files'
+    created=await call(app,'file.create',{'parent':parent,'name':'old.txt','data':b64(b'bytes')},key=key,subject=owner)
+    rid=created.resources[0].id
+    moved=await call(app,'file.move',{'id':rid,'parent':parent,'name':'new.txt'},key=key,subject=owner,
+        expected=((rid,created.data['generation']),))
+    assert moved.status=='ok',wire(moved)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=create_app(app)),base_url=app.settings.service_url) as http:
+        response=await http.get(parent+'/old.txt/raw',headers=signed(app,key,owner,rid,'raw'))
+        assert response.status_code==308,response.text
+        assert response.headers['location']==parent+'/new.txt/raw'
+        followed=await http.get(response.headers['location'],headers=signed(app,key,owner,rid,'raw'))
+        assert followed.status_code==200 and followed.content==b'bytes'

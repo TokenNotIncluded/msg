@@ -20,7 +20,7 @@ from test_service import NOW, call, register
 READ_TABLES = (
     'schema_version', 'resources', 'revisions', 'identities', 'memberships',
     'credentials', 'certificates', 'settings', 'share_grants', 'share_grants_v2',
-    'dm_conversations', 'system_sources',
+    'dm_conversations', 'system_sources', 'resource_path_aliases',
 )
 
 
@@ -301,3 +301,53 @@ def test_hosting_subcommand_never_assembles_main_application(reader_settings, mo
     assert daemon.main(['--config-dir', str(reader_settings.config_dir), 'hosting']) == 0
     assert called[0] == reader_settings
     assert len(called) == 2 and called[1][1]['access_log'] is False
+
+
+async def test_readonly_hosting_role_resolves_old_site_paths_without_authority_leaks(installed,reader_settings):
+    app,_=installed
+    key,subject,_,site,_=await website(app)
+    rid=site.resources[0].id
+    async with app.metadata.transaction(write=False) as tx:
+        generation=(await tx.resource(rid)).generation
+    moved=await call(app,'file.move',{'id':rid,'parent':'/@readonly-host','name':'renamed-web'},
+        key=key,subject=subject,expected=((rid,generation),))
+    assert moved.status=='ok',wire(moved)
+    reader=runtime_class()(reader_settings,clock=lambda:NOW)
+    try:
+        await reader.load()
+        async with reader.metadata.transaction(write=False) as tx:
+            assert await tx.resolve_migrated('/@readonly-host/web')==rid
+            assert tx.one('SHOW transaction_read_only')==('on',)
+        from msg.extensions.hosting import hosting_app
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=hosting_app(reader)),
+                                     base_url=reader_settings.service_url) as http:
+            for method in ('GET','HEAD'):
+                response=await http.request(method,'/@readonly-host/web/',headers={'if-none-match':'"warm"','range':'bytes=0-3'})
+                assert response.status_code==308,response.text
+                assert response.headers['location']=='/@readonly-host/renamed-web/'
+                isolated(response)
+            canonical_response=await http.get('/@readonly-host/renamed-web/')
+            assert canonical_response.status_code==200 and canonical_response.content==b'<h1>published</h1>'
+            private=await call(app,'content.chmod',{'id':rid,'mode':'0700'},key=key,subject=subject,
+                expected=((rid,moved.data['generation']),))
+            assert private.status=='ok',wire(private)
+            for method in ('GET','HEAD'):
+                denied=await http.request(method,'/@readonly-host/web/',headers={'if-none-match':canonical_response.headers['etag']})
+                assert denied.status_code==403,denied.text
+                assert 'location' not in denied.headers and 'etag' not in denied.headers
+                assert 'renamed-web' not in denied.text
+    finally:
+        await reader.close()
+
+
+async def test_hosting_missing_alias_table_grant_fails_closed_at_startup(installed,reader_settings):
+    app,_=installed
+    role=conninfo_to_dict(reader_settings.server.postgres_dsn)['user']
+    with psycopg.connect(app.settings.server.postgres_dsn,autocommit=True) as conn:
+        conn.execute(sql.SQL('REVOKE SELECT ON public.resource_path_aliases FROM {}').format(sql.Identifier(role)))
+    reader=runtime_class()(reader_settings,clock=lambda:NOW)
+    try:
+        with pytest.raises(Failure,match='^hosting_installation_stale$'):
+            await reader.load()
+    finally:
+        await reader.close()

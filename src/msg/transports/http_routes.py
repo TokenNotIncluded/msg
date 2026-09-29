@@ -1538,7 +1538,7 @@ def create_app(service):
                     result.data.get('id',result.data.get('metadata',{}).get('id')))
                 require(authorized_id==redirect_resource_id,'resource_mismatch')
                 return Response(status_code=308,headers={**BASE_HEADERS,
-                    'Location':quote(redirect_target,safe='/')})
+                    'Location':quote(redirect_target,safe='/@&')})
             value=wire(result.data)
             if ssh_projection:
                 value={'id':value['id'],'keys':[key for key in value.get('keys',())

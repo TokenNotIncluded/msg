@@ -16,7 +16,7 @@ from msg.storage.postgres import PostgresMetadataStore
 HOSTING_READ_TABLES = frozenset({
     'schema_version', 'resources', 'revisions', 'identities', 'memberships',
     'credentials', 'certificates', 'settings', 'share_grants', 'share_grants_v2',
-    'dm_conversations', 'system_sources',
+    'dm_conversations', 'system_sources', 'resource_path_aliases',
 })
 
 
