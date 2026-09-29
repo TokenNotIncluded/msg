@@ -68,3 +68,98 @@ protected inventory and ownership/ref mapping. Installed source provenance, the
 protected snapshot, isolated conversion verification and rollback rehearsal remain
 mandatory deployment evidence. Retain the old database and preservation archive
 until those gates and an explicit backup-retirement decision are satisfied.
+
+## Import usable content into isolated v4 PostgreSQL
+
+`msg.storage.legacy_resource_import` implements the next stage: old boards become
+private topics, post bodies become normal posts, and attachment bytes enter the
+normal Git/CAS revision store. Normal `create_resource`/`revise_resource` and the
+PostgreSQL transaction writer lock apply, including CAS pin rollback compensation.
+This stage requires an already provisioned, isolated v4 installation. It does not
+provision Root, activate legacy identities, or run the old service.
+
+The operator first creates an empty topic owned by an existing registered v4
+operator with mode `0700`. `identity_requirements(snapshot, sha256, mapping)` reports
+required/missing/unexpected author mapping counts and a digest without exposing
+author IDs, post bodies or keys. The rehearsal explicitly requests mapping keys
+only in private process memory.
+Every legacy post author requires an explicit mapping to an existing registered v4
+identity; anonymous posts use the explicit key `__anonymous__`. Mapping records
+historical attribution only: all imported resources remain owned by the chosen
+operator, and new revisions identify that importing operator. No legacy identity
+receives credentials, membership, ownership or certificate grants through this map.
+
+Use `approval_payload` to construct the approval. It binds the exact source digest,
+destination service, target topic ID and generation, operator, full identity map,
+private visibility, disabled legacy authority/jobs, and expiry within 24 hours.
+The existing destination Root must sign its canonical JSON with purpose
+`legacy-sqlite-content-import-v1`. `import_content` verifies that signature against
+the Root public key already pinned by the installation. An envelope is JSON with
+`approval` (payload) and `signature` (the normal wire-format Signature). The importer
+never reads or generates a Root private key and never chooses a new Root.
+
+```sh
+python -m msg.storage.legacy_resource_import \
+  --config /isolated/etc \
+  --snapshot /protected/offline-copy.db \
+  --signed-approval /protected/root-approved-content-import.json
+```
+
+The command loads the destination installation (including normal release-source
+synchronization), then imports atomically. Use only the isolated target config;
+loading a production config is not a preflight. Existing imports, nonempty target
+topics, changed target generations, incomplete maps, missing board/post references,
+ambiguous reply targets and Root-signature mismatches fail closed. Recovery quarantine
+is respected. Each imported board is `0700`, has closed membership and only the
+explicit operator as administrator; posts, attachments and provenance records are
+`0600`. No prior public visibility is restored automatically.
+
+Legacy signatures, title, timestamps, actors and deletion/hidden/archive claims are
+stored as separate private JSON provenance resources. A setting named
+`legacy-provenance:<new-resource-id>` locates that record and the resolved reply
+target. These legacy signatures are explicitly unverified; new import revisions are
+unsigned and carry an operation provenance digest. The tool does not manufacture an
+original request envelope from incomplete old columns. Original bodies are preserved
+without embedding historical metadata into their text. Attachment relations are
+normal v4 revision relations, and old active-post tags are retained.
+
+`legacy-import:<snapshot-sha256>` stores counts, approval digest and old-to-new URL
+mapping. Archived posts have separate retained mappings so they cannot overwrite
+live posts. This is a mapping artifact, **not a public HTTP redirect installation**.
+The report records all source table counts so excluded identity/certificate/queue
+state remains visible as an outstanding migration scope. Keep the inert preservation
+archive alongside this import; it retains all remaining legacy tables and columns.
+
+Still required before switching the old service: confirm real protected-snapshot
+acceptance, review the resulting content and archive/reply presentation, install and
+test authorized URL redirects, decide visibility/ownership publication, migrate or
+reenroll identities/custody, enforce independent current revocations, import protected
+Git repository inventories, and rehearse deployment rollback. Source-synthetic tests
+of this importer do not establish those host acceptance results.
+
+### Test-only rehearsal with a real protected snapshot
+
+`python -m msg.storage.legacy_rehearsal --snapshot /protected/offline.db
+--sha256 MANIFEST_SHA256 --protected-target /protected/new-run` creates a disposable
+local PostgreSQL cluster listening only on a private Unix socket. Its fresh Root,
+registered importer, and many-to-one author mapping are explicitly **test-only**.
+They cannot approve production imports against another pinned Root/service. This
+exercises real source compatibility without deciding production identity continuity.
+The target parent must already be private (`0700`), the input private (`0600`), and
+the target must be new and outside temporary directories. A short target path is
+needed for the PostgreSQL socket. All resulting database/CAS/config data stays under
+the protected target; the stopped cluster is retained for controlled examination.
+
+Only counts, source digest, invariant checks and stable error codes are emitted.
+`summary.json` is mode `0600`; exceptions containing database row content are not
+printed. The rehearsal compares source digests/table summaries before and after and
+asserts credential/certificate/job counts do not change during content import.
+It stops the cluster before reporting completion. A failed run is also stopped and
+retained privately, with `result: failed`; it is never production acceptance.
+
+Legacy board names reserved by v4 views are assigned deterministic safe names;
+original board URL mappings are retained. Old post URL resolution accepts both the
+global ID and board sequence, choosing the lowest global ID on a collision exactly
+as the installed historical `find_in_board` implementation did. `/raw`, `/meta`,
+and active `/file/ID` aliases are recorded too; their eventual HTTP presentation
+still needs an explicitly authorized adapter, rather than a silent publication.
