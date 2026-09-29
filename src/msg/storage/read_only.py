@@ -47,11 +47,13 @@ def require_readonly_role(tx):
         require(not writable and (not readable or
                 (schema == 'public' and name in HOSTING_READ_TABLES)),
                 'hosting_database_not_readonly')
-    require(tx.one('''SELECT 1 FROM pg_catalog.pg_class c
+    # Fetch sequence OIDs first: SQL predicates do not impose evaluation order,
+    # and has_sequence_privilege must never receive an index/table OID.
+    for (oid,) in tx.rows('''SELECT c.oid FROM pg_catalog.pg_class c
         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-        WHERE c.relkind='S' AND left(n.nspname,3)<>'pg_'
-        AND has_sequence_privilege(c.oid,'USAGE,UPDATE') LIMIT 1''') is None,
-        'hosting_database_not_readonly')
+        WHERE c.relkind='S' AND left(n.nspname,3)<>'pg_' '''):
+        require(not tx.one("SELECT has_sequence_privilege(?::oid,'USAGE,UPDATE')", (oid,))[0],
+                'hosting_database_not_readonly')
     # A callable SECURITY DEFINER routine can reintroduce its owner's privileges.
     require(tx.one('''SELECT 1 FROM pg_catalog.pg_proc p
         JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
