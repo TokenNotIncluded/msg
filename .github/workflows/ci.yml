@@ -60,10 +60,11 @@ jobs:
       - name: Install required recovery and ingress test tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age nginx openssl git-lfs
+          sudo apt-get install -y -qq age nginx openssl git-lfs bubblewrap
           age --version
           nginx -v
           openssl version
+          bwrap --version
       - name: Install the complete dependency set
         run: python -m pip install -e '.[dev]'
       - name: Compile all new modules
