@@ -130,3 +130,36 @@ Application/MetadataStore，不做 DDL、迁移、计数器推进、目录修复
 最终远端 head 必须另外完成现有完整四分片、精确 JUnit node-ID gate、conformance 及 wheel/sdist。
 最终 source SHA、CI run 与实际数量在 PR/issue 的验收评论中记录；未得到最终结果前不声明成功。
 没有部署、生产迁移/恢复、生产 Root/PIN/私钥访问、真实资金或真实邮件/Webhook 外发。
+
+## Typed policy ceiling checkpoint v2 (partial, not promotion)
+
+`msg-revocation-checkpoint-v2` preserves the v1 contract and uses a separate
+`recovery-checkpoint-v2` signature purpose. Its exact independently supplied pin
+is still required. It adds typed `value` payloads:
+
+- `resource.acl.restrict`: `owner`, `group`, `mode`. Owner and group must match
+  the restored resource; the mode becomes its intersection with the supplied mask.
+  Repeated or broader masks never restore removed permission bits. Current resource
+  generation advances when changed; historical Revision bodies remain untouched.
+- `topic.policy.restrict`: `membership_policy`. Existing and supplied policies
+  intersect: open accepts the supplied restriction, closed remains closed, and
+  incompatible approval/invite ceilings become closed. It never reopens a topic.
+- `topic_ban.set`: explicit `expires_at` (UTC or null), bound by the signed fact.
+  The target must be a topic; the existing ban/member-removal replay path is used.
+  Active bans combine conservatively: permanent dominates finite; otherwise the
+  later expiry wins. A shorter expiry never lifts a previously active ban; only
+  an explicit `topic_ban.lift` fact lifts it.
+
+The packet must state `coverage.complete=false` and an exact sorted list of the
+fact domains it contains (`resource_acl`, `topic_policy`, `topic_ban`,
+`revocations`). Missing/mismatched coverage or a claim of complete recovery is
+rejected. The packaged schema is `recovery-policy-checkpoint.schema.json`.
+All facts, receipt, authorization epoch and audit commit together. Existing v1
+prefixes can continue into v2; rollback to v1 after a v2 receipt is refused.
+
+This is conservative restriction, not reconstruction of all current authority.
+Owner/group/parent changes, certificate grant/constraint reconciliation, complete
+external log provenance/currentness, exhaustive inventory and controlled promotion
+remain unfinished. Certificates are still revoked through existing facts; their
+signed body is never rewritten to manufacture current grants. Neither coverage
+metadata nor an isolated test establishes external freshness or backup destruction.
