@@ -1,6 +1,7 @@
 """Explicit resource use cases shared by content and extensions."""
 from __future__ import annotations
 import re
+import hashlib
 from dataclasses import replace
 from uuid import uuid4
 from msg.constants import *
@@ -121,6 +122,18 @@ async def revise_resource(app,ctx,request,tx,resource,body,media_type='text/mark
     require(signature is None or revision_id is not None,'revision_id_required')
     if isinstance(body,BlobRef):
         blob=body
+        # A retained index/reference is not evidence the payload survived.
+        # Verify copies and reused blobs before publishing another Revision.
+        hasher=hashlib.sha256()
+        size=0
+        try:
+            async for chunk in app.contents.read(blob):
+                size+=len(chunk)
+                hasher.update(chunk)
+        except FileNotFoundError as exc:
+            raise Failure('content_missing') from exc
+        require(size==blob.size and 'sha256:'+hasher.hexdigest()==blob.digest,
+                'content_digest_mismatch')
     else:
         blob=await app.contents.put_bytes(body.encode('utf-8') if isinstance(body,str) else body,media_type)
     for relation in relations:
