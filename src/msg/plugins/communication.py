@@ -243,6 +243,7 @@ def install(app):
     async def presence_get(ctx,request,tx):
         subject=await resolve(tx,request.arguments['subject_id'])
         await tx.subject(subject)
+        await check_access(app,ctx,request,tx,subject,'read')
         row=tx.one('SELECT expires_at,body FROM presence WHERE subject=?',(subject,))
         if row is None or parse_time(row[0])<=ctx.now:
             return HandlerOutput(data={'subject_id':subject,'state':'unknown'})

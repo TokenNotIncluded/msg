@@ -46,10 +46,11 @@ async def _visible_refs(app, ctx, request, tx, refs):
     output = []
     for rid in refs:
         try:
-            await check_access(app, ctx, request, tx, rid, 'read')
+            await _safe_ref(app, ctx, request, tx, rid)
         except Failure as exc:
             if exc.code in {'permission_denied', 'credential_ceiling', 'certificate_gate',
-                            'delegation_scope', 'ancestor_inactive', 'not_found'}:
+                            'delegation_scope', 'ancestor_inactive', 'not_found',
+                            'collaboration_ref_forbidden'}:
                 continue
             raise
         output.append(rid)
