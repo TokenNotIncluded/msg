@@ -210,7 +210,7 @@ asyncio.run(main())
 
 
 async def test_real_other_uid_reads_new_text_and_binary_without_keys(installed, reader_settings):
-    assert shutil.which('sudo'), 'Linux isolation prerequisite missing'
+    assert shutil.which('sudo') and shutil.which('setpriv'), 'Linux isolation prerequisites missing'
     app, _ = installed
     base = Path(tempfile.mkdtemp(prefix='msg-hosting-reader-'))
     changed_ancestors = {}
@@ -265,8 +265,8 @@ async def test_real_other_uid_reads_new_text_and_binary_without_keys(installed, 
                     for root in (app.contents.path, app.contents.binary)
                     for path in root.rglob('*') if path.is_file()}
         before = snapshots()
-        result = subprocess.run(['sudo', '-n', '-u', '#65534', '-g', '#'+str(os.getgid()), '--',
-            'env', 'PYTHONDONTWRITEBYTECODE=1', 'PYTHONPATH='+str(base/'src'),
+        result = subprocess.run(['sudo', '-n', '--', 'setpriv', '--reuid=65534',
+            '--regid='+str(os.getgid()), '--clear-groups', '--no-new-privs', '--', 'env', 'PYTHONDONTWRITEBYTECODE=1', 'PYTHONPATH='+str(base/'src'),
             'PGSERVICEFILE='+str(service_file), sys.executable, str(script), str(config.config_dir),
             str(app.settings.service_keys/'online.key'), str(requests)],
             capture_output=True, text=True, timeout=120)

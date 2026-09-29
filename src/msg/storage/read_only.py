@@ -36,10 +36,12 @@ def require_readonly_role(tx):
         WHERE left(nspname,3)<>'pg_' AND nspname<>'information_schema'
         AND has_schema_privilege(oid,'CREATE') LIMIT 1''') is None,
         'hosting_database_not_readonly')
-    for schema, name, readable, writable in tx.rows('''
+    available = set()
+    for schema, name, readable, writable, full_read in tx.rows('''
         SELECT n.nspname,c.relname,has_any_column_privilege(c.oid,'SELECT'),
             (has_table_privilege(c.oid,'INSERT,UPDATE,DELETE,TRUNCATE,REFERENCES,TRIGGER')
-             OR has_any_column_privilege(c.oid,'INSERT,UPDATE,REFERENCES'))
+             OR has_any_column_privilege(c.oid,'INSERT,UPDATE,REFERENCES')),
+            has_table_privilege(c.oid,'SELECT')
         FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
         WHERE c.relkind IN ('r','p','v','m','f')
         AND left(n.nspname,3)<>'pg_' AND n.nspname<>'information_schema'
@@ -47,6 +49,13 @@ def require_readonly_role(tx):
         require(not writable and (not readable or
                 (schema == 'public' and name in HOSTING_READ_TABLES)),
                 'hosting_database_not_readonly')
+        if schema == 'public' and full_read:
+            available.add(name)
+    require(available == HOSTING_READ_TABLES, 'hosting_installation_stale')
+    # The installed PostgreSQL metadata format is version 1. A reader cannot
+    # initialize or migrate it, or infer readiness from a few working tables.
+    require(tx.rows('SELECT version FROM public.schema_version') == [(1,)],
+            'hosting_installation_stale')
     # Fetch sequence OIDs first: SQL predicates do not impose evaluation order,
     # and has_sequence_privilege must never receive an index/table OID.
     for (oid,) in tx.rows('''SELECT c.oid FROM pg_catalog.pg_class c
