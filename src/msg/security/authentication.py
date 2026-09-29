@@ -20,6 +20,7 @@ CUSTODIAL_SIGNED_WRITES=frozenset({
     'identity.custodial_upgrade_start','identity.custodial_upgrade_finish',
     'identity.custodial_rewrap_entry','identity.custodial_rewrap_revision',
     'identity.custodial_rewrap_ack',
+    'achievement.start','achievement.answer','achievement.finish',
 })
 
 
@@ -127,7 +128,12 @@ class AuthenticationService:
                            request.arguments.get('direction')=='download')
             require(spec.name in CUSTODIAL_SIGNED_WRITES or download_only,
                     'custodial_operation_not_supported')
-        require(not spec.require_signature or method=='signature','signature_required')
+        # The achievement evaluator signs the explicit final confirmation with
+        # the current vault key; ordinary token subjects still need a signature.
+        custodial_confirmation=(actor.kind=='custodial' and method=='token' and
+                                spec.name=='achievement.finish')
+        require(not spec.require_signature or method=='signature' or custodial_confirmation,
+                'signature_required')
         valid=[]
         for cid in ids:
             cert=await self.certificates.validate(cid,session)

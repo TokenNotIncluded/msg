@@ -277,9 +277,28 @@ def install(app):
             return _failure(state, tx, reason)
         if args['statement'] != FINAL_STATEMENT or args['ceremony_digest'] != ceremony_digest(state):
             return _failure(state, tx, 'final_confirmation_failed')
-        # AuthenticationService already verified the signed request bytes with
-        # the subject's active signing key. Token-only actors cannot reach here.
-        require(ctx.principal.method == 'signature', 'self_custody_signature_required')
+        signature_source = 'self-custody'
+        if ctx.principal.method == 'token':
+            require((await tx.subject(subject)).kind == 'custodial',
+                    'self_custody_signature_required')
+            from msg.security.vault import open_signer
+            signer = open_signer(app, tx, subject)
+            primary = tx.one('SELECT key_id FROM identity_keys WHERE subject=? AND is_primary=1',
+                             (subject,))
+            require(primary is not None and primary[0] == signer.key_id,
+                    'custodial_vault_key_mismatch')
+            credential = await tx.credential(signer.key_id)
+            require(credential.revoked_at is None and credential.not_before <= ctx.now and
+                    (credential.expires_at is None or ctx.now < credential.expires_at),
+                    'credential_revoked')
+            state['final_confirmation'] = {'subject_id': subject, 'challenge_id': state['id'],
+                'ceremony_digest': args['ceremony_digest'], 'statement': args['statement'],
+                'request_id': request.request_id, 'signature_source': 'custodial'}
+            state['final_signature'] = wire(signer.sign(canonical(state['final_confirmation']),
+                                                       purpose='achievement-confirmation'))
+            signature_source = 'custodial'
+        else:
+            require(ctx.principal.method == 'signature', 'self_custody_signature_required')
         evidence = digest({'challenge_id': state['id'], 'answers': state['answers'],
                            'strategy': state['strategy'], 'strategy_version': state['strategy_version'],
                            'ceremony_digest': args['ceremony_digest']})
@@ -289,8 +308,10 @@ def install(app):
             grant = {'id': new_id('achg'), 'subject_id': subject, 'achievement_id': I_AM_NOT_HUMAN.id,
                      'spec_version': I_AM_NOT_HUMAN.version, 'issuer': app.receipt_signer.key_id,
                      'issued_at': wire(ctx.now), 'claim': I_AM_NOT_HUMAN.claim,
-                     'auth_method': 'signature', 'evidence_digest': evidence, 'automatic': True,
+                     'auth_method': ctx.principal.method, 'evidence_digest': evidence, 'automatic': True,
                      'revoked_at': None, 'metadata': {'protocol_passed': True}}
+            if signature_source == 'custodial':
+                grant['metadata']['signature_source'] = signature_source
             grant['signature'] = wire(app.receipt_signer.sign(canonical(grant), purpose='achievement-grant'))
             tx.execute('INSERT INTO achievement_grants (id,subject,achievement_id,spec_version,body) VALUES (?,?,?,?,?)',
                        (grant['id'], subject, grant['achievement_id'], grant['spec_version'],
@@ -301,7 +322,7 @@ def install(app):
                           data={'achievement_id': grant['achievement_id'], 'challenge_id': state['id'],
                                 'strategy': state['strategy'], 'strategy_version': state['strategy_version'],
                                 'round_digests': [digest(item) for item in state['answers']],
-                                'auth_method': 'signature', 'signature_source': 'self-custody',
+                                'auth_method': ctx.principal.method, 'signature_source': signature_source,
                                 'evidence_digest': evidence, 'automatic': True,
                                 'certificate_id': grant['id']})
             await tx.append_audit(AuditEvent(event=audit, authority=(ResourceRef(id=subject),),
@@ -314,6 +335,6 @@ def install(app):
         state.pop('expected_digest', None)
         state.pop('nonce_digest', None)
         _save(tx, state)
-        return HandlerOutput(data={'grant': public_grant(grant), 'signature_source': 'self-custody'})
+        return HandlerOutput(data={'grant': public_grant(grant), 'signature_source': signature_source})
 
     finish()
