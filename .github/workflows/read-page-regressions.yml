@@ -1,0 +1,84 @@
+name: Read page and recovery effect regressions
+on:
+  push:
+    branches: [fix/read-page-boundaries-20260929]
+  pull_request:
+    paths:
+      - '.github/workflows/read-page-regressions.yml'
+      - 'src/msg/plugins/discovery.py'
+      - 'src/msg/plugins/read_predicates.py'
+      - 'tests/test_read_page_boundaries.py'
+      - 'tests/test_read_entry_contract_matrix.py'
+      - 'tests/test_http_effect_order.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: read-page-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Record exact source identity
+        run: |
+          mkdir -p artifacts
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          Path('artifacts/source.json').write_text(json.dumps({
+              'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
+              'run_id': os.environ['GITHUB_RUN_ID'], 'attempt': os.environ['GITHUB_RUN_ATTEMPT']}, indent=2) + '\n')
+          PY
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+          cache: pip
+      - name: Install real dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq age
+          python -m pip install -e '.[dev]'
+      - name: Record the actual database collation and endpoint comparison
+        run: |
+          python - <<'PY'
+          import json, os, psycopg
+          from pathlib import Path
+          with psycopg.connect(os.environ['MSG_TEST_POSTGRES_URL_TEMPLATE'].format(database='postgres')) as db:
+              values = db.execute("SELECT version(), current_setting('lc_collate'), %s::text < %s::text, %s::text COLLATE \"C\" < %s::text COLLATE \"C\"", ('r_ascii', '\uffff', '\U00010000', '\uffff')).fetchone()
+          Path('artifacts/collation.json').write_text(json.dumps(dict(zip(
+              ('version', 'collation', 'ascii_below_old_sentinel', 'supplementary_below_old_sentinel_c'), values)), indent=2) + '\n')
+          PY
+      - name: Run real read entry and recovery regressions
+        run: >-
+          python -m pytest -q
+          tests/test_read_page_boundaries.py tests/test_read_entry_contract_matrix.py
+          tests/test_http_effect_order.py tests/test_recovery_runtime_generation.py
+          tests/test_legacy_routes_removed.py
+          --junitxml=artifacts/read-page-regressions.xml
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: read-page-evidence
+          path: artifacts/
+          if-no-files-found: error
