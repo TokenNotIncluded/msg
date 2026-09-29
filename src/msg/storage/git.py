@@ -266,6 +266,18 @@ class GitContentStore:
         require(path.is_file(),'content_missing')
         return loads(path.read_bytes())
 
+    @staticmethod
+    def _published_mode(directory):
+        # A setgid, group-readable content directory is an explicit admin opt-in.
+        # Unconfigured installs and every secret-writing caller retain 0600.
+        mode=directory.stat().st_mode
+        return 0o640 if mode & stat.S_ISGID and mode & stat.S_IRGRP else 0o600
+
+    def _write_content_index(self,path,data):
+        require(not self.read_only,'read_only_role')
+        path.parent.mkdir(parents=True,exist_ok=True)
+        durable_write(path,data,mode=self._published_mode(path.parent))
+
     async def put(self,chunks,media_type,expected_digest=None):
         require(not self.read_only,'read_only_role')
         hasher=hashlib.sha256()
@@ -296,6 +308,17 @@ class GitContentStore:
             else:
                 destination=self.binary/self._key(ref)
                 if not destination.exists():
+                    # The staging file starts private; publish into the target
+                    # content group, not the staging directory's unrelated group.
+                    fd=os.open(name,os.O_RDONLY)
+                    try:
+                        mode=self._published_mode(self.binary)
+                        if mode & stat.S_IRGRP:
+                            os.fchown(fd,-1,self.binary.stat().st_gid)
+                        os.fchmod(fd,mode)
+                        os.fsync(fd)
+                    finally:
+                        os.close(fd)
                     os.replace(name,destination)
                     directory=os.open(destination.parent,os.O_RDONLY|os.O_DIRECTORY)
                     try:
@@ -303,7 +326,7 @@ class GitContentStore:
                     finally:
                         os.close(directory)
                 entry={'kind':'binary','size':size}
-            durable_write(self.index/self._key(ref),canonical(entry))
+            self._write_content_index(self.index/self._key(ref),canonical(entry))
             return ref
         finally:
             if os.path.exists(name):
@@ -376,7 +399,7 @@ class GitContentStore:
         if entry['kind']=='git':
             await self._update_pin_ref('update-ref',f'refs/pins/{name}/{self._key(blob)}',entry['oid'])
         else:
-            durable_write(self.path/'pins'/name/self._key(blob),b'1\n')
+            self._write_content_index(self.path/'pins'/name/self._key(blob),b'1\n')
 
     async def unpin(self,blob,lease_id):
         require(not self.read_only,'read_only_role')
@@ -418,6 +441,6 @@ class GitContentStore:
             resource=hashlib.sha256(revision.resource_id.encode()).hexdigest()
             rev=hashlib.sha256(revision.id.encode()).hexdigest()
             self._run('update-ref',f'refs/topics/{topic}/{resource}/{rev}',oid)
-            durable_write(self.path/'revisions'/revision.id,(oid+'\n').encode())
+            self._write_content_index(self.path/'revisions'/revision.id,(oid+'\n').encode())
             return oid
         return await asyncio.to_thread(commit)
