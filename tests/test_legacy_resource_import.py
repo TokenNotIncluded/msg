@@ -1,16 +1,16 @@
+import hashlib
+import sqlite3
 from dataclasses import replace
 from datetime import timedelta
-import hashlib
 from pathlib import Path
-import sqlite3
 
 import pytest
+from test_service import NOW, call, register
 
 from msg.core.codec import canonical, wire
 from msg.core.errors import Failure
 from msg.core.models import ResourceRef
 from msg.storage.legacy_resource_import import PURPOSE, approval_payload, import_content
-from test_service import NOW, call, register
 
 
 def source(tmp_path):
@@ -64,6 +64,7 @@ async def setup(installed, tmp_path):
 @pytest.mark.asyncio
 async def test_real_pg_import_reads_content_and_preserves_signature_reference(installed, tmp_path):
     app, root, snapshot, approval, key, cert = await setup(installed, tmp_path)
+    approval["identities"] = {"old-id": None}
     async with app.metadata.transaction(write=False) as tx:
         counts = {
             t: tx.one("SELECT count(*) FROM " + t)[0]
@@ -102,7 +103,10 @@ async def test_real_pg_import_reads_content_and_preserves_signature_reference(in
         record = tx.setting("legacy-provenance:" + resource.id)
         provenance = await tx.resource(record["resource"])
         history = await tx.revision(ResourceRef(id=provenance.id, revision=provenance.revision))
-        assert b"historical-signature" in await app.contents.read_bytes(history.content)
+        saved = await app.contents.read_bytes(history.content)
+        assert b"historical-signature" in saved
+        assert b'"historical_author_target":null' in saved
+        assert b"old-id" in saved
         assert {t: tx.one("SELECT count(*) FROM " + t)[0] for t in counts} == counts
     with pytest.raises(Failure):
         await import_content(

@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
+import sqlite3
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
-import sqlite3
 from types import SimpleNamespace
 
 from msg.core.codec import b64, canonical, decode, digest, parse_time, wire
 from msg.core.errors import Failure, require
-from msg.core.models import CapabilityGrant, Scope, Principal, Relation, ResourceRef, Signature
+from msg.core.models import CapabilityGrant, Principal, Relation, ResourceRef, Scope, Signature
 from msg.plugins.common import create_resource, revise_resource, validate_name
 from msg.security.crypto import verify
 from msg.security.quarantine import require_live_authority
@@ -148,9 +148,11 @@ async def import_content(app, snapshot: Path, approval: dict, signature: dict):
         operator = await tx.subject(approval["operator"])
         require(operator.kind == "registered", "legacy_operator_must_be_registered")
         for target in identities.values():
-            require(
-                (await tx.subject(target)).kind == "registered", "legacy_mapping_target_invalid"
-            )
+            require(target is None or isinstance(target, str), "legacy_mapping_target_invalid")
+            if target is not None:
+                require(
+                    (await tx.subject(target)).kind == "registered", "legacy_mapping_target_invalid"
+                )
         parent = await tx.resource(approval["parent"])
         require(
             parent.owner == operator.resource_id
@@ -382,6 +384,7 @@ def main():
     import argparse
     import asyncio
     import json
+
     from msg.application import Application
     from msg.config import load_settings
 
