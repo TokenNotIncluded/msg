@@ -1,0 +1,70 @@
+name: Subject view contracts
+on:
+  push:
+    branches: [work/remaining-contracts-20260930]
+  pull_request:
+    paths:
+      - src/msg/transports/http_routes.py
+      - src/msg/transports/subject_views.py
+      - tests/test_subject_view_effect_order.py
+      - .github/workflows/subject-view-contracts.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: subject-view-contracts-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install locked contracts environment
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq age
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          uv pip check
+      - name: Record exact source
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, platform, subprocess
+          from pathlib import Path
+          git = lambda *args: subprocess.check_output(['git', *args], text=True).strip()
+          Path('artifacts/source.json').write_text(json.dumps({
+              'commit': git('rev-parse', 'HEAD'), 'tree': git('rev-parse', 'HEAD^{tree}'),
+              'run_id': os.environ['GITHUB_RUN_ID'], 'python': platform.python_version(),
+          }, indent=2) + '\n')
+          PY
+      - name: Require subject read boundaries and permanent aliases
+        run: |
+          python -m pytest tests/test_subject_view_effect_order.py tests/test_subject_read_aliases.py tests/test_receipt_effect_order.py tests/test_http_effect_order.py tests/test_route_effect_matrix.py tests/test_hosting_read_permissions.py --junitxml=artifacts/subject-views.xml
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: subject-view-contracts
+          path: artifacts/
+          if-no-files-found: error
