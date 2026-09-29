@@ -135,7 +135,7 @@ def install(app):
         result = _public(resource, body)
         if body['mode'] == 'bounty':
             from msg.plugins.bounty import projection
-            live = projection(tx,resource.id,ctx.now)
+            live = await projection(app,tx,resource.id,ctx.now)
             result['current_state'] = live['state']
             result['pause_reason'] = live['pause_reason']
             result['current_budget_minor'] = live['budget_minor']

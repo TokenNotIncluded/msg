@@ -258,8 +258,10 @@ async def _doctor(config_dir,clock):
             else:
                 checks['market']={'ok':True,'status':'disabled'}
             try:
-                from msg.admin.market_check import inspect_clearing
-                success('market_clearing',**inspect_clearing(app,tx))
+                from msg.admin.market_check import inspect_bounty_contracts, inspect_clearing
+                clearing = inspect_clearing(app,tx)
+                await inspect_bounty_contracts(app,tx)
+                success('market_clearing',**clearing)
             except (Failure,OSError,ValueError,KeyError,psycopg.Error) as exc:
                 failed('market_clearing',getattr(exc,'code','market_inspection_failed'))
             try:

@@ -167,6 +167,23 @@ async def check_market(app,root,call,register,now):
     return True
 
 
+async def inspect_bounty_contracts(app, tx):
+    """Check restored accounting projections against immutable published terms."""
+    from msg.plugins.bounty import _row, validate_contract
+    rows = tx.rows('SELECT listing_id FROM bounty_listings ORDER BY listing_id')
+    if not rows:
+        return
+    reader = app
+    if app.contents is None:
+        # doctor intentionally never opens the application writer stores.
+        from types import SimpleNamespace
+        from msg.storage.read_only import GitContentReader
+        reader = SimpleNamespace(contents=GitContentReader(
+            app.settings.server.content_dir, binary_dir=app.settings.server.blob_dir))
+    for (listing_id,) in rows:
+        await validate_contract(reader, tx, _row(tx, listing_id))
+
+
 def inspect_clearing(app, tx):
     """Never migrate, mint, seed a bank, repair a row or unlock the Root key."""
     tables = ('ledger_accounts','money_ledger','money_bank_roles','server_offers',
