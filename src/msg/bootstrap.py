@@ -198,6 +198,8 @@ def feature_manifest(definition=None):
         require(all(feature[name] is None or
                     (isinstance(feature[name],str) and bool(feature[name]))
                     for name in ('doctor_check','selftest_case')),'feature_manifest_invalid')
+    from msg.plugins.features import validate_feature_sources
+    validate_feature_sources(features)
     return tuple(features)
 
 

@@ -233,7 +233,9 @@ def registration(app,name,dependencies=()):
             return handler
         return decorate
     def finish(resource_types=()):
+        from msg.plugins.features import feature_ids
         manifest=PluginManifest(name=name,version='1',dependencies=tuple(dependencies),
-            resource_types=tuple(resource_types),capabilities=(),operations=tuple(operations),migrations=())
+            resource_types=tuple(resource_types),capabilities=(),operations=tuple(operations),migrations=(),
+            feature_ids=feature_ids(name))
         app.registry.add(manifest)
     return operation,finish

@@ -60,6 +60,8 @@ class Registry:
         self._validators[ref.id]=validator
 
     def add(self,manifest):
+        from msg.plugins.features import validate_feature_claims
+        validate_feature_claims(manifest)
         require(not self._frozen,'registry_frozen')
         require(manifest.name not in self._plugins,'duplicate_plugin')
         require(all(d in self._plugins for d in manifest.dependencies),'missing_plugin_dependency')
@@ -82,7 +84,17 @@ class Registry:
             self.add_operation(item)
         self._plugins[manifest.name]=manifest
 
+    def features(self,plugin_name):
+        """Resolve a plugin's defaults/checks from the sole bootstrap inventory."""
+        from msg.bootstrap import feature_manifest
+        require(plugin_name in self._plugins,'unknown_plugin')
+        claims=self._plugins[plugin_name].feature_ids
+        return tuple(deepcopy(row) for row in feature_manifest()
+                     if row['feature_id'] in claims)
+
     def freeze(self):
+        from msg.bootstrap import feature_manifest
+        feature_manifest()
         from msg.bootstrap import RULE_PATHS
         require('identity' in self._plugins,'identity_plugin_required')
         for spec in self._operations.values():
