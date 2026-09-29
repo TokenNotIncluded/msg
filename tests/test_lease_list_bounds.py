@@ -52,7 +52,7 @@ async def test_lease_pages_bound_sql_and_cross_hidden_batches(installed, monkeyp
                 (record['id'], reader, record['target'], record['status'],
                  record['generation'], record['expires_at'], canonical(record).decode()), write=True)
     transaction = app.metadata.transaction
-    batches = []
+    batches, unbounded_queries = [], []
 
     @asynccontextmanager
     async def bounded_transaction(*, write):
@@ -62,8 +62,9 @@ async def test_lease_pages_bound_sql_and_cross_hidden_batches(installed, monkeyp
 
             def bounded_rows(sql, parameters=()):
                 lease_query = sql.startswith('SELECT id,target,status,expires_at,body FROM collaboration_leases ')
-                if lease_query:
-                    assert ' LIMIT ' in sql.upper(), 'lease_list issued an unbounded SELECT'
+                if lease_query and ' LIMIT ' not in sql.upper():
+                    unbounded_queries.append(sql)
+                    raise AssertionError('lease_list issued an unbounded SELECT')
                 rows = query_rows(sql, parameters)
                 if lease_query:
                     assert len(rows) <= 128, 'lease_list materialized more than one bounded batch'
@@ -85,7 +86,8 @@ async def test_lease_pages_bound_sql_and_cross_hidden_batches(installed, monkeyp
                     args['after'] = after
                 result = await call(app, 'communication.lease_list', args,
                                     key=reader_key, subject=reader)
-                assert result.status == 'ok', wire(result)
+                assert not unbounded_queries, 'unbounded lease SQL: ' + repr(unbounded_queries)
+                assert result.status == 'ok', str(wire(result))
                 assert 'hidden-lease-purpose' not in str(wire(result))
                 items = result.data['items']
                 assert len(items) == (1 if visible_count else 0)
