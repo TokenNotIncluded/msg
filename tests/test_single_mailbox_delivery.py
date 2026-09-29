@@ -37,7 +37,8 @@ VALID = (
 def test_market_rejects_non_exact_single_mailbox_without_leaking_it(address):
     with pytest.raises(Failure) as caught:
         validate_address(address)
-    assert caught.value.as_dict() == {'code': 'invalid_email', 'retryable': False}
+    assert caught.value.as_dict() == {'code': 'invalid_email', 'retryable': False,
+                                           'message': 'Enter one valid email address.'}
     assert address not in str(caught.value)
 
 

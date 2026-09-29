@@ -261,6 +261,8 @@ class OperationError:
     retryable: bool
     field_path: str | None = None
     retry_after_seconds: int | None = None
+    # Omit absent historical messages to preserve canonical receipt bytes.
+    message: str | None = field(default=None, metadata={'omit_if_none': True})
 
 
 class OperationFailure(Exception):

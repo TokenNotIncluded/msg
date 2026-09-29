@@ -9,7 +9,7 @@ from msg.core.batching import packets
 from msg.core.events import event_id
 from msg.core.packet import result_wire
 from msg.core.execution_ports import ResultProjection, TransactionalEventNotifications
-from msg.core.errors import Failure,require
+from msg.core.errors import Failure,require,public_error_message
 from msg.core.models import ExecutionContext,HandlerOutput,OperationResult,OperationError,Event,AccessRequirement
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION,receipt_bytes
 
@@ -148,7 +148,8 @@ class OperationExecutor:
         except Failure as exc:
             return OperationResult(request_id=request.request_id,operation=request.operation,status='error',
                 actor=principal.actor if principal else None,subject=principal.subject if principal else None,
-                error=OperationError(code=exc.code,retryable=exc.retryable,field_path=exc.field),
+                error=OperationError(code=exc.code,retryable=exc.retryable,field_path=exc.field,
+                                     message=public_error_message(exc.code)),
                 data=exc.details)
         except Exception:
             # Neither exception text/tracebacks nor caller-selected IDs are safe
@@ -156,7 +157,8 @@ class OperationExecutor:
             log.error('operation_failed')
             return OperationResult(request_id=request.request_id,operation=request.operation,status='error',
                 actor=principal.actor if principal else None,subject=principal.subject if principal else None,
-                error=OperationError(code='internal_error',retryable=False))
+                error=OperationError(code='internal_error',retryable=False,
+                                     message=public_error_message('internal_error')))
 
 
     async def _independent(self,request,spec,entry):
