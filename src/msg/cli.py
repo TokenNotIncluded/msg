@@ -8,10 +8,11 @@ import sys
 from pathlib import Path
 
 from msg.client import ClientState,MsgClient
-from msg.core.codec import canonical,loads,wire
+from msg.core.codec import canonical,loads,wire,unb64
 from msg.core.errors import Failure,require
 from msg.core.codec import result_wire
 from msg.core.models import ResourceRef,OperationResult
+from msg.core.search_query import search_query_version
 from msg.transports.client import TRANSPORTS
 
 
@@ -76,18 +77,30 @@ def parser():
     following.add_argument('--limit',type=int)
     following.add_argument('--cursor')
     search=commands.add_parser('search',help='One bounded page of scoped lexical results.')
-    search.add_argument('scope',nargs='?',help='Required for a new search; omit with --cursor.')
+    search.add_argument('scope',nargs='?',help='Path or JSON scope object; omit with --cursor.')
     search.add_argument('terms',nargs='?',help='Words to find; omit with --cursor.')
     search.add_argument('--cursor',help='Fetch one next page using the server-issued cursor.')
     search.add_argument('--limit',type=int,default=50)
     search.add_argument('--mode',choices=('all','any'),default='all')
-    search.add_argument('--field',choices=('all','name','body','metadata'),default='all')
+    search.add_argument('--field',choices=('all','name','title','body','metadata'),default='all')
     search.add_argument('--exact');search.add_argument('--exclude',dest='not_terms')
     search.add_argument('--type');search.add_argument('--owner');search.add_argument('--author')
     search.add_argument('--tag');search.add_argument('--state',choices=('active','archived'))
     search.add_argument('--created-after');search.add_argument('--created-before')
     search.add_argument('--updated-after');search.add_argument('--updated-before')
-    search.add_argument('--has-attachment',action='store_true')
+    for name in ('attachment','replies','references'):
+        flags=search.add_mutually_exclusive_group()
+        flags.add_argument('--has-'+name,dest='has_'+name,action='store_true',default=None)
+        flags.add_argument('--no-'+name,dest='has_'+name,action='store_false')
+    search.add_argument('--source-kind',choices=('release','user','operation'))
+    search.add_argument('--source-version',type=int)
+    search.add_argument('--revision')
+    search.add_argument('--relation-type')
+    search.add_argument('--relation-to');search.add_argument('--relation-from')
+    search.add_argument('--fields',help='Comma-separated result fields.')
+    search.add_argument('--facet',dest='facets',choices=('type','tag'),action='append')
+    search.add_argument('--suggest',action='store_true')
+    search.add_argument('--spell',action='store_true',help='Explicit spelling hints from visible names.')
     search.add_argument('--depth',type=int);search.add_argument('--no-recursive',action='store_true')
     search.add_argument('--order',choices=('relevance','updated','created','name'))
     search.add_argument('--no-snippet',action='store_true')
@@ -313,6 +326,8 @@ async def run(args):
             result=await client.call('communication.following',params)
         elif command=='search':
             require(1<=args.limit<=100,'invalid_search_limit')
+            extended=('source_kind','source_version','revision','relation_type','relation_to',
+                      'relation_from','fields','facets','has_replies','has_references')
             if args.cursor:
                 require(args.scope is None and args.terms is None,'cursor_query_mismatch')
                 require(args.limit==50 and args.mode=='all' and args.field=='all' and
@@ -320,25 +335,45 @@ async def run(args):
                         args.owner is None and args.author is None and args.tag is None and
                         args.state is None and args.created_after is None and
                         args.created_before is None and args.updated_after is None and
-                        args.updated_before is None and not args.has_attachment and
+                        args.updated_before is None and args.has_attachment is None and
                         args.depth is None and not args.no_recursive and args.order is None and
-                        not args.no_snippet and not args.explain,'cursor_query_mismatch')
+                        not args.no_snippet and not args.explain and not args.suggest and
+                        not args.spell and all(getattr(args,key) is None for key in extended),
+                        'cursor_query_mismatch')
                 params={'cursor':args.cursor}
+                # Inspect only bounded public query metadata to choose a wire
+                # contract. The server verifies the MAC, principal and grants.
+                require(len(args.cursor)<=8192 and args.cursor.count('.')==1,'invalid_cursor')
+                cursor_body=loads(unb64(args.cursor.split('.')[0],limit=8192))
+                require(isinstance(cursor_body,dict) and cursor_body.get('kind')=='read-page' and
+                        isinstance(cursor_body.get('query'),dict),'invalid_cursor')
+                query=cursor_body['query']
+                require(query.get('operation')=='discovery.lexical_search' and
+                        isinstance(query.get('arguments'),dict),'invalid_cursor')
+                version=search_query_version(query['arguments'])
             else:
                 require(args.scope is not None and (args.terms or args.exact),
                         'search_query_required')
                 params={'scope':args.scope,'mode':args.mode,'field':args.field,'limit':args.limit}
+                if args.scope.startswith('{'):
+                    params['scope']=json_input(args.scope)
                 if args.terms:params['terms']=args.terms
                 for key in ('exact','not_terms','type','owner','author','tag','state',
                             'created_after','created_before','updated_after','updated_before',
-                            'depth','order'):
+                            'depth','order','source_kind','source_version','revision',
+                            'relation_type','relation_to','relation_from','facets'):
                     value=getattr(args,key)
                     if value is not None:params[key]=value
-                if args.has_attachment:params['has_attachment']=True
+                for key in ('has_attachment','has_replies','has_references'):
+                    if getattr(args,key) is not None:params[key]=getattr(args,key)
+                if args.fields is not None:params['fields']=args.fields.split(',')
+                if args.suggest:params['suggest']=True
+                if args.spell:params['spell']=True
                 if args.no_recursive:params['recursive']=False
                 if args.no_snippet:params['snippet']=False
                 if args.explain:params['explain']='compact'
-            result=await client.call('discovery.lexical_search',params)
+                version=search_query_version(params)
+            result=await client.call('discovery.lexical_search',params,contract_version=version)
         elif command=='grep':
             require(0<=args.before<=3 and 0<=args.after<=3,'invalid_grep_context')
             require(1<=args.max_matches<=100 and 1<=args.max_files<=100,

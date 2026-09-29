@@ -1,11 +1,11 @@
 """Spelling hints are explicit, deterministic and limited to visible names."""
-import pytest
 import httpx
+import pytest
+from test_lexical_search_grep import business_state
+from test_service import call, register
 
 from msg.core.codec import wire
 from msg.transports.http import create_app
-from test_service import call, register
-from test_lexical_search_grep import business_state
 
 
 @pytest.mark.asyncio
