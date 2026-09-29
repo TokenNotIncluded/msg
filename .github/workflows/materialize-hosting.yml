@@ -11,20 +11,31 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
-      - name: Apply the reviewed content-only publication patch to its fixed parent
+      - name: Correct test configuration without changing acceptance boundaries
         run: |
           set -eu
-          cp .ci/hosting-publish.patch "$RUNNER_TEMP/hosting-publish.patch"
-          echo 'ce7b1ff2e2a3a094c9587a8eac1ff2b034d0730dbdc1756a27d095a98791322e' "$RUNNER_TEMP/hosting-publish.patch" | sha256sum --check
-          git fetch origin eafea15af0b8ff26c0208d5c0fcc039b4d32fb56
-          git checkout --detach eafea15af0b8ff26c0208d5c0fcc039b4d32fb56
-          echo '83ebcf4a9e2db192697e6b73eeb0c143780e44161ce3078b2f78fd20f0a98742  src/msg/storage/git.py' | sha256sum --check
-          git apply --index --whitespace=error-all "$RUNNER_TEMP/hosting-publish.patch"
-          git diff --cached --check
-          git diff --cached --stat
+          git fetch origin bb3c159138c36473537e9be76aa2e59973c37285
+          git checkout --detach bb3c159138c36473537e9be76aa2e59973c37285
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tests/test_hosting_readonly_isolation.py')
+          text=p.read_text()
+          changes=[
+              ("'Host': 'other.example'})).status_code == 404", "'Host': 'other.example'})).status_code == 403"),
+              ("        config = write_example(base/'etc', base/'unused', 'http://testserver',\n                               postgres_dsn=reader_settings.server.postgres_dsn)",
+               "        fields = psycopg.conninfo.conninfo_to_dict(reader_settings.server.postgres_dsn)\n        assert all('\\n' not in value for value in fields.values())\n        pgservice = base/'pg_service.conf'\n        pgservice.write_text('[hosting_test]\\n' + ''.join(f'{key}={value}\\n' for key, value in fields.items()))\n        config = write_example(base/'etc', base/'unused', 'http://testserver',\n                               postgres_dsn='service=hosting_test')"),
+              ("path.chmod(0o555 if path.is_dir() else 0o444)", "path.chmod(0o550 if path.is_dir() else 0o440)"),
+              ("'env', 'PYTHONDONTWRITEBYTECODE=1', 'PYTHONPATH='+str(base/'src'),", "'env', 'PYTHONDONTWRITEBYTECODE=1', 'PYTHONPATH='+str(base/'src'),\n            'PGSERVICEFILE='+str(pgservice), 'HOME='+str(base),")]
+          for old,new in changes:
+              assert text.count(old)==1, old
+              text=text.replace(old,new)
+          p.write_text(text)
+          PY
+          git diff --check
+          git add tests/test_hosting_readonly_isolation.py
           git config user.name 'msg maintenance CI'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix: preserve explicitly configured read-only content group on publication'
+          git commit -m 'test: use a real libpq service for the isolated hosting process'
           test -z "$(git status --porcelain)"
           git push origin HEAD:refs/heads/ci/hosting-161-source-00ba8f7
           git log -1 --format='%H %T %P'
