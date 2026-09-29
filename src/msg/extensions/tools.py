@@ -54,10 +54,14 @@ async def read_tool(app,tx,rid,revision=None):
     require(resource.type=='tool' and resource.parent==TOOLS_SPACE,'not_a_tool')
     rev=await tx.revision(ResourceRef(id=rid,revision=revision))
     value=loads(await app.contents.read_bytes(rev.content,limit=65536))
-    require(value['executor_key'] in {'dns','curl'} and value['tool_id']==rid,'untrusted_tool_executor')
-    return ToolSpec(resource=ResourceRef(id=rid,revision=rev.id),operation='tool.run',
-        input_schema=decode(ResourceRef,value['input_schema']),output_schema=decode(ResourceRef,value['output_schema']),
-        executor_key=value['executor_key'],network=decode(NetworkPolicy,value['network']))
+    registered=app.registry.tool(rid,value['version'])
+    require(value['tool_id']==rid and value['executor_key']==registered.executor_key,
+            'untrusted_tool_executor')
+    require(decode(ResourceRef,value['input_schema'])==registered.input_schema and
+            decode(ResourceRef,value['output_schema'])==registered.output_schema,
+            'tool_schema_mismatch')
+    return replace(registered,resource=ResourceRef(id=rid,revision=rev.id),
+        network=decode(NetworkPolicy,value['network']))
 
 
 async def tool_policies(app,principal,tool,args,tx):
@@ -109,6 +113,11 @@ def register(app,op):
     for name,schema in (('dns',DNS_INPUT),('curl',CURL_INPUT)):
         app.registry.add_schema(ResourceRef(id='schema:tool.'+name+':input'),schema)
         app.registry.add_schema(ResourceRef(id='schema:tool.'+name+':output'),TOOL_OUTPUT)
+        value=descriptor(name)
+        app.registry.add_tool(ToolSpec(resource=ResourceRef(id=value['tool_id']),
+            operation=value['operation'],input_schema=decode(ResourceRef,value['input_schema']),
+            output_schema=decode(ResourceRef,value['output_schema']),executor_key=value['executor_key'],
+            network=decode(NetworkPolicy,value['network'])),version=value['version'])
 
     @op('tool.run',obj({'id':IDENTIFIER,'revision':IDENTIFIER,'arguments':{'type':'object'}},('id','arguments')),effect='external')
     async def invoke(ctx,request,tx):

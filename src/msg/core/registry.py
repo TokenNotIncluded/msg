@@ -5,7 +5,7 @@ from copy import deepcopy
 
 from referencing.exceptions import Unresolvable
 from msg.core.schema_policy import local_validator
-from msg.core.codec import digest,wire
+from msg.core.codec import decode,digest,wire
 from msg.core.errors import Failure,require
 
 
@@ -27,6 +27,8 @@ class Registry:
         self._types={}
         self._capabilities={}
         self._operations={}
+        self._templates={}
+        self._tools={}
         self._schemas={}
         self._validators={}
         self._plugins={}
@@ -49,6 +51,35 @@ class Registry:
         require(not spec.name.startswith('root.') or spec.entries==frozenset({'local_admin'}),'local_only_contract')
         require(spec.entries and spec.entries<=frozenset({'local_admin','network','worker'}),'invalid_entries')
         self._insert(self._operations,spec,'operation')
+
+    def _insert_resource_spec(self, collection, spec, version, kind):
+        # Registration versions describe installed contracts; resource revisions
+        # remain immutable runtime facts and are never added to this registry.
+        require(not self._frozen, 'registry_frozen')
+        require(type(version) is int and version >= 1 and spec.resource.id
+                and '*' not in spec.resource.id, 'invalid_registry_name')
+        key=(spec.resource.id,version)
+        require(key not in collection, 'duplicate_'+kind)
+        collection[key]=decode(type(spec),wire(spec))
+
+    def add_template(self,spec,version=1):
+        from msg.core.template_dsl import _check
+        from msg.core.codec import loads
+        require(spec.renderer_version == 1, 'unknown_template_renderer')
+        names=[field.name for field in spec.fields]
+        require(len(names)==len(set(names)), 'duplicate_field')
+        for field in spec.fields:
+            require(field.type in {'str','text','int','bool','enum','ref','file'},
+                    'unknown_field_type')
+            require(not field.required or field.default_json is None,
+                    'required_field_has_default')
+            if field.default_json is not None:
+                _check(field,loads(field.default_json))
+        self._insert_resource_spec(self._templates,spec,version,'template')
+
+    def add_tool(self,spec,version=1):
+        require(bool(spec.executor_key), 'untrusted_tool_executor')
+        self._insert_resource_spec(self._tools,spec,version,'tool')
 
     def add_schema(self,ref,schema):
         require(not self._frozen and ref.id not in self._schemas,'schema_conflict')
@@ -112,6 +143,11 @@ class Registry:
                     cap.constraints_schema.id in self._schemas,'missing_schema')
             require(cap.scope_types<=set(n for n,v in self._types),'unknown_scope_type')
             require(cap.operations<=operation_ids,'unknown_capability_operation')
+        for tool in self._tools.values():
+            operation=tool.operation if '@' in tool.operation else tool.operation+'@1'
+            require(operation in operation_ids,'unknown_tool_operation')
+            require(tool.input_schema.id in self._schemas and
+                    tool.output_schema.id in self._schemas,'missing_schema')
         self._frozen=True
 
     @property
@@ -132,6 +168,18 @@ class Registry:
 
     def resource_type(self,name,version=1):
         return self._get(self._types,name,version,'resource_type')
+
+    def template(self,resource_id,version=1):
+        return self._get(self._templates,resource_id,version,'template')
+
+    def tool(self,resource_id,version=1):
+        return self._get(self._tools,resource_id,version,'tool')
+
+    def templates(self):
+        return tuple(self._templates[k] for k in sorted(self._templates))
+
+    def tools(self):
+        return tuple(self._tools[k] for k in sorted(self._tools))
 
     def capabilities(self):
         return tuple(self._capabilities[k] for k in sorted(self._capabilities))

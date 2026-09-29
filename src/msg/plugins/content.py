@@ -6,7 +6,7 @@ from hashlib import sha256
 from msg.constants import ROOT_SPACE,ROOT_SUBJECT
 from msg.core.codec import canonical,decode,loads,wire,unb64,digest,parse_time
 from msg.core.errors import Failure,require
-from msg.core.models import HandlerOutput,ResourceRef,Relation,EffectJob,BlobRef,Event
+from msg.core.models import HandlerOutput,ResourceRef,Relation,EffectJob,BlobRef,Event,TemplateSpec
 from msg.core.tags import normalize_tags
 from msg.core.text_patch import (PATCH_LIMIT,PATCH_CONTEXT_LIMIT,PATCH_CANDIDATE_LIMIT,
     PATCH_SCHEMA,apply_text_patch,apply_patch,validate_patch)
@@ -85,7 +85,16 @@ async def template_content(app,ctx,request,tx,parent,template,values):
     rev=await tx.revision(ref)
     source=(await app.contents.read_bytes(rev.content)).decode('utf-8')
     parsed=parse_template(source)
-    normalized=normalize_values(parsed,values or {})
+    # Installed defaults have a frozen field contract. User-owned templates and
+    # later revisions remain resource data, parsed under the same finite DSL.
+    try:
+        registered=app.registry.template(rid,parsed.version)
+    except Failure as exc:
+        if exc.code!='unknown_template':
+            raise
+        registered=None
+    fields=registered if registered is not None and registered.digest==rev.content.digest else parsed
+    normalized=normalize_values(fields,values or {})
     content={'template_id':rid,'template_version':parsed.version,'template_digest':rev.content.digest,'values':normalized}
     return canonical(content),'application/json',content,Relation(type='template',target=ref)
 
@@ -237,6 +246,13 @@ async def prepare_text_patch(app,ctx,request,tx,args, *, post_only=False):
 
 
 def install(app):
+    from msg.bootstrap import manifest
+    for name,source in manifest()['templates'].items():
+        parsed=parse_template(source)
+        require(name==parsed.name,'template_name_mismatch')
+        app.registry.add_template(TemplateSpec(resource=ResourceRef(id='tpl_'+name),
+            digest='sha256:'+sha256(source.encode()).hexdigest(),fields=parsed.fields,
+            renderer_version=1),version=parsed.version)
     op,finish=registration(app,'content',('identity',))
     post_fields={'parent':IDENTIFIER,'name':STRING,'body':STRING,'template':{'anyOf':[STRING,obj({'id':IDENTIFIER,'version':INTEGER},('id',))]},
                  'values':{'type':'object'},'source':REF,'content_created_at':STRING,'resource_id':IDENTIFIER,'revision_id':IDENTIFIER,'content_signature':SIGNATURE}
