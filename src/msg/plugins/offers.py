@@ -129,6 +129,35 @@ def install(app):
             data['listings'] = [offer_listing(offer) for offer in public]
         return HandlerOutput(data=data)
 
+    @op('money.redeem', obj({'offer_id': IDENTIFIER,
+        'quantity': {'type': 'integer', 'minimum': 1, 'maximum': MAX_MINOR},
+        'currency_id': {'const': CURRENCY_ID}, 'price_revision': IDENTIFIER,
+        'listing_revision': IDENTIFIER,
+        'offer_snapshot_digest': {'type': 'string', 'pattern': '^sha256:[a-f0-9]{64}$'},
+        'total_price_minor': {'type': 'integer', 'minimum': 1, 'maximum': MAX_MINOR},
+        'settlement_policy': {'const': 'deterministic-entitlement-v1'}},
+        ('offer_id', 'quantity', 'currency_id', 'price_revision', 'listing_revision',
+         'offer_snapshot_digest', 'total_price_minor', 'settlement_policy')),
+        signature=True, version=3, requirements=account_requirements)
+    async def redeem_order(ctx, request, tx):
+        owner, args = _owner(ctx), request.arguments
+        row = tx.one("""SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
+            max_quantity,entitlement_kind,duration_seconds,price_revision FROM server_offers
+            WHERE offer_id=? AND enabled=TRUE""", (args['offer_id'],))
+        require(row is not None and _valid_catalog_offer(app, row), 'offer_not_found')
+        from msg.market.offer_resources import verify_projection
+        require(await verify_projection(app, tx, row) is not None, 'offer_requires_import')
+        require(args['price_revision'] == row[8], 'offer_price_changed')
+        require(row[4] <= args['quantity'] <= row[5] and row[3] * args['quantity'] <= MAX_MINOR,
+                'invalid_offer_quantity')
+        require(extra_capacity(tx, owner, ctx.now) + args['quantity'] + app.settings.hosting_base_capacity_bytes
+                <= MAX_CAPACITY_BYTES, 'entitlement_capacity_exceeded')
+        require(ENTITLEMENT_FULFILLERS[row[6]][2] == 1, 'offer_provider_unavailable')
+        from msg.market.entitlement_orders import redeem as redeem_into_order
+        result = await redeem_into_order(app, tx, ctx, request, _public_offer(row),
+                                          ENTITLEMENT_FULFILLERS[row[6]][3])
+        return HandlerOutput(data=result)
+
     @op('money.redeem',obj({'offer_id':IDENTIFIER,'quantity':{'type':'integer','minimum':1,'maximum':MAX_MINOR},
         'currency_id':{'const':CURRENCY_ID},'price_revision':IDENTIFIER},
         ('offer_id','quantity','currency_id','price_revision')),signature=True, requirements=account_requirements)

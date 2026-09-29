@@ -39,6 +39,11 @@ def view(tx, order, viewer):
         result['contract_version'] = locked['version']
         result['delivery_mode'] = locked['listing']['delivery_mode']
         result['policy_digest'] = locked['policy']['policy_digest']
+        if locked['version'] == 5:
+            from msg.core.codec import loads
+            fact = tx.one('SELECT body FROM order_settlements WHERE order_id=?', (order['id'],))
+            result['settlement_policy'] = locked['settlement_policy']
+            result['entitlement_id'] = loads(fact[0])['entitlement_id'] if fact else None
         # Seller needs the *public encryption subkey*, not buyer's email.
         if locked['recipient_key']:
             result['recipient_key'] = locked['recipient_key']
@@ -119,6 +124,8 @@ async def create(app, tx, ctx, request, *, version=3):
 async def fund(app, tx, ctx, request, order):
     require(order['state'] == 'created', 'order_not_fundable')
     locked = contract(tx, order['id'])
+    require(locked['version'] != 5 or (request.operation == 'money.redeem' and
+            request.contract_version == 3), 'entitlement_funding_contract_required')
     require(ctx.now < parse_time(order['created_at']) + timedelta(
         seconds=locked['policy']['policy']['funding_timeout_seconds']), 'payment_intent_expired')
     validate_target(tx, order)
@@ -136,7 +143,7 @@ async def fund(app, tx, ctx, request, order):
                      request_id=request.request_id, reason='signed_payment_intent')
     tx.execute('UPDATE order_deadlines SET expires_at=? WHERE order_id=?',
         (wire(ctx.now+timedelta(seconds=locked['policy']['policy']['delivery_timeout_seconds'])), order['id']), write=True)
-    if locked['listing']['delivery_mode'] == 'managed_instant':
+    if locked['version'] != 5 and locked['listing']['delivery_mode'] == 'managed_instant':
         from msg.market.delivery import automatic
         await automatic(app, tx, ctx, request, order)
     return receipt

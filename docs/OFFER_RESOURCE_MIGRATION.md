@@ -7,7 +7,7 @@ The preceding v2 read adapters are compatibility projections, not a migration.
 
 ## Small reviewable stages
 
-1. **New-offer Resource writer (this change).** Newly created local offers use
+1. **New-offer Resource writer (implemented).** Newly created local offers use
    ordinary `listing` Resources under `/store/` with Root-signed immutable
    Revisions. Their unchanged offer IDs are Resource IDs. `server_offers` is an
    atomic compatibility projection for these records, identified by the typed
@@ -15,16 +15,16 @@ The preceding v2 read adapters are compatibility projections, not a migration.
    public reads/redemption verify the projection against its signed authority.
    An existing unmapped offer stays legacy, even on edit. Nothing imports it
    implicitly. This stage neither migrates Purchases nor changes write contracts.
-2. **Explicit existing-offer adoption.** Add a local dry-run/import command with
-   exact expected legacy snapshot, ID/name collision checks, explicit provenance
-   and rollback manifest. Import must preserve each offer ID and all referenced
+2. **Explicit existing-offer adoption (implemented).** The local dry-run/import command uses
+   an exact expected legacy snapshot, ID/name collision checks, explicit provenance
+   and an auditable approval plan. Import must preserve each offer ID and all referenced
    purchase snapshots, entitlements and ledger bytes. Reject unknown providers
    and inconsistent records. No database-startup import. Existing-row edits stay
    on their original writer until explicit adoption.
-3. **New entitlement Order writer.** Publish a new redemption version whose
-   immutable entitlement policy is represented in the shared Order contract;
-   deterministic grant/payment commit together, deferred fulfillment holds the
-   same typed escrow, and Root settlement remains non-remotely-refundable. Keep
+3. **New entitlement Order writer (synchronous part implemented).** The new redemption version has an
+   immutable entitlement policy represented in the shared Order contract;
+   deterministic grant/payment commit together and Root settlement remains
+   non-remotely-refundable. Later deferred fulfillment must use the same typed escrow. Keep
    legacy Purchase readers/writers until explicit pending-order adoption and
    rollback are verified. Never synthesize acceptance or Delivery from old grants.
 4. **Retire legacy writers only after evidence.** Verify old request replay,
@@ -97,3 +97,60 @@ accounts and ledger bytes are untouched. The signed Root audit contains the plan
 and approval digest. Failure during publication rolls back Resource, mapping,
 Revision and audit in the same transaction; the unchanged plan can be retried.
 No automatic startup adoption or remote import operation is registered.
+
+## Stage 3: explicit synchronous entitlement Order writer
+
+`money.redeem@3` is a synchronous Order contract and the dedicated CLI default. It requires an
+already adopted/new Resource-backed offer and these signed fields:
+`offer_id`, `quantity`, `currency_id`, `price_revision`, `listing_revision`,
+`offer_snapshot_digest`, `total_price_minor`, and
+`settlement_policy="deterministic-entitlement-v1"`.
+
+The snapshot digest covers the exact public offer (resource/entitlement kind,
+unit, unit price, bounds, duration and provider version). The independently bound
+Listing revision fixes the Root-signed terms. The full original signed request
+is retained and verified against the buyer's recorded signing credential during
+contract validation; recomputing a database digest cannot forge consent.
+Revocation still blocks new requests and cached-result replay, while the old
+signature remains valid evidence when the owner reads through a current key.
+
+This uses the existing `store_orders`, `order_contracts`, `order_transitions`,
+`order_settlements`, protected OrderEscrow, funding function and settlement
+function. It creates no `money_purchases` row and no parallel purchase state
+machine. Policy version 5 allows **only this explicitly consented deterministic
+entitlement policy** to go funded → settled: the ResourceEntitlement grant and
+release to Root must succeed in the same transaction. It creates neither Delivery
+nor accepted/claimed facts. This follows the design's same-transaction
+deterministic-entitlement rule; ordinary `orders.buy@4` still requires separate
+signed buyer acceptance and retains all previous checks.
+
+A grant failure after ledger release rolls back funding, release, Order, grant
+and events together. Repeating the same signed request returns the original
+result. Competing spends use the same protected ledger transaction. Native order
+reads and payment receipts validate the exact grant and settlement; remote
+cancellation cannot refund an already settled Root payment. PostgreSQL order
+quantity is widened from INTEGER to BIGINT to preserve byte quantities above
+2 GiB without changing any existing values or signed facts.
+
+Published `money.redeem@1/@2` keep their original writers and response shapes;
+existing pending Purchases are untouched and still settle/cancel independently.
+Version 3 deliberately has no `defer` flag: asynchronously fulfilled new orders
+and explicit adoption of historical pending Purchases remain later work, not
+features inferred from this synchronous contract. All production migrations and
+financial actions remain manual and local; tests use isolated fixtures only.
+
+The dedicated `msg money redeem` fetches `store.listing_get@2` from the ordinary
+Resource branch, binds its actual revision and complete quote digest, and signs
+@3 with explicit synchronous-settlement policy. Supplied price/revision/digest
+fields must match exactly; a stale pinned intent is rejected. Unimported offers
+are rejected by default; `--contract-version 1` or `2` explicitly selects the
+legacy writer, including `defer` only under @2. Reusing a request ID after the
+quote changes fails closed; it never silently replays a differently priced buy.
+The isolated official selftest retains all 20 → 10 → 5 PoP/store acceptance
+checkpoints, then exercises a separate one-minor-unit deterministic grant using
+a real @3 buyer signature, replay and supply checks.
+
+This stage converges new redemptions onto the existing native Order writer. It
+does not yet convert `store_orders`/`order_contracts` themselves into ordinary
+Resource/Revision records, or adopt historical Purchase rows; those are separate
+remaining write-model stages. Compatibility reads are not evidence of migration.

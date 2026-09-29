@@ -43,7 +43,12 @@ def _post_escrow_transfer(tx, *, order, recipient, amount, actor, request_id, no
 
 
 async def transition(tx, order, state, *, now, actor, request_id, reason):
-    require(state in TRANSITIONS.get(order['state'], ()), 'order_transition_invalid')
+    if order['state'] == 'funded' and state == 'settled':
+        locked = contract(tx, order['id'])
+        require(locked['version'] == 5 and reason == 'deterministic_entitlement',
+                'order_transition_invalid')
+    else:
+        require(state in TRANSITIONS.get(order['state'], ()), 'order_transition_invalid')
     changed = tx.execute('UPDATE store_orders SET state=? WHERE id=? AND state=?',
                          (state, order['id'], order['state']), write=True)
     require(changed.rowcount == 1, 'order_transition_conflict')
@@ -60,7 +65,7 @@ async def transition(tx, order, state, *, now, actor, request_id, reason):
 
 
 async def settle(app, tx, order, *, now, actor, request_id, reason,
-                 refund_minor=0, decision=None):
+                 refund_minor=0, decision=None, fulfill=None):
     """Validate authority *before* appending either leg of a balanced settlement.
 
     Caller owns the transaction. Any failure rolls back both legs, the decision
@@ -81,7 +86,11 @@ async def settle(app, tx, order, *, now, actor, request_id, reason,
                 body['decision_id'] == (decision['id'] if decision else None),
                 'order_already_settled')
         return body['receipts']
-    if decision is not None:
+    if locked['version'] == 5:
+        require(decision is None and refund_minor == 0 and order['state'] == 'funded' and
+                actor == order['buyer'] and reason == 'deterministic_entitlement' and callable(fulfill),
+                'escrow_release_forbidden')
+    elif decision is not None:
         from msg.market.arbitration import validate_decision
         await validate_decision(app, tx, order, decision, now)
         require(refund_minor == decision['refund_minor'], 'decision_amount_mismatch')
@@ -104,6 +113,9 @@ async def settle(app, tx, order, *, now, actor, request_id, reason,
                 request_id=f'{order["id"]}:{suffix}', now=now,
                 receipt_signer=app.receipt_signer, reference=f'order_{suffix}:{order["id"]}',
                 kind=kind))
+    entitlement_id = None
+    if locked['version'] == 5:
+        entitlement_id = fulfill(receipts[0]['body']['transaction_id'])
     final = 'refunded' if refund_minor == total else 'settled'
     await transition(tx, order, final, now=now, actor=actor, request_id=request_id, reason=reason)
     refs = order['receipt_refs'] + [r['body']['transaction_id'] for r in receipts]
@@ -116,6 +128,8 @@ async def settle(app, tx, order, *, now, actor, request_id, reason,
                  'order_facts': {name: order[name] for name in ('payment_transaction_id',
                      'payment_intent_digest', 'funded_at', 'delivered_at')},
                  'delivery_snapshot': delivery_snapshot(tx, order['id'])}
+    if locked['version'] == 5:
+        statement['entitlement_id'] = entitlement_id
     tx.execute('INSERT INTO order_settlements(order_id,decision_id,body) VALUES (?,?,?)',
         (order['id'], statement['decision_id'], canonical(statement).decode()), write=True)
     if decision:

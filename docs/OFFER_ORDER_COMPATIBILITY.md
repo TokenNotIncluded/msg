@@ -61,8 +61,9 @@ release and all purchase/grant facts; retry/concurrency and backup restore
 coverage remain required.
 
 The physical tables still retain their legacy names. Unmapped legacy offers
-remain SQL-only; new local offers use the Resource writer described below. New
-`money.redeem` versions have not been introduced. A future write-model migration must preserve historical IDs,
+remain SQL-only; new local offers use the Resource writer described below. The new
+`money.redeem@3` now explicitly opts into the native synchronous Order writer;
+published @1/@2 remain unchanged. A future write-model migration must preserve historical IDs,
 receipts and cached request results and retire the old writer atomically. This
 read compatibility slice does not claim that physical migration is complete.
 

@@ -42,7 +42,7 @@ async def authoritative_offer(app, tx, offer_id):
             resource.state == 'active' and resource.mode == 0o444 and
             resource.group == 'g_public', 'offer_resource_invalid')
     ancestors = await tx.ancestors(resource.id)
-    require(all(parent.state == 'active' and parent.mode & 0o004 for parent in ancestors),
+    require(all(parent.state == 'active' and parent.mode & 0o001 for parent in ancestors),
             'offer_resource_invalid')
     revision = await tx.revision(ResourceRef(id=listing_id, revision=resource.revision))
     require(revision.actor == revision.subject == ROOT_SUBJECT and revision.signature is not None,

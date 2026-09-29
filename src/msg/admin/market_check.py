@@ -27,7 +27,8 @@ async def inspect_market(tx):
         if snapshot:
             locked = contract(tx,oid)
             policy = locked['policy']
-            validate(policy['policy'])
+            if locked['version'] != 5:
+                validate(policy['policy'])
             require(digest(policy['policy'])==policy['policy_digest'] and
                     locked['buyer']==buyer and locked['total_price_minor']==total, 'market_snapshot_invariant')
         row = tx.one('SELECT body FROM order_settlements WHERE order_id=?',(oid,))
@@ -220,6 +221,9 @@ def inspect_clearing(app, tx):
     for oid,escrow,total,state,quote,refs in tx.rows('''SELECT id,escrow_subject,total_price_minor,
         state,quote_digest,receipt_refs FROM store_orders'''):
         require(state != 'accepted', 'incomplete_order_commit')
+        immutable = tx.one('SELECT body FROM order_contracts WHERE order_id=?', (oid,))
+        if immutable is not None and loads(immutable[0]).get('version') == 5:
+            require(state == 'settled', 'incomplete_entitlement_commit')
         expected = total if state in {'funded','delivered','disputed'} else 0
         require(balances.get(escrow,0)==expected, 'order_escrow_mismatch')
         require(all(ref in ledger for ref in loads(refs)), 'order_receipt_missing')
@@ -238,10 +242,15 @@ def inspect_clearing(app, tx):
                 # for arbitrary prepared legacy orders.
                 from msg.market.policy import contract
                 locked=contract(tx,oid)
-                prepared=(delivery is not None and delivery[0]=='prepared' and
-                    locked['listing']['delivery_mode']=='managed_instant')
-                require(delivery is not None and (delivery[0]=='claimed' or prepared),
-                        'settled_delivery_missing')
+                if locked['version'] == 5:
+                    # The contract validator requires the exact entitlement grant;
+                    # synchronous issuance must not invent a Delivery or acceptance.
+                    require(delivery is None, 'unexpected_entitlement_delivery')
+                else:
+                    prepared=(delivery is not None and delivery[0]=='prepared' and
+                        locked['listing']['delivery_mode']=='managed_instant')
+                    require(delivery is not None and (delivery[0]=='claimed' or prepared),
+                            'settled_delivery_missing')
             else:
                 require(delivery is not None and (delivery[0]=='claimed' or
                         delivery==('prepared','escrow-instant-v1')), 'settled_delivery_missing')
@@ -304,7 +313,8 @@ async def check_market_e2e(app, root, call, register):
     require(len(funding['audit_event_ids'])==2 and funding['root_balance_minor']==0, 'selftest_bank_fund_failed')
     async def checked(name,args,key=None,subject=None,**kwargs):
         result=await call(name,args,key,subject,**kwargs)
-        require(result.status=='ok','market_selftest_'+name.replace('.','_'))
+        require(result.status=='ok','market_selftest_'+name.replace('.','_') +
+                (':' + result.error.code if result.error else ''))
         return result
     bounty=await checked('bounty.create',{'name':'signature-reward',
         'terms':'Control of the current IdentityKey only, not human or Sybil proof.',
@@ -369,4 +379,34 @@ async def check_market_e2e(app, root, call, register):
                 checked_state['banks']==baseline['banks']+1 and
                 checked_state['enabled_offers']==baseline['enabled_offers'],
                 'selftest_market_supply_mismatch')
+    # The 20 -> 10 -> 5 buyer checkpoint above remains the official PoP/store
+    # acceptance flow. Separately exercise an explicit synchronous grant intent.
+    from msg.admin.money import apply_offer
+    from msg.client_market import entitlement_intent
+    from msg.plugins.hosting_capacity import ENTITLEMENT_KIND, extra_capacity
+    await apply_offer(app, root, action='set', operator='isolated-TestConsole',
+        offer_id='selftest-byte-grant', fields={'resource_kind': 'website', 'unit': 'byte',
+        'price_minor': 1, 'min_quantity': 1, 'max_quantity': 1,
+        'entitlement_kind': ENTITLEMENT_KIND, 'duration_seconds': None})
+    class BuyerClient:
+        async def call(self, name, params, **options):
+            return await checked(name, params, buyer_key, buyer, **options)
+    intent = await entitlement_intent(BuyerClient(), {'offer_id': 'selftest-byte-grant', 'quantity': 1})
+    grant = await checked('money.redeem', intent, buyer_key, buyer,
+                         contract_version=3, request_id='market-e2e-entitlement')
+    repeated = await checked('money.redeem', intent, buyer_key, buyer,
+                            contract_version=3, request_id='market-e2e-entitlement')
+    order = grant.data['order']
+    require(order['state'] == 'settled' and order['contract_version'] == 5 and
+            order['delivered_at'] is None and repeated.replayed and repeated.data == grant.data,
+            'selftest_entitlement_order_failed')
+    async with app.metadata.transaction(write=False) as tx:
+        locked = contract(tx, order['id'])
+        require(extra_capacity(tx, buyer, app.clock()) == 1 and
+                (_balance(tx, buyer), _balance(tx, bank), _balance(tx, ROOT_SUBJECT),
+                 _balance(tx, locked['escrow_subject'])) == (4_999_999, 15_000_000, 1, 0) and
+                tx.one('SELECT COUNT(*) FROM store_deliveries WHERE order_id=?', (order['id'],))[0] == 0,
+                'selftest_entitlement_grant_failed')
+        require(inspect_clearing(app, tx)['total_supply_minor'] == 20_000_000,
+                'selftest_entitlement_supply_mismatch')
     return True

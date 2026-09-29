@@ -38,7 +38,7 @@ async def test_every_advertised_shortcut_resolves_an_actual_registered_operation
                 assert (group, action) == ('bounty', 'prove')
                 continue
             try:
-                spec = app.registry.operation(operation, 2 if operation == 'money.redeem' else 1)
+                spec = app.registry.operation(operation, 3 if operation == 'money.redeem' else 1)
             except Failure:
                 unknown.append((group, action, operation))
                 continue
@@ -160,14 +160,20 @@ async def test_explicit_buy_version_preserves_old_inputs_and_settlement_semantic
 
 
 @pytest.mark.asyncio
-async def test_redeem_keeps_version_two_default_and_can_explicitly_select_one(installed):
+async def test_redeem_defaults_to_native_order_and_preserves_explicit_legacy_versions(installed):
     from test_market_redemption import setup_offer
 
     app, root = installed
     key, owner, quote, _fields = await setup_offer(app, root)
     client = ExecutorClient(app, key, owner)
+    native = await command(client, 'money', 'redeem', canonical(quote).decode(),
+                           '--request-id', 'cli-native')
+    assert native.status == 'ok' and native.data['order']['contract_version'] == 5, wire(native)
+    replay = await command(client, 'money', 'redeem', canonical(quote).decode(),
+                           '--request-id', 'cli-native')
+    assert replay.replayed and replay.data == native.data
     pending = await command(client, 'money', 'redeem', canonical({**quote, 'defer': True}).decode(),
-                            '--request-id', 'cli-pending')
+                            '--contract-version', '2', '--request-id', 'cli-pending')
     assert pending.status == 'ok' and pending.data['purchase']['state'] == 'pending', wire(pending)
     immediate = await command(client, 'money', 'redeem', canonical(quote).decode(),
                               '--contract-version', '1', '--request-id', 'cli-immediate')
@@ -184,3 +190,27 @@ async def test_out_of_range_version_is_rejected_before_client_or_business_writes
         await command(None, 'money', 'state', '--contract-version', version)
     assert await business_snapshot(app) == before
 
+
+
+@pytest.mark.asyncio
+async def test_redeem_cli_rejects_unimported_offer_and_changed_pinned_intent(installed):
+    from msg.admin.offer_import import apply_import, preview_import
+    from test_offer_import import legacy
+
+    app, root = installed
+    key, owner, quote = await legacy(app, root)
+    client = ExecutorClient(app, key, owner)
+    before = await business_snapshot(app)
+    with pytest.raises(Failure, match='^offer_resource_required_use_explicit_legacy_contract$'):
+        await command(client, 'money', 'redeem', canonical(quote).decode())
+    assert await business_snapshot(app) == before
+    async with app.metadata.transaction(write=False) as tx:
+        plan = await preview_import(app, tx, quote['offer_id'])
+    await apply_import(app, root, plan, operator='test')
+    before = await business_snapshot(app)
+    with pytest.raises(Failure, match='^offer_intent_changed$'):
+        await command(client, 'money', 'redeem', canonical({**quote, 'total_price_minor': 9}).decode())
+    assert await business_snapshot(app) == before
+    result = await command(client, 'money', 'redeem', canonical(quote).decode())
+    assert result.status == 'ok', wire(result)
+    assert result.data['order']['listing_revision'] == plan['revision_id']

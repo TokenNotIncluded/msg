@@ -52,7 +52,9 @@ def add_commands(commands):
         for action, (operation, field) in actions.items():
             help_text = ('Sign a current-key PoP challenge and claim; not a human/Sybil check.'
                          if group=='bounty' and action=='prove' else None)
-            cmd = sub.add_parser(action, help=help_text)
+            if operation == 'money.redeem':
+                help_text = 'Sign current Resource terms and synchronous grant/settlement; legacy needs --contract-version 1 or 2.'
+            cmd = sub.add_parser(action, help=help_text, description=help_text)
             if field=='json':
                 cmd.add_argument('payload', nargs='?', default='{}', help='JSON, @file or - for stdin.')
             elif field:
@@ -86,6 +88,29 @@ async def prove_bounty(client, listing_id, request_id=None):
                              request_id=request_id)
 
 
+async def entitlement_intent(client, params):
+    """Bind the current ordinary Resource quote; legacy requires explicit @1/@2."""
+    require(isinstance(params, Mapping) and isinstance(params.get('offer_id'), str), 'offer_id_required')
+    require(type(params.get('quantity')) is int and params['quantity'] > 0, 'invalid_offer_quantity')
+    require('defer' not in params, 'explicit_legacy_contract_required')
+    result = await client.call('store.listing_get', {'id': params['offer_id']}, contract_version=2)
+    require(result.status == 'ok', 'offer_resource_required_use_explicit_legacy_contract')
+    listing = result.data['listing']
+    source = listing.get('server_offer')
+    require(listing.get('server_offer_model') == 1 and isinstance(source, Mapping) and
+            source.get('enabled') is True and listing['listing_id'] == params['offer_id'],
+            'offer_resource_required_use_explicit_legacy_contract')
+    quote = {k: v for k, v in source.items() if k != 'enabled'}
+    quote.update(currency_id='primary', provider_version=1)
+    bound = {'currency_id': 'primary', 'price_revision': quote['price_revision'],
+        'listing_revision': listing['listing_revision'], 'offer_snapshot_digest': digest(quote),
+        'total_price_minor': quote['price_minor'] * params['quantity'],
+        'settlement_policy': 'deterministic-entitlement-v1'}
+    require(all(key not in params or params[key] == value for key, value in bound.items()),
+            'offer_intent_changed')
+    return {**params, **bound}
+
+
 async def run_command(client, args, parse_arguments):
     operation, field = COMMANDS[args.command][args.action]
     if operation is None:
@@ -101,7 +126,9 @@ async def run_command(client, args, parse_arguments):
     elif operation == 'orders.create':
         kwargs['contract_version'] = 2
     elif operation=='money.redeem':
-        kwargs['contract_version']=2
+        kwargs['contract_version']=3
+    if operation == 'money.redeem' and kwargs.get('contract_version') == 3:
+        params = await entitlement_intent(client, params)
     if args.command=='store' and args.action=='update':
         require(isinstance(params.get('id'),str),'listing_id_required')
         kwargs['expected']=((params['id'],args.generation),)
