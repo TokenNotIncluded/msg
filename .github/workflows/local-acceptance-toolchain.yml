@@ -28,7 +28,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo env NEEDRESTART_MODE=l apt-get install -y -qq postgresql-16 postgresql-client-16 redis-server git-lfs age bubblewrap
-          for command in             /usr/lib/postgresql/16/bin/initdb /usr/lib/postgresql/16/bin/pg_ctl             /usr/lib/postgresql/16/bin/pg_dump /usr/lib/postgresql/16/bin/pg_restore             /usr/bin/redis-server /usr/bin/git-lfs /usr/bin/age /usr/bin/bwrap; do
+          for command in             /usr/lib/postgresql/16/bin/initdb /usr/lib/postgresql/16/bin/pg_ctl             /usr/lib/postgresql/16/bin/pg_dump /usr/lib/postgresql/16/bin/pg_restore /usr/lib/postgresql/16/bin/psql             /usr/bin/redis-server /usr/bin/git-lfs /usr/bin/age /usr/bin/bwrap; do
             cp -L "$command" bundle/bin/
             ldd "$command" | awk '/=> \/|^\// {for (i=1;i<=NF;i++) if ($i ~ /^\//) print $i}' || true
           done | sort -u > /tmp/libs.txt
