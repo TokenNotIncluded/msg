@@ -199,20 +199,43 @@ class LFSObjectStore:
 
 class GitContentStore:
     def __init__(self,path: Path, *, binary_dir: Path | None = None,
-                 staging_dir: Path | None = None):
+                 staging_dir: Path | None = None, group_read: bool = False):
+        require(type(group_read) is bool,'invalid_content_group_read')
+        self.group_read=group_read
         self.path=Path(path)
         self.repo=self.path/'private.git'
         self.index=self.path/'index'
         self.binary=Path(binary_dir) if binary_dir is not None else self.path/'binary'
         self.staging=Path(staging_dir) if staging_dir is not None else self.path/'staging'
-        for p in (self.path,self.index,self.binary,self.staging):
-            p.mkdir(parents=True,exist_ok=True)
-        if not self.repo.exists():
-            subprocess.run(['git','init','--bare',str(self.repo)],check=True,capture_output=True)
         self.env={"PATH":os.environ.get('PATH','/usr/bin:/bin'),"LANG":"C.UTF-8",
                   "HOME":str(self.path),"GIT_CONFIG_NOSYSTEM":"1","GIT_CONFIG_GLOBAL":"/dev/null",
                   "GIT_AUTHOR_NAME":"msg","GIT_AUTHOR_EMAIL":"msg@localhost",
                   "GIT_COMMITTER_NAME":"msg","GIT_COMMITTER_EMAIL":"msg@localhost"}
+        # An existing installation needs an explicit offline permission review.
+        # Validate before creating/chmod'ing anything, including staging paths.
+        if group_read:
+            for p in (self.path,self.index,self.binary):
+                if p.exists() or p.is_symlink():
+                    require(p.is_dir() and not p.is_symlink() and
+                            p.stat().st_mode & 0o2077 == 0o2050,
+                            'content_sharing_not_prepared')
+            if self.repo.exists() or self.repo.is_symlink():
+                require(self.repo.is_dir() and not self.repo.is_symlink(),
+                        'content_sharing_not_prepared')
+                config=subprocess.run(['git','--git-dir',str(self.repo),'config',
+                    '--local','core.sharedRepository'],capture_output=True,env=self.env,timeout=30)
+                require(config.returncode==0 and config.stdout.strip()==b'0640',
+                        'content_sharing_not_prepared')
+        for p in (self.path,self.index,self.binary):
+            existed=p.exists()
+            p.mkdir(parents=True,exist_ok=True)
+            if group_read and not existed:
+                p.chmod(0o2750)
+        self.staging.mkdir(parents=True,exist_ok=True)
+        if not self.repo.exists():
+            shared=['--shared=0640'] if group_read else []
+            subprocess.run(['git','init','--bare',*shared,str(self.repo)],
+                           check=True,capture_output=True,env=self.env,timeout=30)
 
     def _run(self,*args,input=None,stdin=None):
         result=subprocess.run(['git','--git-dir',str(self.repo),'-c','core.fsync=all',
@@ -262,6 +285,13 @@ class GitContentStore:
             else:
                 destination=self.binary/self._key(ref)
                 if not destination.exists():
+                    if self.group_read:
+                        # Rename retains the staging GID, so explicitly use the
+                        # prepared destination group. Staging itself stays private.
+                        os.chown(name,-1,self.binary.stat().st_gid)
+                        os.chmod(name,0o640)
+                        with open(name,'rb') as staged:
+                            os.fsync(staged.fileno())
                     os.replace(name,destination)
                     directory=os.open(destination.parent,os.O_RDONLY|os.O_DIRECTORY)
                     try:
@@ -269,7 +299,8 @@ class GitContentStore:
                     finally:
                         os.close(directory)
                 entry={'kind':'binary','size':size}
-            durable_write(self.index/self._key(ref),canonical(entry))
+            durable_write(self.index/self._key(ref),canonical(entry),
+                          mode=0o640 if self.group_read else 0o600)
             return ref
         finally:
             if os.path.exists(name):

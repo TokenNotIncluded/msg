@@ -214,6 +214,26 @@ def main(argv=None):
         if args.command=='ssh-session':
             from msg.extensions.ssh import forced_session
             return asyncio.run(forced_session(args.config_dir,args.credential))
+        if args.command=='hosting':
+            from contextlib import asynccontextmanager
+            from msg.config import load_settings
+            from msg.hosting_runtime import HostingRuntime
+            from msg.extensions.hosting import hosting_app
+            import uvicorn
+            settings=load_settings(args.config_dir)
+            network_runtime(settings)
+            app=HostingRuntime(settings)
+            @asynccontextmanager
+            async def lifespan(asgi):
+                try:
+                    await app.load()
+                    yield
+                finally:
+                    await app.close()
+            asgi=hosting_app(app)
+            asgi.router.lifespan_context=lifespan
+            uvicorn.run(asgi,host=args.listen,port=args.port,access_log=False,ws='none')
+            return 0
         app=load_application(args.config_dir)
         if args.command=='backup':
             from msg.admin.backups import backup
@@ -228,21 +248,8 @@ def main(argv=None):
             if result is not None:emit(result)
             return 0
         import uvicorn
-        if args.command=='hosting':
-            require(app.settings.public_web_origin is not None,'hosting_origin_not_configured')
-            from msg.extensions.hosting import hosting_app
-            # The hosted origin exposes no operations, cookies, MCP or root routes.
-            from contextlib import asynccontextmanager
-            @asynccontextmanager
-            async def lifespan(asgi):
-                await app.load()
-                yield
-                await app.close()
-            asgi=hosting_app(app);asgi.router.lifespan_context=lifespan
-            uvicorn.run(asgi,host=args.listen,port=args.port,access_log=False,ws='none')
-        else:
-            from msg.transports.http import create_app
-            uvicorn.run(create_app(app),host=app.settings.listen,port=app.settings.port,access_log=False,ws='none')
+        from msg.transports.http import create_app
+        uvicorn.run(create_app(app),host=app.settings.listen,port=app.settings.port,access_log=False,ws='none')
         return 0
     except (Failure,OSError,ValueError) as exc:
         code=exc.code if isinstance(exc,Failure) else 'local_operation_failed'
