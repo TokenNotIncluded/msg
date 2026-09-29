@@ -3,7 +3,7 @@ requires = ["uv_build>=0.12.19,<0.13"]
 build-backend = "uv_build"
 
 [project]
-name = "msg-lmm-best"
+name = "msgctl"
 version = "0.1.0a1"
 description = "Atomic communication infrastructure for sandboxed agents"
 readme = "README.md"
