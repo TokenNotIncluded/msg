@@ -33,8 +33,24 @@ def _webhook_subscription_key(subject,resource_id):
     return 'webhook_subscription:'+subject+':'+resource_id
 
 
+def _domain_delivery_exists(tx,event_id,recipient,resource_id,category):
+    # Existing installations include scope_id in their keys. Inspect only this
+    # event's indexed key range so replay after upgrade cannot enqueue a second
+    # delivery under the new key or a different still-valid subscription.
+    for (raw,) in tx.rows("SELECT body FROM jobs WHERE kind='webhook' AND dedupe>=? AND dedupe<?",
+                          (event_id+':',event_id+';')):
+        job=decode(EffectJob,loads(raw))
+        if (job.event_id==event_id and job.operation=='communication.webhook_subscribe' and
+                job.arguments.get('recipient_subject')==recipient and
+                job.arguments.get('resource_id')==resource_id and
+                job.arguments.get('category')==category):
+            return True
+    return False
+
+
 async def enqueue_domain_webhooks(app,tx,event):
     """Project an explicit owner's Event subscription inside the Event transaction."""
+    from msg.workers.effects import current_principal, effect_request, worker_context
     category=WEBHOOK_DOMAIN_EVENTS.get(event.type)
     if category is None:
         return
@@ -55,14 +71,31 @@ async def enqueue_domain_webhooks(app,tx,event):
             # that can be retargeted by an event emitted from another account.
             if principal.subject!=owner or principal.actor!=owner or principal.method!='signature':
                 continue
-            require_webhook_capacity(tx)
-            await tx.enqueue(EffectJob(id=new_id('job'),event_id=event.id,kind='webhook',
-                dedupe_key=f'{event.id}:{owner}:{scope.id}:{ref.id}:{category}:webhook',
-                principal=principal,operation='communication.webhook_subscribe',
+            # A resource subscription wins over its parent only if its captured
+            # authority is still valid. Once queued, that exact subscription and
+            # endpoint generation remain pinned; revocation never selects a new one.
+            dedupe_key=f'{event.id}:{owner}:{ref.id}:{category}:webhook'
+            if _domain_delivery_exists(tx,event.id,owner,ref.id,category):
+                continue
+            job=EffectJob(id=new_id('job'),event_id=event.id,kind='webhook',
+                dedupe_key=dedupe_key,principal=principal,operation='communication.webhook_subscribe',
                 arguments={'recipient_subject':owner,'resource_id':ref.id,'scope_id':scope.id,
                            'category':category,'endpoint_generation':endpoint[1],
                            'subscription_generation':subscription['generation']},
-                state='pending',attempts=0,next_attempt_at=event.time,lease_until=None))
+                state='pending',attempts=0,next_attempt_at=event.time,lease_until=None)
+            try:
+                current=await current_principal(app,principal,tx)
+                require(resource.state=='active' and scope.state=='active','webhook_scope_changed')
+                require(await app.authorizer.has(current,'webhook.domain',
+                    'communication.webhook_subscribe@1',scope.id,tx),'capability_required')
+                context=worker_context(app,job,current)
+                request=effect_request(app,job,current)
+                await check_access(app,context,request,tx,scope.id,'read')
+                await check_access(app,context,request,tx,resource.id,'read')
+            except Failure:
+                continue
+            require_webhook_capacity(tx)
+            await tx.enqueue(job)
 
 
 def sync_seen_context(subject,sequence,expires_at):
