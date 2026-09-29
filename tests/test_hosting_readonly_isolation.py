@@ -60,7 +60,7 @@ async def test_preview_rechecks_acl_before_head_range_and_cached_response(instal
             assert accepted.status_code == 200 and accepted.content == payload
             assert 'allow-same-origin' not in accepted.headers['content-security-policy']
             assert (await http.get('/-/schema')).status_code == 404
-            assert (await http.get(path, headers={**headers, 'Host': 'other.example'})).status_code == 404
+            assert (await http.get(path, headers={**headers, 'Host': 'other.example'})).status_code == 403
             denied = await call(app, 'content.chmod', {'id': candidate.resources[0].id, 'mode': '0000'},
                 key=key, subject=subject, expected=((candidate.resources[0].id, candidate.data['generation']),))
             assert denied.status == 'ok', wire(denied)
@@ -213,8 +213,12 @@ async def test_real_non_owner_reads_new_text_and_binary_publications_without_key
         package = Path(__file__).resolve().parents[1]/'src'/'msg'
         shutil.copytree(package, base/'src'/'msg')
         from msg.config import write_example
+        fields = psycopg.conninfo.conninfo_to_dict(reader_settings.server.postgres_dsn)
+        assert all('\n' not in value for value in fields.values())
+        pgservice = base/'pg_service.conf'
+        pgservice.write_text('[hosting_test]\n' + ''.join(f'{key}={value}\n' for key, value in fields.items()))
         config = write_example(base/'etc', base/'unused', 'http://testserver',
-                               postgres_dsn=reader_settings.server.postgres_dsn)
+                               postgres_dsn='service=hosting_test')
         config_file = config.config_dir/'msgd.toml'
         text = config_file.read_text()
         for previous, actual in ((config.server.content_dir, app.contents.path),
@@ -247,12 +251,13 @@ async def test_real_non_owner_reads_new_text_and_binary_publications_without_key
         script = base/'reader.py'
         script.write_text(READ_PROCESS)
         for path in [base, *base.rglob('*')]:
-            path.chmod(0o555 if path.is_dir() else 0o444)
+            path.chmod(0o550 if path.is_dir() else 0o440)
         before = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
                   for root in (app.contents.path, app.contents.binary)
                   for path in root.rglob('*') if path.is_file()}
         result = subprocess.run(['sudo', '-n', '-u', '#65534', '-g', '#'+str(os.getgid()), '--',
             'env', 'PYTHONDONTWRITEBYTECODE=1', 'PYTHONPATH='+str(base/'src'),
+            'PGSERVICEFILE='+str(pgservice), 'HOME='+str(base),
             sys.executable, str(script), str(config.config_dir),
             str(app.settings.service_keys/'online.key'), str(requests)],
             capture_output=True, text=True, timeout=120)
