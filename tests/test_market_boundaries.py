@@ -147,18 +147,20 @@ async def test_shared_order_views_preserve_buyer_privacy_and_zero_write_semantic
     args['auto_accept'] = False
     order = ok(await buy(app, buyer, args, rid='shared-order-views')).data['order']
     async with app.metadata.transaction(write=False) as tx:
+
         def counts():
             return tuple(
-                    tx.one(f'SELECT COUNT(*) FROM {name}')[0]
-                    for name in (
-                        'money_ledger',
-                        'store_orders',
-                        'store_deliveries',
-                        'results',
-                        'events',
-                        'jobs',
-                    )
+                tx.one(f'SELECT COUNT(*) FROM {name}')[0]
+                for name in (
+                    'money_ledger',
+                    'store_orders',
+                    'store_deliveries',
+                    'results',
+                    'events',
+                    'jobs',
                 )
+            )
+
         before = counts()
         record = _row(tx, order['id'], buyer[1])
         buyer_view = _view(record, buyer[1])

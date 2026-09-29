@@ -61,8 +61,10 @@ def test_custodial_proof_and_statements_are_shared_without_vault_state():
     from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
     from msg.core.codec import b64, canonical
-    from msg.security.custodial_migration import ack_statement as old_ack
-    from msg.security.custodial_migration import stage_statement as old_stage
+    from msg.security.custodial_migration import (
+        ack_statement as old_ack,
+        stage_statement as old_stage,
+    )
     from msg.security.custodial_protocol import (
         UPGRADE_CONTEXT_FIELDS,
         _proof,

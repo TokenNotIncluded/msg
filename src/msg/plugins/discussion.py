@@ -244,10 +244,12 @@ def install(app):
             if request.arguments.get('cursor')
             else ['', '', '']
         )
-        counts = dict(tx.rows(
+        counts = dict(
+            tx.rows(
                 f'SELECT kind,COUNT(DISTINCT subject) FROM reactions WHERE {filters} GROUP BY kind',
                 params,
-            ))
+            )
+        )
         limit = request.arguments.get('limit', 50)
         rows = tx.rows(
             f'SELECT body,subject,revision,kind FROM reactions WHERE {filters} AND (subject,revision,kind)>(?,?,?) ORDER BY subject,revision,kind LIMIT ?',

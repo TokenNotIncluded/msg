@@ -80,8 +80,10 @@ async def test_recovery_retry_and_successor_keep_original_commit_deadline(instal
     app, _ = installed
     app.settings = replace(app.settings, credential_delivery_recovery_window=120)
     current = [NOW]
+
     def clock():
         return current[0]
+
     app.clock = clock
     app.executor.clock = clock
     app.authenticator.clock = clock

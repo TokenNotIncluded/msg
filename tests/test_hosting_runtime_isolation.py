@@ -19,7 +19,7 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict
-from test_hosting_runtime import isolated, runtime_class, reader_settings as reader_settings
+from test_hosting_runtime import isolated, reader_settings as reader_settings, runtime_class
 from test_service import NOW, call, register
 
 from msg.core.codec import b64, canonical, wire

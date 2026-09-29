@@ -24,16 +24,16 @@ from msg.market.ledger import (
     balance as _balance,
     post_transfer as _post_transfer,
 )
+
+# Compatibility imports; shared implementation has one market owner.
 from msg.market.order_records import (
     _COLUMNS as _COLUMNS,
     legacy_order_view as _view,
     new_order_id as _order_id,
     read_order as _row,
     require_order_viewer as _viewer,
+    require_signed_subject as _subject,
 )
-
-# Compatibility imports; shared implementation has one market owner.
-from msg.market.order_records import require_signed_subject as _subject
 from msg.plugins.common import registration
 from msg.plugins.schemas import IDENTIFIER, obj
 
@@ -270,8 +270,7 @@ def install(app):
         if request.arguments.get('source', 'store_order') == 'store_order':
             return await get(ctx, request, tx)
         from msg.core.errors import Failure
-        from msg.market.compatibility import purchase_order
-        from msg.market.compatibility import read_purchase as _purchase
+        from msg.market.compatibility import purchase_order, read_purchase as _purchase
 
         try:
             purchase = _purchase(tx, request.arguments['order_id'], _viewer(ctx))
@@ -336,8 +335,7 @@ def install(app):
         args = request.arguments
         limit = args.get('limit', 50)
         if args.get('role') != 'sell' and args.get('status') != 'disputed':
-            from msg.market.compatibility import purchase_order
-            from msg.market.compatibility import read_purchase as _purchase
+            from msg.market.compatibility import purchase_order, read_purchase as _purchase
 
             where, values = 'subject_id=?', [viewer]
             if args.get('status'):

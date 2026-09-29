@@ -1,4 +1,34 @@
-# 本地质量收口 · 2026-09-30
+# Python 3.15 质量与部署收口 · 2026-09-30
+
+当前入口 PR #185，起点 main `25cf518a` / tree `61cc47b7`。上轮补丁
+SHA256 `118915fe14d589cf9f1b6e512f528c3a4af1fe2b76c8bdf3aab8d9930d955798`
+精确匹配基线，全部本地修改保留。当前未部署生产。
+
+## 当前实际证据与修复
+
+- 第一轮 e5238e77/tree874f78ed，Python3.15.0rc2、Ruff0.16.9、uv0.12.20。
+  质量运行36620632240实际15项诊断（14 I001、1 C420），stderr为空；
+  ZIP SHA256 `2894295a48ac07ad83bb60c68d32168cf9d0ae1e28efab7f760fb9d854b72059`。
+  source.json及全部安全建议补丁已独立核对并应用，没有unsafe fix。
+- 完整运行36620632032八分片均在collection失败，37项ImportError共同原因是
+  Ruff清理删掉msg.plugins.money._post_entry兼容导出。Storage36620631860
+  同因4项collection error，Recovery36620632239在全量collection拒绝。
+  没有将这些运行计为通过或完整执行。
+- 已恢复_post_entry、_amount和Delivery的_package为明确兼容导出，继续指向
+  唯一market owner；既有完整同对象矩阵、真实账本和receipt回归保持。
+- 新增Deployment rehearsal：源码逐字节wheel/sdist、uv.lock导出的server哈希锁、
+  干净安装、checkout外实际daemon启动/重启、四传输只读、签名客户端与幂等、
+  doctor只读、默认禁外发worker及已有真实OpenSSH/Git/撤销脚本。
+  全部使用可销毁回环实例和独立Test Root，不访问生产或真实收件人。
+
+最终头仍须通过fresh Ruff/format/compile、精确node-ID八分片互斥并集、
+conformance/实际tokenizer、真实wheel/sdist/干净安装及适用专项；新失败继续修复。
+实际日志链、旧快照来源/冻结、新Root真实控制台、独立current pin、备份退役和
+目标机容量/持久性证据分别属于#64/#65/#68/#69/#70/#84，不能由隔离CI替代。
+
+## 上轮本地证据归档
+
+以下内容只对应提交前的本地交付阶段，不是当前分支状态或新CI结论。
 
 ## 当前状态
 

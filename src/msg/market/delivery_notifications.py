@@ -120,8 +120,10 @@ async def queue_notification(app, ctx, request, tx, order, *, enabled):
 
 async def project_notification(app, tx, job, principal):
     """Reconstruct the allowlisted message only after every live owner check."""
-    from msg.market.managed_delivery import read_delivery as _delivery
-    from msg.market.managed_delivery import verify_managed_delivery as _verified_delivery
+    from msg.market.managed_delivery import (
+        read_delivery as _delivery,
+        verify_managed_delivery as _verified_delivery,
+    )
     from msg.market.order_records import read_order as _row
 
     require(mail_enabled(app), 'mail_disabled')

@@ -18,23 +18,28 @@ from msg.market.ledger import (
     CURRENCY_ID as CURRENCY_ID,
     account_requirements as account_requirements,
 )
+
+# Compatibility imports; shared implementation has one market owner.
 from msg.market.managed_delivery import (
     _COLUMNS as _COLUMNS,
     MAX_INLINE_BYTES as MAX_INLINE_BYTES,
     delivery_summary as delivery_summary,
     prepare_managed as prepare_managed,
     read_buyer_order as _buyer_order,
-)
-
-# Compatibility imports; shared implementation has one market owner.
-from msg.market.managed_delivery import (
     read_delivery as _delivery,
+    read_managed_package as _package,
     read_managed_payloads as _payload,
     verify_managed_delivery as _verified_delivery,
 )
 from msg.market.order_records import require_signed_subject as _subject
 from msg.plugins.common import registration
 from msg.plugins.schemas import IDENTIFIER, obj
+
+__all__ = [
+    'CURRENCY_ID', 'EscrowEngine', 'MAX_INLINE_BYTES', '_COLUMNS', '_buyer_order',
+    '_delivery', '_package', '_payload', '_subject', '_verified_delivery',
+    'account_requirements', 'delivery_summary', 'install', 'prepare_managed', 'validate_target',
+]
 
 
 def install(app):

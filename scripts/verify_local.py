@@ -24,9 +24,21 @@ from urllib.parse import urlsplit
 
 PINNED_TOOLS = {'ruff': '0.16.9', 'uv': '0.12.20'}
 REQUIRED_PACKAGES = (
-    'pytest', 'pytest-asyncio', 'build', 'cryptography', 'httpx', 'jsonschema',
-    'referencing', 'starlette', 'uvicorn', 'aiohttp', 'dnspython', 'graphql-core',
-    'psycopg', 'valkey', 'tiktoken',
+    'pytest',
+    'pytest-asyncio',
+    'build',
+    'cryptography',
+    'httpx',
+    'jsonschema',
+    'referencing',
+    'starlette',
+    'uvicorn',
+    'aiohttp',
+    'dnspython',
+    'graphql-core',
+    'psycopg',
+    'valkey',
+    'tiktoken',
 )
 REQUIRED_COMMANDS = ('git', 'git-lfs', 'age', 'openssl', 'nginx', 'bwrap', 'pg_dump', 'pg_restore')
 
@@ -121,7 +133,9 @@ def preflight(root):
             if shutil.which(name) is None:
                 blockers.append(f'missing local PostgreSQL executable: {name}')
         if hasattr(os, 'geteuid') and os.geteuid() == 0:
-            blockers.append('initdb requires a non-root user, or configure disposable local PostgreSQL')
+            blockers.append(
+                'initdb requires a non-root user, or configure disposable local PostgreSQL'
+            )
     if not os.environ.get('MSG_TEST_VALKEY_URL'):
         blockers.append('MSG_TEST_VALKEY_URL must identify disposable local Valkey')
     legacy = os.environ.get('MSG_TEST_LEGACY_SOURCE', str(root / '.legacy-ledger'))
@@ -144,8 +158,13 @@ def run_step(name, command, directory, *, cwd, env=None, clean_stderr=False, tim
     try:
         with stdout.open('wb') as output, stderr.open('wb') as errors:
             completed = subprocess.run(
-                command, cwd=cwd, env=env, stdout=output, stderr=errors,
-                check=False, timeout=timeout,
+                command,
+                cwd=cwd,
+                env=env,
+                stdout=output,
+                stderr=errors,
+                check=False,
+                timeout=timeout,
             )
         result['returncode'] = completed.returncode
         result['stderr_bytes'] = stderr.stat().st_size
@@ -171,7 +190,11 @@ def main(argv=None):
     stamp = datetime.now(UTC).strftime('%Y%m%dT%H%M%S.%fZ')
     directory = (args.directory or root / 'artifacts' / ('local-' + stamp)).resolve()
     directory.mkdir(parents=True, exist_ok=False)
-    report = {'status': 'blocked', 'stages': [], 'scope': 'local source verification; not deployment'}
+    report = {
+        'status': 'blocked',
+        'stages': [],
+        'scope': 'local source verification; not deployment',
+    }
     report_path = directory / 'result.json'
 
     def save():
@@ -198,16 +221,61 @@ def main(argv=None):
         python = sys.executable
         execute('lock', ['uv', 'lock', '--check', '--python', python])
         execute('dependencies', ['uv', 'pip', 'check', '--python', python])
-        execute('ruff', [python, '-m', 'ruff', 'check', '.', '--output-format', 'json'], clean_stderr=True)
+        execute(
+            'ruff',
+            [python, '-m', 'ruff', 'check', '.', '--output-format', 'json'],
+            clean_stderr=True,
+        )
         execute('format', [python, '-m', 'ruff', 'format', '--check', '.'], clean_stderr=True)
-        execute('compile', [python, '-W', 'error', '-m', 'compileall', '-q', 'src', 'tests', 'scripts', 'conformance', 'conftest.py'], clean_stderr=True)
+        execute(
+            'compile',
+            [
+                python,
+                '-W',
+                'error',
+                '-m',
+                'compileall',
+                '-q',
+                'src',
+                'tests',
+                'scripts',
+                'conformance',
+                'conftest.py',
+            ],
+            clean_stderr=True,
+        )
         execute('tool-sandbox', [python, 'scripts/check_tool_sandbox.py'])
         # Sequential shards keep one local Valkey service from cross-shard races.
         for index in range(args.shards):
-            execute(f'shard-{index}', [python, 'scripts/ci_shards.py', 'run', str(index), str(args.shards), '--directory', str(directory)])
-        execute('test-union', [python, 'scripts/ci_shards.py', 'check', str(args.shards), '--directory', str(directory)])
+            execute(
+                f'shard-{index}',
+                [
+                    python,
+                    'scripts/ci_shards.py',
+                    'run',
+                    str(index),
+                    str(args.shards),
+                    '--directory',
+                    str(directory),
+                ],
+            )
+        execute(
+            'test-union',
+            [
+                python,
+                'scripts/ci_shards.py',
+                'check',
+                str(args.shards),
+                '--directory',
+                str(directory),
+            ],
+        )
         environment = {**os.environ, 'MSG_BENCHMARK_PATH': str(directory / 'token-budget.json')}
-        execute('conformance', [python, '-m', 'pytest', 'conformance', f'--junitxml={directory / "conformance.xml"}'], env=environment)
+        execute(
+            'conformance',
+            [python, '-m', 'pytest', 'conformance', f'--junitxml={directory / "conformance.xml"}'],
+            env=environment,
+        )
         # Pytest exits zero for skips too; enforce the same no-skips acceptance here.
         import xml.etree.ElementTree as ET
 
@@ -220,7 +288,20 @@ def main(argv=None):
         execute('build', [python, '-m', 'build', '--outdir', str(dist)])
         execute('artifacts', [python, 'scripts/check_package_artifacts.py', str(dist)])
         requirements = directory / 'client-requirements.txt'
-        execute('client-lock', ['uv', 'export', '--locked', '--no-dev', '--no-emit-project', '--format', 'requirements-txt', '--output-file', str(requirements)])
+        execute(
+            'client-lock',
+            [
+                'uv',
+                'export',
+                '--locked',
+                '--no-dev',
+                '--no-emit-project',
+                '--format',
+                'requirements-txt',
+                '--output-file',
+                str(requirements),
+            ],
+        )
         with tempfile.TemporaryDirectory(prefix='msg-verify-client-') as temporary:
             folder = Path(temporary)
             venv = folder / 'venv'
@@ -229,11 +310,28 @@ def main(argv=None):
             wheels = list(dist.glob('*.whl'))
             if len(wheels) != 1:
                 raise ValueError('ambiguous client wheel')
-            execute('client-install', ['uv', 'pip', 'install', '--python', client_python, '--constraint', str(requirements), str(wheels[0])])
+            execute(
+                'client-install',
+                [
+                    'uv',
+                    'pip',
+                    'install',
+                    '--python',
+                    client_python,
+                    '--constraint',
+                    str(requirements),
+                    str(wheels[0]),
+                ],
+            )
             execute('client-dependencies', ['uv', 'pip', 'check', '--python', client_python])
             environment = dict(os.environ)
             environment.pop('PYTHONPATH', None)
-            execute('client-transports', [client_python, str(root / 'scripts/check_client_install.py'), '--minimal-install'], cwd=folder, env=environment)
+            execute(
+                'client-transports',
+                [client_python, str(root / 'scripts/check_client_install.py'), '--minimal-install'],
+                cwd=folder,
+                env=environment,
+            )
         report['source_after'] = source_snapshot(root)
         assert_same_source(report['source_before'], report['source_after'])
         report['status'] = 'passed'

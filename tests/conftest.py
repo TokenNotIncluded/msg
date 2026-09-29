@@ -25,9 +25,7 @@ def _create_database(cluster, name, *, template=None):
 
 def _drop_database(cluster, name):
     with psycopg.connect(cluster.format(database='postgres'), autocommit=True) as connection:
-        connection.execute(
-            sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name))
-        )
+        connection.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name)))
 
 
 @pytest.fixture(scope='session')
@@ -62,7 +60,9 @@ async def installed(tmp_path, installation_seed, pg_cluster):
         shutil.copytree(seed / 'etc', tmp_path / 'etc')
         shutil.copytree(seed / 'data', tmp_path / 'data')
         config = tmp_path / 'etc' / 'msgd.toml'
-        config.write_text(config.read_text().replace(str(seed), str(tmp_path)).replace(seed_dsn, dsn))
+        config.write_text(
+            config.read_text().replace(str(seed), str(tmp_path)).replace(seed_dsn, dsn)
+        )
         app = Application(load_settings(tmp_path / 'etc'), clock=lambda: NOW)
         try:
             await app.load()

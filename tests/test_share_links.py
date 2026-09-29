@@ -175,8 +175,10 @@ async def test_share_link_rechecks_owner_acl_expiry_and_global_switch(installed)
     )
     assert created.status == 'ok', wire(created)
     lid = created.data['link']['id']
+
     def read():
         return call(app, 'sharing.link_read', {'link_id': lid, 'token': token})
+
     first = await read()
     assert first.status == 'ok', (first.error.code if first.error else None, wire(first))
     hidden = await call(

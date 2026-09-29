@@ -9,8 +9,8 @@ from msg.core.models import ResourceRef
 from msg.security.policy import CERTGATE, allows, grant_covers, scope_contains
 from msg.security.quarantine import (
     RuntimeGeneration,
-    require_live_authority,
     active as quarantine_active,
+    require_live_authority,
 )
 from msg.security.sharing_policy import share_target_error
 

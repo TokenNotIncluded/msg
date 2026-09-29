@@ -20,7 +20,11 @@ MAX_LINK_BYTES = 65536
 
 def _link_public(row):
     return dict(
-        zip(('id', 'resource_id', 'grantor', 'created_at', 'expires_at', 'revoked_at'), row, strict=True)
+        zip(
+            ('id', 'resource_id', 'grantor', 'created_at', 'expires_at', 'revoked_at'),
+            row,
+            strict=True,
+        )
     )
 
 

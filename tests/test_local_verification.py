@@ -56,12 +56,18 @@ def test_empty_source_cannot_be_reported_as_verified(tmp_path):
 
 def test_nonzero_exit_and_stderr_cannot_become_success(tmp_path):
     failed = verification.run_step(
-        'exit', [sys.executable, '-c', 'raise SystemExit(3)'], tmp_path, cwd=tmp_path,
+        'exit',
+        [sys.executable, '-c', 'raise SystemExit(3)'],
+        tmp_path,
+        cwd=tmp_path,
     )
     assert failed['status'] == 'failed' and failed['returncode'] == 3
     warning = verification.run_step(
-        'warning', [sys.executable, '-c', 'import sys; print("warning", file=sys.stderr)'],
-        tmp_path, cwd=tmp_path, clean_stderr=True,
+        'warning',
+        [sys.executable, '-c', 'import sys; print("warning", file=sys.stderr)'],
+        tmp_path,
+        cwd=tmp_path,
+        clean_stderr=True,
     )
     assert warning['status'] == 'failed' and warning['returncode'] == 0
     assert warning['stderr_bytes'] > 0
@@ -74,8 +80,11 @@ def test_missing_program_is_an_explicit_failure(tmp_path):
 
 def test_clean_command_has_successful_evidence(tmp_path):
     result = verification.run_step(
-        'clean', [sys.executable, '-c', 'print("ok")'], tmp_path,
-        cwd=tmp_path, clean_stderr=True,
+        'clean',
+        [sys.executable, '-c', 'print("ok")'],
+        tmp_path,
+        cwd=tmp_path,
+        clean_stderr=True,
     )
     assert result['status'] == 'passed'
     assert (tmp_path / 'clean.stdout').read_text().strip() == 'ok'
@@ -84,7 +93,9 @@ def test_clean_command_has_successful_evidence(tmp_path):
 
 def test_preflight_detects_wrong_interpreter_and_does_not_echo_dsn(monkeypatch):
     monkeypatch.setattr(verification.sys, 'version_info', (3, 13, 5))
-    monkeypatch.setenv('MSG_TEST_POSTGRES_URL_TEMPLATE', 'postgresql://user:secret@db.example/{database}')
+    monkeypatch.setenv(
+        'MSG_TEST_POSTGRES_URL_TEMPLATE', 'postgresql://user:secret@db.example/{database}'
+    )
     report = verification.preflight(ROOT)
     assert any('Python 3.15 is required' in reason for reason in report['blockers'])
     assert any('disposable local test service' in reason for reason in report['blockers'])

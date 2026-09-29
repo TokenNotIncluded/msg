@@ -140,7 +140,9 @@ async def test_v4_suggestions_count_only_matching_readable_names_and_recheck_pag
     assert continued.status == 'ok', wire(continued)
     expected_word = next(
         name[:-4]
-        for name, item in zip(('suggestible-one.txt', 'suggestible-two.txt'), created[:2], strict=True)
+        for name, item in zip(
+            ('suggestible-one.txt', 'suggestible-two.txt'), created[:2], strict=True
+        )
         if item.resources[0].id == first_id
     )
     assert wire(continued)['data']['suggestions'] == [{'value': expected_word, 'count': 1}]

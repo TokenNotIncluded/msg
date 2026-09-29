@@ -14,7 +14,9 @@ from msg.transports.http_routes import RouteEffect
 @pytest.mark.parametrize('effect', ['transaction', 'external'])
 @pytest.mark.parametrize('method', ['GET', 'HEAD'])
 @pytest.mark.parametrize('listing', [False, True])
-async def test_receipt_effect_gate_precedes_subject_lookup(installed, monkeypatch, effect, method, listing):
+async def test_receipt_effect_gate_precedes_subject_lookup(
+    installed, monkeypatch, effect, method, listing
+):
     app, _ = installed
     operation = 'communication.receipt_' + ('list' if listing else 'get')
     suffix = '/receipts' if listing else '/receipts/request0'
@@ -24,7 +26,11 @@ async def test_receipt_effect_gate_precedes_subject_lookup(installed, monkeypatc
         async with readonly_evidence(app, monkeypatch):
             with monkeypatch.context() as patch:
                 key = (operation, 1)
-                patch.setitem(app.registry._operations, key, replace(app.registry._operations[key], effect=effect))
+                patch.setitem(
+                    app.registry._operations,
+                    key,
+                    replace(app.registry._operations[key], effect=effect),
+                )
                 async with runtime_check_only(app, patch) as runtime:
                     for handle in ('root', 'missing-subject'):
                         response = await http.request(method, '/@' + handle + suffix)

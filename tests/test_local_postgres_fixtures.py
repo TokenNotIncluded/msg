@@ -20,7 +20,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def fixture_function(path, name, namespace):
     module = ast.parse(path.read_text())
-    node = next(item for item in module.body if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == name)
+    node = next(
+        item
+        for item in module.body
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and item.name == name
+    )
     node.decorator_list = []
     code = compile(ast.Module(body=[node], type_ignores=[]), str(path), 'exec')
     exec(code, namespace)
@@ -43,7 +47,10 @@ def test_private_cluster_connects_as_the_explicit_initdb_user(tmp_path, monkeypa
         return str(created)
 
     namespace = {
-        'os': os, 'Path': Path, 'quote': quote, 'shutil': shutil,
+        'os': os,
+        'Path': Path,
+        'quote': quote,
+        'shutil': shutil,
         'tempfile': SimpleNamespace(mkdtemp=make_directory),
         'subprocess': SimpleNamespace(run=run),
     }

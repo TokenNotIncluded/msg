@@ -9,9 +9,9 @@ from msg.core.errors import Failure, require
 from msg.core.models import EffectJob
 from msg.market.delivery_targets import (
     account_email,
+    mail_enabled as mail_enabled,
     pickup_url,
     validate_address,
-    mail_enabled as mail_enabled,
 )
 from msg.market.policy import contract
 from msg.plugins.common import new_id

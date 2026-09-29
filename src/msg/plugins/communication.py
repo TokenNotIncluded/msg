@@ -1553,8 +1553,7 @@ def install(app):
     from msg.plugins.collaboration import install as install_collaboration
 
     install_collaboration(app, op)
-    from msg.plugins.collaboration_resources import install as install_records
-    from msg.plugins.collaboration_resources import resource_types
+    from msg.plugins.collaboration_resources import install as install_records, resource_types
 
     install_records(app, op)
     from msg.plugins.following import install as install_following

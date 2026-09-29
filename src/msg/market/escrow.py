@@ -8,13 +8,14 @@ from msg.core.codec import b64, canonical, decode, digest, freeze_json, loads, p
 from msg.core.errors import require
 from msg.core.models import Event, Signature
 from msg.core.requests import signing_bytes
-from msg.market.ledger import (
-    _ESCROW_WRITE as _ESCROW_WRITE,  # Compatibility identity; only ledger uses it.
-)
-from msg.market.ledger import CURRENCY_ID as CURRENCY_ID, balance as _balance
 
 # Preserve the failure-injection seam while using the shared protected release.
-from msg.market.ledger import post_escrow_release as _post_transfer
+from msg.market.ledger import (
+    _ESCROW_WRITE as _ESCROW_WRITE,  # Compatibility identity; only ledger uses it.
+    CURRENCY_ID as CURRENCY_ID,
+    balance as _balance,
+    post_escrow_release as _post_transfer,
+)
 from msg.market.policy import contract as contract, delivery_snapshot as delivery_snapshot
 from msg.plugins.common import new_id
 from msg.security.crypto import verify
@@ -357,10 +358,11 @@ class EscrowEngine:
 
     async def settle(self, ctx, request, tx, *, reason, order_id=None):
         # Import handlers' read-only projections, never their write entry points.
-        from msg.market.managed_delivery import read_delivery as _delivery
-        from msg.market.managed_delivery import verify_managed_delivery as _verified_delivery
-        from msg.market.order_records import read_order as _row
-        from msg.market.order_records import require_signed_subject as _subject
+        from msg.market.managed_delivery import (
+            read_delivery as _delivery,
+            verify_managed_delivery as _verified_delivery,
+        )
+        from msg.market.order_records import read_order as _row, require_signed_subject as _subject
 
         buyer = _subject(ctx)
         require(order_id is None or reason == 'checkout_accept', 'escrow_decision_mismatch')

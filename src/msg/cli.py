@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from msg.client import ClientState, MsgClient
-from msg.core.codec import canonical, loads, unb64, wire, result_wire as result_wire
+from msg.core.codec import canonical, loads, result_wire as result_wire, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import OperationResult, ResourceRef
 from msg.core.search_query import search_query_version

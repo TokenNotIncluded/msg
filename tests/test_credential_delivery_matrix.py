@@ -40,8 +40,10 @@ async def test_two_lost_responses_restart_after_proof_expiry(
 ):
     app, _ = installed
     current = [NOW]
+
     def clock():
         return current[0]
+
     client, http = connect(app, tmp_path / 'client', transport_type, clock)
     if kind == 'rotate':
         assert (await client.temporary()).status == 'ok'
