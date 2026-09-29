@@ -34,11 +34,15 @@ def _webhook_subscription_key(subject,resource_id):
 
 
 def _domain_delivery_exists(tx,event_id,recipient,resource_id,category):
-    # Existing installations include scope_id in their keys. Inspect only this
-    # event's indexed key range so replay after upgrade cannot enqueue a second
-    # delivery under the new key or a different still-valid subscription.
-    for (raw,) in tx.rows("SELECT body FROM jobs WHERE kind='webhook' AND dedupe>=? AND dedupe<?",
-                          (event_id+':',event_id+';')):
+    # New keys use the unique index directly. Older installations also include
+    # scope_id, so match that event's literal prefix when checking legacy jobs.
+    # Punctuation ranges are not prefix ranges under linguistic DB collations.
+    key=f'{event_id}:{recipient}:{resource_id}:{category}:webhook'
+    exact=tx.one("SELECT body FROM jobs WHERE kind='webhook' AND dedupe=?",(key,))
+    prefix=event_id.replace('!','!!').replace('%','!%').replace('_','!_')+':%'
+    rows=(exact,) if exact is not None else tx.rows(
+        "SELECT body FROM jobs WHERE kind='webhook' AND dedupe LIKE ? ESCAPE '!'",(prefix,))
+    for (raw,) in rows:
         job=decode(EffectJob,loads(raw))
         if (job.event_id==event_id and job.operation=='communication.webhook_subscribe' and
                 job.arguments.get('recipient_subject')==recipient and
