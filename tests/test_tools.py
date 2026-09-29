@@ -4,9 +4,11 @@ from pathlib import Path
 import pytest
 import httpx
 
-from msg.core.codec import wire,canonical,digest
+from msg.application import Application
+from msg.core.codec import wire,canonical,digest,loads
 from msg.core.errors import Failure
-from msg.core.models import Scope,NetworkPolicy,ResourceRef
+from msg.core.models import Scope,NetworkPolicy,ResourceRef,Revision
+from msg.plugins.common import new_id
 from msg.security.network import validate_url,validate_addresses,intersect_policy
 from msg.workers.effects import EffectWorker,ToolResult
 from msg.extensions.tools import descriptor, read_tool
@@ -119,6 +121,152 @@ async def test_tool_external_success_then_revocation_records_uncertain(installed
     await EffectWorker(app,tool_runner=runner).run_once()
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.job(result.data['job_id'])).state=='uncertain'
+
+
+async def _claimed_dns_job(app,root,handle):
+    key,uid,_=await register(app,handle)
+    cert=await approve(app,root,uid,key,(scoped(app,'tool.use','tool_dns',app.registry.capability('tool.use').operations),))
+    result=await call(app,'tool.run',{'id':'/tools/dns','arguments':{'name':'example.org','type':'A'}},
+                      key=key,subject=uid,certs=(cert.resource_id,))
+    assert result.status=='accepted',wire(result)
+    async with app.metadata.transaction(write=False) as tx:
+        return await tx.job(result.data['job_id'])
+
+
+async def _enqueue_like(app,template,seconds_ago,**changes):
+    job_id=new_id('job')
+    job=replace(template,id=job_id,dedupe_key='test:'+job_id,state='pending',attempts=0,lease_until=None,
+                next_attempt_at=NOW-timedelta(seconds=seconds_ago),**changes)
+    async with app.metadata.transaction(write=True) as tx:
+        await tx.enqueue(job)
+    return job
+
+
+async def _tool_ref(app,rid):
+    async with app.metadata.transaction(write=False) as tx:
+        return wire(ResourceRef(id=rid,revision=(await tx.resource(rid)).revision))
+
+
+async def _dns_revision_declaring(app,concurrency):
+    async with app.metadata.transaction(write=True) as tx:
+        resource=await tx.resource('tool_dns')
+        blob=await app.contents.put_bytes(canonical({**descriptor('dns'),'concurrency':concurrency}),'application/json')
+        revision=Revision(format_version=1,id=new_id('v'),resource_id=resource.id,parents=(resource.revision,),
+            content=blob,relations=(),actor=resource.owner,subject=resource.owner,author=resource.owner,
+            created_at=app.clock(),manifest_digest='')
+        revision=replace(revision,manifest_digest=digest({k:v for k,v in wire(revision).items()
+            if k not in {'manifest_digest','signature'}}))
+        await app.contents.pin(blob,revision.id)
+        await app.contents.commit_revision(resource.parent,revision)
+        await tx.append_revision(revision)
+    return wire(ResourceRef(id=resource.id,revision=revision.id))
+
+
+async def _state(app,job_id):
+    async with app.metadata.transaction(write=False) as tx:
+        return (await tx.job(job_id)).state
+
+
+@pytest.mark.asyncio
+async def test_historical_tool_revision_bytes_have_no_concurrency_and_mean_one(installed):
+    app,_=installed
+    assert 'concurrency' not in descriptor('dns')
+    async with app.metadata.transaction(write=False) as tx:
+        rev=await tx.revision(ResourceRef(id='tool_dns'))
+        stored=await app.contents.read_bytes(rev.content,limit=65536)
+    assert stored==canonical(descriptor('dns'))
+    assert 'concurrency' not in loads(stored)
+
+
+@pytest.mark.asyncio
+async def test_same_tool_is_not_claimed_by_a_second_worker_while_other_jobs_proceed(installed):
+    app,root=installed
+    held=await _claimed_dns_job(app,root,'concurrency-holder')
+    first=EffectWorker(app,tool_runner=lambda *a:None)
+    claimed,execute=await first._claim()
+    assert execute and claimed.id==held.id
+    same_tool=await _enqueue_like(app,held,3)
+    other_tool=await _enqueue_like(app,held,2,arguments={**held.arguments,'tool':await _tool_ref(app,'tool_curl')})
+    non_tool=await _enqueue_like(app,held,1,kind='mail',operation='communication.send',
+                                 arguments={'recipient_subject':held.principal.subject})
+    peer=await Application(app.settings,clock=lambda:NOW).load()
+    try:
+        second=EffectWorker(peer,tool_runner=lambda *a:None)
+        order=[]
+        for _ in range(2):
+            job,execute=await second._claim()
+            assert execute
+            order.append(job.id)
+        assert order==[other_tool.id,non_tool.id]
+        assert await second._claim()==(None,False)
+        assert await _state(app,same_tool.id)=='pending'
+        await first._finish(claimed,'done','ok')
+        job,execute=await second._claim()
+        assert execute and job.id==same_tool.id
+    finally:
+        await peer.close()
+
+
+@pytest.mark.asyncio
+async def test_explicit_tool_concurrency_admits_up_to_the_declared_limit(installed):
+    app,root=installed
+    template=await _claimed_dns_job(app,root,'concurrency-two')
+    ref=await _dns_revision_declaring(app,2)
+    async with app.metadata.transaction(write=False) as tx:
+        assert (await read_tool(app,tx,'tool_dns',ref['revision'])).resource.revision==ref['revision']
+    async with app.metadata.transaction(write=True) as tx:
+        await tx.save_job(replace(template,state='done'))
+    jobs=[await _enqueue_like(app,template,3-i,arguments={**template.arguments,'tool':ref}) for i in range(3)]
+    peer=await Application(app.settings,clock=lambda:NOW).load()
+    try:
+        workers=(EffectWorker(app,tool_runner=lambda *a:None),EffectWorker(peer,tool_runner=lambda *a:None))
+        for worker,job in zip(workers,jobs):
+            claimed,execute=await worker._claim()
+            assert execute and claimed.id==job.id
+        for worker in workers:
+            assert await worker._claim()==(None,False)
+        assert await _state(app,jobs[2].id)=='pending'
+    finally:
+        await peer.close()
+
+
+@pytest.mark.asyncio
+async def test_historical_limit_counts_running_jobs_across_revisions_of_one_tool(installed):
+    app,root=installed
+    template=await _claimed_dns_job(app,root,'concurrency-mixed')
+    ref=await _dns_revision_declaring(app,2)
+    worker=EffectWorker(app,tool_runner=lambda *a:None)
+    claimed,_=await worker._claim()
+    assert claimed.id==template.id
+    historical=await _enqueue_like(app,template,2)
+    declared=await _enqueue_like(app,template,1,arguments={**template.arguments,'tool':ref})
+    job,execute=await worker._claim()
+    assert execute and job.id==declared.id
+    assert await worker._claim()==(None,False)
+    assert await _state(app,historical.id)=='pending'
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('declared',[0,33,-1,True,'2',1.5,None])
+async def test_invalid_declared_tool_concurrency_is_rejected_not_unbounded(installed,declared):
+    app,root=installed
+    template=await _claimed_dns_job(app,root,'concurrency-invalid')
+    ref=await _dns_revision_declaring(app,declared)
+    async with app.metadata.transaction(write=False) as tx:
+        with pytest.raises(Failure,match='invalid_tool_concurrency'):
+            await read_tool(app,tx,'tool_dns',ref['revision'])
+    async with app.metadata.transaction(write=True) as tx:
+        await tx.save_job(replace(template,state='done'))
+    bad=await _enqueue_like(app,template,1,arguments={**template.arguments,'tool':ref})
+    ran=[]
+    async def runner(*args):ran.append(args)
+    worker=EffectWorker(app,tool_runner=runner)
+    job,execute=await worker._claim()
+    assert job.id==bad.id and not execute
+    assert await _state(app,bad.id)=='failed' and not ran
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.setting('job_status:'+bad.id)=={'code':'invalid_tool_concurrency'}
+    assert await worker._claim()==(None,False)
 
 
 @pytest.mark.asyncio

@@ -19,6 +19,7 @@ CURL_INPUT=obj({'url':{'type':'string','minLength':1,'maxLength':8192},
     'headers':{'type':'object','maxProperties':30,'additionalProperties':{'type':'string','maxLength':4096}},
     'body':BYTES,'body_ref':REF},('url',))
 TOOL_OUTPUT={'type':'object'}
+MAX_TOOL_CONCURRENCY=32
 
 
 def descriptor(name):
@@ -49,11 +50,24 @@ async def resolve_tool_for_invoke(tx,value):
     return await resolve(tx,value)
 
 
+def declared_concurrency(value):
+    # Published revisions predate this field; absence is the tightest limit.
+    limit=value.get('concurrency',1)
+    require(type(limit) is int and 1<=limit<=MAX_TOOL_CONCURRENCY,'invalid_tool_concurrency')
+    return limit
+
+
+async def tool_concurrency(app,tx,ref):
+    rev=await tx.revision(ref)
+    return declared_concurrency(loads(await app.contents.read_bytes(rev.content,limit=65536)))
+
+
 async def read_tool(app,tx,rid,revision=None):
     resource=await tx.resource(rid)
     require(resource.type=='tool' and resource.parent==TOOLS_SPACE,'not_a_tool')
     rev=await tx.revision(ResourceRef(id=rid,revision=revision))
     value=loads(await app.contents.read_bytes(rev.content,limit=65536))
+    declared_concurrency(value)
     registered=app.registry.tool(rid,value['version'])
     require(value['tool_id']==rid and value['executor_key']==registered.executor_key,
             'untrusted_tool_executor')

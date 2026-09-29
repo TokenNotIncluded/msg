@@ -109,26 +109,45 @@ class EffectWorker:
         self.lease_seconds = lease_seconds
 
     async def _claim(self):
+        from msg.extensions.tools import tool_concurrency
         async with self.app.metadata.transaction(write=True) as tx:
             self.app.runtime_generation.require_current(tx)
             if quarantine_active(tx):
                 return None, False
             # Orphaned external work cannot be assumed not to have executed.
+            running = {}
             for (raw_id,) in tx.execute("SELECT id FROM jobs WHERE state='running' ORDER BY next_at,id"):
                 job = await tx.job(raw_id)
                 if job.lease_until is None or job.lease_until <= self.app.clock():
                     await tx.save_job(replace(job, state='uncertain', lease_until=None))
                     tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
                     return job, False
-            row = tx.one("SELECT id FROM jobs WHERE state='pending' AND next_at<=? ORDER BY next_at,id LIMIT 1",
-                         (wire(self.app.clock()),))
-            if row is None:
-                return None, False
-            job = await tx.job(row[0])
-            job = replace(job, state='running', attempts=job.attempts+1,
-                          lease_until=self.app.clock()+timedelta(seconds=self.lease_seconds))
-            await tx.save_job(job)
-            return job, True
+                if job.kind == 'tool':
+                    running[job.arguments['tool']['id']] = running.get(job.arguments['tool']['id'], 0) + 1
+            # Other workers may hold this tool's jobs; only the running rows seen
+            # under this write transaction are a shared fact, never a local lock.
+            limits = {}
+            for (raw_id,) in tx.execute("SELECT id FROM jobs WHERE state='pending' AND next_at<=? ORDER BY next_at,id",
+                                        (wire(self.app.clock()),)):
+                job = await tx.job(raw_id)
+                if job.kind == 'tool':
+                    ref = decode(ResourceRef, job.arguments['tool'])
+                    if (ref.id, ref.revision) not in limits:
+                        try:
+                            limits[ref.id, ref.revision] = await tool_concurrency(self.app, tx, ref)
+                        except Failure as exc:
+                            if exc.retryable:
+                                raise
+                            await tx.save_job(replace(job, state='failed', lease_until=None))
+                            tx.set_setting('job_status:' + job.id, {'code': exc.code})
+                            return job, False
+                    if running.get(ref.id, 0) >= limits[ref.id, ref.revision]:
+                        continue
+                job = replace(job, state='running', attempts=job.attempts+1,
+                              lease_until=self.app.clock()+timedelta(seconds=self.lease_seconds))
+                await tx.save_job(job)
+                return job, True
+            return None, False
 
     async def _finish(self, job, state, code, *, status=None):
         async with self.app.metadata.transaction(write=True) as tx:
