@@ -140,3 +140,25 @@ def test_posts_and_ciphertext_preserved_without_new_signature(snapshot, tmp_path
             ).fetchall()
             == []
         )
+
+
+def test_bad_attachment_digest_aborts(snapshot, tmp_path):
+    with sqlite3.connect(snapshot) as db:
+        db.execute(
+            "INSERT INTO attachments(post_id,slot,name,content_type,data,nbytes,sha256,created,uploader_name,downloads) VALUES (1,0,?,?,?,?,?,1.0,?,0)",
+            ("a.txt", "text/plain", b"content", 7, "0" * 64, "legacy"),
+        )
+    destination = tmp_path / "inert.db"
+    with pytest.raises(ValueError, match="attachment digest"):
+        preserve(snapshot, expected_sha256=digest(snapshot), destination=destination)
+    assert not destination.exists()
+
+
+def test_count_bound_aborts(snapshot, tmp_path, monkeypatch):
+    import msg.storage.legacy_sqlite as module
+
+    monkeypatch.setattr(module, "MAX_ROWS", 0)
+    destination = tmp_path / "inert.db"
+    with pytest.raises(ValueError, match="row limit"):
+        preserve(snapshot, expected_sha256=digest(snapshot), destination=destination)
+    assert not destination.exists()
