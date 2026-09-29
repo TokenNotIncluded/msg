@@ -138,8 +138,22 @@ def post_transfer(tx, *, sender, recipient, amount, actor, request_id, now,
                    escrow_authority=None):
     require(kind in {'transfer', 'redeem', 'refund'}, 'invalid_money_kind')
     account = tx.one('SELECT kind FROM ledger_accounts WHERE id=?', (sender,))
-    if account and account[0] == 'order_escrow':
+    if account and account[0] in {'order_escrow', 'purchase_escrow'}:
         require(escrow_authority is _ESCROW_WRITE, 'escrow_release_forbidden')
     return append_entry(tx, sender=sender, recipient=recipient, amount=amount,
         actor=actor, request_id=request_id, now=now, receipt_signer=receipt_signer,
         reference=reference, kind=kind, entry_key=entry_key)
+
+
+def post_escrow_release(tx, *, escrow_account, source_id, account_kind, buyer, seller,
+                        recipient, amount, actor, request_id, now, receipt_signer,
+                        reference, kind, entry_key='primary'):
+    """Shared typed account boundary; callers validate their immutable policy first."""
+    require(account_kind in {'order_escrow', 'purchase_escrow'}, 'escrow_account_mismatch')
+    account = tx.one('SELECT kind,subject_id,source_id FROM ledger_accounts WHERE id=?',
+                     (escrow_account,))
+    require(account == (account_kind, None, source_id), 'escrow_account_mismatch')
+    require(recipient in {buyer, seller}, 'escrow_recipient_mismatch')
+    return post_transfer(tx, sender=escrow_account, recipient=recipient, amount=amount,
+        actor=actor, request_id=request_id, now=now, receipt_signer=receipt_signer,
+        reference=reference, kind=kind, entry_key=entry_key, escrow_authority=_ESCROW_WRITE)

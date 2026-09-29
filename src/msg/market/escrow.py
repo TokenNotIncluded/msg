@@ -9,10 +9,12 @@ from msg.core.models import Event, Signature
 from msg.core.requests import signing_bytes
 from msg.market.policy import contract, delivery_snapshot
 from msg.plugins.common import new_id
-from msg.market.ledger import CURRENCY_ID, balance as _balance, post_transfer as _post_transfer
+from msg.market.ledger import CURRENCY_ID, balance as _balance
+# Preserve the failure-injection seam while using the shared protected release.
+from msg.market.ledger import post_escrow_release as _post_transfer
+from msg.market.ledger import _ESCROW_WRITE  # Compatibility identity; only ledger uses it.
 from msg.security.crypto import verify
 
-from msg.market.ledger import _ESCROW_WRITE
 
 TRANSITIONS = {
     'created': {'funded', 'cancelled'},
@@ -33,14 +35,11 @@ def _post_escrow_transfer(tx, *, order, recipient, amount, actor, request_id, no
     Legacy signed decisions and versioned arbitration keep their distinct
     journals, signatures and request IDs, but share this account boundary.
     """
-    account = tx.one('SELECT kind,subject_id,source_id FROM ledger_accounts WHERE id=?',
-                     (order['escrow_subject'],))
-    require(account == ('order_escrow', None, order['id']), 'escrow_account_mismatch')
-    require(recipient in {order['buyer'], order['seller']}, 'escrow_recipient_mismatch')
-    return _post_transfer(tx, sender=order['escrow_subject'], recipient=recipient,
-        amount=amount, actor=actor, request_id=request_id, now=now,
-        receipt_signer=receipt_signer, reference=reference, kind=kind,
-        escrow_authority=_ESCROW_WRITE)
+    return _post_transfer(tx, escrow_account=order['escrow_subject'],
+        source_id=order['id'], account_kind='order_escrow', buyer=order['buyer'],
+        seller=order['seller'], recipient=recipient, amount=amount, actor=actor,
+        request_id=request_id, now=now, receipt_signer=receipt_signer,
+        reference=reference, kind=kind)
 
 
 async def transition(tx, order, state, *, now, actor, request_id, reason):

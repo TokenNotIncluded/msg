@@ -6,7 +6,8 @@ an offer edit nor a bank role can change the entitlement or bypass permission.
 from datetime import timedelta
 
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import canonical, digest, loads, parse_time, wire
+from msg.core.codec import canonical, digest, parse_time, wire
+from msg.market.compatibility import read_purchase as _purchase
 from msg.core.errors import Failure, require
 from msg.core.models import HandlerOutput
 from msg.plugins.common import new_id, registration
@@ -82,19 +83,6 @@ def _public_offer(row):
         'currency_id': CURRENCY_ID, 'provider_version': 1}
 
 
-def _purchase(tx, purchase_id, subject):
-    row = tx.one('''SELECT id,subject_id,request_id,offer_snapshot,quantity,total_minor,
-        escrow_account,state,created_at,expires_at,funding_transaction_id,
-        final_transaction_id,entitlement_id,reason FROM money_purchases WHERE id=? AND subject_id=?''',
-        (purchase_id,subject))
-    require(row is not None, 'purchase_not_found')
-    result = dict(zip(('id','subject_id','request_id','offer_snapshot','quantity','total_minor',
-        'escrow_account','state','created_at','expires_at','funding_transaction_id',
-        'final_transaction_id','entitlement_id','reason'),row))
-    result['offer_snapshot'] = loads(result['offer_snapshot'])
-    return result
-
-
 def _finalize(app, tx, purchase, now, request_id, *, cancel=False):
     require(purchase['state'] == 'pending', 'purchase_not_pending')
     snapshot = purchase['offer_snapshot']
@@ -103,7 +91,10 @@ def _finalize(app, tx, purchase, now, request_id, *, cancel=False):
               else 'provider_unavailable' if not purchasable(app,snapshot['resource_kind'],snapshot['entitlement_kind'])
               or provider[2] != snapshot['provider_version'] else None)
     require(_balance(tx,purchase['escrow_account']) == purchase['total_minor'], 'escrow_balance_mismatch')
-    receipt = _post_transfer(tx,sender=purchase['escrow_account'],
+    from msg.market.ledger import post_escrow_release
+    receipt = post_escrow_release(tx,escrow_account=purchase['escrow_account'],
+        source_id=purchase['id'], account_kind='purchase_escrow',
+        buyer=purchase['subject_id'], seller=ROOT_SUBJECT,
         recipient=purchase['subject_id'] if reason else ROOT_SUBJECT,
         amount=purchase['total_minor'],actor=purchase['subject_id'],request_id=request_id,
         now=now,receipt_signer=app.receipt_signer,kind='refund' if reason else 'redeem',
@@ -120,13 +111,18 @@ def _finalize(app, tx, purchase, now, request_id, *, cancel=False):
 def install(app):
     op,finish = registration(app,'offers',('money',))
 
+    @op('money.offers',obj(),effect='read', version=2)
     @op('money.offers',obj(),effect='read')
     async def offers(ctx,request,tx):
         rows = tx.rows('''SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
             max_quantity,entitlement_kind,duration_seconds,price_revision
             FROM server_offers WHERE enabled=TRUE ORDER BY offer_id''')
-        return HandlerOutput(data={'currency_id':CURRENCY_ID,'offers':[
-            _public_offer(row) for row in rows if _valid_catalog_offer(app, row)]})
+        public = [_public_offer(row) for row in rows if _valid_catalog_offer(app, row)]
+        data = {'currency_id': CURRENCY_ID, 'offers': public}
+        if request.contract_version == 2:
+            from msg.market.compatibility import offer_listing
+            data['listings'] = [offer_listing(offer) for offer in public]
+        return HandlerOutput(data=data)
 
     @op('money.redeem',obj({'offer_id':IDENTIFIER,'quantity':{'type':'integer','minimum':1,'maximum':MAX_MINOR},
         'currency_id':{'const':CURRENCY_ID},'price_revision':IDENTIFIER},
@@ -165,9 +161,15 @@ def install(app):
         return HandlerOutput(data={'purchase':_purchase(tx,purchase_id,owner),
                                    'funding':funding,'settlement':settlement})
 
+    @op('money.purchase_get',obj({'purchase_id':IDENTIFIER},('purchase_id',)),effect='read', version=2, requirements=account_requirements)
     @op('money.purchase_get',obj({'purchase_id':IDENTIFIER},('purchase_id',)),effect='read', requirements=account_requirements)
     async def get(ctx,request,tx):
-        return HandlerOutput(data={'purchase':_purchase(tx,request.arguments['purchase_id'],_owner(ctx))})
+        purchase = _purchase(tx,request.arguments['purchase_id'],_owner(ctx))
+        data = {'purchase': purchase}
+        if request.contract_version == 2:
+            from msg.market.compatibility import purchase_order
+            data['order'] = purchase_order(tx, purchase)
+        return HandlerOutput(data=data)
 
     @op('money.purchase_settle',obj({'purchase_id':IDENTIFIER},('purchase_id',)),signature=True, requirements=account_requirements)
     async def settle(ctx,request,tx):

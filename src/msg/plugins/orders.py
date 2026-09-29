@@ -164,6 +164,23 @@ def install(app):
         from msg.market.orders import view
         return HandlerOutput(data={'order': view(tx, _row(tx, request.arguments['order_id'], viewer), viewer)})
 
+    @op('orders.get', obj({'order_id': IDENTIFIER,
+        'source': {'enum': ['store_order', 'legacy_purchase']}}, ('order_id',)),
+        effect='read', version=2)
+    async def get_compatible(ctx, request, tx):
+        if request.arguments.get('source', 'store_order') == 'store_order':
+            return await get(ctx, request, tx)
+        from msg.core.errors import Failure
+        from msg.market.compatibility import read_purchase as _purchase
+        from msg.market.compatibility import purchase_order
+        try:
+            purchase = _purchase(tx, request.arguments['order_id'], _viewer(ctx))
+        except Failure as exc:
+            if exc.code == 'purchase_not_found':
+                raise Failure('order_not_found') from None
+            raise
+        return HandlerOutput(data={'order': purchase_order(tx, purchase)})
+
     @op('orders.list', obj({'role': {'enum': ['buy', 'sell']},
         'status': {'enum': ['open', 'completed', 'disputed']},
         'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100}}), effect='read')
@@ -189,6 +206,28 @@ def install(app):
                        (*values,limit))
         return HandlerOutput(data={'orders': [_view(_row(tx, id, viewer), viewer)
                                               for (id,) in rows]})
+
+    @op('orders.list', obj({'role': {'enum': ['buy', 'sell']},
+        'status': {'enum': ['open', 'completed', 'disputed']},
+        'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100}}), effect='read', version=2)
+    async def list_compatible(ctx, request, tx):
+        viewer = _viewer(ctx)
+        native = await list_orders(ctx, request, tx)
+        projected = [{**row, 'source': 'store_order'} for row in native.data['orders']]
+        args = request.arguments
+        limit = args.get('limit', 50)
+        if args.get('role') != 'sell' and args.get('status') != 'disputed':
+            from msg.market.compatibility import read_purchase as _purchase
+            from msg.market.compatibility import purchase_order
+            where, values = 'subject_id=?', [viewer]
+            if args.get('status'):
+                where += (" AND state='pending'" if args['status'] == 'open' else
+                          " AND state IN ('settled','refunded')")
+            rows = tx.rows('SELECT id FROM money_purchases WHERE ' + where +
+                           ' ORDER BY created_at DESC,id DESC LIMIT ?', (*values, limit))
+            projected.extend(purchase_order(tx, _purchase(tx, id_, viewer)) for (id_,) in rows)
+        projected.sort(key=lambda row: (row['created_at'], row['id']), reverse=True)
+        return HandlerOutput(data={'orders': projected[:limit]})
 
     @op('orders.payment', obj({'order_id': IDENTIFIER}, ('order_id',)),
         effect='read')

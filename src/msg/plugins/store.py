@@ -149,6 +149,20 @@ def install(app):
         return HandlerOutput(resources=(ResourceRef(id=resource.id, revision=rev.id),),
                              data={'listing':result})
 
+    @op('store.listing_get', obj({'id': IDENTIFIER, 'revision': IDENTIFIER,
+        'source': {'enum': ['resource', 'server_offer']}}, ('id',)), effect='read', version=2)
+    async def listing_get_compatible(ctx, request, tx):
+        if request.arguments.get('source', 'resource') == 'resource':
+            return await listing_get(ctx, request, tx)
+        from msg.plugins.offers import _public_offer, _valid_catalog_offer
+        from msg.market.compatibility import offer_listing
+        row = tx.one("""SELECT offer_id,resource_kind,unit,price_minor,min_quantity,
+            max_quantity,entitlement_kind,duration_seconds,price_revision
+            FROM server_offers WHERE offer_id=? AND enabled=TRUE""", (request.arguments['id'],))
+        require(row is not None and _valid_catalog_offer(app, row), 'listing_not_found')
+        require(request.arguments.get('revision', row[8]) == row[8], 'listing_not_found')
+        return HandlerOutput(data={'listing': offer_listing(_public_offer(row))})
+
     @op('store.package_deposit', obj({'listing_id':IDENTIFIER,
         'listing_revision':IDENTIFIER,
         'manifest':{'type':'object'},
