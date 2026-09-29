@@ -96,6 +96,10 @@ async def run_command(client, args, parse_arguments):
     if version is not None:
         require(type(version) is int and 1 <= version <= 2**31 - 1, 'invalid_contract_version')
         kwargs['contract_version'] = version
+    elif operation == 'orders.buy':
+        kwargs['contract_version'] = 4
+    elif operation == 'orders.create':
+        kwargs['contract_version'] = 2
     elif operation=='money.redeem':
         kwargs['contract_version']=2
     if args.command=='store' and args.action=='update':

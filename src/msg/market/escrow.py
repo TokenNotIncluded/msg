@@ -67,7 +67,9 @@ async def settle(app, tx, order, *, now, actor, request_id, reason,
     Caller owns the transaction. Any failure rolls back both legs, the decision
     consumption, transitions, receipts, events and request result together.
     """
-    contract(tx, order['id'])
+    locked = contract(tx, order['id'])
+    require(not (locked['version'] == 4 and reason == 'managed_instant_verified'),
+            'escrow_release_forbidden')
     require(tx.one('SELECT 1 FROM order_escrow_decisions WHERE order_id=?', (order['id'],)) is None,
             'order_already_settled')
     total = order['total_price_minor']

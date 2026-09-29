@@ -89,7 +89,11 @@ def delivery_snapshot(tx, order_id):
 
 def validate_projection(tx, locked):
     """A restored mutable projection cannot replace the immutable checkout facts."""
-    require(locked.get('version') == 3, 'order_contract_version')
+    require(locked.get('version') in {3, 4}, 'order_contract_version')
+    if locked['version'] == 4:
+        require(locked.get('settlement_policy') ==
+                {'id': 'explicit-buyer-acceptance', 'version': 1},
+                'order_contract_version')
     listing = locked['listing']
     expected = {name: locked[name] for name in (
         'buyer', 'seller', 'listing_id', 'listing_revision', 'package_id',

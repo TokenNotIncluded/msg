@@ -110,7 +110,7 @@ async def prepare(app, tx, ctx, request, order, kind, manifest, refs, *, envelop
 
 
 async def automatic(app, tx, ctx, request, order):
-    """An authenticated payment authorizes the pinned managed-instant policy.
+    """Prepare automatically; release only under the pinned settlement policy.
 
     Only verified objective storage faults refund. An arbitrary exception rolls
     back the executor transaction, rather than turning software bugs into payouts.
@@ -124,6 +124,8 @@ async def automatic(app, tx, ctx, request, order):
             request_id=request.request_id, reason=exc.code, refund_minor=order['total_price_minor'])
         return
     await prepare(app, tx, ctx, request, order, kind, manifest, refs)
+    if contract(tx, order['id'])['version'] == 4:
+        return
     await transition(tx, order, 'accepted', now=ctx.now, actor=order['buyer'],
                      request_id=request.request_id, reason='managed_instant_verified')
     await settle(app, tx, order, now=ctx.now, actor=order['buyer'],

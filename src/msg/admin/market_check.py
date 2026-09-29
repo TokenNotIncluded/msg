@@ -67,6 +67,8 @@ async def check_market(app,root,call,register,now):
     from msg.market.policy import DEFAULT_POLICY
     from msg.workers.effects import EffectWorker
     require(app.selftest_run_id is not None,'selftest_namespace_required')
+    async with app.metadata.transaction(write=False) as tx:
+        baseline_supply = _supply(tx)
     bank,bank_id = await register('market-test-bank')
     buyer,buyer_id = await register('market-test-buyer')
     async def invoke(name,args,key=buyer,subject=buyer_id,**kw):
@@ -158,7 +160,7 @@ async def check_market(app,root,call,register,now):
     async with app.metadata.transaction(write=False) as tx:
         await inspect_market(tx)
         require(_balance(tx,buyer_id)==5_000_000 and _balance(tx,bank_id)==15_000_000 and
-            tx.one("SELECT SUM(amount_minor) FROM money_ledger WHERE kind='mint'")[0]==20_000_000,
+            _supply(tx)==baseline_supply+20_000_000,
             'market_conservation_failed')
         for (escrow,) in tx.rows("SELECT id FROM ledger_accounts WHERE kind IN ('order_escrow','bounty_escrow')"):
             require(_balance(tx,escrow)==0,'market_escrow_invariant')
@@ -260,6 +262,7 @@ async def check_market_e2e(app, root, call, register):
     from msg.daemon import parser
     async with app.metadata.transaction(write=False) as tx:
         baseline=inspect_clearing(app,tx)
+        require(baseline['total_supply_minor']==0,'selftest_requires_zero_supply')
     bank_key,bank=await register('bank-test')
     buyer_key,buyer=await register('market-buyer')
 
@@ -299,7 +302,7 @@ async def check_market_e2e(app, root, call, register):
             claimed.data['escrow_balance_minor']==0,'selftest_bounty_not_paid')
     listing=await checked('store.listing_create',{'name':'test-delivery','item_kind':'bundle',
         'price_minor':5_000_000,'currency_id':'primary','quantity':1,
-        'delivery_mode':'managed_instant','escrow_policy':'escrow-instant-v1',
+        'delivery_mode':'managed_instant','escrow_policy':'escrow-v1',
         'dispute_policy':'dispute-v1','terms':'Fixed text and file; immediate in-site delivery.'},bank_key,bank)
     async with app.metadata.transaction(write=False) as tx:
         files=await tx.resolve((await tx.path(bank))+'/files')
@@ -313,28 +316,39 @@ async def check_market_e2e(app, root, call, register):
         bank_key,bank,expected=((listing_id,listing.data['generation']),))
     quote=active.data['listing']
     args={'listing_id':listing_id,'listing_revision':quote['listing_revision'],'quantity':1,
-          'currency_id':'primary','total_price_minor':5_000_000,
-          'package_digest':package.data['package']['digest'],'auto_accept':True}
+          'currency_id':'primary','total_price_minor':5_000_000}
     # No seller request occurs after publishing. The signed buyer request alone
-    # validates the immutable deposit, delivers, then releases the exact escrow.
+    # validates the immutable deposit and delivers; payment remains in escrow.
     bought=await checked('orders.buy',args,buyer_key,buyer,request_id='market-e2e-buy',
-                         contract_version=2)
-    require(bought.data['order']['state']=='settled','selftest_order_not_settled')
-    delivery=await checked('delivery.get',{'order_id':bought.data['order']['id']},buyer_key,buyer)
+                         contract_version=4)
+    require(bought.data['order']['state']=='delivered','selftest_order_not_delivered')
+    oid=bought.data['order']['id']
+    async with app.metadata.transaction(write=False) as tx:
+        escrow=tx.one('SELECT escrow_subject FROM store_orders WHERE id=?',(oid,))[0]
+        require((_balance(tx,buyer),_balance(tx,bank),_balance(tx,escrow)) ==
+                (5_000_000,10_000_000,5_000_000),'selftest_awaiting_acceptance_balance_mismatch')
+    delivery=await checked('delivery.get',{'order_id':oid},buyer_key,buyer,contract_version=2)
     content=delivery.data['delivery']
     require(content['manifest']=={'text':'msg.lmm.best store selftest'} and
             content['payloads'][0]['data']==b64(b'delivery-ok\n') and
             content['package_digest']==package.data['package']['digest'],'selftest_delivery_mismatch')
     repeated=await checked('orders.buy',args,buyer_key,buyer,request_id='market-e2e-buy',
-                           contract_version=2)
+                           contract_version=4)
     require(repeated.replayed and repeated.data==bought.data,'selftest_market_replay_failed')
+    require(content['state']=='prepared','selftest_false_buyer_ack')
+    accepted=await checked('delivery.accept',{'order_id':oid,
+        'delivery_digest':content['delivery_digest']},buyer_key,buyer,
+        contract_version=2,request_id='market-e2e-accept')
+    require(accepted.data['state']=='settled','selftest_order_not_settled')
+    async with app.metadata.transaction(write=False) as tx:
+        require(_balance(tx,escrow)==0,'selftest_escrow_not_empty')
     buyer_balance=await checked('money.balance',{},buyer_key,buyer)
     bank_balance=await checked('money.balance',{},bank_key,bank)
     require(buyer_balance.data['balance_minor']==5_000_000 and bank_balance.data['balance_minor']==15_000_000,
             'selftest_market_balance_mismatch')
     async with app.metadata.transaction(write=False) as tx:
         checked_state=inspect_clearing(app,tx)
-        require(checked_state['total_supply_minor']==baseline['total_supply_minor']+20_000_000 and
+        require(checked_state['total_supply_minor']==20_000_000 and
                 checked_state['banks']==baseline['banks']+1 and
                 checked_state['enabled_offers']==baseline['enabled_offers'],
                 'selftest_market_supply_mismatch')

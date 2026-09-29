@@ -1,4 +1,4 @@
-"""New checkout contracts without changing published orders.buy@1/@2 semantics."""
+"""Versioned checkout, preserving published orders.buy@1/@2/@3 semantics."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -35,8 +35,8 @@ def view(tx, order, viewer):
     row = tx.one('SELECT digest FROM order_contracts WHERE order_id=?', (order['id'],))
     if row:
         result['order_digest'] = row[0]
-        result['contract_version'] = 3
         locked = contract(tx, order['id'])
+        result['contract_version'] = locked['version']
         result['delivery_mode'] = locked['listing']['delivery_mode']
         result['policy_digest'] = locked['policy']['policy_digest']
         # Seller needs the *public encryption subkey*, not buyer's email.
@@ -46,7 +46,7 @@ def view(tx, order, viewer):
     return result
 
 
-async def create(app, tx, ctx, request):
+async def create(app, tx, ctx, request, *, version=3):
     buyer, args = _subject(ctx), request.arguments
     listing = await _listing(app, ctx, request, tx, args['listing_id'])
     body, revision = await _body(app, tx, listing)
@@ -95,7 +95,7 @@ async def create(app, tx, ctx, request):
          package_digest,args['quantity'],body['price_minor'],total,CURRENCY_ID,escrow,
          body['escrow_policy'],body['dispute_policy'],digest(body['terms']),canonical(target).decode(),
          request.payload_digest,now), write=True)
-    locked = {'order_id': order_id, 'version': 3, 'buyer': buyer, 'seller': listing.owner,
+    locked = {'order_id': order_id, 'version': version, 'buyer': buyer, 'seller': listing.owner,
         'listing': body, 'listing_id': listing.id, 'escrow_subject': escrow,
         'listing_revision': listing.revision,
         'listing_digest': revision.content.digest, 'package_id': package_id,
@@ -104,6 +104,8 @@ async def create(app, tx, ctx, request):
         'terms_digest': digest(body['terms']), 'policy': policy,
         'recipient_key': recipient_key, 'handle_snapshot': target['handle_snapshot'],
         'buyer_principal': wire(ctx.principal), 'created_at': now}
+    if version == 4:
+        locked['settlement_policy'] = {'id': 'explicit-buyer-acceptance', 'version': 1}
     tx.execute('INSERT INTO order_contracts(order_id,body,digest) VALUES (?,?,?)',
                (order_id,canonical(locked).decode(),digest(locked)), write=True)
     tx.execute('INSERT INTO order_deadlines(order_id,expires_at) VALUES (?,?)',
@@ -149,9 +151,21 @@ def install(app, op):
         order = await create(app, tx, ctx, request)
         return HandlerOutput(data={'order': view(tx, order, order['buyer'])})
 
+    @op('orders.create', obj(INTENT, INTENT_REQUIRED), signature=True, version=2)
+    async def reserve_explicit(ctx, request, tx):
+        order = await create(app, tx, ctx, request, version=4)
+        return HandlerOutput(data={'order': view(tx, order, order['buyer'])})
+
     @op('orders.buy', obj(INTENT, INTENT_REQUIRED), signature=True, version=3)
     async def buy(ctx, request, tx):
         order = await create(app, tx, ctx, request)
+        receipt = await fund(app, tx, ctx, request, order)
+        return HandlerOutput(data={'order': view(tx, _row(tx, order['id'], order['buyer']), order['buyer']),
+                                   'payment': receipt})
+
+    @op('orders.buy', obj(INTENT, INTENT_REQUIRED), signature=True, version=4)
+    async def buy_explicit(ctx, request, tx):
+        order = await create(app, tx, ctx, request, version=4)
         receipt = await fund(app, tx, ctx, request, order)
         return HandlerOutput(data={'order': view(tx, _row(tx, order['id'], order['buyer']), order['buyer']),
                                    'payment': receipt})
