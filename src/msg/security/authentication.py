@@ -11,6 +11,7 @@ from msg.core.models import Principal,SignatureProof,TokenProof
 from msg.core.requests import payload_fields,signing_bytes
 from msg.security.crypto import key_id,subject_id,verify
 from msg.security.quarantine import active as quarantine_active
+from msg.security.token_delivery import recovery_verifier
 
 
 CUSTODIAL_SIGNED_WRITES=frozenset({
@@ -64,9 +65,7 @@ class AuthenticationService:
             require(old.kind=='token' and old.subject_id==request.subject,'recovery_unavailable')
             actor=await session.subject(old.subject_id)
             require(not actor.local_only and actor.resource_id!=ROOT_SUBJECT,'local_only')
-            raw=unb64(request.arguments['recovery_secret'],limit=64)
-            require(len(raw)>=32,'invalid_recovery_secret')
-            verifier=hashlib.sha256(b'token-recovery-v1\0'+raw).hexdigest()
+            verifier=recovery_verifier(request.arguments['recovery_secret'])
             row=session.one('''SELECT recovery_verifier,recovery_expires_at,consumed_at,request_id
                 FROM token_deliveries WHERE credential_id=? AND subject=?''',
                 (old.id,actor.resource_id))
