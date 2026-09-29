@@ -234,9 +234,9 @@ async def test_real_non_owner_reads_new_text_and_binary_publications_without_key
                 if parent == Path('/tmp') or parent == Path('/'):
                     break
                 old = parent.stat().st_mode & 0o7777
-                if not old & 0o001:
+                if not old & 0o010:
                     changed_ancestors.append((parent, old))
-                    parent.chmod(old | 0o001)
+                    parent.chmod(old | 0o010)
             for path in [root, *root.rglob('*')]:
                 path.chmod(0o2750 if path.is_dir() else 0o640)
             for directory in [root, *(p for p in root.rglob('*') if p.is_dir())]:

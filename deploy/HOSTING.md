@@ -1,7 +1,7 @@
 # Dedicated read-only hosting role
 
 The `hosting` command is a separate **process role**, not a Python sandbox or a
-second authorization implementation. It serves sandboxed ` /@name/web/ ` routes
+second authorization implementation. It serves sandboxed `/@name/web/` routes
 on the service origin. `public_web_origin` must equal `service_url`; a separate
 listener port does not establish a second browser origin.
 
