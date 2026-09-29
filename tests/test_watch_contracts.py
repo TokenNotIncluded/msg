@@ -89,3 +89,26 @@ async def test_watch_quarantine_and_duplicate_event_projection(installed):
         tx.set_setting('recovery_quarantine', {'active': True})
         await enqueue(app, tx, event)
         assert tx.one('SELECT COUNT(*) FROM messages WHERE recipient=?', (reader,))[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_watch_removed_creating_operation_version_stops_delivery(installed):
+    app, _ = installed
+    ak, author, _ = await register(app, 'watch-version-author')
+    rk, reader, _ = await register(app, 'watch-version-reader')
+    watched = await call(app, 'communication.watch_create', {
+        'target': '/main', 'event_types': ['content.post_create'], 'delivery': 'inbox'},
+        key=rk, subject=reader)
+    assert watched.status == 'ok', wire(watched)
+    # Historical v1 disappears while a newer version exists. A name-only lookup
+    # or fall back to the newest contract would incorrectly authorize delivery.
+    original = app.registry._operations.pop(('communication.watch_create', 1))
+    app.registry._operations[('communication.watch_create', 2)] = replace(original, version=2)
+    try:
+        post = await call(app, 'content.post_create', {'parent': '/main', 'body': 'new'}, key=ak, subject=author)
+        assert post.status == 'ok', wire(post)
+        async with app.metadata.transaction(write=False) as tx:
+            assert tx.one('SELECT COUNT(*) FROM messages WHERE recipient=?', (reader,))[0] == 0
+    finally:
+        app.registry._operations[('communication.watch_create', 1)] = original
+        del app.registry._operations[('communication.watch_create', 2)]

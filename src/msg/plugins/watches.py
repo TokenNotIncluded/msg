@@ -75,6 +75,8 @@ async def enqueue(app, tx, event):
         try:
             principal = await current_principal(app, decode(Principal, saved['principal']), tx)
             operation, version = saved['operation'].rsplit('@', 1)
+            # A captured credential cannot revive a removed operation version.
+            app.registry.operation(operation, int(version))
             request = request_for(operation, {}, subject=principal.subject, service=app.settings.service_url, contract_version=int(version))
             ctx = ExecutionContext(request_id=event.id, principal=principal, entry='worker',
                                    now=app.clock(), deadline_monotonic=time.monotonic()+30)
