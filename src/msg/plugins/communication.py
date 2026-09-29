@@ -512,14 +512,20 @@ def install(app):
         return HandlerOutput(resources=(ref,),data={'message_id':record['id'],'recipient':recipient})
 
     async def watch(ctx,request,tx):
+        require(ctx.principal.subject is not None,'authentication_required')
         rid=await resolve(tx,request.arguments['id'])
-        await check_access(app,ctx,request,tx,rid,'read')
+        if request.operation=='communication.watch':
+            await check_access(app,ctx,request,tx,rid,'read')
+        await app.authorizer.require_base(ctx.principal,operation_id(request),ctx.principal.subject,tx)
         await app.authorizer._ceiling(ctx.principal,operation_id(request),rid,tx)
+        from msg.plugins.watches import legacy
+        await legacy(app,ctx,request,tx,rid,request.operation=='communication.watch')
         if request.operation=='communication.watch':
             tx.execute('INSERT OR IGNORE INTO watches VALUES (?,?)',(ctx.principal.subject,rid),write=True)
         else:
             tx.execute('DELETE FROM watches WHERE subject=? AND resource=?',(ctx.principal.subject,rid),write=True)
-        return HandlerOutput(resources=(ResourceRef(id=rid),),data={'watching':request.operation=='communication.watch'})
+        return HandlerOutput(resources=(ResourceRef(id=rid),) if request.operation=='communication.watch' else (),
+                             data={'watching':request.operation=='communication.watch'})
     for name in ('communication.watch','communication.unwatch'):
         op(name,obj({'id':IDENTIFIER},('id',)))(watch)
 
@@ -852,5 +858,9 @@ def install(app):
     install_records(app, op)
     from msg.plugins.following import install as install_following
     install_following(app, op)
-    finish((ResourceTypeSpec(name='claim',version=1,container=False,content_schema=None,
+    from msg.plugins.watches import install as install_watches
+    install_watches(app, op)
+    finish((ResourceTypeSpec(name='watch',version=1,container=False,content_schema=None,
+                             operations=frozenset(),relations=frozenset()),
+            ResourceTypeSpec(name='claim',version=1,container=False,content_schema=None,
                              operations=frozenset(),relations=frozenset()), *resource_types(app)))

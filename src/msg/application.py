@@ -142,6 +142,8 @@ class Application:
             return
         from msg.plugins.communication import enqueue_domain_webhooks
         await enqueue_domain_webhooks(self,session,event)
+        from msg.plugins.watches import enqueue
+        await enqueue(self,session,event)
 
     async def online_issuer(self,tx):
         issuer=tx.setting('online_ca_certificate')

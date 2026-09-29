@@ -180,6 +180,9 @@ class AuthorizationService:
         for check in checks:
             resource=await session.resource(check.resource_id)
             operation=check.operation
+            # Watch revisions capture authority and stale target references; only
+            # the dedicated clipped contract may expose them.
+            require(resource.type != 'watch', 'permission_denied')
             await self._ceiling(principal,operation,resource.id,session)
             chain=(*await session.ancestors(resource.id),resource)
             preview=next((marker for item in chain
