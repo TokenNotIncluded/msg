@@ -30,16 +30,22 @@ async def _query_scope(app, ctx, tx, descriptor, principal):
     require('cursor' not in arguments, 'saved_query_invalid')
     scope_id = arguments.get('parent' if operation == 'discovery.read_query' else 'scope')
     require(scope_id is not None, 'saved_query_invalid')
-    scope_id = await resolve(tx, scope_id)
-    scope = await tx.resource(scope_id)
-    require(scope.state == 'active', 'ancestor_inactive')
     source_ctx = replace(ctx, principal=principal)
     # This is an authorization query, never a replacement signed operation or
     # execution of a stored result. It checks the original read contract's scope.
     probe = request_for(operation, arguments, app.settings.service_url,
                         subject=principal.subject, contract_version=version)
+    if operation == 'discovery.lexical_search':
+        from msg.plugins.discovery import normalize_search_scope
+        normalized, _, resources = await normalize_search_scope(app, source_ctx, probe, tx, scope_id)
+        require(all(resource.state == 'active' for resource in resources), 'ancestor_inactive')
+        return normalized
+    scope_id = await resolve(tx, scope_id)
+    scope = await tx.resource(scope_id)
+    require(scope.state == 'active', 'ancestor_inactive')
     check = 'list' if app.registry.resource_type(scope.type, scope.type_version).container else 'read'
     await check_access(app, source_ctx, probe, tx, scope_id, check)
+    return scope_id
 
 
 async def load_saved_query(app, ctx, request, tx, ref):
@@ -93,11 +99,13 @@ def install(app, op):
         operation = 'discovery.read_query' if kind == 'read' else 'discovery.lexical_search'
         version = read_query_version(args) if kind == 'read' else search_query_version(args)
         arguments = dict(args)
-        for field in ('parent', 'scope', 'author', 'owner', 'relation_to', 'relation_from'):
+        for field in ('parent', 'author', 'owner', 'relation_to', 'relation_from'):
             if field in arguments:
                 arguments[field] = await resolve(tx, arguments[field])
         descriptor = {'operation': operation, 'contract_version': version, 'arguments': arguments}
-        await _query_scope(app, ctx, tx, descriptor, ctx.principal)
+        normalized_scope = await _query_scope(app, ctx, tx, descriptor, ctx.principal)
+        if kind == 'search':
+            arguments['scope'] = normalized_scope
         saved = {'subject': subject, 'created_at': wire(ctx.now), 'descriptor': descriptor,
                  'descriptor_digest': digest(descriptor), 'principal': wire(ctx.principal),
                  'source_digest': revision.content.digest}
