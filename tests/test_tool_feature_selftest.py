@@ -47,3 +47,12 @@ async def test_tool_selftest_distinguishes_runner_output_from_operation_denial(i
     assert result == {'operation': 'private_target_denied',
         'runner': 'loopback_output_and_policy_denial',
         'normal_operation_pipeline': 'not_exercised', 'external_requests': 0}
+
+
+def test_on_demand_feature_samples_are_explicitly_empty():
+    from msg.bootstrap import feature_manifest
+    rows = {row['feature_id']: row for row in feature_manifest()}
+    for name in ('content_editing', 'private_dm', 'transfer', 'following', 'collaboration'):
+        assert rows[name]['sample_resource'] is None
+        assert rows[name]['default_config'] == {
+            'sample_state': 'empty', 'sample_creation': 'isolated_selftest'}
