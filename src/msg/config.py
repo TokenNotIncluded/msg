@@ -80,7 +80,8 @@ class Settings:
 
     @property
     def trust_file(self):
-        return self.config_dir/'trust'/'root.json'
+        from msg.security.trust_files import trust_file
+        return trust_file(self.config_dir)
 
     @property
     def service_keys(self):
@@ -97,6 +98,8 @@ class Settings:
 
 def load_settings(config_dir=Path('/etc/msgd')):
     config_dir=Path(config_dir)
+    from msg.security.trust_files import reserved_plugins_directory
+    reserved_plugins_directory(config_dir)
     path=server_config_file(config_dir)
     require(path.is_file(),'configuration_missing')
     data=tomllib.loads(path.read_text())
@@ -285,6 +288,8 @@ def write_example(config_dir,data_dir,service_url='https://msg.lmm.best',*,postg
     """Local install helper: writes no private key or default PIN."""
     config_dir,data_dir=Path(config_dir),Path(data_dir)
     config_dir.mkdir(parents=True,exist_ok=True)
+    from msg.security.trust_files import reserved_plugins_directory
+    reserved_plugins_directory(config_dir,create=True)
     path=server_config_file(config_dir)
     if not path.exists():
         path.write_text(f'''[server]

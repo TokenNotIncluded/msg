@@ -23,6 +23,7 @@ from msg.security.crypto import Ed25519Signer,seal_private_key,open_private_key
 from msg.security.certificates import sign_certificate,csr_body,verify_csr
 from msg.security.capabilities import grant_for
 from msg.storage.git import durable_write
+from msg.security.trust_files import trust_file, write_trust, reserved_plugins_directory
 from msg.bootstrap import bootstrap,seed_resource
 from msg.plugins.common import new_id
 from msg.plugins.identity import certificate_resource
@@ -48,6 +49,7 @@ async def _provision(app,pin):
     root=Ed25519Signer.generate()
     envelope=seal_private_key(root.private_bytes(),pin)
     settings.config_dir.mkdir(parents=True,exist_ok=True)
+    reserved_plugins_directory(settings.config_dir,create=True)
     durable_write(marker,b'1\n',mode=0o600)
     protected.mkdir(mode=0o700,parents=True,exist_ok=True)
     os.chmod(protected,0o700)
@@ -95,8 +97,8 @@ async def _provision(app,pin):
         tx.set_setting('active_root_certificate',root_certificate.resource_id)
         tx.set_setting('online_ca_request',csr.resource_id)
         tx.set_setting('receipt_public_key',{'key_id':receipt.key_id,'public_key':b64(receipt.public_key)})
-    durable_write(settings.trust_file,canonical({'version':1,'public_key':b64(root.public_key),
-                                               'certificate':wire(root_certificate)}),mode=0o444)
+    write_trust(settings.config_dir,{'version':1,'public_key':b64(root.public_key),
+                'certificate':wire(root_certificate)},writer=durable_write)
     marker.unlink()
     await app.load()
     return csr.resource_id,root
@@ -306,7 +308,7 @@ class RootAdmin:
         target=Path(destination)
         require(not target.exists() and not target.is_symlink(),'backup_destination_exists')
         envelope=loads(root_envelope(self.config_dir).read_bytes())
-        trust=loads((self.config_dir/'trust'/'root.json').read_bytes())
+        trust=loads(trust_file(self.config_dir).read_bytes())
         require(input('Type BACKUP ROOT to continue: ')=='BACKUP ROOT','approval_cancelled')
         private=open_private_key(envelope,getpass.getpass('Root PIN/passphrase: '))
         require(b64(Ed25519Signer.from_bytes(private).public_key)==trust['public_key'],'root_key_mismatch')
@@ -320,7 +322,7 @@ class RootAdmin:
         require(not target.exists(),'root_material_already_present')
         backup=loads(Path(source).read_bytes())
         require(set(backup)=={'format','envelope','trust'} and backup['format']=='msg-root-backup-v1','invalid_root_backup')
-        current=loads((self.config_dir/'trust'/'root.json').read_bytes())
+        current=loads(trust_file(self.config_dir).read_bytes())
         require(canonical(current)==canonical(backup['trust']),'trust_anchor_mismatch')
         print(canonical({'fingerprint':digest(unb64(current['public_key'])),'action':'recover_missing_encrypted_root_key'}).decode())
         require(input('Type RECOVER ROOT to continue: ')=='RECOVER ROOT','approval_cancelled')

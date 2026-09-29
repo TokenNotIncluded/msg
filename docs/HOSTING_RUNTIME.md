@@ -40,7 +40,7 @@ New schema/authorization dependencies require review plus regression coverage be
 adding a table. Column/row data returned by public HTTP still uses current authority.
 
 Do not copy a possibly stale public trust file or recovery marker. Link the public
-`trust/root.json` to the installed public trust, keep its directory traversable, and
+`trust/root.crt` (or the legacy `trust/root.json`) to the installed public trust, keep its directory traversable, and
 set `hosting.recovery_marker` to the writer's real `recovery-drill.json` path. The
 hosting account must be able to stat the marker's parent without reading writer
 configuration or secrets. The sample marker is `/etc/msgd/recovery-drill.json`.

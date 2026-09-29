@@ -332,8 +332,9 @@ def restore(source,config_dir,data_dir,*,postgres_dsn='service=msgd'):
         shutil.move(str(directory/'service'),settings.service_keys)
         os.chmod(settings.service_keys,0o700)
         settings.trust_file.parent.mkdir(parents=True,exist_ok=True)
-        shutil.move(str(directory/'root-public.json'),settings.trust_file)
-        os.chmod(settings.trust_file,0o444)
+        from msg.security.trust_files import write_trust
+        write_trust(settings.config_dir,loads((directory/'root-public.json').read_bytes()),
+                    writer=durable_write)
         _relink_lfs(data_dir,settings)
         _verify_storage(data_dir,manifest['references'],settings=settings)
     return {'status':'restored','root_admin_material':'restore_separate_encrypted_root_backup_locally',
