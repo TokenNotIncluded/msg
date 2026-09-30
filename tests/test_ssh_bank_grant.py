@@ -192,7 +192,7 @@ async def test_ssh_money_preserves_confirm_pin_atomic_writes_and_audit(
     assert len(result['audit_event_ids']) == (2 if action == 'bank_fund' else 1)
     async with app.metadata.transaction(write=False) as tx:
         for event_id in result['audit_event_ids']:
-            event = money.loads(tx.one('SELECT body FROM events WHERE event_id=?', (event_id,))[0])
+            event = money.loads(tx.one('SELECT body FROM events WHERE id=?', (event_id,))[0])
             assert event['data']['operator'] == operator
             assert event['data']['root_signature']
         if action in {'transfer', 'bank_fund'}:
