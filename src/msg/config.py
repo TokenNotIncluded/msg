@@ -74,6 +74,7 @@ def server_config_file(config_dir: Path) -> Path:
 class Settings:
     server: ServerConfig
     service_url: str
+    service_aliases: tuple[str, ...] = ()
     listen: str = '127.0.0.1'
     port: int = 8042
     public_web_origin: str | None = None
@@ -229,6 +230,18 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
         service_origin(service)
     except Failure:
         raise Failure('invalid_service_url') from None
+    aliases = server.get('service_aliases', [])
+    require(isinstance(aliases, list) and len(aliases) <= 32, 'invalid_service_aliases')
+    try:
+        aliases = tuple(service_origin(value) for value in aliases)
+    except Failure:
+        raise Failure('invalid_service_aliases') from None
+    require(
+        len(set(aliases)) == len(aliases)
+        and service_origin(service) not in aliases
+        and all(urlsplit(value).scheme == url.scheme for value in aliases),
+        'invalid_service_aliases',
+    )
     require(
         type(server.get('port', 8042)) is int and 1 <= server.get('port', 8042) <= 65535,
         'invalid_listen_port',
@@ -477,6 +490,7 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
             mail=mail,
         ),
         service_url=service,
+        service_aliases=aliases,
         listen=server.get('listen', '127.0.0.1'),
         port=server.get('port', 8042),
         public_web_origin=public_web,
