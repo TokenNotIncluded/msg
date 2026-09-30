@@ -123,7 +123,11 @@ class HostingRuntime:
         self.registry = _ContractRegistry()
         # Installers only register trusted code. The throw-away context has no
         # storage, signer, policy service or parent Application to capture.
-        install_registry(SimpleNamespace(registry=self.registry), settings.server.plugins)
+        # Registration can inspect immutable feature flags, just as the writer
+        # does; handlers are still replaced by contract-only closures.
+        install_registry(
+            SimpleNamespace(registry=self.registry, settings=settings), settings.server.plugins
+        )
         self.metadata = None
         self.contents = None
         self.runtime_generation = None
