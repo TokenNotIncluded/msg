@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from msg.config_contracts import configuration_keys, validate_sections
 from msg.core.errors import require
 from msg.core.models import MailConfig, ServerConfig, TransportLimits
+from msg.oauth_config import OAuthConfig, load_oauth
 from msg.security.age_keys import encryption_key_id, public_from_recipient
 
 
@@ -74,6 +75,7 @@ class Settings:
     hosting_base_capacity_bytes: int = 10 * 1024 * 1024
     hosting_recovery_marker: Path | None = None
     hosting_content_group_read: bool = False
+    oauth: OAuthConfig = OAuthConfig()
 
     @property
     def config_dir(self):
@@ -443,6 +445,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
         hosting_base_capacity_bytes=hosting_base,
         hosting_recovery_marker=Path(recovery_marker) if recovery_marker is not None else None,
         hosting_content_group_read=content_group_read,
+        oauth=load_oauth(data.get('oauth', {}), service),
     )
 
 

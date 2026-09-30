@@ -25,6 +25,7 @@ READ_TABLES = (
     'identities',
     'memberships',
     'credentials',
+    'oauth_states',
     'certificates',
     'settings',
     'share_grants',

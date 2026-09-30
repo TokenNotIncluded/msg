@@ -20,6 +20,7 @@ HOSTING_READ_TABLES = frozenset({
     'identities',
     'memberships',
     'credentials',
+    'oauth_states',
     'certificates',
     'settings',
     'share_grants',

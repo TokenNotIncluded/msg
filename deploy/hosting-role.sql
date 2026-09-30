@@ -6,7 +6,7 @@ CREATE ROLE msgd_hosting LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
 SELECT format('GRANT CONNECT ON DATABASE %I TO msgd_hosting', current_database()) \gexec
 GRANT USAGE ON SCHEMA public TO msgd_hosting;
 GRANT SELECT ON public.schema_version, public.resources, public.revisions,
-    public.identities, public.memberships, public.credentials, public.certificates,
+    public.identities, public.memberships, public.credentials, public.certificates, public.oauth_states,
     public.settings, public.share_grants, public.share_grants_v2,
     public.dm_conversations, public.system_sources, public.resource_path_aliases TO msgd_hosting;
 ALTER ROLE msgd_hosting SET default_transaction_read_only = on;

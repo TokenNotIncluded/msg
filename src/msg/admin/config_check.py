@@ -26,6 +26,28 @@ def _vectors():
     # These are independent acceptance expectations, not configuration defaults
     # used by the server. Each case asserts the loader's effective Settings value.
     rows = {
+        'oauth.enabled': (False, True, 'true', 'invalid_oauth_config'),
+        'oauth.access_ttl': (900, 3600, 3601, 'invalid_oauth_config'),
+        'oauth.session_ttl': (2592000, 7776000, 7776001, 'invalid_oauth_config'),
+        'oauth.clients': (
+            [],
+            [
+                {
+                    'client_id': 'selftest',
+                    'name': 'Config test',
+                    'redirect_uris': ['https://example.invalid/callback'],
+                    'scopes': ['msg.read', 'openid'],
+                }
+            ],
+            [
+                {
+                    'client_id': 'selftest',
+                    'name': 'Config test',
+                    'redirect_uris': ['http://example.invalid/callback'],
+                }
+            ],
+            'invalid_redirect_uri',
+        ),
         'server.service_url': (
             'https://msg.lmm.best',
             'https://config.invalid',
@@ -198,6 +220,17 @@ def _effective(settings, field):
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, tuple):
+        if field == 'oauth.clients':
+            return [
+                {
+                    'client_id': item.client_id,
+                    'name': item.name,
+                    'redirect_uris': list(item.redirect_uris),
+                    'scopes': sorted(item.scopes),
+                }
+                for item in value
+                if item.client_id != 'msg-cli'
+            ]
         if field == 'recovery.custodians':
             return [
                 {key: getattr(item, key) for key in ('id', 'name', 'recipient')} for item in value

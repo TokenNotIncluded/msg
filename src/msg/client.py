@@ -48,6 +48,14 @@ class ClientState:
         self.key_path = self.directory / 'identity.key'
         self.age_key_path = self.directory / 'encryption.agekey'
         self.pending_path = self.directory / 'registration.json'
+        if self.path.exists() or self.path.is_symlink():
+            require(
+                self.path.is_file()
+                and not self.path.is_symlink()
+                and self.path.stat().st_uid == os.geteuid()
+                and self.path.stat().st_mode & 0o077 == 0,
+                'unsafe_client_state_permissions',
+            )
         self.data = loads(self.path.read_bytes()) if self.path.exists() else {'version': 1}
         require(self.data.get('version') == 1, 'unknown_client_state_version')
         require(
@@ -143,6 +151,7 @@ class MsgClient:
         self.state, self.transport = state, transport
         self.clock = clock or (lambda: datetime.now(UTC))
         self.retries = retries
+        self.signer_override = None
         require(state.server == transport.server, 'client_server_mismatch')
 
     def prepare(
@@ -161,12 +170,28 @@ class MsgClient:
         expires_at=None,
     ):
         require(not operation.startswith('root.'), 'local_only')
+        signer = signer or self.signer_override
         if (self.state.directory / 'token-rotation.json').exists():
             require(operation == 'identity.token_rotate', 'token_rotation_pending')
         selected_signer = signer or self.state.signer
         selected_subject = subject or self.state.subject
         # An explicit temporary token remains authoritative until upgrade succeeds.
         token = self.state.token if signer is None else None
+        if token is None and signer is None and self.state.data.get('api_key'):
+            saved = self.state.data['api_key']
+            token = (saved['credential_id'], unb64(saved['value']))
+        if (
+            not anonymous
+            and signer is None
+            and operation not in {'identity.oauth_request', 'identity.oauth_approve'}
+        ):
+            from msg.client_oauth import read_session
+
+            session = read_session(self.state)
+            if session is not None:
+                credential, _, encoded = session['access_token'].partition('.')
+                token = (credential, unb64(encoded, limit=32))
+                selected_subject = selected_subject or session['subject_id']
         if token:
             selected_signer = None
         return request_for(
@@ -214,6 +239,15 @@ class MsgClient:
         return result
 
     async def call(self, operation, arguments=None, **kwargs):
+        if (
+            not kwargs.get('anonymous')
+            and kwargs.get('signer') is None
+            and self.signer_override is None
+        ):
+            from msg.client_oauth import read_session, refresh
+
+            if read_session(self.state) is not None:
+                await refresh(self)
         return await self.send(self.prepare(operation, arguments or {}, **kwargs))
 
     async def _website_generation(self, website):
@@ -437,7 +471,12 @@ class MsgClient:
                 and bool(result.data.get('token')),
                 'token_claim_mismatch',
             )
-            self.state.accept_identity(result)
+            if pending['operation'] == 'identity.token_create':
+                from msg.client_api_keys import accept
+
+                accept(self.state, result)
+            else:
+                self.state.accept_identity(result)
             remove_journal(path)
         return result
 
@@ -574,7 +613,14 @@ class MsgClient:
         # A crash after writing client.json but before unlinking the journal is
         # complete locally. Never revoke that already accepted credential.
         accepted = {pending['credential_id'], (pending.get('recovery') or {}).get('credential_id')}
-        if self.state.token and self.state.token[0] in accepted:
+        saved_api = (
+            self.state.data.get('api_key')
+            if pending['operation'] == 'identity.token_create'
+            else None
+        )
+        if (self.state.token and self.state.token[0] in accepted) or (
+            saved_api and saved_api['credential_id'] in accepted
+        ):
             remove_journal(path)
             raise Failure('token_recovery_not_pending')
         recovery = pending.get('recovery')
@@ -618,7 +664,12 @@ class MsgClient:
                 and bool(result.data.get('token')),
                 'token_claim_mismatch',
             )
-            self.state.accept_identity(result)
+            if pending['operation'] == 'identity.token_create':
+                from msg.client_api_keys import accept
+
+                accept(self.state, result)
+            else:
+                self.state.accept_identity(result)
             remove_journal(path)
         elif result.error.code == 'token_delivery_unavailable':
             # Claim committed but its response may have vanished. A further

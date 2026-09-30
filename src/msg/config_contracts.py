@@ -8,6 +8,10 @@ from msg.core.errors import require
 
 # section -> field -> (Settings attribute path, related doctor check)
 _SECTIONS = {
+    'oauth': {
+        name: ('oauth.' + name, None)
+        for name in ('enabled', 'access_ttl', 'session_ttl', 'clients')
+    },
     'server': {
         'service_url': ('service_url', None),
         'listen': ('listen', None),
