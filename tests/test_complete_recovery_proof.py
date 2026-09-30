@@ -51,11 +51,25 @@ async def test_complete_proof_accepts_exact_disposable_state(complete_state):
 
 @pytest.mark.parametrize(
     'change',
-    ['extra_setting', 'extra_table', 'extra_column', 'oauth_state', 'wrong_pin', 'partial'],
+    [
+        'extra_setting',
+        'extra_table',
+        'extra_column',
+        'oauth_state',
+        'money_visibility',
+        'wrong_pin',
+        'partial',
+    ],
 )
 async def test_complete_proof_rejects_unaccounted_state(complete_state, change):
     app, root, packet, pin = complete_state
-    if change in {'extra_setting', 'extra_table', 'extra_column', 'oauth_state'}:
+    if change in {
+        'extra_setting',
+        'extra_table',
+        'extra_column',
+        'oauth_state',
+        'money_visibility',
+    }:
         async with app.metadata.transaction(write=True) as tx:
             if change == 'extra_setting':
                 tx.set_setting('recovery_promotion_attacker', {'authority': True})
@@ -63,6 +77,12 @@ async def test_complete_proof_rejects_unaccounted_state(complete_state, change):
                 tx.execute('CREATE TABLE hidden_authority (id TEXT)', write=True)
             elif change == 'extra_column':
                 tx.execute('ALTER TABLE resources ADD COLUMN hidden_authority TEXT', write=True)
+            elif change == 'money_visibility':
+                tx.execute(
+                    'INSERT INTO money_visibility VALUES (?,?,?)',
+                    ('u_root', 'public', '2026-09-27T00:00:00Z'),
+                    write=True,
+                )
             else:
                 tx.execute(
                     'INSERT INTO oauth_states VALUES (?,?,?,?)',
@@ -225,6 +245,14 @@ async def test_complete_proof_from_real_backup_restores_exact_inventory(
         subject=subject,
     )
     assert created.status == 'ok'
+    published = await call(
+        app,
+        'money.visibility_set',
+        {'visibility': 'public'},
+        key=key,
+        subject=subject,
+    )
+    assert published.status == 'ok'
     archive = tmp_path / 'complete.zip'
     saved = await backup(app, archive)
     packet = await capture(app, root, source_backup_sha256=saved['sha256'], sequence=3)
@@ -239,6 +267,11 @@ async def test_complete_proof_from_real_backup_restores_exact_inventory(
     restored = await open_for_proof(tmp_path / 'complete-etc')
     restored.clock = app.clock
     try:
+        async with restored.metadata.transaction(write=False) as tx:
+            assert (
+                tx.one('SELECT visibility FROM money_visibility WHERE subject_id=?', (subject,))[0]
+                == 'public'
+            )
         assert (await promote(restored, packet, pin=pin, signer=root, operator='isolated-fixture'))[
             'status'
         ] == 'recovery_promoted'
