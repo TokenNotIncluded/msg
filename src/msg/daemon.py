@@ -13,6 +13,7 @@ from pathlib import Path
 from msg import __version__
 from msg.core.codec import canonical, wire
 from msg.core.errors import Failure, require
+from msg.paths import SERVER_CONFIG_DIR, SERVER_DATA_DIR
 
 
 def emit(value):
@@ -99,12 +100,12 @@ def parser():
         prog='msgd', description='Agent communication service and local administration'
     )
     root.add_argument('--version', action='version', version=__version__)
-    root.add_argument('--config-dir', type=Path, default=Path('/etc/msgd'))
+    root.add_argument('--config-dir', type=Path, default=SERVER_CONFIG_DIR)
     sub = root.add_subparsers(dest='command', required=True)
     init = sub.add_parser(
         'init', help='Initialize from the physical local console; no PIN arguments'
     )
-    init.add_argument('--data-dir', type=Path, default=Path('/var/lib/msgd'))
+    init.add_argument('--data-dir', type=Path, default=SERVER_DATA_DIR)
     init.add_argument('--service-url', default='https://msg.lmm.best')
     init.add_argument(
         '--allow-ssh',
@@ -133,6 +134,17 @@ def parser():
     revoke = cs.add_parser('revoke')
     revoke.add_argument('certificate_id')
     revoke.add_argument('--reason', required=True)
+    account = sub.add_parser('account', help='Root-approved account lifecycle administration')
+    account_sub = account.add_subparsers(dest='account_command', required=True)
+    archive = account_sub.add_parser(
+        'archive', help='Revoke account access and archive its profile; preserve history'
+    )
+    archive.add_argument('subject_id')
+    archive.add_argument(
+        '--allow-ssh',
+        action='store_true',
+        help='Allow an OS root SSH terminal for this archival only; requires PIN and exact preview confirmation',
+    )
     rootkey = sub.add_parser('root')
     rs = rootkey.add_subparsers(dest='root_command', required=True)
     rs.add_parser('change-pin')
@@ -267,11 +279,13 @@ def main(argv=None):
             result = RootAdmin(args.config_dir, allow_ssh=args.allow_ssh).initialize()
             emit({'root_id': result})
             return 0
-        if args.command in {'cert', 'root'}:
+        if args.command in {'cert', 'root', 'account'}:
             from msg.admin.root import RootAdmin
 
             admin = RootAdmin(args.config_dir, allow_ssh=getattr(args, 'allow_ssh', False))
-            if args.command == 'cert':
+            if args.command == 'account':
+                result = admin.archive_account(args.subject_id)
+            elif args.command == 'cert':
                 result = (
                     admin.issue(args.csr_id)
                     if args.cert_command == 'issue'

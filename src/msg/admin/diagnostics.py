@@ -23,6 +23,7 @@ from msg.constants import ROOT_SUBJECT
 from msg.core.codec import b64, canonical, decode, digest, loads, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import Certificate, ResourceRef
+from msg.paths import SERVER_CONFIG_DIR
 
 
 @contextmanager
@@ -42,7 +43,7 @@ def temporary_postgres():
                     sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name))
                 )
         return
-    with tempfile.TemporaryDirectory(prefix='msg-selftest-pg-', dir='/tmp') as temporary:
+    with tempfile.TemporaryDirectory(prefix='msg-selftest-pg-') as temporary:
         root = Path(temporary)
         data = root / 'data'
         socket = root / 'socket'
@@ -287,7 +288,7 @@ async def authority_snapshot_drift(app, root, online, tx):
     }
 
 
-def doctor(config_dir=Path('/etc/msgd'), *, clock=None):
+def doctor(config_dir=SERVER_CONFIG_DIR, *, clock=None):
     """This synchronous wrapper is also safe to call from an existing event loop."""
     # Running the read-only coroutine in a short-lived thread avoids nesting an
     # asyncio.run() inside adapters/tests with an already running event loop.

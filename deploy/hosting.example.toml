@@ -6,7 +6,7 @@ public_web_origin = "https://msg.example.org"
 
 [hosting]
 # The same marker checked by the write service. Never select a private copy.
-recovery_marker = "/etc/msgd/recovery-drill.json"
+recovery_marker = "/var/lib/msgd/recovery-drill.json"
 
 [storage]
 postgres_dsn = "service=msgd-hosting"

@@ -43,7 +43,7 @@ Do not copy a possibly stale public trust file or recovery marker. Link the publ
 `trust/root.crt` (or the legacy `trust/root.json`) to the installed public trust, keep its directory traversable, and
 set `hosting.recovery_marker` to the writer's real `recovery-drill.json` path. The
 hosting account must be able to stat the marker's parent without reading writer
-configuration or secrets. The sample marker is `/etc/msgd/recovery-drill.json`.
+configuration or secrets. The sample marker is `/var/lib/msgd/recovery-drill.json`.
 Missing/untraversable parents fail closed. An observed marker latches quarantine
 until restart, even if someone subsequently removes it; the database gate is also
 checked for every request. Root rotation requires restarting readers after the

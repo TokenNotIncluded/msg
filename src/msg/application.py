@@ -130,7 +130,7 @@ class Application:
         # This is idempotent per source digest/version and rejects source deletion.
         from msg.bootstrap import sync_root_web_sample, sync_system_sources
 
-        marker = self.settings.config_dir / 'recovery-drill.json'
+        marker = self.settings.recovery_marker
         quarantined = quarantined or marker.exists() or marker.is_symlink()
         if not quarantined:
             async with self.metadata.transaction(write=True) as tx:
@@ -183,7 +183,8 @@ class Application:
         )
         executor.runtime_generation = self.runtime_generation
         executor.response_hook = self.token_delivery.release
-        executor.recovery_drill_marker = self.settings.config_dir / 'recovery-drill.json'
+        executor.recovery_drill_marker = self.settings.recovery_marker
+        executor.recovery_marker_factory = lambda: self.settings.recovery_marker
         if self.executor is not None:
             executor.recovery_quarantined = self.executor.recovery_quarantined
         return executor

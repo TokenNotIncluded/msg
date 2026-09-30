@@ -345,7 +345,7 @@ async def test_backup_restores_pending_purchase_and_settled_entitlement_without_
             restored, 'money.redeem', args, key=key, subject=owner, rid='backup-settled'
         )
         assert blocked.error.code == 'writes_paused'
-        (restored.settings.config_dir / 'recovery-drill.json').unlink()
+        (restored.settings.recovery_marker).unlink()
         replay = await call(
             restored, 'money.redeem', args, key=key, subject=owner, rid='backup-settled'
         )

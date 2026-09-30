@@ -16,6 +16,7 @@ import pytest
 from psycopg import sql
 
 from msg.admin.backups import restore
+from msg.config import load_settings
 from msg.storage import ledger_migration
 from msg.storage.postgres import PostgresMetadataStore
 
@@ -194,7 +195,7 @@ def test_real_old_backup_twice_and_two_concurrent_startups_keep_all_history(rest
     instance = PostgresMetadataStore(dsn)
     asyncio.run(instance.close())
     assert_migrated(dsn, before, escrows, identities)
-    assert (config / 'recovery-drill.json').is_file()
+    assert (load_settings(config).recovery_marker).is_file()
     # Migration must not promote a restored installation or re-enable workers.
     with psycopg.connect(dsn) as conn:
         runtime = json.loads(

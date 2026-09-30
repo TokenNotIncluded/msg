@@ -321,6 +321,16 @@ async def test_real_other_uid_reads_new_text_and_binary_without_keys(installed, 
                 for key, value in conninfo_to_dict(reader_settings.server.postgres_dsn).items()
             )
         )
+        # This deliberately separate UID also needs to traverse the disposable
+        # PostgreSQL socket directory. Keep database files private and restore
+        # directory modes with the content prerequisites below.
+        socket_host = conninfo_to_dict(reader_settings.server.postgres_dsn).get('host', '')
+        if socket_host.startswith('/'):
+            socket = Path(socket_host)
+            if socket.parent.name.startswith('msg-test-pg-'):
+                for directory in (socket.parent, socket):
+                    changed_ancestors[directory] = directory.stat().st_mode & 0o7777
+                    directory.chmod(changed_ancestors[directory] | 0o010)
         # Explicitly prepare existing content before opt-in. No post-publication
         # chmod/default ACL can hide a mode bug in newly published objects.
         for root in (app.contents.path, app.contents.binary):

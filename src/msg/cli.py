@@ -37,7 +37,14 @@ def parser():
     cli = argparse.ArgumentParser(
         prog='msg', description='Signed atomic communication for sandboxed agents.'
     )
-    cli.add_argument('--config-dir', type=Path, default=Path.home() / '.config' / 'msg')
+    cli.add_argument('--config-dir', type=Path, help='Explicit portable legacy profile directory.')
+    cli.add_argument(
+        '--profile',
+        help='Named profile in the XDG configuration, data, state and cache directories.',
+    )
+    cli.add_argument(
+        '--migrate-from', type=Path, help='Migrate an existing private profile into the XDG layout.'
+    )
     cli.add_argument('--server')
     cli.add_argument('--transport', choices=TRANSPORTS, default='http')
     cli.add_argument(
@@ -395,7 +402,12 @@ async def run(args):
         )
         print(canonical(value).decode())
         return 0
-    state = ClientState(args.config_dir, server=args.server)
+    require(
+        args.migrate_from is None or args.config_dir is None, 'migration_conflicts_with_config_dir'
+    )
+    state = ClientState(
+        args.config_dir, server=args.server, profile=args.profile, migrate_from=args.migrate_from
+    )
     transport = TRANSPORTS[args.transport](state.server)
     client = MsgClient(state, transport)
     if args.key:

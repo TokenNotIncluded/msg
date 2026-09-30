@@ -38,7 +38,9 @@ async def put_secret(client, name, path, recipient):
         plaintext = source.read(524289)
     require(len(plaintext) <= 524288, 'use_streaming_age_or_openpgp')
     sealed = encrypt(plaintext, unb64(recipient, limit=32))
-    with tempfile.TemporaryDirectory(prefix='encrypted-', dir=client.state.directory) as temp:
+    with tempfile.TemporaryDirectory(
+        prefix='encrypted-', dir=client.state.temporary_directory
+    ) as temp:
         ciphertext = Path(temp) / 'ciphertext'
         write_private(ciphertext, sealed)
         uploaded = client.checked(
@@ -64,7 +66,9 @@ async def get_secret(client, resource, output, private_key):
     require(entry.data['format'] == FORMAT, 'external_decryptor_required')
     require(entry.data['size'] <= 1048576, 'ciphertext_envelope_too_large')
     require(not Path(output).exists(), 'download_target_exists')
-    with tempfile.TemporaryDirectory(prefix='encrypted-', dir=client.state.directory) as temp:
+    with tempfile.TemporaryDirectory(
+        prefix='encrypted-', dir=client.state.temporary_directory
+    ) as temp:
         ciphertext = Path(temp) / 'ciphertext'
         await client.download(entry.output, ciphertext)
         plaintext = decrypt(ciphertext.read_bytes(), private)

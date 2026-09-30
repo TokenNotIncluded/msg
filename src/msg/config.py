@@ -13,6 +13,7 @@ from msg.config_contracts import configuration_keys, validate_sections
 from msg.core.errors import require
 from msg.core.models import MailConfig, ServerConfig, TransportLimits
 from msg.oauth_config import OAuthConfig, load_oauth
+from msg.paths import ROOT_PRIVATE_DIR, SERVER_CONFIG_DIR
 from msg.security.age_keys import encryption_key_id, public_from_recipient
 
 
@@ -40,8 +41,8 @@ class MoneyConfig:
 def root_private_dir(config_dir: Path) -> Path:
     """Root material is outside the network service configuration tree."""
     directory = Path(config_dir)
-    if directory == Path('/etc/msgd'):
-        return Path('/var/lib/msgd-root')
+    if directory == SERVER_CONFIG_DIR:
+        return ROOT_PRIVATE_DIR
     return directory.parent / (directory.name + '-root')
 
 
@@ -96,12 +97,30 @@ class Settings:
         return root_private_dir(self.config_dir)
 
     @property
+    def data_dir(self):
+        content = self.server.content_dir
+        return content.parent.parent if content.parent.name == 'git' else content.parent
+
+    @property
+    def recovery_marker(self):
+        current = self.data_dir / 'recovery-drill.json'
+        legacy = self.config_dir / 'recovery-drill.json'
+        require(
+            not (
+                (current.exists() or current.is_symlink())
+                and (legacy.exists() or legacy.is_symlink())
+            ),
+            'ambiguous_recovery_marker',
+        )
+        return legacy if legacy.exists() or legacy.is_symlink() else current
+
+    @property
     def repositories_dir(self):
         return self.server.repositories_dir
 
 
-def load_settings(config_dir=Path('/etc/msgd')):
-    config_dir = Path(config_dir)
+def load_settings(config_dir=SERVER_CONFIG_DIR):
+    config_dir = Path(config_dir).expanduser().absolute()
     from msg.security.trust_files import reserved_plugins_directory
 
     reserved_plugins_directory(config_dir)
@@ -252,15 +271,21 @@ def load_settings(config_dir=Path('/etc/msgd')):
         if (config_dir / 'service').exists() and not modern_layout
         else (content_dir.parent.parent if modern_layout else content_dir.parent) / 'service'
     )
+    staging_default = (
+        (content_dir.parent.parent if modern_layout else content_dir.parent)
+        / 'transfers'
+        / 'staging'
+    )
     require(
         all(
             isinstance(store.get(key, str(default)), str)
             and Path(store.get(key, str(default))).is_absolute()
+            and '..' not in Path(store.get(key, str(default))).parts
             for key, default in (
                 ('content', content_dir),
                 ('repositories', repository_default),
                 ('blobs', blob_default),
-                ('staging', Path('/var/lib/msgd/transfers/staging')),
+                ('staging', staging_default),
                 ('service_keys', service_keys_default),
             )
         ),
@@ -417,7 +442,7 @@ def load_settings(config_dir=Path('/etc/msgd')):
             content_dir=content_dir,
             repositories_dir=Path(store.get('repositories', repository_default)),
             blob_dir=Path(store.get('blobs', blob_default)),
-            staging_dir=Path(store.get('staging', '/var/lib/msgd/transfers/staging')),
+            staging_dir=Path(store.get('staging', staging_default)),
             plugins=plugins,
             service_keys_dir=Path(store.get('service_keys', service_keys_default)),
             limits=TransportLimits(
@@ -458,7 +483,10 @@ def write_example(
     valkey_url=None,
 ):
     """Local install helper: writes no private key or default PIN."""
-    config_dir, data_dir = Path(config_dir), Path(data_dir)
+    config_dir, data_dir = (
+        Path(config_dir).expanduser().absolute(),
+        Path(data_dir).expanduser().absolute(),
+    )
     config_dir.mkdir(parents=True, exist_ok=True)
     from msg.security.trust_files import reserved_plugins_directory
 

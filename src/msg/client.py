@@ -19,6 +19,7 @@ from msg.core.codec import b64, canonical, decode, digest, loads, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import ResourceRef
 from msg.core.requests import request_for
+from msg.paths import ClientPaths
 from msg.security.age_keys import generate_age_key, recipient_from_identity
 from msg.security.crypto import Ed25519Signer, subject_id
 from msg.security.custodial_protocol import client_upgrade_proof
@@ -38,16 +39,18 @@ def hash_file(path):
 class ClientState:
     """Owned files only; a failed registration never loses its private key."""
 
-    def __init__(self, directory=None, *, server=None):
-        self.directory = Path(directory or Path.home() / '.config' / 'msg')
-        self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        require(not self.directory.is_symlink(), 'unsafe_client_directory')
-        require(self.directory.stat().st_uid == os.geteuid(), 'client_directory_not_owned')
-        self.directory.chmod(0o700)
-        self.path = self.directory / 'client.json'
-        self.key_path = self.directory / 'identity.key'
-        self.age_key_path = self.directory / 'encryption.agekey'
-        self.pending_path = self.directory / 'registration.json'
+    def __init__(self, directory=None, *, server=None, profile=None, migrate_from=None, paths=None):
+        self.paths = paths or ClientPaths.discover(directory, profile=profile)
+        self.paths.prepare()
+        if not self.paths.portable:
+            legacy = migrate_from or (self.paths.config if profile is None else None)
+            if legacy is not None and (Path(legacy) / 'client.json').exists():
+                self.paths.migrate(legacy)
+        self.directory = self.paths.state
+        self.path = self.file('client.json')
+        self.key_path = self.file('identity.key')
+        self.age_key_path = self.file('encryption.agekey')
+        self.pending_path = self.file('registration.json')
         if self.path.exists() or self.path.is_symlink():
             require(
                 self.path.is_file()
@@ -66,7 +69,7 @@ class ClientState:
         self.data['server'] = self.server
         self.signer = None
         self.encryption_recipient = None
-        if self.key_path.exists():
+        if self.key_path.exists() or self.key_path.is_symlink():
             require(
                 self.key_path.is_file()
                 and not self.key_path.is_symlink()
@@ -75,7 +78,7 @@ class ClientState:
                 'unsafe_client_key_permissions',
             )
             self.signer = Ed25519Signer.from_bytes(self.key_path.read_bytes())
-        if self.age_key_path.exists():
+        if self.age_key_path.exists() or self.age_key_path.is_symlink():
             require(
                 self.age_key_path.is_file()
                 and not self.age_key_path.is_symlink()
@@ -87,6 +90,19 @@ class ClientState:
                 self.age_key_path.read_text().strip()
             )
         self._save()
+
+    def file(self, name):
+        return self.paths.file(name)
+
+    @property
+    def cache_directory(self):
+        return self.paths.cache
+
+    @property
+    def temporary_directory(self):
+        # TemporaryDirectory creates a private, unique child. If the session
+        # runtime directory is unavailable, Python honors TMPDIR/TEMP/TMP.
+        return self.paths.temporary_parent()
 
     @property
     def subject(self):
@@ -171,7 +187,7 @@ class MsgClient:
     ):
         require(not operation.startswith('root.'), 'local_only')
         signer = signer or self.signer_override
-        if (self.state.directory / 'token-rotation.json').exists():
+        if (self.state.file('token-rotation.json')).exists():
             require(operation == 'identity.token_rotate', 'token_rotation_pending')
         selected_signer = signer or self.state.signer
         selected_subject = subject or self.state.subject
@@ -541,7 +557,7 @@ class MsgClient:
             self.state.save_signer(Ed25519Signer.generate())
         signer = self.state.signer
         recipient = self.state.ensure_encryption_key()
-        pending = self.state.directory / 'temporary.json'
+        pending = self.state.file('temporary.json')
         data = self._existing_token_journal(pending, 'identity.temporary', contract_version=3)
         proof = signer.sign(
             canonical({
@@ -578,7 +594,7 @@ class MsgClient:
             'identity_already_configured',
         )
         self._require_token_secret_transport()
-        pending = self.state.directory / 'custodial-bootstrap.json'
+        pending = self.state.file('custodial-bootstrap.json')
         data = self._existing_token_journal(pending, 'identity.custodial_create', handle=handle)
         packet = self.prepare(
             'identity.custodial_create',
@@ -594,7 +610,7 @@ class MsgClient:
     async def rotate_token(self):
         require(self.state.token is not None, 'token_required')
         self._require_token_secret_transport()
-        pending = self.state.directory / 'token-rotation.json'
+        pending = self.state.file('token-rotation.json')
         data = self._existing_token_journal(pending, 'identity.token_rotate')
         packet = self.prepare(
             'identity.token_rotate',
@@ -695,8 +711,7 @@ class MsgClient:
         with locked_state(self.state):
             require(
                 not any(
-                    (self.state.directory / name).exists()
-                    or (self.state.directory / name).is_symlink()
+                    (self.state.file(name)).exists() or (self.state.file(name)).is_symlink()
                     for name in (
                         'identity-upgrade.json',
                         'temporary.json',
@@ -716,7 +731,7 @@ class MsgClient:
             self.state.subject is not None and self.state.token is not None,
             'custodial_token_required',
         )
-        journal = self.state.directory / 'custodial-upgrade.json'
+        journal = self.state.file('custodial-upgrade.json')
         if self.state.signer is None:
             self.state.save_signer(Ed25519Signer.generate())
         recipient = self.state.ensure_encryption_key()
@@ -839,8 +854,8 @@ class MsgClient:
             and self.state.token is None,
             'signing_identity_required',
         )
-        journal = self.state.directory / 'encryption-rotation.json'
-        pending_key = self.state.directory / 'encryption.pending.agekey'
+        journal = self.state.file('encryption-rotation.json')
+        pending_key = self.state.file('encryption.pending.agekey')
         if journal.exists():
             pending = loads(journal.read_bytes())
             require(
@@ -870,7 +885,7 @@ class MsgClient:
                 result.data['recipient'] == pending['recipient'], 'encryption_rotation_mismatch'
             )
             previous = result.data['previous_key_id']
-            history = self.state.directory / ('encryption-' + previous + '.agekey')
+            history = self.state.file('encryption-' + previous + '.agekey')
             if (
                 self.state.age_key_path.exists()
                 and self.state.encryption_recipient != pending['recipient']
@@ -896,9 +911,7 @@ class MsgClient:
         require(type(part_bytes) is int and part_bytes > 0, 'invalid_part_bytes')
         path = Path(path)
         size, hashed = await asyncio.to_thread(hash_file, path)
-        journal = self.state.directory / (
-            'upload-' + digest((str(path.resolve()), hashed))[7:39] + '.json'
-        )
+        journal = self.state.file('upload-' + digest((str(path.resolve()), hashed))[7:39] + '.json')
         saved = loads(journal.read_bytes()) if journal.exists() else None
         if transfer_id is None and saved:
             transfer_id = saved.get('transfer_id')
@@ -976,7 +989,7 @@ class MsgClient:
         require(type(part_bytes) is int and part_bytes > 0, 'invalid_part_bytes')
         ref = resource if isinstance(resource, ResourceRef) else ResourceRef(id=resource)
         path = Path(path)
-        journal = self.state.directory / (
+        journal = self.state.file(
             'download-' + digest((wire(ref), str(path.resolve())))[7:39] + '.json'
         )
         part = path.with_name(path.name + '.msg-part')
@@ -1091,8 +1104,10 @@ class RemoteRegistry:
         self._catalog = dict(catalog)
         self._specs = {}
         self._schemas = {}
-        self.directory = client.state.directory / 'cache' / catalog['digest'].replace(':', '-')
-        self.directory.mkdir(parents=True, exist_ok=True)
+        self.directory = client.state.cache_directory / catalog['digest'].replace(':', '-')
+        from msg.paths import private_directory
+
+        private_directory(self.directory)
         for item in catalog['operations']:
             key = (item['name'], item['version'])
             require(key not in self._specs, 'duplicate_operation')

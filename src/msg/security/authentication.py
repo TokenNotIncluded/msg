@@ -56,6 +56,15 @@ class AuthenticationService:
         self.oauth_config = None
 
     async def authenticate(self, request, session, *, entry):
+        require(
+            not session.setting('identity_archived:' + str(request.subject)), 'account_archived'
+        )
+        principal = await self._authenticate(request, session, entry=entry)
+        for subject in {principal.actor, principal.subject}:
+            require(not session.setting('identity_archived:' + str(subject)), 'account_archived')
+        return principal
+
+    async def _authenticate(self, request, session, *, entry):
         self.runtime_generation.require_current(session)
         require(
             session.setting(

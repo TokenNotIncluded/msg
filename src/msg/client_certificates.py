@@ -58,7 +58,7 @@ async def request_certificate(client, spec, key_path=None):
         )
         issuer = result.data['id']
     signer = (
-        local_key(key_path or client.state.directory / 'ca.key', create=True)
+        local_key(key_path or client.state.file('ca.key'), create=True)
         if spec.get('kind') == 'ca' or key_path
         else client.state.signer
     )
@@ -94,7 +94,7 @@ async def request_certificate(client, spec, key_path=None):
         }
     }
     args['possession_proof'] = wire(proof)
-    journal = client.state.directory / ('csr-' + digest(csr_body(csr))[7:39] + '.json')
+    journal = client.state.file('csr-' + digest(csr_body(csr))[7:39] + '.json')
     pending = loads(journal.read_bytes()) if journal.exists() else {'request_id': uuid4().hex}
     durable_write(journal, canonical(pending), mode=0o600)
     result = await client.call('cert.request', args, request_id=pending['request_id'])
@@ -146,9 +146,7 @@ async def issue_certificate(
             'cert.get', {'id': result.data['state']['certificate_id']}, anonymous=True
         )
     require(result.data['state']['status'] == 'pending', 'csr_not_pending')
-    journal = client.state.directory / (
-        'issued-' + digest((csr_id, issuer_certificate_id))[7:39] + '.json'
-    )
+    journal = client.state.file('issued-' + digest((csr_id, issuer_certificate_id))[7:39] + '.json')
     if journal.exists():
         pending = loads(journal.read_bytes())
         require(pending['csr_digest'] == csr.request_digest, 'approval_digest_mismatch')

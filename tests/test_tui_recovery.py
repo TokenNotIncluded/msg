@@ -220,3 +220,9 @@ def test_credentials_view_never_prints_secret_state_or_url_credentials():
     assert 'cert_public_id' in text and 'https://example.invalid' in text
     for secret in ('password', 'secret', 'private-token', 'private-key', '#proof'):
         assert secret not in text
+
+
+@pytest.fixture(autouse=True)
+def chinese_ui_locale(monkeypatch):
+    """Keep existing Chinese rendering expectations independent of the runner locale."""
+    monkeypatch.setenv('LC_ALL', 'zh_CN.UTF-8')

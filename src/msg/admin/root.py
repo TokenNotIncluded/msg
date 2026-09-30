@@ -41,6 +41,7 @@ from msg.core.models import (
     ResourceRef,
     Signature,
 )
+from msg.paths import SERVER_CONFIG_DIR
 from msg.plugins.common import new_id
 from msg.plugins.identity import certificate_resource
 from msg.security.capabilities import grant_for
@@ -62,11 +63,12 @@ async def _provision(app, pin):
     """Initialize only an empty installation; partial state requires explicit recovery."""
     settings = app.settings
     protected = settings.root_private_dir
-    marker = settings.config_dir / 'initialization.pending'
+    marker = protected / 'initialization.pending'
     require(
         not root_envelope(settings.config_dir).exists()
         and not settings.trust_file.exists()
-        and not marker.exists(),
+        and not marker.exists()
+        and not (settings.config_dir / 'initialization.pending').exists(),
         'initialization_requires_recovery',
     )
     await app.open_storage()
@@ -78,9 +80,9 @@ async def _provision(app, pin):
     envelope = seal_private_key(root.private_bytes(), pin)
     settings.config_dir.mkdir(parents=True, exist_ok=True)
     reserved_plugins_directory(settings.config_dir, create=True)
-    durable_write(marker, b'1\n', mode=0o600)
     protected.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(protected, 0o700)
+    durable_write(marker, b'1\n', mode=0o600)
     settings.service_keys.mkdir(mode=0o700, parents=True, exist_ok=True)
     os.chmod(settings.service_keys, 0o700)
     settings.trust_file.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
@@ -322,7 +324,7 @@ def require_ssh_administrator(config_dir):
 
 
 class RootAdmin:
-    def __init__(self, config_dir=Path('/etc/msgd'), *, allow_ssh=False):
+    def __init__(self, config_dir=SERVER_CONFIG_DIR, *, allow_ssh=False):
         self.config_dir = Path(config_dir)
         self.allow_ssh = allow_ssh
 
@@ -507,6 +509,38 @@ class RootAdmin:
                 operator=operator,
             )
         )
+
+    def archive_account(self, subject_id):
+        operator = self._provisioning_operator()
+        from msg.admin.accounts import archive_account, archive_preview
+        from msg.security.root_files import read_private
+
+        async def execute():
+            app = self._app()
+            try:
+                await app.load()
+                async with app.metadata.transaction(write=False) as tx:
+                    preview = await archive_preview(tx, subject_id)
+                fingerprint = digest(preview)
+                print(canonical({'preview': preview, 'digest': fingerprint}).decode())
+                require(
+                    input('Type ARCHIVE ACCOUNT ' + fingerprint + ': ')
+                    == 'ARCHIVE ACCOUNT ' + fingerprint,
+                    'approval_cancelled',
+                )
+                signer = Ed25519Signer.from_bytes(
+                    open_private_key(
+                        loads(read_private(root_envelope(self.config_dir))),
+                        getpass.getpass('Root PIN/passphrase: '),
+                    )
+                )
+                return await archive_account(
+                    app, subject_id, signer, expected_digest=fingerprint, operator=operator
+                )
+            finally:
+                await app.close()
+
+        return asyncio.run(execute())
 
     def sign_recovery_proof(self, source_backup_sha256, sequence, destination):
         require_local_console(self.config_dir)

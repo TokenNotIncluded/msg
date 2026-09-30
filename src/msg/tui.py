@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from msg.core.errors import Failure
+from msg.tui_i18n import Translator
 
 READ_OPERATIONS = frozenset({
     'discovery.get',
@@ -80,29 +81,26 @@ def terminal_lines(value, width):
         yield line.rstrip()
 
 
-HELP = (
-    '命令：h Home，id 身份，topics 话题，following 关注，i Inbox，o Outbox，notes 笔记，'
-    'todos 待办，files 文件，groups 组织，credentials 本地凭据，'
-    's <scope> <terms> 搜索，t <id> 线程，r <id> 读取，'
-    'n 下一页，retry 重新读取，q 退出。'
-)
+HELP = 'Commands: h home, id identity, topics, following, i inbox, o outbox, notes, todos, files, groups, credentials local credentials, s <scope> <terms> search, t <id> thread, r <id> read, n next page, retry, q quit.'
 
 
-def service_origin(value):
+def service_origin(value, translate=None):
     """The connection URL may be misconfigured; never display its credentials."""
+    translate = translate or Translator()
     try:
         parsed = urlsplit(value)
         if parsed.scheme not in {'http', 'https'} or not parsed.hostname:
-            return '（未配置）'
+            return translate('(not configured)')
         host = '[' + parsed.hostname + ']' if ':' in parsed.hostname else parsed.hostname
         port = ':' + str(parsed.port) if parsed.port is not None else ''
         return parsed.scheme + '://' + host + port
     except TypeError, ValueError:
-        return '（无效地址）'
+        return translate('(invalid address)')
 
 
 class TerminalUI:
-    def __init__(self, client, *, stdin=None, stdout=None, width=None):
+    def __init__(self, client, *, stdin=None, stdout=None, width=None, language=None):
+        self.translate = Translator(language)
         self.client = client
         self.stdin = stdin or sys.stdin
         self.stdout = stdout or sys.stdout
@@ -128,7 +126,7 @@ class TerminalUI:
     def _discard_stale_read(self):
         if self._read_context is not None and self._read_context != self._context():
             self.page = self._last_read = self._read_context = None
-            self._write('身份或服务已变化；请重新选择视图。')
+            self._write(self.translate('Identity or service changed; choose a view again.'))
             return True
         return False
 
@@ -173,8 +171,12 @@ class TerminalUI:
         # reach the terminal; a retry always re-enters the signed read contract.
         if not isinstance(code, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,95}', code):
             code = 'read_failed'
-        self._write('读取失败：' + code)
-        self._write('retry 重新读取；不自动提交 ACK 或其他写入。')
+        self._write(self.translate('Read failed: ') + code)
+        self._write(
+            self.translate(
+                'Use retry to read again; no ACK or other writes are sent automatically.'
+            )
+        )
 
     @staticmethod
     def _item_id(item, *, mailbox=False):
@@ -250,30 +252,42 @@ class TerminalUI:
         if items:
             self._show_items(items)
         else:
-            self._write('（空）')
+            self._write(self.translate('(empty)'))
         if self.page['cursor']:
-            self._write('n 下一页')
+            self._write(self.translate('n next page'))
 
     async def home(self):
         subject = getattr(self.client.state, 'subject', None)
-        self._write('msg  ' + (subject or '未登录（公开内容）'))
-        await self._show_page('discovery.read_query', {'parent': '/', 'limit': 20}, 'Home')
+        self._write('msg  ' + (subject or self.translate('Not signed in (public content)')))
+        await self._show_page(
+            'discovery.read_query', {'parent': '/', 'limit': 20}, self.translate('Home')
+        )
 
     def identity(self):
         state = self.client.state
         subject = getattr(state, 'subject', None)
-        self._write('身份：' + (subject or '未登录；可以浏览公开内容'))
-        self._write('服务：' + service_origin(getattr(state, 'server', '')))
+        self._write(
+            self.translate('Identity: ')
+            + (subject or self.translate('Not signed in; public content is available'))
+        )
+        self._write(
+            self.translate('Service: ')
+            + service_origin(getattr(state, 'server', ''), self.translate)
+        )
         if subject:
-            self._write('身份管理请使用 msg identity；TUI 不接收密钥或令牌。')
+            self._write(
+                self.translate(
+                    'Use msg identity to manage your identity; the TUI does not accept keys or tokens.'
+                )
+            )
 
     async def inbox(self):
-        await self.private_page('communication.inbox', {'limit': 20}, 'Inbox')
+        await self.private_page('communication.inbox', {'limit': 20}, self.translate('Inbox'))
 
     async def private_page(self, operation, arguments, title):
         if not getattr(self.client.state, 'subject', None):
             self.page = self._last_read = self._read_context = None
-            self._write(title + ' 需要已登录身份。')
+            self._write(title + self.translate(' requires a signed-in identity.'))
             return
         await self._show_page(operation, arguments, title)
 
@@ -282,7 +296,7 @@ class TerminalUI:
         self.page = None
         if not subject:
             self._last_read = self._read_context = None
-            self._write('Files 需要已登录身份。')
+            self._write(self.translate('Files requires a signed-in identity.'))
             return
         self._remember_read(self.files)
         profile = await self._read('discovery.get', {'id': subject, 'fields': ['path']})
@@ -292,35 +306,39 @@ class TerminalUI:
             self._invalid_response()
         elif profile is not None:
             await self._show_page(
-                'discovery.read_query', {'parent': profile['path'] + '/files', 'limit': 20}, 'Files'
+                'discovery.read_query',
+                {'parent': profile['path'] + '/files', 'limit': 20},
+                self.translate('Files'),
             )
 
     def credentials(self):
         self.identity()
         # Never inspect or stringify ClientState.data, signer, token or journals.
-        self._write('本地证书 ID（在线有效性由每次请求重新检查）：')
+        self._write(self.translate('Local certificate IDs (validity is checked on every request):'))
         for certificate in getattr(self.client.state, 'certificates', ()):
             self._write(certificate)
 
     async def search(self, scope, terms):
         if not scope or not terms:
-            self._write('用法：s <scope> <terms>')
+            self._write(self.translate('Usage: s <scope> <terms>'))
             return
         await self._show_page(
             'discovery.lexical_search',
             {'scope': scope, 'terms': terms, 'limit': 20, 'snippet': True},
-            '搜索',
+            self.translate('Search'),
         )
 
     async def thread(self, rid):
         if not rid:
-            self._write('用法：t <resource-id>')
+            self._write(self.translate('Usage: t <resource-id>'))
             return
-        await self._show_page('discussion.thread', {'id': rid, 'limit': 20}, '线程 ' + rid)
+        await self._show_page(
+            'discussion.thread', {'id': rid, 'limit': 20}, self.translate('Thread ') + rid
+        )
 
     async def read(self, rid):
         if not rid:
-            self._write('用法：r <resource-id>')
+            self._write(self.translate('Usage: r <resource-id>'))
             return
         await self._document('discovery.get', {'id': rid}, rid)
 
@@ -336,16 +354,16 @@ class TerminalUI:
         elif operation == 'identity.todo_get':
             self._write(data.get('title', ''))
             self._write(data.get('description', ''))
-            self._write('状态：' + str(data.get('status', '')))
+            self._write(self.translate('Status: ') + str(data.get('status', '')))
         else:
-            self._write('（无文本正文）')
-        self._write('读取不会发送 ACK。')
+            self._write(self.translate('(no text body)'))
+        self._write(self.translate('Reading does not send ACK.'))
 
     async def next_page(self):
         if self._discard_stale_read():
             return
         if not self.page or not self.page['cursor']:
-            self._write('没有下一页。')
+            self._write(self.translate('No next page.'))
             return
         current = self.page
         arguments = (
@@ -373,24 +391,30 @@ class TerminalUI:
         elif command in {'credentials', 'creds'}:
             self.credentials()
         elif command == 'topics':
-            await self._show_page('discovery.read_query', {'type': 'topic', 'limit': 20}, 'Topics')
+            await self._show_page(
+                'discovery.read_query', {'type': 'topic', 'limit': 20}, self.translate('Topics')
+            )
         elif command == 'groups':
             await self._show_page(
-                'discovery.read_query', {'type': 'organization', 'limit': 20}, 'Groups'
+                'discovery.read_query',
+                {'type': 'organization', 'limit': 20},
+                self.translate('Groups'),
             )
         elif command in {'o', 'outbox'}:
-            await self.private_page('communication.outbox', {'limit': 20}, 'Outbox')
+            await self.private_page('communication.outbox', {'limit': 20}, self.translate('Outbox'))
         elif command == 'following':
-            await self.private_page('communication.following', {'limit': 20}, 'Following')
+            await self.private_page(
+                'communication.following', {'limit': 20}, self.translate('Following')
+            )
         elif command == 'notes':
-            await self.private_page('identity.note_list', {}, 'Notes')
+            await self.private_page('identity.note_list', {}, self.translate('Notes'))
         elif command == 'todos':
-            await self.private_page('identity.todo_list', {'limit': 20}, 'Todos')
+            await self.private_page('identity.todo_list', {'limit': 20}, self.translate('Todos'))
         elif command == 'files':
             await self.files()
         elif command == 'retry':
             if self._last_read is None:
-                self._write('没有可重新读取的请求。')
+                self._write(self.translate('No request to retry.'))
             else:
                 function, arguments = self._last_read
                 await function(*arguments)
@@ -417,19 +441,19 @@ class TerminalUI:
                         operation = self.page['operation'].replace('_list', '_get')
                         await self._document(operation, {'name': name}, name)
                     else:
-                        self._write('该条目没有可读取的标识。')
+                        self._write(self.translate('This item has no readable identifier.'))
                 elif rid := self._page_item_id(item):
                     await self.read(rid)
                 else:
-                    self._write('该条目没有可读取的标识。')
+                    self._write(self.translate('This item has no readable identifier.'))
             else:
-                self._write('序号不在本页。')
+                self._write(self.translate('Number is not on this page.'))
         else:
-            self._write(HELP)
+            self._write(self.translate(HELP))
         return True
 
     async def run(self):
-        self._write(HELP)
+        self._write(self.translate(HELP))
         await self.home()
         while True:
             self.stdout.write('msg> ')
@@ -439,6 +463,6 @@ class TerminalUI:
                 break
 
 
-async def run_tui(client, *, stdin=None, stdout=None, width=None):
+async def run_tui(client, *, stdin=None, stdout=None, width=None, language=None):
     """Run the read-only UI; the owner of ``client`` closes its transport."""
-    await TerminalUI(client, stdin=stdin, stdout=stdout, width=width).run()
+    await TerminalUI(client, stdin=stdin, stdout=stdout, width=width, language=language).run()

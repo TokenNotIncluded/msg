@@ -229,3 +229,9 @@ def test_malformed_snippet_text_does_not_crash_or_display(text):
     ui = TerminalUI(Client([]), stdout=output)
     ui._show_items([{'id': 'r_item', 'snippet': {'text': text}}])
     assert output.getvalue().strip() == '1. r_item  r_item'
+
+
+@pytest.fixture(autouse=True)
+def chinese_ui_locale(monkeypatch):
+    """Keep existing Chinese rendering expectations independent of the runner locale."""
+    monkeypatch.setenv('LC_ALL', 'zh_CN.UTF-8')

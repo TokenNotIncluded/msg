@@ -17,7 +17,7 @@ from msg.transports.client import GraphQLTransport, HTTPTransport, MCPHTTPTransp
 
 
 def read_session(state):
-    path = state.directory / 'oauth-session.json'
+    path = state.file('oauth-session.json')
     if not path.exists() and not path.is_symlink():
         return None
     try:
@@ -71,7 +71,7 @@ def save_session(client, value):
         client_id='msg-cli',
         expires_at=wire(client.clock() + timedelta(seconds=value['expires_in'])),
     )
-    durable_write(client.state.directory / 'oauth-session.json', canonical(saved), mode=0o600)
+    durable_write(client.state.file('oauth-session.json'), canonical(saved), mode=0o600)
     client.state.data['subject_id'] = value['subject_id']
     client.state._save()
     return saved
@@ -166,7 +166,7 @@ async def refresh(client):
         if current.get('refresh_pending'):
             raise Failure('oauth_login_required')
         current['refresh_pending'] = True
-        durable_write(client.state.directory / 'oauth-session.json', canonical(current), mode=0o600)
+        durable_write(client.state.file('oauth-session.json'), canonical(current), mode=0o600)
         value = await endpoint(
             client,
             '/oauth/token',
@@ -194,7 +194,7 @@ async def logout(client):
             )
             from msg.client_tokens import remove_journal
 
-            remove_journal(client.state.directory / 'oauth-session.json')
+            remove_journal(client.state.file('oauth-session.json'))
     return {'logged_out': True}
 
 

@@ -22,7 +22,7 @@ async def create(client, *, ttl=86400, ceiling=None, rotate=False):
     require(client.state.signer is not None, 'signing_identity_required')
     old = client.state.data.get('api_key')
     require(not rotate or old is not None, 'api_key_required')
-    path = client.state.directory / 'api-key-create.json'
+    path = client.state.file('api-key-create.json')
     existing, pending = client._token_journal()
     intention = {
         'ttl': ttl,

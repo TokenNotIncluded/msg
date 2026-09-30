@@ -193,14 +193,14 @@ async def test_restore_preserves_shared_lfs_hardlinks_and_disables_outbound(
     assert linked.read_bytes() == data
     assert linked.stat().st_ino == shared.stat().st_ino
     assert shared.stat().st_nlink >= 2
-    marker = loads((restored_config / 'recovery-drill.json').read_bytes())
+    marker = loads((load_settings(restored_config).recovery_marker).read_bytes())
     assert marker['outbound_enabled'] is False
     assert marker['source_backup_sha256'] == hashlib.sha256(archive.read_bytes()).hexdigest()
     assert settings.server.valkey_url is None
     assert settings.server.mail is None
     assert not (restored_config / 'root').exists()
     # A copied/deleted config marker must not resurrect snapshot authority.
-    (restored_config / 'recovery-drill.json').unlink()
+    (load_settings(restored_config).recovery_marker).unlink()
 
     async def forbidden_sync(*args, **kwargs):
         raise AssertionError('loading a quarantine rewrote release resources')

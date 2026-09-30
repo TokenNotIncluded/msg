@@ -129,12 +129,11 @@ class HostingRuntime:
         self.runtime_generation = None
         self._loaded = False
         self._quarantined = False
-        self._marker = (
-            settings.hosting_recovery_marker or settings.config_dir / 'recovery-drill.json'
-        )
+        self._marker = settings.hosting_recovery_marker or settings.recovery_marker
 
     def require_ready(self, *, loading=False):
         require(loading or self._loaded, 'hosting_not_ready')
+        self._marker = self.settings.hosting_recovery_marker or self.settings.recovery_marker
         try:
             self._marker.lstat()  # includes a dangling symlink: never a bypass
         except FileNotFoundError:

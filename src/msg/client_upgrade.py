@@ -47,7 +47,7 @@ def upgrade_lock(directory):
 def locked_state(state):
     """Refresh accepted credentials under the same lock used by every transition."""
     with upgrade_lock(state.directory):
-        fresh = type(state)(state.directory, server=state.server)
+        fresh = type(state)(paths=state.paths, server=state.server)
         state.__dict__.update(fresh.__dict__)
         yield
 
@@ -139,7 +139,7 @@ def confirm_local_identity(state, pending, result, journal):
 
 
 def pending_upgrade(state):
-    path = state.directory / 'identity-upgrade.json'
+    path = state.file('identity-upgrade.json')
     if not (path.exists() or path.is_symlink()):
         return None
     pending = read_intent(path)
@@ -161,7 +161,7 @@ async def upgrade_identity(client, handle=None):
     state = client.state
     client._require_token_secret_transport()
     with locked_state(state):
-        journal = state.directory / 'identity-upgrade.json'
+        journal = state.file('identity-upgrade.json')
         resuming = journal.exists() or journal.is_symlink()
         pending = read_intent(journal) if resuming else None
         if handle is None:
@@ -205,7 +205,7 @@ async def upgrade_identity(client, handle=None):
             )
             require(
                 not any(
-                    (state.directory / name).exists() or (state.directory / name).is_symlink()
+                    (state.file(name)).exists() or (state.file(name)).is_symlink()
                     for name in (
                         'temporary.json',
                         'custodial-bootstrap.json',

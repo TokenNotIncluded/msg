@@ -133,3 +133,9 @@ async def test_tui_real_pg_read_and_revocation_no_business_effect(installed, tmp
         await ui.read(rid)
         assert 'TUI public text' not in hidden.getvalue()
         assert '读取失败' in hidden.getvalue()
+
+
+@pytest.fixture(autouse=True)
+def chinese_ui_locale(monkeypatch):
+    """Keep existing Chinese rendering expectations independent of the runner locale."""
+    monkeypatch.setenv('LC_ALL', 'zh_CN.UTF-8')

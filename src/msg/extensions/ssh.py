@@ -124,6 +124,7 @@ async def ssh_principal(app, credential_id, tx):
     )
     credential = await tx.credential(credential_id)
     require(credential.kind == 'ssh_key', 'wrong_credential_kind')
+    require(not tx.setting('identity_archived:' + credential.subject_id), 'account_archived')
     subject = await tx.subject(credential.subject_id)
     require(subject.resource_id != ROOT_SUBJECT and not subject.local_only, 'local_only')
     now = app.clock()

@@ -46,6 +46,7 @@ class OperationExecutor:
         self.receipt_signer = receipt_signer
         self.response_hook = None
         self.recovery_drill_marker = None
+        self.recovery_marker_factory = None
         self.recovery_quarantined = False
         from msg.security.quarantine import RuntimeGeneration
 
@@ -59,7 +60,11 @@ class OperationExecutor:
         self.event_notifications = event_notifications
 
     def recovery_drill_active(self):
-        marker = self.recovery_drill_marker
+        marker = (
+            self.recovery_marker_factory()
+            if self.recovery_marker_factory
+            else self.recovery_drill_marker
+        )
         return self.recovery_quarantined or (
             marker is not None and (marker.exists() or marker.is_symlink())
         )

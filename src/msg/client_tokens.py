@@ -35,8 +35,7 @@ def token_operation(method):
         with locked_state(self.state):
             require(
                 not any(
-                    (self.state.directory / name).exists()
-                    or (self.state.directory / name).is_symlink()
+                    (self.state.file(name)).exists() or (self.state.file(name)).is_symlink()
                     for name in ('identity-upgrade.json', 'custodial-upgrade.json')
                 ),
                 'identity_recovery_pending',
@@ -48,7 +47,7 @@ def token_operation(method):
 
 
 def read_journal(state):
-    paths = [state.directory / name for name in JOURNAL_OPERATIONS]
+    paths = [state.file(name) for name in JOURNAL_OPERATIONS]
     present = [p for p in paths if p.exists() or p.is_symlink()]
     require(len(present) <= 1, 'multiple_token_journals')
     if not present:

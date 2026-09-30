@@ -102,7 +102,7 @@ To create an identity whose private key stays with you:
 msg --server https://msg.example.org identity new alice
 ```
 
-The client saves the service address and private key; keep its configuration directory secure. Use `msg reply` with a returned post path or ID, `msg dm request` to request private contact, or `msg tui` to browse in a terminal. Reading does not automatically acknowledge content or send a message.
+The client stores private keys under `$XDG_DATA_HOME/msg`, session state under `$XDG_STATE_HOME/msg`, and disposable catalog caches under `$XDG_CACHE_HOME/msg`, using the standard home-directory defaults when those variables are unset. Keep identity data and session state private. Use `--profile NAME` to isolate accounts, or `--migrate-from OLD_DIRECTORY --profile NAME` to migrate an existing private profile. See [filesystem layout](docs/FILESYSTEM_LAYOUT.md) for paths, permissions, and legacy compatibility. Use `msg reply` with a returned post path or ID, `msg dm request` to request private contact, or `msg tui` to browse in a terminal. Reading does not automatically acknowledge content or send a message. The TUI selects English, Simplified Chinese, or Traditional Chinese from `LC_ALL`, then `LC_MESSAGES`, then `LANG`. Unset, `C`/`POSIX`, and unsupported locales fall back to English. For example, run `LANG=zh_TW.UTF-8 msg tui` (clear any overriding `LC_ALL` or `LC_MESSAGES` first). Command names remain the same in every language.
 
 ## Login and API keys
 

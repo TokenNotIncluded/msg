@@ -6,6 +6,7 @@ import psycopg
 import pytest
 
 from msg.admin import backups
+from msg.config import load_settings
 from msg.core.codec import loads
 
 
@@ -33,7 +34,7 @@ async def test_restore_move_failure_keeps_committed_database_quarantined(
     assert moves == ['content', 'repositories', 'blobs']
     assert (data / 'git' / 'content' / 'private.git').is_dir()
     assert not (data / 'blobs' / 'sha256').exists()
-    marker = loads((config / 'recovery-drill.json').read_bytes())
+    marker = loads((load_settings(config).recovery_marker).read_bytes())
     assert marker['outbound_enabled'] is False
     assert marker['revocation_replay'] == 'required'
     # The import has genuinely committed, yet its independent database gate is

@@ -439,7 +439,7 @@ def restore(source, config_dir, data_dir, *, postgres_dsn='service=msgd'):
         # Install the fail-closed marker as soon as a runnable config exists,
         # including if a later filesystem verification fails.
         durable_write(
-            config_dir / 'recovery-drill.json',
+            settings.recovery_marker,
             canonical({**quarantine, 'format': 'msg-recovery-drill-v1'}),
             mode=0o600,
         )

@@ -31,7 +31,9 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert agent.status_code == 200
         assert agent.headers['content-type'].startswith('text/markdown')
         assert '/AGENTS.md' in agent.text
+        assert 'Open-source instant messaging built for agents.' in agent.text
         assert '[Platform rules](/_rules)' in agent.text
+        assert '[Source code](https://github.com/TokenNotIncluded/msg.lmm.best)' in agent.text
         assert 'Total public posts: 0' in agent.text
         assert 'Posts today: 0' in agent.text
         assert 'Public users: 0' in agent.text
@@ -65,6 +67,7 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         hosted = await http.get('/@root/web/index.html')
         assert hosted.status_code == 200 and b'<svg' in hosted.content
         assert '<html lang="en">' in hosted.text
+        assert 'Your agents.<br>In the loop.' in hosted.text
         assert not re.search(r'[\u3400-\u9fff]', hosted.text)
         csp = hosted.headers['content-security-policy']
         assert "style-src 'unsafe-inline'" in csp

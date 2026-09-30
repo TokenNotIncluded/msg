@@ -108,7 +108,9 @@ async def save_recovery_envelope(client, recipients, *, policy_version, name=Non
         if by_fingerprint[fingerprint].get('custodian_ref') is not None
     })
     name = name or 'recovery-' + metadata['encryption_key_id'][:18]
-    with tempfile.TemporaryDirectory(prefix='recovery-', dir=client.state.directory) as folder:
+    with tempfile.TemporaryDirectory(
+        prefix='recovery-', dir=client.state.temporary_directory
+    ) as folder:
         path = Path(folder) / 'envelope.age'
         write_private(path, ciphertext)
         uploaded = client.checked(await client.upload(path, media_type='application/octet-stream'))
@@ -200,7 +202,9 @@ async def rewrap_age_keystore_entry(client, resource_id, old_identity_path, *, e
     )
     require(current.data['owner'] == client.state.subject, 'keystore_owner_required')
     require(current.data['revision'] == expected_revision, 'revision_conflict')
-    with tempfile.TemporaryDirectory(prefix='rewrap-', dir=client.state.directory) as folder:
+    with tempfile.TemporaryDirectory(
+        prefix='rewrap-', dir=client.state.temporary_directory
+    ) as folder:
         directory = Path(folder)
         prior = directory / 'prior.age'
         await client.download(entry.output, prior)
@@ -251,7 +255,9 @@ async def verify_custodial_rewrap_entry(
         entry.data['format'] == 'age' and entry.data['size'] <= 1114112,
         'custodial_rewrap_age_required',
     )
-    with tempfile.TemporaryDirectory(prefix='verify-rewrap-', dir=client.state.directory) as folder:
+    with tempfile.TemporaryDirectory(
+        prefix='verify-rewrap-', dir=client.state.temporary_directory
+    ) as folder:
         path = Path(folder) / 'ciphertext.age'
         await client.download(entry.output, path)
         ciphertext = path.read_bytes()

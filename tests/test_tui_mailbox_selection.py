@@ -131,3 +131,9 @@ async def test_real_signed_mailbox_selection_reads_without_ack(
             await ui.command(str(ui.page['items'].index(item) + 1))
         assert 'Mailbox referenced content' in output.getvalue()
         assert '读取失败' not in output.getvalue()
+
+
+@pytest.fixture(autouse=True)
+def chinese_ui_locale(monkeypatch):
+    """Keep existing Chinese rendering expectations independent of the runner locale."""
+    monkeypatch.setenv('LC_ALL', 'zh_CN.UTF-8')

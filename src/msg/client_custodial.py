@@ -17,7 +17,7 @@ from msg.security.custodial_protocol import ack_statement, client_upgrade_proof,
 
 def journal_for(state):
     for name in ('custodial-upgrade.json', 'custodial-history.json'):
-        path = state.directory / name
+        path = state.file(name)
         if path.exists() or path.is_symlink():
             path = _protected_file(path)
             require(path.stat().st_size <= 4 * 1024 * 1024, 'custodial_journal_too_large')
@@ -150,7 +150,7 @@ async def transition(
                 client.state.accept_identity(result)
                 journal['status'] = 'completed'
                 journal['completed_result'] = wire(result.data)
-                destination = client.state.directory / 'custodial-history.json'
+                destination = client.state.file('custodial-history.json')
                 durable_write(destination, canonical(journal), mode=0o600)
                 if path != destination:
                     remove_journal(path)
@@ -193,7 +193,7 @@ async def acknowledge(client, old_revision, *, method='rewrap'):
             'custodial_rewrap_recipient_mismatch',
         )
         with tempfile.TemporaryDirectory(
-            prefix='custodial-history-', dir=client.state.directory
+            prefix='custodial-history-', dir=client.state.temporary_directory
         ) as temp:
             directory = Path(temp)
             if method == 'rewrap':

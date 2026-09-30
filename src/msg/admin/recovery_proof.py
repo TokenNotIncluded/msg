@@ -239,8 +239,8 @@ async def draft(app, *, public_key, source_backup_sha256, sequence):
     async with app.metadata.transaction(write=True) as tx:
         require(
             not active(tx)
-            and not (app.settings.config_dir / 'recovery-drill.json').exists()
-            and not (app.settings.config_dir / 'recovery-drill.json').is_symlink(),
+            and not (app.settings.recovery_marker).exists()
+            and not (app.settings.recovery_marker).is_symlink(),
             'recovery_source_is_quarantined',
         )
         state = snapshot(tx)
@@ -263,8 +263,8 @@ async def seal(app, body, signer):
     async with app.metadata.transaction(write=True) as tx:
         require(
             not active(tx)
-            and not (app.settings.config_dir / 'recovery-drill.json').exists()
-            and not (app.settings.config_dir / 'recovery-drill.json').is_symlink(),
+            and not (app.settings.recovery_marker).exists()
+            and not (app.settings.recovery_marker).is_symlink(),
             'recovery_source_is_quarantined',
         )
         require(
@@ -353,7 +353,7 @@ async def promote(app, packet, *, pin, signer, operator):
     )
     require(signer.public_key == pin.public_key, 'recovery_root_mismatch')
     require(type(operator) is str and bool(operator), 'recovery_operator_required')
-    marker = app.settings.config_dir / 'recovery-drill.json'
+    marker = app.settings.recovery_marker
     from msg.security.root_files import read_private
 
     marker_present = marker.exists() or marker.is_symlink()

@@ -199,7 +199,7 @@ async def test_backup_restores_claim_nonce_inbox_receipt_and_replay_together(
             restored, 'bounty.claim', claim, key=key, subject=buyer, rid='restore-claim'
         )
         assert repeated.error.code == 'writes_paused'
-        (restored.settings.config_dir / 'recovery-drill.json').unlink()
+        (restored.settings.recovery_marker).unlink()
         repeated = await call(
             restored, 'bounty.claim', claim, key=key, subject=buyer, rid='restore-claim'
         )
