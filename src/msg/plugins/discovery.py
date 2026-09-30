@@ -584,6 +584,7 @@ def install(app):
         today = ctx.now.astimezone(timezone).date()
         posts = posts_today = users = 0
         latest = []
+        channels = []
         position = None
         while True:
             require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
@@ -617,8 +618,42 @@ def install(app):
             if len(rows) < 128:
                 break
         require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+        # Only root-level, non-system topics are discussion channels. Use the
+        # same current authorization as a public resource read, never raw ACLs.
+        for (raw,) in tx.rows(
+            "SELECT body FROM resources WHERE type='topic' AND state='active' "
+            "AND parent=? AND created_at<=? ORDER BY name,id",
+            (ROOT_SPACE, wire(ctx.now)),
+        ):
+            require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+            resource = decode(Resource, loads(raw))
+            if resource.name.startswith(('.', '_')) or not await visible(
+                app, ctx, request, tx, resource.id
+            ):
+                continue
+            chain = (*await tx.ancestors(resource.id), resource)
+            mode = resource.mode
+            if resource.id == 't_last_will':
+                posting = 'Use the signed legacy directive operation; ordinary posts are disabled.'
+            elif not tx.setting('policy:' + resource.id, {}).get('editable', True):
+                posting = 'Posting is frozen.'
+            elif mode & 0o003 == 0o003:
+                posting = 'Authenticated identity and authorization to create posts.'
+            elif mode & 0o030 == 0o030 or mode & 0o300 == 0o300:
+                posting = 'Owner or authorized group; authorization to create posts is required.'
+            else:
+                posting = 'Read-only; ordinary posting is disabled.'
+            if any(item.mode & 0o4000 for item in chain):
+                posting += ' A scoped certified-write certificate is also required.'
+            channels.append({
+                'name': resource.name,
+                'path': short_subject_path(await tx.path(resource.id)),
+                'read': 'Public; no login required.',
+                'posting': posting,
+            })
         return HandlerOutput(
             data={
+                'channels': channels,
                 'posts': posts,
                 'posts_today': posts_today,
                 'users': users,
