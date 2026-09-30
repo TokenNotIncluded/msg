@@ -1,8 +1,7 @@
 """The homepage is Markdown even for browsers; hosted files keep their own media type."""
 
-from importlib.resources import files
-
 import re
+from importlib.resources import files
 
 import httpx
 import pytest
