@@ -13,7 +13,7 @@ from pathlib import Path
 from msg import __version__
 from msg.core.codec import canonical, wire
 from msg.core.errors import Failure, require
-from msg.paths import SERVER_CONFIG_DIR, SERVER_DATA_DIR
+from msg.paths import SERVER_CONFIG_DIR, SERVER_DATA_DIR, ServerPaths
 
 
 def emit(value):
@@ -141,13 +141,16 @@ def parser():
         prog='msgd', description='Agent communication service and local administration'
     )
     root.add_argument('--version', action='version', version=__version__)
-    root.add_argument('--config-dir', type=Path, default=SERVER_CONFIG_DIR)
+    location = root.add_mutually_exclusive_group()
+    location.add_argument('--config-dir', type=Path)
+    location.add_argument('--instance', help='Stable installation name, independent of domains')
     sub = root.add_subparsers(dest='command', required=True)
     init = sub.add_parser(
         'init', help='Initialize from the physical local console; no PIN arguments'
     )
-    init.add_argument('--data-dir', type=Path, default=SERVER_DATA_DIR)
+    init.add_argument('--data-dir', type=Path)
     init.add_argument('--service-url', required=True, help='Public origin of this installation.')
+    init.add_argument('--postgres-dsn', help='Independent PostgreSQL database for this instance')
     init.add_argument(
         '--allow-ssh',
         action='store_true',
@@ -281,6 +284,18 @@ def parser():
 
 def main(argv=None):
     args = parser().parse_args(argv)
+    try:
+        layout = ServerPaths.for_instance(args.instance) if args.instance else None
+        args.config_dir = layout.config if layout else args.config_dir or SERVER_CONFIG_DIR
+        if args.command == 'init':
+            if layout:
+                require(args.service_url is not None, 'instance_service_url_required')
+                require(args.postgres_dsn is not None, 'instance_postgres_dsn_required')
+            args.data_dir = args.data_dir or (layout.data if layout else SERVER_DATA_DIR)
+            args.postgres_dsn = args.postgres_dsn or 'service=msgd'
+    except Failure as exc:
+        emit({'status': 'error', 'error': {'code': exc.code}})
+        return 2
     server_modules = ('starlette', 'uvicorn', 'psycopg', 'valkey', 'aiohttp', 'dns', 'graphql')
     if any(importlib.util.find_spec(name) is None for name in server_modules):
         print(
@@ -320,7 +335,12 @@ def main(argv=None):
 
             check = require_ssh_administrator if args.allow_ssh else require_local_console
             check(args.config_dir)
-            write_example(args.config_dir, args.data_dir, args.service_url)
+            write_example(
+                args.config_dir,
+                args.data_dir,
+                args.service_url,
+                postgres_dsn=args.postgres_dsn,
+            )
             result = RootAdmin(args.config_dir, allow_ssh=args.allow_ssh).initialize()
             emit({'root_id': result})
             return 0

@@ -1,5 +1,5 @@
 [Unit]
-Description=msg.lmm.best read-only hosted-content process
+Description=MSG read-only hosted-content process
 After=network.target
 
 [Service]
