@@ -9,6 +9,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import replace as replace
 from datetime import timedelta
+from zoneinfo import ZoneInfo
 
 from msg.constants import (
     ADMINS_GROUP as ADMINS_GROUP,
@@ -568,6 +569,57 @@ def next_link(app, operation, args):
 def install(app):
     op, finish = registration(app, 'discovery', ('identity', 'content'))
     fields = {'type': 'array', 'items': STRING, 'maxItems': 30, 'uniqueItems': True}
+
+    @op('discovery.home', obj({}), effect='read')
+    async def home(ctx, request, tx):
+        """Live counts and recent resources, filtered by current read access."""
+        timezone = ZoneInfo('Asia/Taipei')
+        today = ctx.now.astimezone(timezone).date()
+        posts = posts_today = users = 0
+        latest = []
+        position = None
+        while True:
+            require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+            seek = ' AND (r.created_at,r.id)<(?,?)' if position is not None else ''
+            rows = tx.rows(
+                'SELECT r.body,r.created_at,r.id FROM resources r '
+                "WHERE r.state='active' AND r.created_at<=? AND "
+                "(r.type='post' OR (r.type='user' AND EXISTS "
+                "(SELECT 1 FROM identities i WHERE i.id=r.id AND i.kind='subject')))"
+                + seek
+                + ' ORDER BY r.created_at DESC,r.id DESC LIMIT 128',
+                (wire(ctx.now), *(position if position is not None else ())),
+            )
+            for raw, created_at, rid in rows:
+                require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+                position = (created_at, rid)
+                if not await visible(app, ctx, request, tx, rid):
+                    continue
+                resource = decode(Resource, loads(raw))
+                if resource.type == 'user':
+                    users += (await tx.subject(rid)).kind != 'system'
+                    continue
+                posts += 1
+                posts_today += resource.created_at.astimezone(timezone).date() == today
+                if len(latest) < 5:
+                    latest.append({
+                        'name': resource.name,
+                        'path': short_subject_path(await tx.path(rid)),
+                        'created_at': resource.created_at.astimezone(timezone).isoformat(),
+                    })
+            if len(rows) < 128:
+                break
+        require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+        return HandlerOutput(
+            data={
+                'posts': posts,
+                'posts_today': posts_today,
+                'users': users,
+                'date': today.isoformat(),
+                'timezone': timezone.key,
+                'latest': latest,
+            }
+        )
 
     @op(
         'discovery.get',
