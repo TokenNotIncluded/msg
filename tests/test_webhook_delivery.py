@@ -11,7 +11,13 @@ from test_service import NOW, call, register
 from msg.core.codec import b64, canonical, wire
 from msg.core.errors import Failure
 from msg.workers.effects import EffectWorker
-from msg.workers.webhook import PublicResolver, sign_delivery, validate_endpoint, verify_delivery
+from msg.workers.webhook import (
+    PublicResolver,
+    WebhookSender,
+    sign_delivery,
+    validate_endpoint,
+    verify_delivery,
+)
 
 
 class Sender:
@@ -196,12 +202,36 @@ async def test_webhook_retries_definite_5xx_but_marks_network_ambiguity_uncertai
         'https://[::1]/hook',
         'https://10.1.2.3/hook',
         'https://example.org:8443/hook',
+        'https://example.org:0/hook',
+        'https://example.org:000/hook',
         'https://user:pass@example.org/hook',
     ],
 )
 def test_webhook_rejects_unsafe_endpoint(url):
     with pytest.raises(Failure):
         validate_endpoint(url)
+
+
+@pytest.mark.parametrize('authority', ['example.org', 'example.org:443'])
+def test_webhook_accepts_only_default_or_explicit_https_port(authority):
+    assert validate_endpoint(f'https://{authority}/hook') == ('example.org', 443)
+
+
+@pytest.mark.asyncio
+async def test_webhook_zero_port_rejected_before_network_setup(monkeypatch):
+    def unexpected_connector(*args, **kwargs):
+        pytest.fail('invalid endpoint reached network setup')
+
+    monkeypatch.setattr('msg.workers.webhook.aiohttp.TCPConnector', unexpected_connector)
+    with pytest.raises(Failure, match='webhook_port_forbidden'):
+        await WebhookSender().send(
+            'https://example.org:0/hook',
+            b'x' * 32,
+            b'{}',
+            timestamp='1',
+            event_id='e_a',
+            delivery_id='job_a',
+        )
 
 
 def test_webhook_signature_covers_raw_body_and_timestamp():

@@ -56,7 +56,7 @@ def validate_endpoint(url: str) -> tuple[str, int]:
             'invalid_webhook_url',
         )
         host = normalized_host(parsed.hostname)
-        port = parsed.port or 443
+        port = 443 if parsed.port is None else parsed.port
     except ValueError as exc:
         raise Failure('invalid_webhook_url') from exc
     require(port == 443, 'webhook_port_forbidden')
