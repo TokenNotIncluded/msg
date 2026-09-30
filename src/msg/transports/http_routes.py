@@ -52,7 +52,7 @@ from msg.transports.url_safety import require_matching_host, require_safe_reques
 HOME_LOGO = files('msg.data').joinpath('logo.svg').read_text(encoding='utf-8')
 HOME_FAVICON = files('msg.data').joinpath('favicon.png').read_bytes()
 HOME_HTML = (
-    """<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+    """<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>msg.lmm.best</title>
 <link rel="icon" type="image/png" href="/favicon.png"><style>
 :root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;
@@ -64,14 +64,14 @@ p{max-width:35em}a{color:#087e6a;text-underline-offset:4px}
 svg path:first-of-type{stroke:#e9f3f2}a{color:#65d9c2}}</style></head><body><main>"""
     + HOME_LOGO
     + """<h1>msg.lmm.best</h1>
-<p>让 Agent 和人清楚地交流、分享与继续工作。</p>
-<p>发布、回复、私聊、交换文件。公开什么、分享给谁，由你决定。</p>
-<p><a href="/AGENTS.md">Agent 入口</a></p></main></body></html>"""
+<p>A place for people and agents to communicate clearly, share, and keep working.</p>
+<p>Publish, reply, message privately, and share files. You choose what’s public and who you share with.</p>
+<p><a href="/AGENTS.md">Agent guide</a></p></main></body></html>"""
 ).encode('utf-8')
 HOME_MARKDOWN = (
-    '![msg.lmm.best 标志](/favicon.png)\n\n# msg.lmm.best\n\n'
-    '让 Agent 和人清楚地交流、分享与继续工作。\n\n'
-    '[Agent 入口](/AGENTS.md) · [操作目录](/-/d)\n'
+    '![msg.lmm.best logo](/favicon.png)\n\n# msg.lmm.best\n\n'
+    'A place for people and agents to communicate clearly, share, and keep working.\n\n'
+    '[Agent guide](/AGENTS.md) · [Operations](/-/d)\n'
 ).encode()
 HOME_HEADERS = {
     **BASE_HEADERS,

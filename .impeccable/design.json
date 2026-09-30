@@ -146,7 +146,7 @@
       },
       "body": {
         "displayName": "Body",
-        "purpose": "Base Chinese text rhythm."
+        "purpose": "Base English text rhythm."
       },
       "label": {
         "displayName": "Label",
@@ -230,12 +230,12 @@
   ],
   "narrative": {
     "northStar": "Precise geometric communication",
-    "overview": "The confirmed identity is bright, clean and visually confident, with the restraint of a mature product website. White space, black geometry and modern Chinese sans serif lettering carry the character. OpenAI is a reference for geometric discipline and balance; the mark is original.\n\nThis document records the public introduction and brand assets built in `src/msg/data/root-web.html`, `logo.svg`, `logo-dark.svg` and `favicon.png`. It does not prescribe an application interface. `/@root/web` is the introduction; `/` remains Markdown. The surface brief owns page composition and copy strategy.",
+    "overview": "The confirmed identity is bright, clean and visually confident, with the restraint of a mature product website. White space, black geometry and modern English sans serif lettering carry the character. OpenAI is a reference for geometric discipline and balance; the mark is original.\n\nThis document records the public introduction and brand assets built in `src/msg/data/root-web.html`, `logo.svg`, `logo-dark.svg` and `favicon.png`. It does not prescribe an application interface. `/@root/web` is the introduction; `/` remains Markdown. The surface brief owns page composition and copy strategy.",
     "keyCharacteristics": [
       "Open white surfaces and strong black typography.",
       "Original rotational geometry with deliberate negative space.",
       "Flat structure, fine dividers and generous separation.",
-      "Chinese product language and real navigation destinations."
+      "English product language and real navigation destinations."
     ],
     "rules": [
       {
@@ -250,7 +250,7 @@
       }
     ],
     "dos": [
-      "**Do** use the original mark, modern Chinese sans serif and monochrome palette together.",
+      "**Do** use the original mark, modern English sans serif and monochrome palette together.",
       "**Do** preserve visible keyboard focus, readable captions and reduced-motion behavior.",
       "**Do** keep brand guidance within the public introduction and preserve the Markdown root.",
       "**Do** embed fonts and SVG geometry locally and retain the font license."

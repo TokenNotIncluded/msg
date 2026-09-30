@@ -68,7 +68,7 @@ components:
 
 **Creative North Star: "Precise geometric communication"**
 
-The confirmed identity is bright, clean and visually confident, with the restraint of a mature product website. White space, black geometry and modern Chinese sans serif lettering carry the character. OpenAI is a reference for geometric discipline and balance; the mark is original.
+The confirmed identity is bright, clean and visually confident, with the restraint of a mature product website. White space, black geometry and modern English sans serif lettering carry the character. OpenAI is a reference for geometric discipline and balance; the mark is original.
 
 This document records the public introduction and brand assets built in `src/msg/data/root-web.html`, `logo.svg`, `logo-dark.svg` and `favicon.png`. It does not prescribe an application interface. `/@root/web` is the introduction; `/` remains Markdown. The surface brief owns page composition and copy strategy.
 
@@ -77,7 +77,7 @@ This document records the public introduction and brand assets built in `src/msg
 - Open white surfaces and strong black typography.
 - Original rotational geometry with deliberate negative space.
 - Flat structure, fine dividers and generous separation.
-- Chinese product language and real navigation destinations.
+- English product language and real navigation destinations.
 
 ## Colors
 
@@ -104,11 +104,11 @@ The palette is monochrome: contrast and spacing provide emphasis without a separ
 
 **Display and body font:** `Msg Sans`, the local Noto Sans CJK SC subsets, with Arial and sans-serif fallbacks. Regular and bold WOFF2 files are embedded as data URLs by `src/msg/bootstrap.py`; no font service or external request is needed. The font license is SIL Open Font License 1.1, retained in `src/msg/data/root-web-font-LICENSE.txt`. Only weights 400 and 700 are provided; the observed 600 declarations use browser synthesis.
 
-**Wordmark:** Arial, weight 600, forming the small `msg` wordmark alongside the symbol. Chinese display lettering uses the embedded face.
+**Wordmark:** Arial, weight 600, forming the small `msg` wordmark alongside the symbol. English display lettering uses the embedded face.
 
 ### Hierarchy
 
-- **Display:** the largest, boldest voice; balanced headlines and a desktop maximum below six rem. Mobile uses 54px with line-height 1.25.
+- **Display:** the largest, boldest voice; balanced headlines and a desktop maximum below six rem. Mobile uses 48px with line-height 1.25.
 - **Headline:** section and closing headings; desktop 32px, intermediate 28px for the section heading, mobile 27px.
 - **Title:** feature headings, increasing to 21px on mobile.
 - **Body:** the base text rhythm; hero summary uses 17px/1.9, reducing to 15px at narrower widths. Feature copy uses 13px/1.95.
@@ -122,7 +122,7 @@ The public introduction has an auto-centered container capped at 1280px. Its wid
 
 Desktop pairs text and geometric artwork in a 1.17:1 grid. Features form three open columns separated by space, each starting with an ink rule. At 640px they become a single reading flow; the diagram follows the hero copy. The closing panel and footer also stack. At widths above 1600px the hero gains vertical space.
 
-Keep supporting copy in bounded measures: the hero summary is at most 30em, section copy 34em, feature copy 28em. Mobile adapts these measures to the available width. These are observed choices for short Chinese copy, not a Latin character-count requirement.
+Keep supporting copy in bounded measures: the hero summary is at most 30em, section copy 34em, feature copy 28em. Mobile adapts these measures to the available width. These are observed choices for short English copy, not a fixed character-count requirement.
 
 ## Elevation & Depth
 
@@ -162,7 +162,7 @@ The central emblem joins a restrained orbit diagram labeled 人 and Agent. Its c
 
 ### Do:
 
-- **Do** use the original mark, modern Chinese sans serif and monochrome palette together.
+- **Do** use the original mark, modern English sans serif and monochrome palette together.
 - **Do** preserve visible keyboard focus, readable captions and reduced-motion behavior.
 - **Do** keep brand guidance within the public introduction and preserve the Markdown root.
 - **Do** embed fonts and SVG geometry locally and retain the font license.

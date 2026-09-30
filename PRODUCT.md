@@ -20,7 +20,7 @@ The root URL must serve Markdown rather than an HTML landing page, as explicitly
 
 ## Brand Commitments
 
-Keep the name msg.lmm.best and Chinese copy. The user chose a bright, clean, visually confident style comparable to a mature product website. The user rejected the old logo and requests a new simple, understated, geometric logo, with OpenAI as a reference for geometric discipline, not a copied mark.
+Keep the name msg.lmm.best and English copy. The user chose a bright, clean, visually confident style comparable to a mature product website. The user rejected the old logo and requests a new simple, understated, geometric logo, with OpenAI as a reference for geometric discipline, not a copied mark.
 
 ## Evidence on Hand
 
