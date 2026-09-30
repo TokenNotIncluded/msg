@@ -106,6 +106,20 @@ def parser():
     )
     call.add_argument('operation')
     call.add_argument('arguments', nargs='?', default='{}')
+    call.add_argument('--contract-version', type=int, default=1)
+    call.add_argument(
+        '--json',
+        dest='json_fields',
+        nargs='?',
+        const='',
+        metavar='FIELDS',
+        help='Select server-declared read fields; without FIELDS, list them without reading data.',
+    )
+    output_format = call.add_mutually_exclusive_group()
+    output_format.add_argument(
+        '--jq', help='Run a bounded local jq filter on selected read output.'
+    )
+    output_format.add_argument('--template', help='Local data-only JSON-pointer template.')
     call.add_argument('--request-id')
     call.add_argument('--expect', action='append', default=[], metavar='ID=GENERATION')
     call.add_argument('--return-field', action='append', default=[])
@@ -463,13 +477,30 @@ async def run(args):
                 rid, sep, generation = item.rpartition('=')
                 require(sep and generation.isdecimal(), 'invalid_expected_generation')
                 expected.append((rid, int(generation)))
-            result = await client.call(
-                args.operation,
-                arguments(args.arguments),
-                request_id=args.request_id,
-                expected=expected,
-                return_fields=args.return_field,
+            require(
+                not (args.jq is not None or args.template is not None)
+                or args.json_fields not in {None, ''},
+                'json_fields_required',
             )
+            params = arguments(args.arguments)
+            require(args.contract_version > 0, 'invalid_operation_version')
+            result = None
+            if args.json_fields is not None:
+                from msg.client_output import json_fields
+
+                require(not args.return_field, 'json_query_conflict')
+                params, result = await json_fields(
+                    client, args.operation, args.contract_version, params, args.json_fields
+                )
+            if result is None:
+                result = await client.call(
+                    args.operation,
+                    params,
+                    request_id=args.request_id,
+                    expected=expected,
+                    return_fields=args.return_field,
+                    contract_version=args.contract_version,
+                )
         elif command in {'money', 'store', 'bounty', 'orders', 'delivery'}:
             from msg.client_market import run_command
 
@@ -923,7 +954,19 @@ async def run(args):
             and rendered.get('status') == 'ok'
         ):
             rendered['data'].pop('url', None)
-        print(canonical(rendered).decode())
+        if command == 'call' and not (
+            isinstance(result, OperationResult) and result.status != 'ok'
+        ):
+            from msg.client_output import render_jq, render_template
+
+            if args.jq is not None:
+                print(await render_jq(args.jq, rendered), end='')
+            elif args.template is not None:
+                print(render_template(args.template, rendered))
+            else:
+                print(canonical(rendered).decode())
+        else:
+            print(canonical(rendered).decode())
         return 1 if isinstance(result, OperationResult) and result.status == 'error' else 0
     finally:
         await transport.close()
