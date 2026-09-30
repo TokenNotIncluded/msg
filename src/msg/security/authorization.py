@@ -196,17 +196,20 @@ class AuthorizationService:
         if share_target_error(self.registry, resource, chain, session):
             return False
         row = session.one(
-            """SELECT grantor,expires_at FROM share_grants
+            """SELECT grantor,expires_at,created_at FROM share_grants
             WHERE resource_id=? AND grantee=? AND revoked_at IS NULL""",
             (resource.id, principal.subject),
         )
-        if (
-            row
-            and row[0] == resource.owner
-            and parse_time(row[1]) > now
-            and resource.state == 'active'
-        ):
-            return True
+        if row and row[0] == resource.owner and resource.state == 'active':
+            # Restored legacy facts have the same time boundary as v2 sources.
+            # A malformed source denies only itself, preserving independent ones.
+            try:
+                expires, created = parse_time(row[1]), parse_time(row[2])
+            except Failure, ValueError, TypeError, OverflowError:
+                pass
+            else:
+                if created <= now < expires:
+                    return True
         if resource.state != 'active':
             return False
         candidates = session.rows(

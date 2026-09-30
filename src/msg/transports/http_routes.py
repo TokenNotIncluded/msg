@@ -821,7 +821,7 @@ def create_app(service):
                 args = dict(request.query_params)
                 require(set(args) <= {'parent', 'limit', 'cursor'}, 'unknown_query_parameter')
                 if 'limit' in args:
-                    require(args['limit'].isdigit(), 'invalid_limit')
+                    require(args['limit'].isdecimal(), 'invalid_limit')
                     args['limit'] = int(args['limit'])
                 header = request.headers.get('x-msg-request')
                 packet = (

@@ -150,6 +150,9 @@ def _hunks(text):
                 previous = None
             else:
                 require(line[:1] in {' ', '-', '+'}, 'invalid_unified_patch')
+                # A missing file newline must be represented by the explicit
+                # marker, not an unterminated diff transport line.
+                require(line.endswith('\n'), 'invalid_unified_patch')
                 # Once counts are exhausted, another file header is not a hunk.
                 require(len(old) < old_count or len(new) < new_count, 'invalid_unified_patch')
                 previous = []
@@ -195,6 +198,12 @@ def _unified(source, hunks, *, rebase=False):
         require(last <= start <= len(lines), 'invalid_unified_patch')
         end = start + len(hunk.old)
         require(tuple(lines[start:end]) == hunk.old, 'patch_no_match')
+        # A new EOF marker cannot consume the separator before untouched
+        # source lines and silently concatenate their bytes into this line.
+        require(
+            not hunk.new or hunk.new[-1].endswith('\n') or end == len(lines),
+            'invalid_unified_patch',
+        )
         result.extend(lines[last:start])
         result.extend(hunk.new)
         last = end

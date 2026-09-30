@@ -59,7 +59,9 @@ def validate_url(url, method, policy):
             'invalid_network_url',
         )
         host = normalized_host(parsed.hostname)
-        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        port = parsed.port
+        if port is None:
+            port = 443 if parsed.scheme == 'https' else 80
     except ValueError as exc:
         if isinstance(exc, Failure):
             raise
