@@ -21,7 +21,7 @@ New feature delivery does not establish every older production/recovery gate.
 | #213 graceful shutdown | Deployed with mixed kill and 90s stop budget; production in-flight drain evidence remains distinct from isolated SIGTERM tests. |
 | #214 recovery schema catalogue | Resolved: money_visibility is covered by catalogue and real recovery regression, included in production. No production promotion is claimed. |
 | #215 instance paths | #222 merged; #226 fixes its missing hosting-settings contract registration (25 real PostgreSQL hosting/recovery tests passed; new CI pending). These main-branch additions are not yet published or deployed; production directory migration pending. |
-| #216 same-instance domain aliases | Not implemented; client host aliases and server instance separation do not replace this contract. |
+| #216 same-instance domain aliases | PR #225 implements explicit ingress aliases with unchanged canonical signing authority and local identity, endpoint selection in all transports, strict hosting ingress, and retained recovery policy. The 74-test contract and installed rehearsal passed on source 210d2cf/test merge f5c45b3; later workflow-prerequisite changes and the final full gate need their own verification. DNS/TLS/proxy configuration and target rollout are separate operator steps. |
 | #217 archive retention / #220 retired apps | Cleanup not executed or verified. |
 | #218 PIN record location | Resolved privately from historical records; no secret or credential path is published. |
 | #219 identity selection | Origin/username checks shipped; old server-account archival and full recovery UX acceptance remain separate. |

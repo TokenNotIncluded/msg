@@ -1,16 +1,18 @@
 """SSH-like connection/config syntax with real identity and write boundaries."""
 
 import argparse
+import os
 
 import httpx
 import pytest
 from test_service import NOW, register
 
 from msg import cli
-from msg.client import ClientState, MsgClient
+from msg.client import ClientState, MsgClient, private_identity_key
 from msg.client_connection import expand_connection_args, host_options
 from msg.core.codec import loads
 from msg.core.errors import Failure
+from msg.security.crypto import Ed25519Signer
 from msg.transports.client import HTTPTransport
 from msg.transports.http import create_app
 
@@ -127,6 +129,47 @@ def test_unsafe_config_and_executable_directives_are_rejected(home):
     config.symlink_to(home / 'missing')
     with pytest.raises(Failure, match='unsafe_connection_config'):
         parse(['work'])
+
+
+@pytest.mark.parametrize(
+    'kind', ['symlink', 'fifo', 'directory', 'hardlink', 'public', 'oversized']
+)
+@pytest.mark.asyncio
+async def test_identity_file_is_rejected_before_state_or_network(home, monkeypatch, kind):
+    key = home / 'key'
+    signer = Ed25519Signer.generate()
+    if kind == 'symlink':
+        original = home / 'original'
+        original.write_bytes(signer.private_bytes())
+        original.chmod(0o600)
+        key.symlink_to(original)
+    elif kind == 'fifo':
+        os.mkfifo(key, 0o600)
+    elif kind == 'directory':
+        key.mkdir(mode=0o700)
+    else:
+        key.write_bytes(signer.private_bytes() if kind != 'oversized' else b'x' * 4096)
+        key.chmod(0o644 if kind == 'public' else 0o600)
+        if kind == 'hardlink':
+            os.link(key, home / 'other-link')
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError('unsafe IdentityFile must fail before client state is created')
+
+    monkeypatch.setattr(cli, 'ClientState', forbidden)
+    code = 'invalid_private_key' if kind == 'oversized' else 'unsafe_client_key_permissions'
+    with pytest.raises(Failure, match='^' + code + '$'):
+        await cli.run(
+            parse(['--server', 'https://own.example.org', '-i', str(key), 'identity', 'show'])
+        )
+
+
+def test_identity_file_reads_exact_owned_key_and_closes_descriptor(home):
+    key = home / 'key'
+    original = Ed25519Signer.generate()
+    key.write_bytes(original.private_bytes())
+    key.chmod(0o600)
+    assert private_identity_key(key).public_key == original.public_key
 
 
 @pytest.mark.asyncio

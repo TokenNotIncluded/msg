@@ -203,7 +203,7 @@ def _write_restored_config(source, settings, postgres_dsn):
     """Retain policy, but bind only to the new isolated storage and loopback."""
     raw = tomllib.loads(source.read_text())
     server = {'service_url': settings.service_url, 'listen': '127.0.0.1', 'port': 8042}
-    for name in ('public_web_origin', 'temporary_ttl', 'transfer_ttl'):
+    for name in ('service_aliases', 'public_web_origin', 'temporary_ttl', 'transfer_ttl'):
         if name in raw.get('server', {}):
             server[name] = raw['server'][name]
     storage = {

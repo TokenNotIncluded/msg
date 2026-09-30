@@ -84,7 +84,7 @@ def secure_transport(client):
     )
     from urllib.parse import urlsplit
 
-    parsed = urlsplit(client.state.server)
+    parsed = urlsplit(client.transport.endpoint)
     require(
         parsed.scheme == 'https'
         or parsed.hostname in {'localhost', '127.0.0.1', '::1', 'testserver'},
@@ -94,6 +94,8 @@ def secure_transport(client):
 
 async def endpoint(client, path, data):
     secure_transport(client)
+    if client.transport.endpoint != client.state.server:
+        await client.transport.description()
     try:
         return await client.transport._json('POST', path, body=data)
     except Failure as exc:

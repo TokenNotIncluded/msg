@@ -65,6 +65,27 @@ def private_client_json(path):
         os.close(descriptor)
 
 
+def private_identity_key(path):
+    """Read one owned Ed25519 key through a no-follow, nonblocking descriptor."""
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        raise Failure('unsafe_client_key_permissions') from None
+    try:
+        info = os.fstat(descriptor)
+        require(
+            stat.S_ISREG(info.st_mode)
+            and info.st_uid == os.geteuid()
+            and info.st_mode & 0o077 == 0
+            and info.st_nlink == 1,
+            'unsafe_client_key_permissions',
+        )
+        require(info.st_size == 32, 'invalid_private_key')
+        return Ed25519Signer.from_bytes(os.read(descriptor, 33))
+    finally:
+        os.close(descriptor)
+
+
 class ClientState:
     """Owned files only; a failed registration never loses its private key."""
 
@@ -142,14 +163,7 @@ class ClientState:
         self.signer = None
         self.encryption_recipient = None
         if self.key_path.exists() or self.key_path.is_symlink():
-            require(
-                self.key_path.is_file()
-                and not self.key_path.is_symlink()
-                and self.key_path.stat().st_uid == os.geteuid()
-                and self.key_path.stat().st_mode & 0o077 == 0,
-                'unsafe_client_key_permissions',
-            )
-            self.signer = Ed25519Signer.from_bytes(self.key_path.read_bytes())
+            self.signer = private_identity_key(self.key_path)
         if self.age_key_path.exists() or self.age_key_path.is_symlink():
             require(
                 self.age_key_path.is_file()
@@ -466,12 +480,14 @@ class MsgClient:
             'invalid_hosting_path',
         )
         require(type(max_bytes) is int and 0 < max_bytes <= 10485760, 'invalid_preview_limit')
+        if self.transport.endpoint != self.state.server:
+            await self.transport.description()
         packet = self.prepare('discovery.raw', {'id': candidate_id})
         header = b64(canonical(wire(packet)))
         path = site_path + '/_preview/' + candidate_id + '/' + file_path
         async with self.transport.http.stream(
             'GET',
-            self.state.server + path,
+            self.transport.endpoint + path,
             headers={'X-Msg-Request': header},
             follow_redirects=False,
         ) as response:
@@ -510,9 +526,9 @@ class MsgClient:
             type(self.transport) in {HTTPTransport, GraphQLTransport, MCPHTTPTransport},
             'secure_channel_required',
         )
-        host = urlsplit(self.state.server).hostname
+        host = urlsplit(self.transport.endpoint).hostname
         require(
-            self.state.server.startswith('https://')
+            self.transport.endpoint.startswith('https://')
             or host in {'testserver', 'localhost', '127.0.0.1', '::1'},
             'secure_channel_required',
         )
