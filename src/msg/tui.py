@@ -177,7 +177,12 @@ class TerminalUI:
         self._write('retry 重新读取；不自动提交 ACK 或其他写入。')
 
     @staticmethod
-    def _item_id(item):
+    def _item_id(item, *, mailbox=False):
+        if mailbox:
+            # Delivery IDs identify Inbox/Outbox records, not readable resources.
+            ref = item.get('resource')
+            rid = ref.get('id') if isinstance(ref, Mapping) else None
+            return rid if isinstance(rid, str) and rid else None
         ref = item.get('ref') or item.get('resource')
         for rid in (
             item.get('id'),
@@ -188,9 +193,18 @@ class TerminalUI:
                 return rid
         return None
 
+    def _page_item_id(self, item):
+        return self._item_id(
+            item,
+            mailbox=bool(
+                self.page
+                and self.page['operation'] in {'communication.inbox', 'communication.outbox'}
+            ),
+        )
+
     def _show_items(self, items):
         for index, item in enumerate(items, 1):
-            rid = self._item_id(item) or ''
+            rid = self._page_item_id(item) or ''
             name = (
                 item.get('title')
                 or item.get('name')
@@ -404,7 +418,7 @@ class TerminalUI:
                         await self._document(operation, {'name': name}, name)
                     else:
                         self._write('该条目没有可读取的标识。')
-                elif rid := self._item_id(item):
+                elif rid := self._page_item_id(item):
                     await self.read(rid)
                 else:
                     self._write('该条目没有可读取的标识。')
