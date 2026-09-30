@@ -1768,6 +1768,18 @@ def create_app(service):
             if path == '/-' or path.startswith('/-/'):
                 raise Failure('not_found')
             require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+            if path == '/install':
+                require(not request.url.query, 'unknown_query_parameter')
+                payload = files('msg.data').joinpath('install.sh').read_bytes()
+                return Response(
+                    b'' if request.method == 'HEAD' else payload,
+                    media_type='text/plain',
+                    headers={
+                        **BASE_HEADERS,
+                        'Content-Length': str(len(payload)),
+                        'Cache-Control': 'no-cache',
+                    },
+                )
             if path in {'/robots.txt', '/sitemap.xml'}:
                 require(not request.url.query, 'unknown_query_parameter')
                 origin = service.settings.service_url.rstrip('/')

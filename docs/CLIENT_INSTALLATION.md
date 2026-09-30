@@ -37,3 +37,42 @@ Compatibility exports refer to the same functions/constants. Shared protocol hel
 `tests/test_client_boundary.py` checks implementation ownership, compatibility exports, proof context, atomic-write failure protection and missing-dependency errors. `scripts/check_client_install.py` starts a fresh interpreter with server imports blocked, loads client features, saves/reloads a private key, and sends the same signed request through four real client adapters. Its HTTP endpoints use MockTransport rather than production.
 
 The client-boundary workflow builds wheel/sdist, installs the wheel in a new environment outside the source tree, checks dependencies, both help commands and all four transport probes. `--minimal-install` rejects server Python dependencies. Full PostgreSQL/Valkey, CLI/MCP, credential journal/recovery and conformance gates remain required separately. These checks do not establish physical-device, external-network, performance or production acceptance.
+
+## One-command, user-level installation
+
+```bash
+curl -fsSL https://msg.lmm.best/install | bash
+msg lightjunction@msg.lmm.best ""
+```
+
+The `/install` endpoint serves a packaged Bash script. It installs the client
+without `sudo` on Linux glibc x86_64/ARM64 and macOS Intel/Apple Silicon.
+It needs Bash, curl, tar, and a SHA-256 utility. No existing Python is required:
+the script verifies a pinned uv 0.12.20 native archive and obtains managed
+CPython 3.15.0rc2. CPython is currently a release candidate because this project
+requires Python 3.15.
+
+The client source is the published GitHub commit
+`5554f93819478f4559aa226d1d94cfc6202a1cee`, verified against its embedded SHA-256;
+there is no dependency on an unpublished MSG release asset. Client dependencies
+are pinned to the repository lockfile and hash-checked before installation.
+Only `msg` is exposed in `$HOME/.local/bin`; server dependencies and daemon
+services are not installed. Install data stays under
+`$XDG_DATA_HOME/msg/client-{releases,python,cache}` (default `~/.local/share`).
+Identity, certificates, and service connection configuration are untouched.
+
+If that bin directory is absent from PATH, the installer prints the line to add
+to your shell configuration. It does not edit shell files. Repeating the
+installation reuses the verified installed revision. An existing `msg` launcher
+from a different installer is retained unless you explicitly replace it:
+
+```bash
+curl -fsSL https://msg.lmm.best/install | bash -s -- --force
+```
+
+To publish a newer client, update the source revision and archive SHA-256 in
+`src/msg/data/install.sh`, regenerate its embedded client requirements with
+`uv export --no-dev --no-emit-project --format requirements-txt`, and exercise a
+fresh installation before deploying the `/install` endpoint. The installer UX
+was inspired by [Termium](https://github.com/codr1/termium); its browser and SSH
+implementation are not dependencies of MSG.
