@@ -323,6 +323,8 @@ async def test_cli_format_conflicts_refuse_before_network(flags, tmp_path, monke
     monkeypatch.setitem(cli.TRANSPORTS, 'http', lambda server: Transport())
     monkeypatch.setattr(cli, 'MsgClient', Client)
     args = cli.parser().parse_args([
+        '--server',
+        'https://unit.invalid',
         '--config-dir',
         str(tmp_path),
         'call',
@@ -368,6 +370,8 @@ async def test_schema_error_preserves_json_and_nonzero_exit_without_formatter(
     monkeypatch.setattr(cli, 'MsgClient', Client)
     monkeypatch.setattr(output, 'render_jq', forbidden)
     args = cli.parser().parse_args([
+        '--server',
+        'https://unit.invalid',
         '--config-dir',
         str(tmp_path),
         'call',
