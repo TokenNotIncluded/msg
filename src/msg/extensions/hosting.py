@@ -40,11 +40,17 @@ def path_name(value):
         and all(ord(c) >= 32 and ord(c) != 127 for c in value),
         'invalid_hosting_path',
     )
+    # Hosted reads deliberately reject percent-encoded and non-ASCII paths.
+    # Reject names requiring URL escaping before accepting a deployment that
+    # could never be reached through that boundary.
+    require(quote(value, safe="/:@!$&'()*+,;=") == value, 'invalid_hosting_path')
     parts = value.split('/')
     require(
         all(part not in {'', '.', '..'} and not part.startswith('.') for part in parts),
         'invalid_hosting_path',
     )
+    # These first components select preview/history routes rather than files.
+    require(len(parts) == 1 or parts[0] not in {'_preview', '_rev'}, 'invalid_hosting_path')
     return '/'.join(parts)
 
 
