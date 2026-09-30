@@ -110,6 +110,10 @@ async def test_visibility_self_only_revoke_bank_and_archive(installed):
     assert opted.status == 'ok', wire(opted)
     assert (await call(app, 'money.public_balance', {'subject_id': other})).status == 'ok'
     assert not (await call(app, 'money.public_ledger', {'subject_id': other})).data['items']
+    for target in ('t_main', 'missing-public-account'):
+        for operation in ('money.public_balance', 'money.public_ledger'):
+            result = await call(app, operation, {'subject_id': target})
+            assert result.error.code == 'not_found'
     assert (
         await call(
             app,
