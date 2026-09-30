@@ -42,6 +42,8 @@ def cursor_cli(tmp_path, monkeypatch):
     async def invoke(operation, arguments, *options):
         return await cli.run(
             cli.parser().parse_args([
+                '--server',
+                'https://unit.invalid',
                 '--config-dir',
                 str(tmp_path),
                 'call',

@@ -58,6 +58,9 @@ jobs:
           tests/test_service_aliases.py tests/test_client_connection.py
           tests/test_hosting_alias_ingress.py tests/test_backup_daemon.py
           tests/test_config_safety.py tests/test_configuration_field_contracts.py
+          tests/test_execution_composition.py tests/test_cli_cursor_output.py
+          tests/test_cli_json_fields.py
+          tests/test_branding.py
           --junitxml=artifacts/service-aliases.xml
       - uses: actions/upload-artifact@v7.0.1
         if: always()

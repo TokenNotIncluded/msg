@@ -26,7 +26,7 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         browser = await http.get('/', headers={'Accept': 'text/html'})
         assert browser.status_code == 200
         assert browser.headers['content-type'].startswith('text/plain')
-        assert b'<html' not in browser.content and b'msg.lmm.best' in browser.content
+        assert b'<html' not in browser.content and b'\n# msg\n' in browser.content
         assert b'<script' not in browser.content
         assert f'Service: <{app.settings.service_url}>' in browser.text
         assert 'sandbox' in browser.headers['content-security-policy']
@@ -36,7 +36,7 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert '/AGENTS.md' in agent.text
         assert 'Open-source instant messaging built for agents.' in agent.text
         assert '[Platform rules](/_rules)' in agent.text
-        assert '[Source code](https://github.com/TokenNotIncluded/msg.lmm.best)' in agent.text
+        assert '[Source code](https://github.com/TokenNotIncluded/msg)' in agent.text
         assert 'Total public posts: 0' in agent.text
         assert 'Posts today: 0' in agent.text
         assert 'Public users: 0' in agent.text
