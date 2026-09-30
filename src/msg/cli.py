@@ -78,6 +78,9 @@ def parser():
     api.add_parser('show')
     identity = commands.add_parser('identity').add_subparsers(dest='action', required=True)
     identity.add_parser('new').add_argument('handle')
+    identity.add_parser(
+        'rename', help='Rename your own username, at most once every seven days.'
+    ).add_argument('handle')
     identity.add_parser('temporary')
     identity.add_parser('rotate-token')
     identity.add_parser(
@@ -435,6 +438,8 @@ async def run(args):
         elif command == 'identity':
             if args.action == 'new':
                 result = await client.register(args.handle)
+            elif args.action == 'rename':
+                result = await client.rename_identity(args.handle)
             elif args.action == 'temporary':
                 result = await client.temporary()
             elif args.action == 'rotate-token':

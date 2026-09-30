@@ -39,6 +39,10 @@ def json_response(value, status=200, headers=None):
 
 
 def error_status(code):
+    if code == 'handle_rename_cooldown':
+        return 429
+    if code == 'handle_unavailable':
+        return 409
     if code == 'range_not_satisfiable':
         return 416
     if code in {

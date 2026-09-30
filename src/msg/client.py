@@ -305,6 +305,27 @@ class MsgClient:
             validated.append({'path': path, 'source': source})
         return validated
 
+    async def rename_identity(self, handle):
+        require(self.state.subject is not None, 'authentication_required')
+        current = await self.call(
+            'discovery.get',
+            {
+                'id': self.state.subject,
+                'fields': ['id', 'generation'],
+            },
+        )
+        if current.status != 'ok':
+            return current
+        result = await self.call(
+            'identity.rename',
+            {'handle': handle},
+            expected=((current.data['id'], current.data['generation']),),
+        )
+        if result.status == 'ok':
+            self.state.data['handle'] = result.data['handle']
+            self.state._save()
+        return result
+
     async def hosting_preview(self, website, entries):
         require(
             self.state.signer is not None and self.state.token is None, 'signing_identity_required'

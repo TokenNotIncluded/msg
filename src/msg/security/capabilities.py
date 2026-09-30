@@ -12,6 +12,7 @@ from msg.plugins.schemas import NETWORK_CONSTRAINTS
 # stand in for a special capability or a trusted local execution entry.
 BASE_FAMILIES = {
     'identity.basic': (
+        'identity.rename',
         'identity.register',
         'identity.temporary',
         'identity.custodial_create',
@@ -97,6 +98,7 @@ BASE_FAMILIES = {
 }
 EXCLUDED_BASE = {'content.purge', 'content.chown', 'identity.recover'}
 TEMPORARY_OPERATIONS = frozenset({
+    'identity.rename',
     'identity.oauth_request',
     'identity.oauth_approve',
     'identity.temporary',
