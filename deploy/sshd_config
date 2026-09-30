@@ -12,7 +12,7 @@ PubkeyAuthentication yes
 AuthenticationMethods publickey
 UsePAM yes
 AuthorizedKeysFile none
-AuthorizedKeysCommand /opt/msgd/venv/bin/msgd ssh-authorized-key %t %k
+AuthorizedKeysCommand /usr/bin/msgd ssh-authorized-key %t %k
 AuthorizedKeysCommandUser msgd
 PermitTTY no
 DisableForwarding yes

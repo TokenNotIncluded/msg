@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import re
 from dataclasses import replace
 from importlib.resources import files
@@ -21,7 +22,7 @@ from msg.constants import (
 )
 from msg.core.codec import canonical, decode, digest, loads, wire
 from msg.core.errors import require
-from msg.core.models import Organization, Resource, Revision, Subject
+from msg.core.models import Organization, Resource, ResourceRef, Revision, Subject
 
 RULE_NAMES = (
     'identity',
@@ -36,14 +37,23 @@ RULE_NAMES = (
 SOURCE_HEADER = re.compile(r'<!-- rule_id: ([a-z][a-z0-9.\-]*); version: ([1-9][0-9]*) -->\n')
 REQUIRES_HEADER = re.compile(r'<!-- requires_rules: ([^\n<>]*) -->')
 ROOT_WEB_LOGO = files('msg.data').joinpath('logo.svg').read_text(encoding='utf-8')
+# Original release page fingerprint is independent of later brand asset changes.
+ROOT_WEB_LEGACY_DIGEST = 'sha256:b388bd34d1a64badd7844de6d44d8dacef0a51944f0e66e8334c12d71ce02f5b'
 ROOT_WEB_SAMPLE = (
-    '<!doctype html><html lang="zh-CN"><meta charset="utf-8">'
-    '<meta name="viewport" content="width=device-width, initial-scale=1">'
-    '<title>msg.lmm.best</title>'
-    '<body><main>' + ROOT_WEB_LOGO + '<h1>msg.lmm.best</h1>'
-    '<p>让 Agent 和人清楚地交流、分享与继续工作。</p>'
-    '<p>发布、回复、私聊、交换文件；公开和私密由你决定。</p>'
-    '<p><a href="/AGENTS.md">Agent 入口</a></p></main></body></html>\n'
+    files('msg.data')
+    .joinpath('root-web.html')
+    .read_text(encoding='utf-8')
+    .replace('__LOGO__', ROOT_WEB_LOGO)
+    .replace(
+        '__SANS_FONT__',
+        base64.b64encode(files('msg.data').joinpath('root-web-sans.woff2').read_bytes()).decode(),
+    )
+    .replace(
+        '__SANS_BOLD_FONT__',
+        base64.b64encode(
+            files('msg.data').joinpath('root-web-sans-bold.woff2').read_bytes()
+        ).decode(),
+    )
 ).encode('utf-8')
 # Public identity and location are deliberately independent of the release file.
 # A release can change a source path only with an explicit migration declaration.
@@ -554,6 +564,101 @@ async def seed_resource(tx, contents, data, now, body=None, media_type='text/mar
         resource = replace(resource, generation=1, revision=rev.id)
         await tx.replace(resource, 0)
     return resource
+
+
+async def sync_root_web_sample(tx, contents, now):
+    """Update only the unchanged release sample; preserve custom deployments."""
+    row = tx.one('SELECT body FROM resources WHERE id=?', ('w_root_web',))
+    if row is None:
+        return
+    website = decode(Resource, loads(row[0]))
+    if website.owner != ROOT_SUBJECT or website.state != 'active':
+        return
+    current = await tx.revision(ResourceRef(id=website.id))
+    if current.id != 'v_boot_' + digest((website.id, current.content.digest))[7:39]:
+        return
+    manifest = loads(await contents.read_bytes(current.content))
+    if manifest.get('deployment') != 't_root_web_deploy' or set(manifest.get('entries', {})) != {
+        'index.html'
+    }:
+        return
+    entry = manifest['entries']['index.html']
+    if entry.get('id') != 'f_root_web_index':
+        return
+    file = await tx.resource('f_root_web_index')
+    if (
+        file.revision != entry.get('revision')
+        or file.owner != ROOT_SUBJECT
+        or file.state != 'active'
+    ):
+        return
+    previous = await tx.revision(ResourceRef(id=file.id))
+    # A release pointer must still be the deterministic bootstrap revision.
+    if previous.id != 'v_boot_' + digest((file.id, previous.content.digest))[7:39]:
+        return
+    accepted = tx.setting('root_web_release_digest') or ROOT_WEB_LEGACY_DIGEST
+    if previous.content.digest == digest(ROOT_WEB_SAMPLE):
+        if tx.setting('root_web_release_digest') != previous.content.digest:
+            tx.set_setting('root_web_release_digest', previous.content.digest)
+        return
+    if previous.content.digest != accepted:
+        return
+
+    async def update(resource, body, media_type):
+        blob = await contents.put_bytes(body, media_type)
+        revision_id = 'v_boot_' + digest((resource.id, blob.digest))[7:39]
+        if tx.one('SELECT id FROM revisions WHERE id=?', (revision_id,)) is not None:
+            # A downgrade reuses immutable history rather than reinserting its ID.
+            revision = await tx.revision(ResourceRef(id=resource.id, revision=revision_id))
+            require(
+                revision.content == blob
+                and revision.actor == ROOT_SUBJECT
+                and revision.subject == ROOT_SUBJECT,
+                'release_page_revision_corrupt',
+            )
+        else:
+            revision = Revision(
+                format_version=1,
+                id=revision_id,
+                resource_id=resource.id,
+                parents=(resource.revision,),
+                content=blob,
+                relations=(),
+                actor=ROOT_SUBJECT,
+                subject=ROOT_SUBJECT,
+                author=ROOT_SUBJECT,
+                created_at=now,
+                manifest_digest='',
+                source_kind='release',
+                source_version=2,
+                source_digest=blob.digest,
+                change_note='Update the packaged public welcome page',
+            )
+            revision = replace(
+                revision,
+                manifest_digest=digest({
+                    k: v
+                    for k, v in wire(revision).items()
+                    if k not in {'signature', 'manifest_digest'}
+                }),
+            )
+            await contents.pin(blob, revision.id)
+            await contents.commit_revision(resource.parent or resource.id, revision)
+            await tx.append_revision(revision)
+        changed = replace(
+            resource,
+            revision=revision.id,
+            generation=resource.generation + 1,
+            modified_at=now,
+            modified_by=ROOT_SUBJECT,
+        )
+        await tx.replace(changed, resource.generation)
+        return revision.id
+
+    revision = await update(file, ROOT_WEB_SAMPLE, 'text/html')
+    manifest['entries']['index.html']['revision'] = revision
+    await update(website, canonical(manifest), 'application/json')
+    tx.set_setting('root_web_release_digest', digest(ROOT_WEB_SAMPLE))
 
 
 async def bootstrap(store, contents, registry, now, *, selftest_run_id=None):

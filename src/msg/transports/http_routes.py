@@ -1748,15 +1748,16 @@ def create_app(service):
                     headers=headers,
                 )
             if path == '/':
-                html = 'text/html' in request.headers.get('accept', '')
-                payload = HOME_HTML if html else HOME_MARKDOWN
+                payload = HOME_MARKDOWN
                 headers = {
-                    **(HOME_HEADERS if html else BASE_HEADERS),
+                    **BASE_HEADERS,
                     'Content-Length': str(len(payload)),
                 }
                 return Response(
                     b'' if request.method == 'HEAD' else payload,
-                    media_type='text/html' if html else 'text/markdown',
+                    media_type='text/plain'
+                    if 'text/html' in request.headers.get('accept', '')
+                    else 'text/markdown',
                     headers=headers,
                 )
             money_public = {
@@ -2473,6 +2474,8 @@ def create_app(service):
                 b'' if request.method == 'HEAD' else body,
                 media_type='application/json'
                 if view in {'json', 'meta', 'history'}
+                else 'text/plain'
+                if 'text/html' in request.headers.get('accept', '').casefold()
                 else 'text/markdown',
                 headers=headers,
             )

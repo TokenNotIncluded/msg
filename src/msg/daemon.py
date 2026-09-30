@@ -106,6 +106,11 @@ def parser():
     )
     init.add_argument('--data-dir', type=Path, default=Path('/var/lib/msgd'))
     init.add_argument('--service-url', default='https://msg.lmm.best')
+    init.add_argument(
+        '--allow-ssh',
+        action='store_true',
+        help='Allow an OS root SSH terminal; still requires interactive PIN input',
+    )
     sub.add_parser('serve', help='Serve JSON/Markdown, operations, GraphQL and MCP')
     hosted = sub.add_parser(
         'hosting', help='Serve user-published files with the read-only hosting runtime'
@@ -120,6 +125,11 @@ def parser():
     cs = cert.add_subparsers(dest='cert_command', required=True)
     issue = cs.add_parser('issue')
     issue.add_argument('csr_id')
+    issue.add_argument(
+        '--allow-ssh',
+        action='store_true',
+        help='Allow an OS root SSH terminal for this issuance only',
+    )
     revoke = cs.add_parser('revoke')
     revoke.add_argument('certificate_id')
     revoke.add_argument('--reason', required=True)
@@ -243,17 +253,18 @@ def main(argv=None):
                 return 78
             require(hasattr(os, 'geteuid') and os.geteuid() == 0, 'local_os_administrator_required')
             args.config_dir.mkdir(parents=True, exist_ok=True)
-            from msg.admin.root import RootAdmin, require_local_console
+            from msg.admin.root import RootAdmin, require_local_console, require_ssh_administrator
 
-            require_local_console(args.config_dir)
+            check = require_ssh_administrator if args.allow_ssh else require_local_console
+            check(args.config_dir)
             write_example(args.config_dir, args.data_dir, args.service_url)
-            result = RootAdmin(args.config_dir).initialize()
+            result = RootAdmin(args.config_dir, allow_ssh=args.allow_ssh).initialize()
             emit({'root_id': result})
             return 0
         if args.command in {'cert', 'root'}:
             from msg.admin.root import RootAdmin
 
-            admin = RootAdmin(args.config_dir)
+            admin = RootAdmin(args.config_dir, allow_ssh=getattr(args, 'allow_ssh', False))
             if args.command == 'cert':
                 result = (
                     admin.issue(args.csr_id)

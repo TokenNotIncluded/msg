@@ -7,7 +7,7 @@ Type=simple
 User=msgd
 Group=msgd
 WorkingDirectory=/var/lib/msgd
-ExecStart=/opt/msgd/venv/bin/msgd serve
+ExecStart=/usr/bin/msgd serve
 Restart=on-failure
 RestartSec=3
 UMask=0077
@@ -16,7 +16,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/msgd
-InaccessiblePaths=/var/lib/msgd-root /etc/msgd/root
+InaccessiblePaths=/var/lib/msgd-root -/etc/msgd/root
 RestrictSUIDSGID=true
 LimitCORE=0
 

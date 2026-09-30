@@ -39,31 +39,18 @@ service_keys = "/var/lib/msgd/service"
 触发未测依赖重新解析，也不要把 client-only venv 用于服务器。产物范围及现场闸门见
 [发布验收入口](RELEASE_ACCEPTANCE.md)。
 
-例如，先在与目标平台和解释器一致的构建/验收环境中，用实际 wheel 路径生成并测试锁文件（示例文件名须替换）：
-
-```bash
-# 将此占位路径换成已验证的独立 Python 解释器；此步骤分别在验收和部署环境执行。
-sudo install -d -m 0755 /opt/msgd
-sudo /absolute/path/to/verified/python3.15 -m venv /opt/msgd/venv
-# 下面的锁生成只在验收环境运行；目录需由构建操作者可写。
-printf '%s\n' 'msgctl[server] @ file:///protected/staged/msgctl-0.1.0a1-py3-none-any.whl' > /protected/staged/server.in
-uv pip compile --python /opt/msgd/venv/bin/python --generate-hashes \
-  /protected/staged/server.in --output-file /protected/staged/server.lock
-sudo uv pip sync --python /opt/msgd/venv/bin/python --require-hashes /protected/staged/server.lock
-uv pip check --python /opt/msgd/venv/bin/python
-sha256sum /protected/staged/*.whl /protected/staged/server.lock
-```
-
-上述 venv 必须预先用固定的独立解释器创建；验收环境与部署目标使用相同的 wheel 绝对路径，或在锁生成前确定部署路径。将已测试 wheel、锁文件及摘要一起送到目标机，只执行同一 `uv pip sync --require-hashes` 和 `uv pip check`，不重新编译锁。锁中的本地 wheel 路径必须存在；锁含完整 `server` 依赖（包括 Starlette、Uvicorn、psycopg）。需要离线安装时，预先准备锁中所有匹配平台的依赖产物并验证摘要。依赖锁是此次发布产物，不覆盖工作区已有的 `uv.lock`。
+正式部署使用[原生软件包](NATIVE_PACKAGES.md)。Arch 用 `pacman -U`，Debian/Ubuntu 用 `apt install ./...deb`，RPM 系用 `dnf install ./...rpm`。运行时安装在 `/usr/lib/msgd`，命令位于 `/usr/bin`；固定 Python 和依赖由系统包一并管理，生产服务器不运行 pip、uv sync 或创建 venv。软件包应来自匹配平台的构建/验收环境，先验证软件包及 wheel/依赖锁摘要。系统 Python 版本满足要求时可另行维护系统依赖型原生包；当前独立运行时避免替换系统解释器。
 
 在真实本机 VT 或串行控制台运行：
 
 ```bash
-sudo /opt/msgd/venv/bin/msgd --config-dir /etc/msgd init --service-url https://msg.example.org
-sudo /opt/msgd/venv/bin/msgd --config-dir /etc/msgd cert issue ONLINE_CA_REQUEST_ID
+sudo /usr/bin/msgd --config-dir /etc/msgd init --service-url https://msg.example.org
+sudo /usr/bin/msgd --config-dir /etc/msgd cert issue ONLINE_CA_REQUEST_ID
 ```
 
-ONLINE_CA_REQUEST_ID 取自 init 输出。签发时检查显示的权限范围和申请摘要，输入准确摘要确认，再输入 PIN。没有默认 PIN、环境变量 PIN 或 --yes。不能通过 SSH / 远程命令转发完成 root 管理；不能把退出码 78 当成初始化成功。
+ONLINE_CA_REQUEST_ID 取自 init 输出。签发时检查显示的权限范围和申请摘要，输入准确摘要确认，再输入 PIN。没有默认 PIN、环境变量 PIN 或 --yes。默认不能通过 SSH / 远程命令转发完成 root 管理；不能把退出码 78 当成初始化成功。
+
+经部署操作者明确授权，可使用 `msgd init --allow-ssh` 和 `msgd cert issue CSR_ID --allow-ssh` 从 SSH 终端执行这两项操作。此选项仅对当前命令生效，仍要求 OS root、SSH 伪终端、安全配置目录及交互 PIN/申请摘要确认；不开放 HTTP 根管理，也不放宽其他根命令的物理控制台限制。默认不带选项时仍拒绝 SSH。
 
 根初始化会保留 @root、公钥、根证书，以及待授权基础在线 CA。普通注册在 CA 尚未授权时返回 issuer_not_ready，不借用根私钥。
 
@@ -77,7 +64,7 @@ sudo install -m 0644 deploy/msgd.service deploy/msgd-worker.service /etc/systemd
 sudo systemctl daemon-reload
 sudo systemctl start msgd.service
 # worker 在真实隔离与禁外发检查完成后单独启动，不在此自动 enable。
-sudo /opt/msgd/venv/bin/msgd doctor
+sudo /usr/bin/msgd doctor
 ```
 
 持久数据位于 `/var/lib/msgd/`，可重建缓存位于 `/var/cache/msgd/`，运行时文件位于 `/run/msgd/`；这些目录不能互换，未 seal 的分片必须保留在持久暂存中。配置目录 `/etc/msgd/` 只放服务配置与公开信任材料。根 CA 私有状态位于 `/var/lib/msgd-root/`，root:root 0700，根加密私钥 0600；`/var/lib/msgd/service/` 为 root:msgd 0750，在线与回执私钥 root:msgd 0640。trust 公共材料只允许管理员修改。**不要递归 chown `/etc/msgd/` 或 `/var/lib/msgd-root/` 给服务账号。** 旧安装的根材料若仍在 `/etc/msgd/root/`，需明确迁移与复核，不能靠目录名推断已经完成。

@@ -16,3 +16,6 @@ dist/
 htmlcov/
 .legacy-ledger/
 /artifacts/
+
+# Local visual review evidence
+.impeccable/review/

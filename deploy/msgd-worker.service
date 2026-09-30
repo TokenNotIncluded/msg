@@ -7,7 +7,7 @@ Type=simple
 User=msgd
 Group=msgd
 WorkingDirectory=/var/lib/msgd
-ExecStart=/opt/msgd/venv/bin/msgd worker
+ExecStart=/usr/bin/msgd worker
 Restart=on-failure
 RestartSec=3
 UMask=0077
@@ -15,7 +15,7 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/msgd
-InaccessiblePaths=/var/lib/msgd-root /etc/msgd/root
+InaccessiblePaths=/var/lib/msgd-root -/etc/msgd/root
 LimitCORE=0
 # Do not block user namespaces needed by bubblewrap. Isolation remains mandatory
 # inside the runner; an unavailable sandbox fails closed rather than falling back.

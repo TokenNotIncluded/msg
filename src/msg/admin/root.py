@@ -306,9 +306,29 @@ def require_local_console(config_dir):
     return f'uid:{os.geteuid()}:{tty}'
 
 
+def require_ssh_administrator(config_dir):
+    """Explicit SSH opt-in for initialization and issuance, never HTTP administration."""
+    require(hasattr(os, 'geteuid') and os.geteuid() == 0, 'local_os_administrator_required')
+    require(bool(os.environ.get('SSH_CONNECTION')), 'ssh_administrator_required')
+    require(sys.stdin.isatty() and sys.stdout.isatty(), 'interactive_pin_required')
+    tty = os.path.realpath(os.ttyname(sys.stdin.fileno()))
+    require(re.fullmatch(r'/dev/pts/[0-9]+', tty) is not None, 'ssh_terminal_required')
+    path = Path(config_dir).resolve()
+    require(
+        path.exists() and path.stat().st_uid == 0 and not path.stat().st_mode & 0o022,
+        'unsafe_config_owner',
+    )
+    return f'uid:{os.geteuid()}:ssh:{tty}:{os.environ["SSH_CONNECTION"]}'
+
+
 class RootAdmin:
-    def __init__(self, config_dir=Path('/etc/msgd')):
+    def __init__(self, config_dir=Path('/etc/msgd'), *, allow_ssh=False):
         self.config_dir = Path(config_dir)
+        self.allow_ssh = allow_ssh
+
+    def _provisioning_operator(self):
+        check = require_ssh_administrator if self.allow_ssh else require_local_console
+        return check(self.config_dir)
 
     def _app(self):
         from msg.application import Application
@@ -317,7 +337,7 @@ class RootAdmin:
         return Application(load_settings(self.config_dir))
 
     def initialize(self):
-        require_local_console(self.config_dir)
+        self._provisioning_operator()
         app = self._app()
         if root_envelope(self.config_dir).exists() and app.settings.trust_file.exists():
             status = self.doctor()
@@ -352,7 +372,7 @@ class RootAdmin:
         return ROOT_SUBJECT
 
     def issue(self, csr_id):
-        operator = require_local_console(self.config_dir)
+        operator = self._provisioning_operator()
         app = self._app()
 
         async def read():

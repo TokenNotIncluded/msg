@@ -8,8 +8,10 @@ done
 config_file=/etc/msgd/msgd.toml
 if [ ! -f "$config_file" ]; then config_file=/etc/msgd/server.toml; fi
 [ -f "$config_file" ] || exit 1
-/opt/msgd/venv/bin/python - <<'PY'
+/usr/lib/msgd/python3.15/bin/python3.15 -I - <<'PY'
+import sys
 from pathlib import Path
+sys.path.insert(0, '/usr/lib/msgd/site-packages')
 from msg.config import load_settings
 s=load_settings()
 assert s.server.postgres_dsn, 'PostgreSQL DSN must be configured'
@@ -21,7 +23,7 @@ assert s.server.service_keys_dir==Path('/var/lib/msgd/service')
 assert s.root_private_dir==Path('/var/lib/msgd-root')
 PY
 if ! getent passwd msgd >/dev/null; then
-    useradd --system --user-group --home-dir /var/lib/msgd --no-create-home --shell /bin/sh msgd
+    useradd --system --user-group --home-dir /var/lib/msgd --no-create-home --shell /usr/bin/nologin msgd
 fi
 chown root:root /etc/msgd
 chmod 0755 /etc/msgd

@@ -128,7 +128,7 @@ class Application:
             require(root.local_only, 'root_policy_corrupt')
         # Only a verified installation may import immutable release-owned rules.
         # This is idempotent per source digest/version and rejects source deletion.
-        from msg.bootstrap import sync_system_sources
+        from msg.bootstrap import sync_root_web_sample, sync_system_sources
 
         marker = self.settings.config_dir / 'recovery-drill.json'
         quarantined = quarantined or marker.exists() or marker.is_symlink()
@@ -145,6 +145,8 @@ class Application:
                         namespace_root=self.namespace_root,
                         registry=self.registry,
                     )
+                    if self.selftest_run_id is None:
+                        await sync_root_web_sample(tx, self.contents, self.clock())
                 else:
                     quarantined = True
         self.authenticator = AuthenticationService(

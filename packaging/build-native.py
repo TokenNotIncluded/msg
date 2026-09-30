@@ -1,0 +1,274 @@
+#!/usr/bin/env python3
+"""Build FHS system packages from a verified wheel, lock and Python runtime.
+
+Install into a disposable staging root, never into the running host.
+No configuration, database, identity, or CA private state belongs in this input.
+"""
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+
+def run(*args, **kwargs):
+    subprocess.run(args, check=True, **kwargs)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        '--runtime', type=Path, required=True, help='Verified standalone Python 3.15 prefix'
+    )
+    parser.add_argument('--wheel', type=Path, required=True)
+    parser.add_argument('--lock', type=Path, required=True)
+    parser.add_argument('--wheel-sha256', required=True)
+    parser.add_argument('--lock-sha256', required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--version', default='0.1.0a1')
+    parser.add_argument('--release', default='1')
+    parser.add_argument('--format', choices=('arch', 'deb', 'rpm', 'all'), default='all')
+    parser.add_argument('--source-revision', required=True)
+    args = parser.parse_args()
+    if not all(c.isalnum() or c in '.+' for c in args.version) or not all(
+        part.isdecimal() for part in args.release.split('.')
+    ):
+        parser.error('Invalid package version or release')
+    runtime = args.runtime.resolve()
+    wheel = args.wheel.resolve()
+    lock = args.lock.resolve()
+    for path, expected in ((wheel, args.wheel_sha256), (lock, args.lock_sha256)):
+        if hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+            parser.error(f'Checksum mismatch: {path.name}')
+    if not (runtime / 'bin/python3.15').is_file():
+        parser.error('Runtime must contain bin/python3.15')
+    output = args.output.resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    repo = Path(__file__).resolve().parents[1]
+    with tempfile.TemporaryDirectory(prefix='msg-native-') as directory:
+        work = Path(directory)
+        root = work / 'root'
+        private = root / 'usr/lib/msgd'
+        interpreter = private / 'python3.15'
+        shutil.copytree(
+            runtime,
+            interpreter,
+            symlinks=True,
+            ignore=shutil.ignore_patterns('__pycache__', '*.pyc'),
+        )
+        # Install only the interpreter entrypoint; no pip/build tools or stale shebangs.
+        for path in (interpreter / 'bin').iterdir():
+            if path.name != 'python3.15':
+                path.unlink()
+        for name in ('include', 'share'):
+            shutil.rmtree(interpreter / name, ignore_errors=True)
+        shutil.rmtree(interpreter / 'lib/python3.15/site-packages', ignore_errors=True)
+        python = interpreter / 'bin/python3.15'
+        actual = subprocess.check_output(
+            [str(python), '-I', '-c', 'import platform; print(platform.python_version())'],
+            text=True,
+        ).strip()
+        if not actual.startswith('3.15.'):
+            parser.error('Python 3.15 is required')
+        site = private / 'site-packages'
+        build_env = work / 'build-env'
+        run('uv', 'venv', '--python', str(python), str(build_env))
+        build_python = build_env / 'bin/python'
+        run('uv', 'pip', 'sync', '--python', str(build_python), '--require-hashes', str(lock))
+        run('uv', 'pip', 'install', '--python', str(build_python), '--no-deps', str(wheel))
+        run('uv', 'pip', 'check', '--python', str(build_python))
+        shutil.copytree(
+            build_env / 'lib/python3.15/site-packages',
+            site,
+            symlinks=True,
+            ignore=shutil.ignore_patterns(
+                '__pycache__', '*.pyc', '_virtualenv.py', '_virtualenv.pth'
+            ),
+        )
+        # Relative package-managed path also works for sandbox/SSH subprocesses.
+        runtime_site = interpreter / 'lib/python3.15/site-packages'
+        runtime_site.mkdir(parents=True)
+        (runtime_site / 'msgd.pth').write_text('../../../../site-packages\n')
+        run(str(python), '-I', '-m', 'msg.cli', '--help')
+        run(str(python), '-I', '-m', 'msg.daemon', '--help')
+        for name in ('msgd.service', 'msgd-worker.service'):
+            target = root / 'usr/lib/systemd/system' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(repo / 'deploy' / name, target)
+        for name in ('msg', 'msgd'):
+            target = root / 'usr/bin' / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            module = 'msg.daemon' if name == 'msgd' else 'msg.cli'
+            target.write_text(
+                '#!/bin/sh\nexec /usr/lib/msgd/python3.15/bin/python3.15 -I -m '
+                + module
+                + ' "$@"\n'
+            )
+            target.chmod(0o755)
+        target = root / 'usr/lib/sysusers.d/msgd.conf'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('u msgd - "msg service" /var/lib/msgd /usr/bin/nologin\n')
+        target = root / 'usr/lib/tmpfiles.d/msgd.conf'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            'd /etc/msgd 0755 root root -\nd /var/lib/msgd 0750 msgd msgd -\nd /var/cache/msgd 0750 msgd msgd -\nd /run/msgd 0750 msgd msgd -\nd /var/lib/msgd-root 0700 root root -\n'
+        )
+        docs = root / 'usr/share/doc/msgctl-server'
+        docs.mkdir(parents=True)
+        for name in ('DEPLOYMENT.md', 'NATIVE_PACKAGES.md'):
+            shutil.copyfile(repo / 'docs' / name, docs / name)
+        shutil.copyfile(repo / 'LICENSE', docs / 'LICENSE')
+        manifest = {
+            'source_revision': args.source_revision,
+            'python': actual,
+            'wheel_sha256': args.wheel_sha256,
+            'server_lock_sha256': args.lock_sha256,
+            'layout': 'fhs',
+            'platform': 'linux-x86_64-glibc',
+            'automatic_initialization': False,
+        }
+        (docs / 'build.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        archive = work / 'payload.tar.gz'
+        run(
+            'tar',
+            '--sort=name',
+            '--owner=0',
+            '--group=0',
+            '-czf',
+            str(archive),
+            '-C',
+            str(root),
+            '.',
+        )
+        formats = ('arch', 'deb', 'rpm') if args.format == 'all' else (args.format,)
+        version = args.version
+        release = args.release
+        for fmt in formats:
+            if fmt == 'arch':
+                arch = work / 'arch'
+                arch.mkdir()
+                shutil.copyfile(archive, arch / 'payload.tar.gz')
+                checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
+                (arch / 'PKGBUILD').write_text(f"""pkgname=msgctl-server
+pkgver={version}
+pkgrel={release}
+pkgdesc='msg communication service with locked Python runtime'
+arch=('x86_64')
+url='https://github.com/TokenNotIncluded/msg.lmm.best'
+license=('MIT')
+depends=('glibc' 'gcc-libs' 'git' 'openssh' 'postgresql' 'bubblewrap' 'age' 'git-lfs')
+options=('!strip' '!debug')
+source=('payload.tar.gz')
+sha256sums=('{checksum}')
+package() {{
+  bsdtar -xf "$srcdir/payload.tar.gz" -C "$pkgdir"
+}}
+""")
+                if os.geteuid() == 0:
+                    parser.error('Run makepkg as an unprivileged builder')
+                run('makepkg', '--nodeps', '--noconfirm', cwd=arch)
+                for built in arch.glob('*.pkg.tar.*'):
+                    shutil.copyfile(built, output / built.name)
+            elif fmt == 'deb':
+                control = root / 'DEBIAN'
+                control.mkdir()
+                size = (
+                    sum(
+                        p.stat().st_size
+                        for p in root.rglob('*')
+                        if p.is_file() and not p.is_symlink()
+                    )
+                    // 1024
+                )
+                (control / 'control').write_text(f"""Package: msgctl-server
+Version: {version}-{release}
+Architecture: amd64
+Maintainer: TokenNotIncluded
+Installed-Size: {size}
+Depends: libc6 (>= 2.28), libgcc-s1, git, openssh-server, postgresql, bubblewrap, age, git-lfs, systemd
+Description: msg service with independent locked Python runtime
+ Configuration and CA initialization are explicit administrator operations.
+""")
+                (control / 'postinst').write_text(
+                    '#!/bin/sh\nset -e\nif [ "$1" = configure ]; then\n systemd-sysusers /usr/lib/sysusers.d/msgd.conf\n systemd-tmpfiles --create /usr/lib/tmpfiles.d/msgd.conf\n systemctl daemon-reload || true\nfi\n'
+                )
+                (control / 'postinst').chmod(0o755)
+                (control / 'postrm').write_text(
+                    '#!/bin/sh\nset -e\nif command -v systemctl >/dev/null; then systemctl daemon-reload || true; fi\n'
+                )
+                (control / 'postrm').chmod(0o755)
+                run(
+                    'dpkg-deb',
+                    '--root-owner-group',
+                    '--build',
+                    str(root),
+                    str(output / f'msgctl-server_{version}-{release}_amd64.deb'),
+                )
+                shutil.rmtree(control)
+            else:
+                rpm = work / 'rpm'
+                for name in ('SOURCES', 'SPECS', 'BUILD', 'BUILDROOT', 'RPMS', 'SRPMS'):
+                    (rpm / name).mkdir(parents=True)
+                shutil.copyfile(archive, rpm / 'SOURCES/payload.tar.gz')
+                spec = rpm / 'SPECS/msgctl-server.spec'
+                spec.write_text(f"""Name: msgctl-server
+Version: {version}
+Release: {release}
+Summary: msg service with independent locked Python runtime
+License: MIT
+URL: https://github.com/TokenNotIncluded/msg.lmm.best
+Source0: payload.tar.gz
+BuildArch: x86_64
+AutoReqProv: no
+Requires: glibc >= 2.28, libgcc, git, openssh-server, postgresql-server, bubblewrap, age, git-lfs, systemd
+%description
+Configuration and CA initialization are explicit administrator operations.
+%prep
+%build
+%install
+mkdir -p %{{buildroot}}
+tar -xzf %{{SOURCE0}} -C %{{buildroot}}
+%post
+systemd-sysusers /usr/lib/sysusers.d/msgd.conf
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/msgd.conf
+systemctl daemon-reload || :
+%postun
+systemctl daemon-reload || :
+%files
+/usr/lib/msgd
+/usr/bin/msg
+/usr/bin/msgd
+/usr/lib/systemd/system/msgd.service
+/usr/lib/systemd/system/msgd-worker.service
+/usr/lib/sysusers.d/msgd.conf
+/usr/lib/tmpfiles.d/msgd.conf
+/usr/share/doc/msgctl-server
+""")
+                run(
+                    'rpmbuild',
+                    '-bb',
+                    '--define',
+                    f'_topdir {rpm}',
+                    '--define',
+                    '__os_install_post %{nil}',
+                    '--define',
+                    '_build_id_links none',
+                    str(spec),
+                )
+                for built in (rpm / 'RPMS').rglob('*.rpm'):
+                    shutil.copyfile(built, output / built.name)
+        results = {
+            p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in output.iterdir()
+            if p.is_file() and p.suffix != '.json'
+        }
+        (output / 'sha256.json').write_text(json.dumps(results, indent=2) + '\n')
+        print(json.dumps(results, indent=2))
+
+
+if __name__ == '__main__':
+    main()

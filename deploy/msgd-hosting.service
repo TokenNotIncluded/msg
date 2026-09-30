@@ -8,7 +8,7 @@ User=msgd-hosting
 Group=msgd-hosting
 SupplementaryGroups=msgd-content-read
 WorkingDirectory=/
-ExecStart=/opt/msgd/venv/bin/msgd --config-dir /etc/msgd-hosting hosting --listen 127.0.0.1 --port 8043
+ExecStart=/usr/bin/msgd --config-dir /etc/msgd-hosting hosting --listen 127.0.0.1 --port 8043
 Environment=PGSERVICEFILE=/etc/msgd-hosting/pg_service.conf
 Environment=PGPASSFILE=/etc/msgd-hosting/pgpass
 Restart=on-failure
