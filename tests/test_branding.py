@@ -9,7 +9,9 @@ import httpx
 import pytest
 from test_service import NOW, call, register
 
-from msg.core.codec import canonical, wire
+from msg.core.codec import b64, canonical, wire
+from msg.core.requests import request_for
+from msg.transports.dictionary import build_dictionary
 from msg.transports.http import create_app
 
 
@@ -217,11 +219,43 @@ async def test_home_summary_uses_existing_read_authority_and_remains_public(inst
     app, _ = installed
     assert all(operation.name != 'discovery.home' for operation in app.registry.operations())
     key, uid, cert = await register(app, 'home-summary-reader')
-    anonymous = await call(app, 'discovery.read_query', {'home_summary': True})
+    anonymous = await call(app, 'discovery.read_query', {'home_summary': True}, contract_version=4)
     assert anonymous.status == 'ok' and 'posts' in anonymous.data
     authenticated = await call(
-        app, 'discovery.read_query', {'home_summary': True}, key=key, subject=uid, certs=(cert,)
+        app,
+        'discovery.read_query',
+        {'home_summary': True},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+        contract_version=4,
     )
     assert authenticated.error.code == 'public_home_summary_only'
-    mixed = await call(app, 'discovery.read_query', {'home_summary': True, 'parent': '/main'})
-    assert mixed.error.code == 'invalid_home_summary'
+    mixed = await call(
+        app, 'discovery.read_query', {'home_summary': True, 'parent': '/main'}, contract_version=4
+    )
+    assert mixed.error.code == 'schema_validation'
+    for args in ({}, {'home_summary': False}):
+        invalid = await call(app, 'discovery.read_query', args, contract_version=4)
+        assert invalid.error.code == 'schema_validation'
+    legacy = await call(app, 'discovery.read_query', {'home_summary': True})
+    assert legacy.error.code == 'schema_validation'
+    dictionary = build_dictionary(app.registry)
+    direct_path = next(
+        row['example']
+        for row in dictionary.document['operations']
+        if row['name'] == 'discovery.read_query' and row['version'] == 4
+    )
+    wrong_version = request_for(
+        'discovery.read_query', {'home_summary': True}, app.settings.service_url
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        direct = await http.get(direct_path)
+        assert direct.status_code == 200 and 'posts' in direct.json()['data']
+        mismatched = await http.get(
+            direct_path, headers={'X-Msg-Request': b64(canonical(wrong_version))}
+        )
+        assert mismatched.status_code == 400
+        assert mismatched.json()['error']['code'] == 'representation_mismatch'
