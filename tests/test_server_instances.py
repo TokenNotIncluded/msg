@@ -34,8 +34,10 @@ def test_instance_and_explicit_directory_are_exclusive():
 
 
 def test_new_instance_requires_explicit_origin_and_database_before_writing(capsys):
-    assert main(['--instance', 'main', 'init']) == 2
-    assert 'instance_service_url_required' in capsys.readouterr().out
+    with pytest.raises(SystemExit) as absent_origin:
+        main(['--instance', 'main', 'init'])
+    assert absent_origin.value.code == 2
+    assert '--service-url' in capsys.readouterr().err
     assert main(['--instance', 'main', 'init', '--service-url', 'https://example.org']) == 2
     assert 'instance_postgres_dsn_required' in capsys.readouterr().out
 
