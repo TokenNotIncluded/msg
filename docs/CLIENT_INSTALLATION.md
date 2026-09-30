@@ -53,8 +53,11 @@ CPython 3.15.0rc2. CPython is currently a release candidate because this project
 requires Python 3.15.
 
 The client source is the published GitHub commit
-`5554f93819478f4559aa226d1d94cfc6202a1cee`, verified against its embedded SHA-256;
-there is no dependency on an unpublished MSG release asset. Client dependencies
+`5a71e67094b5d48dac8e32c0074d3eab6f003833` (client 0.2.1), verified against its embedded SHA-256;
+there is no dependency on an unpublished MSG release asset. This pin is independent of
+the current PyPI release, msgctl 0.2.3. To use the latest PyPI client, run
+`uv tool install --python 3.15 --force msgctl==0.2.3`, or `uv tool upgrade msgctl` for an existing
+uv-managed installation. Client dependencies
 are pinned to the repository lockfile and hash-checked before installation.
 Only `msg` is exposed in `$HOME/.local/bin`; server dependencies and daemon
 services are not installed. Install data stays under
