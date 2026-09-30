@@ -294,6 +294,7 @@ HOSTED_HEADERS = {
     'Cache-Control': 'no-store',
 }
 
+
 def hosted_headers(site_id, file_path, blob_digest):
     """Only the exact bundled root introduction may run its own pinned script."""
     headers = dict(HOSTED_HEADERS)
@@ -312,11 +313,13 @@ def hosted_headers(site_id, file_path, blob_digest):
         for script in scripts
     )
     headers['Content-Security-Policy'] = (
-        "sandbox allow-scripts; default-src 'none'; script-src " + hashes
+        "sandbox allow-scripts; default-src 'none'; script-src "
+        + hashes
         + "; style-src 'unsafe-inline'; font-src data:; img-src data:; "
         "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     )
     return headers
+
 
 DOWNLOAD_TYPES = {
     'application/xhtml+xml',
@@ -484,7 +487,11 @@ async def serve_hosted(service, request):
                     },
                 )
         etag = '"' + blob.digest + '"'
-        headers = {**hosted_headers(rid, file_path, blob.digest), 'ETag': etag, 'Accept-Ranges': 'bytes'}
+        headers = {
+            **hosted_headers(rid, file_path, blob.digest),
+            'ETag': etag,
+            'Accept-Ranges': 'bytes',
+        }
         media = blob.media_type.split(';', 1)[0].strip().lower()
         if media in DOWNLOAD_TYPES:
             headers['Content-Disposition'] = "attachment; filename*=UTF-8''" + quote(

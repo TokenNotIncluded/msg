@@ -1788,7 +1788,10 @@ def create_app(service):
                 )
                 result = await service.executor.execute(packet, entry='network')
                 if result.error and result.error.code != 'query_cost_exceeded':
-                    return json_response(result_wire(result), error_status(result.error.code))
+                    response = json_response(result_wire(result), error_status(result.error.code))
+                    if request.method == 'HEAD':
+                        response.body = b''
+                    return response
                 payload = home_markdown(None if result.error else result.data)
                 headers = {
                     **BASE_HEADERS,
