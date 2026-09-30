@@ -291,6 +291,7 @@ _JSON_IDENTITY_REFS = {
     'memberships': ('organization_id', 'subject_id', 'invited_by'),
     'emails': ('subject_id',),
     'credentials': ('subject_id', 'ceiling.*.scope.resource_id'),
+    'oauth_states': ('subject', 'ceiling.*.scope.resource_id'),
     'certificates': (
         'resource_id',
         'subject_id',
