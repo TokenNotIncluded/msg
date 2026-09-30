@@ -5,6 +5,7 @@ import pytest
 
 from msg.admin.preflight import inspect_database, preflight
 from msg.config import write_example
+from msg.core.codec import digest, wire
 from msg.core.errors import Failure
 from msg.storage.postgres import PostgresMetadataStore
 
@@ -60,3 +61,35 @@ def test_inspection_refuses_a_writable_transaction(pg_dsn):
         pytest.raises(Failure, match='^preflight_read_only_required$'),
     ):
         inspect_database(conn)
+
+
+@pytest.mark.asyncio
+async def test_ca_inventory_preserves_exact_signed_policy_without_changing_state(installed):
+    from test_route_effect_matrix import database_snapshot
+
+    app, _ = installed
+    files_before = tree(app.settings.config_dir.parent)
+    before = await database_snapshot(app)
+    async with app.metadata.transaction(write=False) as tx:
+        root = await tx.certificate(app.certificates.root_certificate.resource_id)
+        online = await tx.certificate(tx.setting('online_ca_certificate'))
+    report = preflight(app.settings.config_dir)
+    assert report['decision'] == 'blocked'
+    assert report['root_private_material'] == 'not_opened'
+    inventory = {item['id']: item for item in report['database']['ca_inventory']}
+    assert set(inventory) == {root.resource_id, online.resource_id}
+    for certificate in (root, online):
+        item = inventory[certificate.resource_id]
+        assert item['signed_grants'] == wire(certificate.grants)
+        assert item['signed_issuance_policy'] == wire(certificate.issuance)
+        assert item['authority_sources'] == wire(certificate.authority_sources)
+        assert item['certificate_digest'] == digest(certificate)
+        assert item['not_before'] == wire(certificate.not_before)
+        assert item['expires_at'] == wire(certificate.expires_at)
+        assert item['delegation_depth'] == certificate.delegation_depth
+        assert item['issuer'] == certificate.issuer_id
+        assert item['target_service'] == certificate.target_service
+        assert item['explicit_operations']
+        assert item['next_step'] == 'explicit_operator_review_only'
+    assert await database_snapshot(app) == before
+    assert tree(app.settings.config_dir.parent) == files_before

@@ -21,7 +21,7 @@ def pg_cluster():
     if configured:
         yield configured
         return
-    root = Path(tempfile.mkdtemp(prefix='msg-test-pg-', dir='/tmp'))
+    root = Path(tempfile.mkdtemp(prefix='msg-test-pg-'))
     data = root / 'data'
     socket = root / 'socket'
     socket.mkdir()

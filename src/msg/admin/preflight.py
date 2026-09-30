@@ -15,7 +15,7 @@ from pathlib import Path
 import psycopg
 
 from msg.config import load_settings
-from msg.core.codec import canonical, decode, digest, loads
+from msg.core.codec import canonical, decode, digest, loads, wire
 from msg.core.errors import Failure, require
 from msg.core.models import Certificate
 
@@ -138,6 +138,17 @@ def inspect_database(connection):
                 'parent': parent,
                 'revoked': bool(revoked),
                 'key_id': certificate.key_id,
+                'issuer': certificate.issuer_id,
+                'target_service': certificate.target_service,
+                'not_before': wire(certificate.not_before),
+                'expires_at': wire(certificate.expires_at),
+                'delegation_depth': certificate.delegation_depth,
+                'authority_sources': wire(certificate.authority_sources),
+                'certificate_digest': digest(certificate),
+                # Preserve finite signed scopes and constraints for operator
+                # comparison; counts alone cannot support a CA transition.
+                'signed_grants': wire(certificate.grants),
+                'signed_issuance_policy': wire(policy),
                 'signed_grants_digest': digest(certificate.grants),
                 'issuance_digest': digest(policy),
                 'operation_count': len(operations),
