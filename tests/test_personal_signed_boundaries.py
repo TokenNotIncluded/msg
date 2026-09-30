@@ -99,7 +99,10 @@ async def test_statement_history_is_private_and_provable_after_signing_key_revoc
         app, key, owner, kind, 'third statement', ref=second.resources[0]
     )
     async with app.metadata.transaction(write=True) as tx:
-        await tx.put(replace(await tx.credential(key.key_id), revoked_at=NOW))
+        subject = await tx.subject(owner)
+        await tx.save_credential(
+            replace(await tx.credential(key.key_id), revoked_at=NOW), subject.auth_version
+        )
     before = await business_snapshot(app)
     denied = await call(
         app,
