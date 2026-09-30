@@ -185,6 +185,8 @@ async def test_oauth_security_uses_actual_endpoint_not_canonical_loopback(tmp_pa
     try:
         with pytest.raises(Failure, match='^secure_channel_required$'):
             secure_transport(client)
+        with pytest.raises(Failure, match='^secure_channel_required$'):
+            client._require_token_secret_transport()
     finally:
         await transport.close()
 
