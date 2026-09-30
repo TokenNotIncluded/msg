@@ -1787,7 +1787,10 @@ def create_app(service):
                 )
             if path == '/':
                 packet = request_for(
-                    'discovery.home', {}, service.settings.service_url, source='manual'
+                    'discovery.read_query',
+                    {'home_summary': True},
+                    service.settings.service_url,
+                    source='manual',
                 )
                 result = await service.executor.execute(packet, entry='network')
                 if result.error and result.error.code != 'query_cost_exceeded':

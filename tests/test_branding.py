@@ -210,3 +210,18 @@ def test_game_script_permission_is_pinned_to_exact_bundled_root_page():
         ('w_root_web', 'index.html', digest(ROOT_WEB_SAMPLE + b'<script>changed()</script>')),
     ):
         assert hosted_headers(site, path, content) == HOSTED_HEADERS
+
+
+@pytest.mark.asyncio
+async def test_home_summary_uses_existing_read_authority_and_remains_public(installed):
+    app, _ = installed
+    assert all(operation.name != 'discovery.home' for operation in app.registry.operations())
+    key, uid, cert = await register(app, 'home-summary-reader')
+    anonymous = await call(app, 'discovery.read_query', {'home_summary': True})
+    assert anonymous.status == 'ok' and 'posts' in anonymous.data
+    authenticated = await call(
+        app, 'discovery.read_query', {'home_summary': True}, key=key, subject=uid, certs=(cert,)
+    )
+    assert authenticated.error.code == 'public_home_summary_only'
+    mixed = await call(app, 'discovery.read_query', {'home_summary': True, 'parent': '/main'})
+    assert mixed.error.code == 'invalid_home_summary'

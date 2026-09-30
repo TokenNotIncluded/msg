@@ -570,7 +570,6 @@ def install(app):
     op, finish = registration(app, 'discovery', ('identity', 'content'))
     fields = {'type': 'array', 'items': STRING, 'maxItems': 30, 'uniqueItems': True}
 
-    @op('discovery.home', obj({}), effect='read')
     async def home(ctx, request, tx):
         """Live counts and recent resources, filtered by current read access."""
         timezone = ZoneInfo('Asia/Taipei')
@@ -806,6 +805,16 @@ def install(app):
 
     async def list_items(ctx, request, tx, *, arguments=None, budget=None):
         a = dict(request.arguments if arguments is None else arguments)
+        if 'home_summary' in a:
+            require(
+                request.operation == 'discovery.read_query'
+                and request.contract_version == 1
+                and a == {'home_summary': True},
+                'invalid_home_summary',
+            )
+            require(ctx.principal.subject is None, 'public_home_summary_only')
+            return await home(ctx, request, tx)
+
         stable = request.operation == 'discovery.read_query'
         internal_page = getattr(request, 'internal_page_state', None)
         if internal_page is not None:
@@ -948,7 +957,7 @@ def install(app):
 
     op('discovery.list', obj(listing), effect='read')(list_items)
     op('discovery.search', obj(listing, ('query',)), effect='read')(list_items)
-    op('discovery.read_query', obj(listing), effect='read')(list_items)
+    op('discovery.read_query', obj({**listing, 'home_summary': BOOLEAN}), effect='read')(list_items)
 
     nested_schema = obj(
         {
