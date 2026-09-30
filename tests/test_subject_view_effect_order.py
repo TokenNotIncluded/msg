@@ -23,6 +23,8 @@ VIEWS = (
     ('bal', 'money.balance'),
     ('balance/json', 'money.balance'),
     ('ledger', 'money.ledger'),
+    ('public-balance', 'money.public_balance'),
+    ('public-ledger/json', 'money.public_ledger'),
     ('handoffs', 'communication.handoff_list'),
     ('handoffs/item0/json', 'communication.handoff_get'),
     ('leases', 'communication.lease_list'),
