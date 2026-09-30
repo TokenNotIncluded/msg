@@ -1,7 +1,7 @@
 """Run the complete deployment config, including TLS/default/error contexts.
 
-The application fixture has no business executor: only actual HTTP boundary
-rejections and health/root reads are exercised here. PostgreSQL/authentication
+The application fixture only stubs read-only homepage discovery: actual HTTP
+boundary rejections and health/root reads are exercised here. PostgreSQL/authentication
 and zero-write assertions remain in test_url_secrets.py.
 """
 
@@ -147,14 +147,40 @@ def _proxy(tmp_path, backend_port, *, unsafe_control=False):
 
 @contextmanager
 def _application():
+    class HomepageExecutor:
+        async def require_current_runtime(self):
+            pass
+
+        def recovery_drill_active(self):
+            return False
+
+        async def execute(self, packet, *, entry):
+            # The homepage is the only read exercised by this boundary fixture.
+            # Any attempted business execution still fails immediately.
+            assert packet.operation == 'discovery.home'
+            assert entry == 'network'
+            assert not packet.arguments
+            return SimpleNamespace(
+                error=None,
+                data={
+                    'posts': 0,
+                    'posts_today': 0,
+                    'users': 0,
+                    'date': '2026-09-30',
+                    'timezone': 'Asia/Taipei',
+                    'latest': [],
+                },
+            )
+
     class BoundaryRegistry:
         def operation(self, name, *_args):
             # These specs only enable real packet parsing/rejection. Any request
-            # reaching business execution fails because there is no executor.
+            # reaching business execution fails in the homepage-only executor.
             return SimpleNamespace(name=name, entries=('network',), effect='transaction')
 
     service = SimpleNamespace(
         _loaded=True,
+        executor=HomepageExecutor(),
         registry=BoundaryRegistry(),
         settings=SimpleNamespace(
             service_url='https://msg.example.org',

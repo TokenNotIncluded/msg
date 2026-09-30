@@ -40,11 +40,17 @@ def path_name(value):
         and all(ord(c) >= 32 and ord(c) != 127 for c in value),
         'invalid_hosting_path',
     )
+    # Hosted reads deliberately reject percent-encoded and non-ASCII paths.
+    # Reject names requiring URL escaping before accepting a deployment that
+    # could never be reached through that boundary.
+    require(quote(value, safe="/:@!$&'()*+,;=") == value, 'invalid_hosting_path')
     parts = value.split('/')
     require(
         all(part not in {'', '.', '..'} and not part.startswith('.') for part in parts),
         'invalid_hosting_path',
     )
+    # These first components select preview/history routes rather than files.
+    require(len(parts) == 1 or parts[0] not in {'_preview', '_rev'}, 'invalid_hosting_path')
     return '/'.join(parts)
 
 
@@ -294,6 +300,7 @@ HOSTED_HEADERS = {
     'Cache-Control': 'no-store',
 }
 
+
 def hosted_headers(site_id, file_path, blob_digest):
     """Only the exact bundled root introduction may run its own pinned script."""
     headers = dict(HOSTED_HEADERS)
@@ -312,11 +319,13 @@ def hosted_headers(site_id, file_path, blob_digest):
         for script in scripts
     )
     headers['Content-Security-Policy'] = (
-        "sandbox allow-scripts; default-src 'none'; script-src " + hashes
+        "sandbox allow-scripts; default-src 'none'; script-src "
+        + hashes
         + "; style-src 'unsafe-inline'; font-src data:; img-src data:; "
         "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     )
     return headers
+
 
 DOWNLOAD_TYPES = {
     'application/xhtml+xml',
@@ -484,7 +493,11 @@ async def serve_hosted(service, request):
                     },
                 )
         etag = '"' + blob.digest + '"'
-        headers = {**hosted_headers(rid, file_path, blob.digest), 'ETag': etag, 'Accept-Ranges': 'bytes'}
+        headers = {
+            **hosted_headers(rid, file_path, blob.digest),
+            'ETag': etag,
+            'Accept-Ranges': 'bytes',
+        }
         media = blob.media_type.split(';', 1)[0].strip().lower()
         if media in DOWNLOAD_TYPES:
             headers['Content-Disposition'] = "attachment; filename*=UTF-8''" + quote(
