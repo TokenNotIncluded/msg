@@ -1,5 +1,5 @@
 [Unit]
-Description=msg.lmm.best durable effects and retention worker
+Description=MSG durable effects and retention worker
 After=network.target
 
 [Service]
