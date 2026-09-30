@@ -25,6 +25,7 @@ from msg.constants import (
 )
 from msg.core.codec import b64, canonical, decode, digest, loads, parse_time, unb64, wire
 from msg.core.errors import Failure, require
+from msg.core.handles import check_handle_change, claim_handle
 from msg.core.models import (
     AuditEvent,
     CapabilityGrant,
@@ -135,6 +136,7 @@ async def make_user(app, tx, ctx, id, handle, kind):
         and handle not in {'root', 'online-ca'},
         'invalid_handle',
     )
+    claim_handle(tx, app.namespace_root, handle, id)
     resource = Resource(
         id=id,
         type='user',
@@ -374,6 +376,33 @@ def install(app):
 
     install_oauth(app, op)
 
+    @op('identity.rename', obj({'handle': STRING}, ('handle',)))
+    async def rename(ctx, request, tx):
+        subject = await controlled_owner(app, ctx, request, tx)
+        require(subject.kind in {'registered', 'custodial'}, 'formal_identity_required')
+        user = await tx.resource(subject.resource_id)
+        require(user.type == 'user' and user.state == 'active', 'resource_inactive')
+        await assert_generation(request, user)
+        name, next_at = check_handle_change(
+            tx, user, request.arguments['handle'], ctx.now, record=True
+        )
+        if name != user.name:
+            user = replace(
+                user,
+                name=name,
+                generation=user.generation + 1,
+                modified_at=ctx.now,
+                modified_by=ctx.principal.actor,
+            )
+            await tx.replace(user, user.generation - 1)
+        return output_for(
+            user,
+            subject_id=user.id,
+            handle=user.name.removeprefix('@'),
+            path=await tx.path(user.id),
+            next_rename_at=wire(next_at),
+        )
+
     @op(
         'identity.register',
         obj({'handle': STRING, 'public_key': BYTES}, ('handle', 'public_key')),
@@ -494,6 +523,7 @@ def install(app):
             'custodial_token_required',
         )
         args = request.arguments
+        check_handle_change(tx, await tx.resource(subject.resource_id), args['handle'], ctx.now)
         require(
             not tx.one(
                 """SELECT id FROM custodial_upgrades WHERE subject=?
@@ -2127,6 +2157,7 @@ def install(app):
             'invalid_handle',
         )
         resource = await tx.resource(subject.resource_id)
+        claim_handle(tx, resource.parent, a['handle'], resource.id)
         updated = replace(
             resource,
             name='@' + a['handle'],

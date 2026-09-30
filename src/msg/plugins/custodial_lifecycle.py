@@ -333,10 +333,13 @@ async def switch_identity(
         )
         activate_encryption_target(tx, uid, challenge, details, ctx.now)
         resource = await tx.resource(uid)
+        from msg.core.handles import check_handle_change
+
+        name, _ = check_handle_change(tx, resource, challenge['handle'], ctx.now, record=True)
         await tx.replace(
             replace(
                 resource,
-                name='@' + challenge['handle'],
+                name=name,
                 generation=resource.generation + 1,
                 modified_at=ctx.now,
                 modified_by=ctx.principal.actor,
