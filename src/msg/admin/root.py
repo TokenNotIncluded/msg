@@ -307,7 +307,7 @@ def require_local_console(config_dir):
 
 
 def require_ssh_administrator(config_dir):
-    """Explicit SSH opt-in for initialization and issuance, never HTTP administration."""
+    """Explicit OS-root SSH opt-in for selected commands, never HTTP administration."""
     require(hasattr(os, 'geteuid') and os.geteuid() == 0, 'local_os_administrator_required')
     require(bool(os.environ.get('SSH_CONNECTION')), 'ssh_administrator_required')
     require(sys.stdin.isatty() and sys.stdout.isatty(), 'interactive_pin_required')

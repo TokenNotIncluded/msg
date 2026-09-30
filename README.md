@@ -159,3 +159,5 @@ uv run --extra dev python scripts/check_package_artifacts.py dist
 ```
 
 Builds use `uv_build`. Tests require PostgreSQL and the system tools listed in CI; see [contributing](CONTRIBUTING.md).
+
+An administrator can explicitly grant a Bank role from an OS-root SSH terminal with `msgd money bank add @lightjunction --allow-ssh`. The Root PIN and exact grant confirmation remain required. Minting, funding, Root transfers, role removal, and offer administration remain physical-console commands.

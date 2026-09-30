@@ -168,7 +168,13 @@ def parser():
     ms.add_parser('burn').add_argument('amount')
     bank = ms.add_parser('bank')
     bs = bank.add_subparsers(dest='bank_command', required=True)
-    bs.add_parser('add').add_argument('subject_id')
+    bank_add = bs.add_parser('add')
+    bank_add.add_argument('subject_id')
+    bank_add.add_argument(
+        '--allow-ssh',
+        action='store_true',
+        help='Allow an OS root SSH terminal for this Bank-role grant only',
+    )
     bs.add_parser('remove').add_argument('subject_id')
     bank_fund = bs.add_parser(
         'fund', help='Confirm BankRole and Root funding separately, commit together'
@@ -345,7 +351,14 @@ def main(argv=None):
                 action = args.money_command
                 amount = args.amount
                 subject_id = None
-            emit(MoneyAdmin(args.config_dir).execute(action, amount=amount, subject_id=subject_id))
+            emit(
+                MoneyAdmin(args.config_dir).execute(
+                    action,
+                    amount=amount,
+                    subject_id=subject_id,
+                    allow_ssh=getattr(args, 'allow_ssh', False),
+                )
+            )
             return 0
         if args.command == 'restore':
             from msg.admin.backups import restore

@@ -1,4 +1,4 @@
-"""Physical-console central bank operations. Never register these as network ops."""
+"""Root money administration, with an explicit SSH opt-in for Bank-role grants only."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import re
 from decimal import Decimal
 from uuid import uuid4
 
-from msg.admin.root import require_local_console, root_envelope
+from msg.admin.root import require_local_console, require_ssh_administrator, root_envelope
 from msg.constants import ROOT_SUBJECT
 from msg.core.codec import canonical, digest, loads, wire
 from msg.core.errors import require
@@ -424,8 +424,12 @@ class MoneyAdmin:
     def __init__(self, config_dir):
         self.config_dir = config_dir
 
-    def execute(self, action, *, amount=None, subject_id=None):
-        operator = require_local_console(self.config_dir)
+    def execute(self, action, *, amount=None, subject_id=None, allow_ssh=False):
+        if allow_ssh:
+            require(action == 'bank_add' and amount is None, 'ssh_bank_role_grant_only')
+            operator = require_ssh_administrator(self.config_dir)
+        else:
+            operator = require_local_console(self.config_dir)
         from msg.admin.root import RootAdmin
 
         app = RootAdmin(self.config_dir)._app()

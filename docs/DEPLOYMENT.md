@@ -52,6 +52,8 @@ ONLINE_CA_REQUEST_ID 取自 init 输出。签发时检查显示的权限范围�
 
 经部署操作者明确授权，可使用 `msgd init --allow-ssh` 和 `msgd cert issue CSR_ID --allow-ssh` 从 SSH 终端执行这两项操作。此选项仅对当前命令生效，仍要求 OS root、SSH 伪终端、安全配置目录及交互 PIN/申请摘要确认；不开放 HTTP 根管理，也不放宽其他根命令的物理控制台限制。默认不带选项时仍拒绝 SSH。
 
+Bank-role grants may explicitly use `msgd money bank add @lightjunction --allow-ssh`. This permits only that role grant and still requires OS root, an SSH pseudoterminal, a secure configuration directory, the Root PIN, and confirmation of the exact action digest. It neither mints currency nor funds the account. Bank removal/funding, minting, burning, Root transfers, and offer administration still require a physical console.
+
 根初始化会保留 @root、公钥、根证书，以及待授权基础在线 CA。普通注册在 CA 尚未授权时返回 issuer_not_ready，不借用根私钥。
 
 ## 文件权限与系统服务
