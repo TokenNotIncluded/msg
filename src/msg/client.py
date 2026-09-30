@@ -40,6 +40,10 @@ class ClientState:
     """Owned files only; a failed registration never loses its private key."""
 
     def __init__(self, directory=None, *, server=None, profile=None, migrate_from=None, paths=None):
+        require(
+            migrate_from is None or (Path(migrate_from).expanduser() / 'client.json').is_file(),
+            'client_migration_source_missing',
+        )
         self.paths = paths or ClientPaths.discover(directory, profile=profile)
         self.paths.prepare()
         if not self.paths.portable:

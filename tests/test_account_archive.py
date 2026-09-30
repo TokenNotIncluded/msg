@@ -10,7 +10,7 @@ from msg.security.crypto import Ed25519Signer
 
 
 @pytest.mark.asyncio
-async def test_archive_blocks_existing_and_recreated_credentials_and_preserves_history(installed):
+async def test_archive_blocks_existing_credentials_and_preserves_history(installed):
     app, root = installed
     key, uid, cert = await register(app, 'archive-me')
     async with app.metadata.transaction(write=False) as tx:

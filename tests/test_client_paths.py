@@ -87,3 +87,9 @@ def test_symlink_directory_is_rejected_without_chmod_target(xdg_home):
 def test_profile_name_cannot_escape(profile):
     with pytest.raises(Failure, match='invalid_profile_name'):
         ClientPaths.discover(profile=profile)
+
+
+def test_missing_explicit_migration_source_does_not_create_a_profile(xdg_home):
+    with pytest.raises(Failure, match='client_migration_source_missing'):
+        ClientState(profile='work', migrate_from=xdg_home / 'missing')
+    assert not (xdg_home / 'state/msg/profiles/work/client.json').exists()
