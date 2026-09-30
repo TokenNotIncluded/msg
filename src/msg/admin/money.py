@@ -1,4 +1,4 @@
-"""Root money administration, with an explicit SSH opt-in for Bank-role grants only."""
+"""Root money administration, with an explicit interactive SSH opt-in."""
 
 from __future__ import annotations
 
@@ -426,7 +426,14 @@ class MoneyAdmin:
 
     def execute(self, action, *, amount=None, subject_id=None, allow_ssh=False):
         if allow_ssh:
-            require(action == 'bank_add' and amount is None, 'ssh_bank_role_grant_only')
+            require(
+                action in {'mint', 'burn', 'transfer', 'bank_add', 'bank_remove', 'bank_fund'},
+                'invalid_money_action',
+            )
+            require(
+                action not in {'bank_add', 'bank_remove'} or amount is None,
+                'invalid_money_amount',
+            )
             operator = require_ssh_administrator(self.config_dir)
         else:
             operator = require_local_console(self.config_dir)

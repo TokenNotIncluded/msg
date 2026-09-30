@@ -174,20 +174,18 @@ def parser():
     retirement_sign.add_argument('source', type=Path)
     retirement_sign.add_argument('destination', type=Path)
     retirement_sub.add_parser('import').add_argument('source', type=Path)
-    money = sub.add_parser('money', help='Physical-console central bank administration')
+    money = sub.add_parser('money', help='Interactive Root central bank administration')
     ms = money.add_subparsers(dest='money_command', required=True)
-    ms.add_parser('mint').add_argument('amount')
-    ms.add_parser('burn').add_argument('amount')
+    mint = ms.add_parser('mint')
+    mint.add_argument('amount')
+    burn = ms.add_parser('burn')
+    burn.add_argument('amount')
     bank = ms.add_parser('bank')
     bs = bank.add_subparsers(dest='bank_command', required=True)
     bank_add = bs.add_parser('add')
     bank_add.add_argument('subject_id')
-    bank_add.add_argument(
-        '--allow-ssh',
-        action='store_true',
-        help='Allow an OS root SSH terminal for this Bank-role grant only',
-    )
-    bs.add_parser('remove').add_argument('subject_id')
+    bank_remove = bs.add_parser('remove')
+    bank_remove.add_argument('subject_id')
     bank_fund = bs.add_parser(
         'fund', help='Confirm BankRole and Root funding separately, commit together'
     )
@@ -197,6 +195,12 @@ def parser():
     transfer.add_argument('--from', dest='from_subject', required=True, choices=['@root'])
     transfer.add_argument('--to', dest='to_subject', required=True)
     transfer.add_argument('amount')
+    for command in (mint, burn, bank_add, bank_remove, bank_fund, transfer):
+        command.add_argument(
+            '--allow-ssh',
+            action='store_true',
+            help='Allow an OS root SSH terminal for this action only; requires PIN and exact confirmation',
+        )
     offer = ms.add_parser('offer')
     ops = offer.add_subparsers(dest='offer_command', required=True)
     offer_set = ops.add_parser('set')

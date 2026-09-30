@@ -52,7 +52,11 @@ ONLINE_CA_REQUEST_ID 取自 init 输出。签发时检查显示的权限范围�
 
 经部署操作者明确授权，可使用 `msgd init --allow-ssh` 和 `msgd cert issue CSR_ID --allow-ssh` 从 SSH 终端执行这两项操作。此选项仅对当前命令生效，仍要求 OS root、SSH 伪终端、安全配置目录及交互 PIN/申请摘要确认；不开放 HTTP 根管理，也不放宽其他根命令的物理控制台限制。默认不带选项时仍拒绝 SSH。
 
-Bank-role grants may explicitly use `msgd money bank add @lightjunction --allow-ssh`. This permits only that role grant and still requires OS root, an SSH pseudoterminal, a secure configuration directory, the Root PIN, and confirmation of the exact action digest. It neither mints currency nor funds the account. Bank removal/funding, minting, burning, Root transfers, and offer administration still require a physical console.
+Root money administration supports explicit SSH opt-in on `money mint`, `money burn`, `money transfer`, and `money bank add/remove/fund`. Each command must include `--allow-ssh`; the default still requires a physical console. SSH opt-in requires OS root, an interactive SSH pseudoterminal (`SSH_CONNECTION` must survive `sudo`), a root-owned configuration directory that is not group/world writable, the Root PIN/passphrase, and exact preview-digest confirmation. Bank funding still requires separate role and payment approvals. Root signatures, stale-preview checks, atomic ledger writes and append-only audits remain unchanged; audits record the SSH operator/channel. This does not expose HTTP Root administration or permit unattended `--yes`/PIN arguments. Offer administration remains physical-console only.
+
+For example, in an SSH session with a pseudoterminal, use `sudo --preserve-env=SSH_CONNECTION msgd money mint 10000 --allow-ssh`, then `sudo --preserve-env=SSH_CONNECTION msgd money transfer --from @root --to @lightjunction 10000 --allow-ssh`. If sudo policy does not permit preserving this variable, configure that policy locally rather than fabricating an SSH context. These commands still prompt for confirmation and the existing Root passphrase.
+
+There is no default Root PIN: initialization requests an operator-selected passphrase twice. `msgd root change-pin` needs the current passphrase, and `msgd root recover BACKUP` needs the backup passphrase and restores only missing private-key material. Forgotten passphrases cannot be recovered from the encrypted envelope. The separate physical-console `msgd root rotate --lost-key` recovery ceremony creates a new Root key and requires reissuing all existing certificate chains; it is not an ordinary PIN reset and must be planned explicitly.
 
 根初始化会保留 @root、公钥、根证书，以及待授权基础在线 CA。普通注册在 CA 尚未授权时返回 issuer_not_ready，不借用根私钥。
 
