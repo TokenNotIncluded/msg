@@ -1,6 +1,6 @@
 """A vault identity binding is not a request grant or an unlimited ceiling."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +8,7 @@ import pytest
 from msg.core.codec import canonical, wire
 from msg.core.errors import Failure
 from msg.core.models import CapabilityGrant, Scope
+from msg.oauth_config import OAuthConfig
 from msg.security.oauth import require_binding, require_source
 
 NOW = datetime(2026, 9, 27, tzinfo=UTC)
@@ -47,7 +48,7 @@ class SourceSession:
             'custodial': custodial,
             'ceiling': wire((grant('read'),)),
         }
-        self.api = False
+        self.api = self.oauth = False
 
     async def credential(self, _id):
         return self.parent
@@ -59,7 +60,18 @@ class SourceSession:
         if 'custodial_vault' in query:
             return self.vault
         if self.api and args[0] == 'api:t_api_test':
-            return (canonical(self.body).decode(),)
+            return (
+                canonical({
+                    name: self.body[name] for name in ('subject', 'parent', 'auth_version')
+                }).decode(),
+            )
+        if self.oauth and args[0] == 'access:t_oauth_test':
+            return (canonical({'family': 'family:test'}).decode(),)
+        if self.oauth and args[0] == 'family:test':
+            return (
+                wire(NOW + timedelta(hours=1)),
+                canonical({**self.body, 'client_id': 'msg-cli', 'scopes': ['msg.read']}).decode(),
+            )
         return None
 
 
@@ -109,18 +121,42 @@ async def test_registered_source_remains_independent_of_custodial_policy():
 @pytest.mark.parametrize('expanded', [False, True])
 async def test_derived_credential_cannot_exceed_captured_custodial_grants(expanded):
     tx = SourceSession()
-    tx.api = True
+    tx.oauth = True
     credential = SimpleNamespace(
-        id='t_api_test',
+        id='t_oauth_test',
         source_credential_id='key',
         ceiling=(grant('read', 'write') if expanded else grant('read'),),
     )
     if expanded:
         with pytest.raises(Failure, match='invalid_grant'):
             await require_binding(
-                tx, credential, NOW, None, custodial_ceiling=(grant('read', 'write'),)
+                tx,
+                credential,
+                NOW,
+                OAuthConfig(enabled=True),
+                custodial_ceiling=(grant('read', 'write'),),
             )
     else:
         await require_binding(
-            tx, credential, NOW, None, custodial_ceiling=(grant('read', 'write'),)
+            tx,
+            credential,
+            NOW,
+            OAuthConfig(enabled=True),
+            custodial_ceiling=(grant('read', 'write'),),
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('contracted', [False, True])
+async def test_api_binding_without_captured_ceiling_uses_current_signing_key(contracted):
+    tx = SourceSession(custodial=False)
+    tx.api = True
+    credential = SimpleNamespace(
+        id='t_api_test', source_credential_id='key', ceiling=(grant('read'),)
+    )
+    if contracted:
+        tx.parent.ceiling = ()
+        with pytest.raises(Failure, match='invalid_grant'):
+            await require_binding(tx, credential, NOW, None, custodial_ceiling=())
+    else:
+        await require_binding(tx, credential, NOW, None, custodial_ceiling=())

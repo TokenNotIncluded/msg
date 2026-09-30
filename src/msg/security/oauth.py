@@ -125,8 +125,10 @@ async def require_binding(tx, credential, now, config, *, custodial_ceiling):
         source = loads(api[0])
         require(credential.source_credential_id == source['parent'], 'invalid_grant')
         await require_source(tx, source, now, custodial_ceiling=custodial_ceiling)
+        # API bindings predate OAuth families and store no captured ceiling.
+        # Their credential grants remain bounded by the current signing source.
         await require_ceiling(
-            tx, credential.ceiling, tuple(decode(CapabilityGrant, raw) for raw in source['ceiling'])
+            tx, credential.ceiling, (await tx.credential(source['parent'])).ceiling
         )
     row = tx.one('SELECT body FROM oauth_states WHERE id=?', ('access:' + credential.id,))
     if row is None:
