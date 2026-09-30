@@ -51,7 +51,7 @@ def test_nginx_policy_covers_pre_host_parsing_and_both_default_listeners():
 
 
 @contextmanager
-def _proxy(tmp_path, backend_port, *, unsafe_control=False):
+def _proxy(tmp_path, backend_port, *, unsafe_control=False, shared_logging=False):
     # Dependencies are required, not skipped. CI installs them explicitly.
     assert shutil.which('nginx'), 'install nginx to run ingress security tests'
     assert shutil.which('openssl'), 'install openssl to run ingress TLS tests'
@@ -101,6 +101,16 @@ def _proxy(tmp_path, backend_port, *, unsafe_control=False):
     source = re.sub(r'(?m)^http \{', lambda _: 'http {\n' + '\n'.join(temp_directives), source)
     if unsafe_control:
         source = source.replace('access_log off;', f'access_log {tmp_path}/unsafe.log;')
+    shared_port = None
+    if shared_logging:
+        policy = (NGINX_CONFIG.parent / 'nginx-shared-http-logging.conf').read_text()
+        policy = policy.replace('/var/log/nginx/access.log', str(tmp_path / 'shared.log'))
+        source = source.replace('access_log off;', policy, 1)
+        shared_port = _free_port()
+        source = source.rsplit('}', 1)[0] + (
+            f'    server {{ listen 127.0.0.1:{shared_port}; '
+            'server_name monitor.example.org; return 204; }\n}\n'
+        )
     config = tmp_path / 'nginx.conf'
     config.write_text(source)
     check = subprocess.run(
@@ -135,7 +145,7 @@ def _proxy(tmp_path, backend_port, *, unsafe_control=False):
                     threading.Event().wait(0.02)
             else:
                 pytest.fail('nginx did not begin listening')
-            yield SimpleNamespace(http=http_port, tls=tls_port, process=process)
+            yield SimpleNamespace(http=http_port, tls=tls_port, shared=shared_port, process=process)
         finally:
             process.terminate()
             try:
@@ -256,6 +266,33 @@ def _assert_safe(response, status, markers):
 def _assert_logs_safe(tmp_path, caplog, markers):
     logs = caplog.text.encode() + b''.join(path.read_bytes() for path in tmp_path.rglob('*.log'))
     assert all(marker.encode() not in logs for marker in markers), 'a log leaked a sentinel'
+
+
+def test_shared_logging_keeps_metrics_without_request_input(tmp_path, caplog):
+    marker = 'nonlive_' + uuid4().hex
+    with _proxy(tmp_path, _free_port(), shared_logging=True) as proxy:
+        monitor = SimpleNamespace(http=proxy.shared)
+        response = _request(
+            monitor,
+            '/?token=' + marker,
+            plain=True,
+            host='monitor.example.org',
+            headers={
+                'Referer': 'https://example.org/' + marker,
+                'Authorization': 'Bearer ' + marker,
+                'User-Agent': marker,
+            },
+        )
+        assert response[0] == 204
+        assert _request(monitor, '/%GG' + marker, plain=True)[0] == 400
+        assert _request(monitor, '/' + marker + 'x' * 20000, plain=True)[0] == 414
+    # A nonempty metrics log proves this is redaction, not silently disabled
+    # monitoring. Malformed targets are rejected before the application runs.
+    rows = (tmp_path / 'shared.log').read_text().splitlines()
+    assert len(rows) == 3
+    assert all('server=monitor.example.org status=' in row for row in rows)
+    assert {re.search(r'status=(\d+)', row).group(1) for row in rows} == {'204', '400', '414'}
+    _assert_logs_safe(tmp_path, caplog, [marker])
 
 
 def test_actual_tls_proxy_application_and_early_error_matrix(tmp_path, caplog):

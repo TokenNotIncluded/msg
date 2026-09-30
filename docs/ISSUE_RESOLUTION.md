@@ -8,7 +8,7 @@ keeps the original scope rather than turning green tests into blanket acceptance
 
 | Issue | Current evidence | Work needed before closure |
 | --- | --- | --- |
-| [#64](https://github.com/TokenNotIncluded/msg.lmm.best/issues/64) ingress secrets | Actual nginx configuration/listeners read over authorized SSH; writer binds loopback; site logging off; isolated nginx/request-target regressions in full CI | Global/pre-Host shared nginx policy, all default vhosts and upstream/collector inventory, controlled whole-chain sentinel/error evidence. Site-only logging suppression is insufficient. |
+| [#64](https://github.com/TokenNotIncluded/msg.lmm.best/issues/64) ingress secrets | Actual nginx/listener inventory; loopback writer; site logs off; global main error suppression and safe inherited HTTP log format installed; actual configuration test/reload/site checks and isolated metrics/redaction regression passed | Complete all default-vhost and upstream/collector inventory and controlled whole-chain sentinel/error evidence. The installed shared policy does not certify an external collector. |
 | [#65](https://github.com/TokenNotIncluded/msg.lmm.best/issues/65) legacy ledger | Read-only target inventory: typed schema, zero ledger rows/legacy escrows; fixed-old-source fixture and migration rollback tests exist | Protected real legacy snapshot with provenance/freeze point; isolated migration, exact receipts/rows/sequences, interruption/retry/concurrency and rollback. Current empty ledger is not an old snapshot. |
 | [#68](https://github.com/TokenNotIncluded/msg.lmm.best/issues/68) historical ciphertext | Existing custodial inventory/ACK/rewrap/retirement tests and root-signed backup-retirement verification | Match every original scenario to its assertion; real retained ciphertext decrypted by its authorized client; independently bounded backup-retirement facts. No key destruction is inferred. |
 | [#69](https://github.com/TokenNotIncluded/msg.lmm.best/issues/69) revocation after restore | Proof/current-authority reconcile/promotion code exists; installed restore checks retain quarantine after marker removal | Full scenario-to-assertion review; actual independently current checkpoint outside the rollback set, protected snapshot and controlled-console promotion. Do not repeat the obsolete claim that promotion has no implementation. |
@@ -41,6 +41,21 @@ requirements are fulfilled. A database policy export does not validate its own
 external provenance or authorize reissue. Store complete reports privately:
 resource scopes can reveal non-public identifiers. Do not paste raw policies,
 configuration, logs or backup contents into public GitHub issues.
+
+The shared Nginx ingress policy is now installed on `archczy`. The root/HTTP
+error policy suppresses request-bearing error text and the shared access format
+retains only timestamp, configured server, status and byte count. The original
+configuration is backed up at
+`/var/backups/msgd/deployments/ingress-policy-20261001/nginx.conf`; previous logs
+were retained. Actual `nginx -t` and reload passed, followed by HTTP 200 from the
+health endpoint, Markdown homepage and shared status site. All six ingress tests
+passed locally, including a real isolated shared listener whose normal/400/414
+status records contain no URL/header sentinel. External collectors remain unverified.
+
+The complete target CA report is stored privately at
+`~/.local/state/msg/admin/archczy/preflight-20261001.json` (0600). It contains both
+CA signed-policy snapshots, including scopes/constraints/validity/depth, and records
+`mutation_performed=false` and `decision=blocked`. No CA key was unlocked.
 
 ## Verified source evidence
 

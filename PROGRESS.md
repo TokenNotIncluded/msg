@@ -51,9 +51,11 @@ installed signed CA snapshots. Existing certificates must not acquire it merely
 because code was updated. Root rotation invalidates old chains; an upgrade must
 first have a concrete, approved CA transition rather than silently changing trust.
 
-The shared Nginx configuration suppresses site logs but lacks the tested global
-pre-Host logging policy. Actual upstream/collector evidence is also incomplete.
-Issue #64 remains open. See the issue ledger for all other unresolved conditions.
+The shared Nginx global/pre-Host policy is now installed: inherited access logs
+keep only time/configured server/status/bytes and error text is suppressed.
+Configuration test/reload and the homepage, health and shared status-site requests
+passed; old logs were retained. Upstream/collector evidence is still incomplete,
+so #64 remains open. See the issue ledger for all other unresolved conditions.
 
 ## Completion gate
 

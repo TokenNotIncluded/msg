@@ -139,7 +139,7 @@ Commands live in `/usr/bin`, application code and a private compatible Python 3.
 
 See [native packaging](docs/NATIVE_PACKAGES.md) for verified build inputs and cross-distribution limitations, then [deployment](docs/DEPLOYMENT.md) for PostgreSQL, Root CA, online-CA certificate issuance and service startup. Root initialization and certificate issuance default to the physical host console. An explicitly authorized OS-root SSH administrator can provision with `msgd init --allow-ssh` and `msgd cert issue CSR_ID --allow-ssh`; both still require an interactive terminal and PIN. Other root operations keep the physical-console restriction.
 
-For development from source, use `uv sync --extra server` or `python -m pip install '.[server]'`. Upgrades need the `server` extra; `dev` includes server dependencies. See [release acceptance](docs/RELEASE_ACCEPTANCE.md) before making deployment claims.
+For development from source, use `uv sync --extra server` or `python -m pip install '.[server]'`. Upgrades need the `server` extra; `dev` includes server dependencies. See [release acceptance](docs/RELEASE_ACCEPTANCE.md) before making deployment claims. The [issue resolution ledger](docs/ISSUE_RESOLUTION.md) tracks the remaining code and target-host acceptance requirements.
 
 ## Market operations
 
