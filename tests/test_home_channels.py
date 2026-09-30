@@ -41,7 +41,7 @@ async def test_public_channels_show_current_read_and_post_requirements(installed
     result = await call(app, 'discovery.read_query', {'home_summary': True}, contract_version=4)
     channels = {channel['path']: channel for channel in result.data['channels']}
     assert '/main' not in channels and '/intro' not in channels
-    assert 'Owner or authorized group' in channels['/store']['posting']
+    assert 'Channel owner' in channels['/store']['posting']
     assert 'Read-only' in channels['/sos']['posting']
     assert channels['/wiki']['posting'] == 'Posting is frozen.'
     async with httpx.AsyncClient(

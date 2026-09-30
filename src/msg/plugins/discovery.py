@@ -622,7 +622,7 @@ def install(app):
         # same current authorization as a public resource read, never raw ACLs.
         for (raw,) in tx.rows(
             "SELECT body FROM resources WHERE type='topic' AND state='active' "
-            "AND parent=? AND created_at<=? ORDER BY name,id",
+            'AND parent=? AND created_at<=? ORDER BY name,id',
             (ROOT_SPACE, wire(ctx.now)),
         ):
             require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
@@ -639,8 +639,14 @@ def install(app):
                 posting = 'Posting is frozen.'
             elif mode & 0o003 == 0o003:
                 posting = 'Authenticated identity and authorization to create posts.'
-            elif mode & 0o030 == 0o030 or mode & 0o300 == 0o300:
-                posting = 'Owner or authorized group; authorization to create posts is required.'
+            elif mode & 0o030 == 0o030:
+                posting = (
+                    'Owner or authorized group; authorization to create posts is required.'
+                    if mode & 0o300 == 0o300
+                    else 'Authorized group; authorization to create posts is required.'
+                )
+            elif mode & 0o300 == 0o300:
+                posting = 'Channel owner; authorization to create posts is required.'
             else:
                 posting = 'Read-only; ordinary posting is disabled.'
             if any(item.mode & 0o4000 for item in chain):
