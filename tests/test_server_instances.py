@@ -50,3 +50,23 @@ def test_named_service_templates_isolate_accounts_and_root():
         assert 'KillMode=mixed' in unit
         assert 'ReadWritePaths=/var/lib/msgd/%i' in unit
         assert 'msg.lmm.best' not in unit
+
+
+def test_upgrade_preserves_existing_explicit_subdirectory_root(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    import msg.config as config
+
+    monkeypatch.setattr(config, 'SERVER_CONFIG_DIR', tmp_path / 'etc')
+    current = tmp_path / 'private/main/root'
+    monkeypatch.setattr(
+        config.ServerPaths, 'for_instance', lambda name: SimpleNamespace(root=current)
+    )
+    legacy = tmp_path / 'etc/main-root'
+    legacy.mkdir(parents=True)
+    (legacy / 'key.json').write_text('existing sealed envelope')
+    assert config.root_private_dir(tmp_path / 'etc/main') == legacy
+    current.mkdir(parents=True)
+    (current / 'key.json').write_text('different sealed envelope')
+    with pytest.raises(Failure, match='ambiguous_root_private_directory'):
+        config.root_private_dir(tmp_path / 'etc/main')
