@@ -39,6 +39,7 @@ Then connect with `msg production ""`, `msg production "identity show"`, or `msg
 | --- | --- |
 | `Host` | One or more case-insensitive alias patterns; `*`, `?` and `!excluded` are supported |
 | `HostName` | Actual DNS name or bracketed IPv6 address; `%h` expands to the alias |
+| `ServiceURL` | Optional canonical signing origin when `HostName` is a configured server-domain alias |
 | `User` | Expected MSG username |
 | `Port` | Service port, normally HTTPS 443; it is not the administrator's SSH port |
 | `Scheme` | `https` by default; `http` for an explicitly configured local installation |
@@ -68,3 +69,37 @@ The first connection has no hardcoded public-domain fallback. Choose a destinati
 Existing profiles migrate only to their recorded service. Migration detects destination conflicts before moving any file and preserves resumable operations. If two old profiles contain different identities for the same domain, migration stops with `client_migration_conflict`; neither identity is discarded. Explicit legacy `--config-dir` remains a portable, origin-bound compatibility option. See [filesystem layout](FILESYSTEM_LAYOUT.md).
 
 The historical `msg.lmm.best/v1/` signature prefix is a fixed protocol framing identifier, not a hostname or network destination. Changing that prefix would invalidate existing signatures. Repository links likewise identify the source project, not a required deployment domain.
+
+## Multiple domains for one service
+
+A server can accept explicitly configured alias domains while preserving its
+original `service_url`, certificates and request authority. Configure that server
+first; DNS alone does not authorize another Host. See [server aliases](SERVICE_ALIASES.md).
+
+```sshconfig
+Host backup
+    HostName backup.example.org
+    ServiceURL https://primary.example.org
+    User alice
+```
+
+`msg backup 'identity show'` connects to `https://backup.example.org` and uses the
+identity belonging to `https://primary.example.org`. It shares that identity's
+tokens, certificates, resumable journals and caches with a direct primary
+connection. The equivalent ordinary syntax is:
+
+```sh
+msg --server https://primary.example.org --endpoint https://backup.example.org identity show
+```
+
+The endpoint is explicit and invocation-only; it never changes the saved service
+authority. Both origins must use the same scheme. Discovery must report the
+canonical authority before MSG operations, OAuth secrets or signed previews are
+sent to an alias. Redirects are refused. Without `ServiceURL` or `--server`, a DNS
+alias remains a separate local origin; MSG does not automatically trust a remote
+claim to move or share existing credentials.
+
+`IdentityFile` is read through an owned, private, no-follow descriptor. Symlinks,
+FIFOs, directories, hardlinks and keys with group/world access are rejected before
+creating client state or opening a network connection. The key must contain the
+32-byte MSG Ed25519 private-key format.

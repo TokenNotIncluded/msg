@@ -19,10 +19,19 @@ from msg.transports.url_safety import require_safe_relative_url
 class HTTPTransport:
     name = 'http'
 
-    def __init__(self, server, *, http=None, max_response_bytes=1048576, max_path_bytes=8192):
+    def __init__(
+        self, server, *, endpoint=None, http=None, max_response_bytes=1048576, max_path_bytes=8192
+    ):
         server = service_origin(server)
         self.server = server
-        self.http = http or httpx.AsyncClient(base_url=server, timeout=30, follow_redirects=False)
+        self.endpoint = service_origin(endpoint) if endpoint is not None else server
+        require(
+            urlsplit(self.endpoint).scheme == urlsplit(server).scheme,
+            'endpoint_scheme_mismatch',
+        )
+        self.http = http or httpx.AsyncClient(
+            base_url=self.endpoint, timeout=30, follow_redirects=False
+        )
         self._owns_http = http is None
         self.max_response_bytes = max_response_bytes
         self.max_path_bytes = max_path_bytes
@@ -42,7 +51,7 @@ class HTTPTransport:
         self.bytes_sent += len(raw or b'') + len(path.encode())
         # Never follow a credential-bearing operation to another origin.
         async with self.http.stream(
-            method, self.server + path, content=raw, headers=headers, follow_redirects=False
+            method, self.endpoint + path, content=raw, headers=headers, follow_redirects=False
         ) as response:
             require(not response.is_redirect, 'redirect_not_allowed')
             data = bytearray()
@@ -96,7 +105,7 @@ class HTTPTransport:
 
     def _secure_delivery(self, request):
         if request.operation in SECRET_DELIVERY_MIN_VERSION:
-            parsed = urlsplit(self.server)
+            parsed = urlsplit(self.endpoint)
             require(
                 parsed.scheme == 'https'
                 or parsed.hostname in {'testserver', 'localhost', '127.0.0.1', '::1'},

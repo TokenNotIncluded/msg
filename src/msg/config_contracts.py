@@ -14,6 +14,7 @@ _SECTIONS = {
     },
     'server': {
         'service_url': ('service_url', None),
+        'service_aliases': ('service_aliases', None),
         'listen': ('listen', None),
         'port': ('port', None),
         'public_web_origin': ('public_web_origin', 'hosting'),

@@ -55,6 +55,12 @@ def _vectors():
             'invalid_service_url',
         ),
         'server.listen': ('127.0.0.1', '::1', '', 'invalid_listen_address'),
+        'server.service_aliases': (
+            [],
+            ['https://alias.example.org'],
+            ['http://alias.example.org'],
+            'invalid_service_aliases',
+        ),
         'server.port': (8042, 65535, 0, 'invalid_listen_port'),
         'server.public_web_origin': (
             None,

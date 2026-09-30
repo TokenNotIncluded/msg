@@ -27,6 +27,7 @@ from msg.plugins.common import (
     revise_resource,
 )
 from msg.plugins.schemas import IDENTIFIER, REF, STRING, obj
+from msg.transports.url_safety import require_matching_host, require_safe_request_target
 
 MAX_HOSTING_ENTRIES = 128
 
@@ -525,15 +526,21 @@ def hosting_app(service):
 
     async def dispatch(request):
         try:
+            require_safe_request_target(
+                request.scope.get('raw_path') or request.scope['path'].encode(),
+                request.scope.get('query_string', b''),
+                maximum=service.settings.server.limits.max_path_bytes,
+            )
+            require_matching_host(
+                request.headers.getlist('host'),
+                urlsplit(service.settings.service_url),
+                aliases=service.settings.service_aliases,
+            )
             service.require_ready()
             async with service.metadata.transaction(write=False) as tx:
                 service.runtime_generation.require_current(tx)
         except Failure as exc:
             return hosted_error(exc.code)
-        expected = urlsplit(service.settings.service_url)
-        supplied = urlsplit('//' + request.headers.get('host', ''))
-        if supplied.hostname != expected.hostname:
-            return hosted_error('forbidden_host')
         return await serve_hosted(service, request) or hosted_error('not_found')
 
     return Starlette(

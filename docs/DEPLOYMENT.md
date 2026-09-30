@@ -1,8 +1,9 @@
 # msgctl 部署
 
-发行包名为 `msgctl`，客户端为 `msg`，服务端为 `msgd`；仓库名称采用服务域名。
-PyPI 已发布的 `msgctl 0.1.0a1` 与当前 CI 候选包分别追踪，不能仅按相同版本字符串
-认定包含后续修复。交付候选使用下述精确源码和产物摘要安装；若再次发布到 PyPI，
+Python 发行包名为 `msgctl`，客户端命令为 `msg`，服务端命令与原生包为 `msgd`；
+仓库为 [TokenNotIncluded/msg](https://github.com/TokenNotIncluded/msg)，不绑定服务域名。
+截至 2026-10-01，PyPI 已发布 `msgctl 0.2.3`，公开服务运行 `msgd 0.2.3-20261001.1`。
+一行客户端安装器仍固定 0.2.1；这些交付入口分别追踪，不能仅按版本字符串认定包含后续修复。交付候选使用下述精确源码和产物摘要安装；若再次发布到 PyPI，
 须选择新的未发布版本并重新验证该版本的产物。
 
 ## 前置条件
@@ -50,11 +51,11 @@ sudo /usr/bin/msgd --config-dir /etc/msgd cert issue ONLINE_CA_REQUEST_ID
 
 ONLINE_CA_REQUEST_ID 取自 init 输出。签发时检查显示的权限范围和申请摘要，输入准确摘要确认，再输入 PIN。没有默认 PIN、环境变量 PIN 或 --yes。默认不能通过 SSH / 远程命令转发完成 root 管理；不能把退出码 78 当成初始化成功。
 
-经部署操作者明确授权，可使用 `msgd init --allow-ssh` 和 `msgd cert issue CSR_ID --allow-ssh` 从 SSH 终端执行这两项操作。此选项仅对当前命令生效，仍要求 OS root、SSH 伪终端、安全配置目录及交互 PIN/申请摘要确认；不开放 HTTP 根管理，也不放宽其他根命令的物理控制台限制。默认不带选项时仍拒绝 SSH。
+经部署操作者明确授权，可使用 `msgd init --allow-ssh` 和 `msgd cert issue CSR_ID --allow-ssh` 从 SSH 终端执行这两项操作。此选项仅对当前命令生效，仍要求 OS root、SSH 伪终端、安全配置目录及交互 PIN/申请摘要确认；不开放 HTTP 根管理；Root money 的显式 SSH 支持与其边界见下节，其他根命令仍按各自控制台要求执行。默认不带选项时仍拒绝 SSH。
 
 Root money administration supports explicit SSH opt-in on `money mint`, `money burn`, `money transfer`, and `money bank add/remove/fund`. Each command must include `--allow-ssh`; the default still requires a physical console. SSH opt-in requires OS root, an interactive SSH pseudoterminal (`SSH_CONNECTION` must survive `sudo`), a root-owned configuration directory that is not group/world writable, the Root PIN/passphrase, and exact preview-digest confirmation. Bank funding still requires separate role and payment approvals. Root signatures, stale-preview checks, atomic ledger writes and append-only audits remain unchanged; audits record the SSH operator/channel. This does not expose HTTP Root administration or permit unattended `--yes`/PIN arguments. Offer administration remains physical-console only.
 
-For example, in an SSH session with a pseudoterminal, use `sudo --preserve-env=SSH_CONNECTION msgd money mint 10000 --allow-ssh`, then `sudo --preserve-env=SSH_CONNECTION msgd money transfer --from @root --to @lightjunction 10000 --allow-ssh`. If sudo policy does not permit preserving this variable, configure that policy locally rather than fabricating an SSH context. These commands still prompt for confirmation and the existing Root passphrase.
+For example, in an SSH session with a pseudoterminal, use `sudo --preserve-env=SSH_CONNECTION env PGSERVICEFILE=/etc/msgd/pg_service.conf msgd money mint 10000 --allow-ssh`, then `sudo --preserve-env=SSH_CONNECTION env PGSERVICEFILE=/etc/msgd/pg_service.conf msgd money transfer --from @root --to @lightjunction 10000 --allow-ssh`. If sudo policy does not permit preserving this variable, configure that policy locally rather than fabricating an SSH context. These commands still prompt for confirmation and the existing Root passphrase. The example assumes `postgres_dsn = "service=msgd"` and the actual libpq service file `/etc/msgd/pg_service.conf`; substitute your protected service-file path, including for `money bank add/remove/fund`. A systemd unit/drop-in environment does not carry into an interactive sudo command. If the DSN does not use a libpq service name, this `PGSERVICEFILE` setting is unnecessary.
 
 There is no default Root PIN: initialization requests an operator-selected passphrase twice. `msgd root change-pin` needs the current passphrase, and `msgd root recover BACKUP` needs the backup passphrase and restores only missing private-key material. Forgotten passphrases cannot be recovered from the encrypted envelope. The separate physical-console `msgd root rotate --lost-key` recovery ceremony creates a new Root key and requires reissuing all existing certificate chains; it is not an ordinary PIN reset and must be planned explicitly.
 

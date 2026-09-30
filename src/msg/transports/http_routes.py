@@ -751,8 +751,11 @@ def create_app(service):
             require_safe_request_target(
                 raw_path, request.scope.get('query_string', b''), maximum=limits.max_path_bytes
             )
-            expected = urlsplit(service.settings.service_url)
-            require_matching_host(request.headers.getlist('host'), expected)
+            expected = require_matching_host(
+                request.headers.getlist('host'),
+                urlsplit(service.settings.service_url),
+                aliases=getattr(service.settings, 'service_aliases', ()),
+            )
             require(
                 'x-http-method-override' not in request.headers
                 and 'x-method-override' not in request.headers,
@@ -770,10 +773,11 @@ def create_app(service):
                 hosted = await serve_hosted(service, request)
                 if hosted is not None:
                     return hosted
-            origin = request.headers.get('origin')
-            if origin is not None:
+            origins = request.headers.getlist('origin')
+            if origins:
                 require(
-                    origin.rstrip('/') == f'{expected.scheme}://{expected.netloc}',
+                    len(origins) == 1
+                    and origins[0].rstrip('/') == f'{expected.scheme}://{expected.netloc}',
                     'forbidden_origin',
                 )
             path = request.url.path

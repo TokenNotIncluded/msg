@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from msg.client import ClientState, MsgClient
+from msg.client import ClientState, MsgClient, private_identity_key
 from msg.core.codec import canonical, loads, result_wire as result_wire, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import OperationResult, ResourceRef
@@ -47,6 +47,9 @@ def parser():
     )
     cli.add_argument(
         '--server', help='Service origin; overrides MSG_SERVER and the saved selection.'
+    )
+    cli.add_argument(
+        '--endpoint', help='Explicit alias origin to connect to; --server remains the authority.'
     )
     cli.add_argument('--transport', choices=TRANSPORTS, default='http')
     cli.add_argument(
@@ -415,16 +418,15 @@ async def run(args):
     require(
         args.migrate_from is None or args.config_dir is None, 'migration_conflicts_with_config_dir'
     )
+    signer_override = private_identity_key(args.key) if args.key else None
     state = ClientState(
         args.config_dir, server=args.server, profile=args.profile, migrate_from=args.migrate_from
     )
-    transport = TRANSPORTS[args.transport](state.server)
+    transport_options = {'endpoint': args.endpoint} if args.endpoint is not None else {}
+    transport = TRANSPORTS[args.transport](state.server, **transport_options)
     client = MsgClient(state, transport)
-    if args.key:
-        from msg.security.crypto import Ed25519Signer
-
-        require(args.key.stat().st_mode & 0o077 == 0, 'unsafe_client_key_permissions')
-        state.signer = Ed25519Signer.from_bytes(args.key.read_bytes())
+    if signer_override is not None:
+        state.signer = signer_override
         client.signer_override = state.signer
         # Key override is invocation-only, never written back to the primary identity.
         state.data.pop('token', None)
