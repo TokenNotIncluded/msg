@@ -121,7 +121,9 @@ def require_safe_relative_url(path: str, *, maximum: int) -> None:
     require_safe_request_target(raw_path, query, maximum=maximum)
 
 
-def require_matching_host(values: list[str], expected: SplitResult) -> None:
+def require_matching_host(
+    values: list[str], expected: SplitResult, *, aliases: tuple[str, ...] = ()
+) -> SplitResult:
     """Check Host syntax before a URL parser can discard delimiters or controls."""
     require(
         len(values) == 1
@@ -132,12 +134,13 @@ def require_matching_host(values: list[str], expected: SplitResult) -> None:
     try:
         supplied = urlsplit('//' + values[0])
         port = supplied.port
-        default = 443 if expected.scheme == 'https' else 80
-        require(
-            (port is None or port > 0)
-            and supplied.hostname == expected.hostname
-            and (port if port is not None else default) == (expected.port or default),
-            'forbidden_host',
-        )
+        require(port is None or port > 0, 'forbidden_host')
+        for candidate in (expected, *(urlsplit(value) for value in aliases)):
+            default = 443 if candidate.scheme == 'https' else 80
+            if supplied.hostname == candidate.hostname and (
+                port if port is not None else default
+            ) == (candidate.port or default):
+                return candidate
     except ValueError:
         raise Failure('forbidden_host') from None
+    raise Failure('forbidden_host')

@@ -6,12 +6,13 @@ import re
 import shlex
 import stat
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from msg.core.errors import Failure, require
 from msg.paths import xdg_directory
 from msg.service_origin import service_origin
 
-OPTIONS = {'hostname', 'user', 'port', 'scheme', 'identityfile', 'transport'}
+OPTIONS = {'hostname', 'user', 'port', 'scheme', 'identityfile', 'transport', 'serviceurl'}
 
 
 def host_options(host, filename=None):
@@ -86,6 +87,7 @@ def expand_connection_args(argv, commands):
         '-i': 'identityfile',
         '--key': 'identityfile',
         '--server': 'server',
+        '--endpoint': 'endpoint',
         '--transport': 'transport',
         '--config-dir': 'config_dir',
         '--profile': 'profile',
@@ -137,10 +139,15 @@ def expand_connection_args(argv, commands):
         )
         require(not hostname.startswith('[') or hostname.endswith(']'), 'invalid_connection_target')
         hostname += ':' + str(int(port))
-    origin = service_origin(f'{chosen.get("scheme", "https")}://{hostname}')
+    endpoint = service_origin(f'{chosen.get("scheme", "https")}://{hostname}')
+    origin = service_origin(chosen['serviceurl']) if chosen.get('serviceurl') else endpoint
     if chosen.get('server'):
         require(service_origin(chosen['server']) == origin, 'connection_server_conflict')
     generated = ['--server', origin]
+    endpoint = service_origin(chosen['endpoint']) if chosen.get('endpoint') else endpoint
+    require(urlsplit(endpoint).scheme == urlsplit(origin).scheme, 'endpoint_scheme_mismatch')
+    if endpoint != origin:
+        generated += ['--endpoint', endpoint]
     for name, flag in [('user', '--user'), ('transport', '--transport')]:
         if chosen.get(name) is not None:
             generated += [flag, chosen[name]]

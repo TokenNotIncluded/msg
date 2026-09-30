@@ -14,7 +14,7 @@ from test_service import NOW, call, register
 from msg.core.codec import wire
 from msg.core.errors import Failure
 from msg.core.executor import OperationExecutor
-from msg.core.models import HandlerOutput, Principal, ResourceRef
+from msg.core.models import HandlerOutput, OperationSpec, Principal, ResourceRef
 from msg.core.requests import request_for
 
 
@@ -57,11 +57,12 @@ async def test_core_executor_runs_with_explicit_services_and_no_application():
         assert request.return_fields == fields == ('id',)
         return {'id': ref.id}
 
-    spec = SimpleNamespace(
+    spec = OperationSpec(
         name='testing.read',
         version=1,
-        entries={'network'},
+        entries=frozenset({'network'}),
         effect='read',
+        require_signature=True,
         input_schema=None,
         output_schema=None,
         requirements=requirements,

@@ -1,0 +1,69 @@
+name: Service alias contracts
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: service-aliases-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  aliases:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install locked development dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq postgresql-client-16 age nginx openssl git-lfs bubblewrap apparmor-profiles
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+      - name: Record tested source
+        env:
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          mkdir -p artifacts
+          python - <<'PY'
+          import json, os, pathlib, subprocess
+          def git(*args):
+              return subprocess.check_output(['git', *args], text=True).strip()
+          pathlib.Path('artifacts/source.json').write_text(json.dumps({
+              'head': os.environ['EVENT_HEAD_SHA'], 'checkout': git('rev-parse', 'HEAD'),
+              'tree': git('rev-parse', 'HEAD^{tree}'), 'run_id': os.environ['GITHUB_RUN_ID'],
+          }, indent=2) + '\n')
+          PY
+      - name: Exercise alias, identity and configuration boundaries
+        run: >-
+          uv run --locked --extra dev python -m pytest
+          tests/test_service_aliases.py tests/test_client_connection.py
+          tests/test_hosting_alias_ingress.py tests/test_backup_daemon.py
+          tests/test_config_safety.py tests/test_configuration_field_contracts.py
+          tests/test_execution_composition.py tests/test_cli_cursor_output.py
+          tests/test_cli_json_fields.py
+          tests/test_branding.py
+          --junitxml=artifacts/service-aliases.xml
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: service-alias-contracts
+          path: artifacts/

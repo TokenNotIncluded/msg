@@ -18,6 +18,13 @@ async def test_consistent_backup_restores_content_but_never_root_private_key(
     installed, tmp_path, pg_dsn
 ):
     app, _ = installed
+    config = app.settings.config_dir / 'msgd.toml'
+    config.write_text(
+        config.read_text().replace(
+            '[server]', '[server]\nservice_aliases = ["http://backup-alias.example.org"]'
+        )
+    )
+    app.settings = load_settings(app.settings.config_dir)
     key, uid, _ = await register(app, 'backup-agent')
     posted = await call(
         app,
@@ -38,6 +45,8 @@ async def test_consistent_backup_restores_content_but_never_root_private_key(
         postgres_dsn=pg_dsn,
     )
     restored = Application(load_settings(tmp_path / 'restored-etc'), clock=lambda: NOW)
+    assert restored.settings.service_url == app.settings.service_url
+    assert restored.settings.service_aliases == app.settings.service_aliases
     await restored.load()
     read = await call(restored, 'discovery.get', {'id': posted.resources[0].id})
     assert read.status == 'error' and read.error.code == 'recovery_quarantined', wire(read)
@@ -60,6 +69,8 @@ def test_unattended_init_never_generates_root_or_accepts_pin_flag(tmp_path):
         'init',
         '--data-dir',
         str(tmp_path / 'data'),
+        '--service-url',
+        'https://unattended.example.org',
     ]
     env = {**os.environ, 'PYTHONPATH': str(Path(__file__).parents[1] / 'src')}
     result = subprocess.run(base, input='', text=True, capture_output=True, env=env)
