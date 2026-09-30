@@ -63,7 +63,9 @@ async def _provision(app, pin):
     """Initialize only an empty installation; partial state requires explicit recovery."""
     settings = app.settings
     protected = settings.root_private_dir
-    if settings.config_dir.parent == Path('/etc/msgd'):
+    if settings.config_dir.parent == Path('/etc/msgd') and protected.is_relative_to(
+        Path('/var/lib/private/msgd')
+    ):
         # Named-instance Root state must never sit below a service-writable parent.
         for directory in (Path('/var/lib/private'), *reversed(protected.parents[:3]), protected):
             require(not directory.is_symlink(), 'unsafe_root_private_directory')

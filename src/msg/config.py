@@ -45,7 +45,20 @@ def root_private_dir(config_dir: Path) -> Path:
     if directory == SERVER_CONFIG_DIR:
         return ROOT_PRIVATE_DIR
     if directory.parent == SERVER_CONFIG_DIR:
-        return ServerPaths.for_instance(directory.name).root
+        legacy = directory.parent / (directory.name + '-root')
+        # Existing explicit subdirectories were supported before named instances.
+        # Never make their Root envelope disappear merely by upgrading the CLI.
+        has_legacy = any(
+            (legacy / name).exists() for name in ('key.json', 'initialization.pending')
+        )
+        if has_legacy and re.fullmatch(r'[a-z][a-z0-9_-]{0,25}', directory.name) is None:
+            return legacy
+        current = ServerPaths.for_instance(directory.name).root
+        has_current = any(
+            (current / name).exists() for name in ('key.json', 'initialization.pending')
+        )
+        require(not (has_legacy and has_current), 'ambiguous_root_private_directory')
+        return legacy if has_legacy else current
     return directory.parent / (directory.name + '-root')
 
 
