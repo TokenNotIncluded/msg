@@ -29,7 +29,7 @@ def main():
     parser.add_argument('--wheel-sha256', required=True)
     parser.add_argument('--lock-sha256', required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--version', default='0.1.0a1')
+    parser.add_argument('--version', default='0.2.0')
     parser.add_argument('--release', default='1')
     parser.add_argument('--format', choices=('arch', 'deb', 'rpm', 'all'), default='all')
     parser.add_argument('--source-revision', required=True)

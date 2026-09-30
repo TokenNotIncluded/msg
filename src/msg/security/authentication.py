@@ -16,6 +16,7 @@ from msg.security.quarantine import RuntimeGeneration, active as quarantine_acti
 from msg.security.token_delivery import recovery_verifier
 
 CUSTODIAL_SIGNED_WRITES = frozenset({
+    'identity.rename',
     'identity.oauth_approve',
     'content.post_create',
     'content.post_edit',

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 _PUBLIC_MESSAGES = {
+    'handle_rename_cooldown': 'You can change your username once every seven days.',
+    'handle_unavailable': 'This username is already in use or reserved.',
     'authentication_required': 'Authentication is required.',
     'permission_denied': 'You do not have permission to perform this operation.',
     'capability_required': 'The required permission has not been granted.',

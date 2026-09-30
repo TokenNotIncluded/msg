@@ -181,10 +181,13 @@ async def restore_drill(settings, folder, client, packet, source_dsn):
         expected_settings['recovery_quarantine'] = current_settings['recovery_quarantine']
         original['tables']['settings'] = sorted(canonical(row) for row in expected_settings.items())
         assert current == original, 'Restore changed other table values or sequence state'
+        restored_settings = load_settings(folder / 'restore-etc')
+        marker = restored_settings.recovery_marker
+        assert marker.is_file(), 'Restore did not install its configured quarantine marker'
         for marker_present in (True, False):
             if not marker_present:
-                (folder / 'restore-etc/recovery-drill.json').unlink()
-            recovered = Application(load_settings(folder / 'restore-etc'))
+                marker.unlink()
+            recovered = Application(restored_settings)
             try:
                 await recovered.load()
                 replay = await recovered.executor.execute(packet)

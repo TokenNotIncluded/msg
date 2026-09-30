@@ -1765,10 +1765,15 @@ def create_app(service):
                     if header:
                         packet = path_packet(header, 'j', limits.max_request_bytes)
                         require(packet.operation == spec.name, 'operation_mismatch')
+                        require(packet.contract_version == spec.version, 'representation_mismatch')
                         require(dict(packet.arguments) == args, 'representation_mismatch')
                     else:
                         packet = request_for(
-                            spec.name, args, service.settings.service_url, source='manual'
+                            spec.name,
+                            args,
+                            service.settings.service_url,
+                            source='manual',
+                            contract_version=spec.version,
                         )
                 result = await service.executor.execute(packet, entry='network')
                 value = result_wire(result)
@@ -1815,6 +1820,7 @@ def create_app(service):
                     {'home_summary': True},
                     service.settings.service_url,
                     source='manual',
+                    contract_version=4,
                 )
                 result = await service.executor.execute(packet, entry='network')
                 if result.error and result.error.code != 'query_cost_exceeded':
