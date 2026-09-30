@@ -1,6 +1,7 @@
 """Registry freeze rejects dangling references before serving any contract."""
 
-from dataclasses import replace
+from dataclasses import fields, replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -52,6 +53,14 @@ def declarations():
         handler=unused,
     )
     return resource, capability, operation
+
+
+def contract_adapter(spec, version):
+    # Normal records already reject malformed versions in codec.record.
+    # Registry also accepts plugin-provided objects, so test that boundary
+    # without asking the record constructor to accept an invalid contract.
+    values = {field.name: getattr(spec, field.name) for field in fields(spec)}
+    return SimpleNamespace(**(values | {'version': version}))
 
 
 def registry(resource, capability, operation):
@@ -118,7 +127,7 @@ def test_registration_rejects_non_positive_integer_versions_without_inserting(ki
     installed = Registry()
     register = getattr(installed, 'add_' + kind)
     with pytest.raises(Failure, match='^invalid_registry_name$'):
-        register(replace(spec, version=version))
+        register(contract_adapter(spec, version))
     register(spec)
     assert getattr(installed, kind)(spec.name) == spec
 
@@ -128,7 +137,7 @@ def test_registration_rejects_non_positive_integer_versions_without_inserting(ki
 def test_manifest_rejects_invalid_versions_before_registering_any_contract(kind, version):
     resource, capability, operation = declarations()
     values = {'resource_type': resource, 'capability': capability, 'operation': operation}
-    values[kind] = replace(values[kind], version=version)
+    values[kind] = contract_adapter(values[kind], version)
     installed = Registry()
     manifest = PluginManifest(
         name='identity',
