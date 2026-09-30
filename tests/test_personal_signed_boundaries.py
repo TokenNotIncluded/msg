@@ -183,9 +183,12 @@ async def test_note_archive_restore_preserves_independent_revision_and_content(i
         async with app.metadata.transaction(write=False) as tx:
             assert await tx.revision(ref) == original
             assert (await tx.resource(ref.id)).revision == ref.revision
-            assert tx.one(
-                'SELECT signature,signed_envelope FROM personal_revision_proofs WHERE revision_id=?',
-                (ref.revision,),
-            ) == proof
+            assert (
+                tx.one(
+                    'SELECT signature,signed_envelope FROM personal_revision_proofs WHERE revision_id=?',
+                    (ref.revision,),
+                )
+                == proof
+            )
             assert await app.contents.read_bytes(original.content) == b'privatehistoryneedle first'
             verify(key.public_key, canonical(manifest), original.signature, purpose='revision')
