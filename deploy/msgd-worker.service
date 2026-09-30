@@ -8,6 +8,10 @@ User=msgd
 Group=msgd
 WorkingDirectory=/var/lib/msgd
 ExecStart=/usr/bin/msgd worker
+# Signal the parent first so in-flight work can drain before killing children.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=90
 Restart=on-failure
 RestartSec=3
 UMask=0077

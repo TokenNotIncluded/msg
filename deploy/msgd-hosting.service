@@ -11,6 +11,10 @@ WorkingDirectory=/
 ExecStart=/usr/bin/msgd --config-dir /etc/msgd-hosting hosting --listen 127.0.0.1 --port 8043
 Environment=PGSERVICEFILE=/etc/msgd-hosting/pg_service.conf
 Environment=PGPASSFILE=/etc/msgd-hosting/pgpass
+# Signal the parent first so in-flight work can drain before killing children.
+KillSignal=SIGTERM
+KillMode=mixed
+TimeoutStopSec=90
 Restart=on-failure
 UMask=0077
 NoNewPrivileges=true
