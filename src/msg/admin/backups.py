@@ -62,6 +62,19 @@ def _db_refs(connection):
     return {'contents': contents, 'revisions': revisions}
 
 
+def _git_layout(repository, *, repair):
+    """Restore empty bare-Git directories without changing objects or refs."""
+    require(repository.is_dir() and not repository.is_symlink(), 'backup_repository_invalid')
+    for name in ('objects', 'objects/info', 'objects/pack', 'refs', 'refs/heads', 'refs/tags'):
+        path = repository / name
+        require(not path.is_symlink(), 'backup_symlink_forbidden')
+        require(not path.exists() or path.is_dir(), 'backup_git_layout_invalid')
+        if repair:
+            path.mkdir(exist_ok=True)
+        else:
+            require(path.is_dir(), 'backup_git_layout_missing')
+
+
 def _verify_storage(directory, refs, *, settings=None, repair_git_layout=True):
     """Verify archived bytes, Git objects and the SQL-referenced content index."""
     content = settings.server.content_dir if settings is not None else directory / 'content'
@@ -74,6 +87,9 @@ def _verify_storage(directory, refs, *, settings=None, repair_git_layout=True):
         and blobs.is_dir(),
         'backup_storage_missing',
     )
+    # ZIP contains files only. Packed refs can leave the private repository's
+    # entire refs directory empty, which Git still requires to recognize it.
+    _git_layout(content / 'private.git', repair=repair_git_layout)
     index_files = {path.name: path for path in (content / 'index').iterdir() if path.is_file()}
     require(set(refs['contents']).issubset(index_files), 'backup_content_missing')
     for key, index in index_files.items():
@@ -129,13 +145,7 @@ def _verify_storage(directory, refs, *, settings=None, repair_git_layout=True):
         require(
             repository.is_dir() and repository.name.endswith('.git'), 'backup_repository_invalid'
         )
-        # ZIP stores files only. An empty bare repository still needs these
-        # structural directories; recreating them changes no Git object/ref.
-        for name in ('objects/info', 'objects/pack', 'refs/heads', 'refs/tags'):
-            if repair_git_layout:
-                (repository / name).mkdir(parents=True, exist_ok=True)
-            else:
-                require((repository / name).is_dir(), 'backup_git_layout_missing')
+        _git_layout(repository, repair=repair_git_layout)
         process = subprocess.run(
             ['git', '--git-dir', str(repository), 'fsck', '--full', '--no-reflogs'],
             capture_output=True,
