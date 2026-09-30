@@ -736,10 +736,12 @@ def create_app(service):
 
     @asynccontextmanager
     async def lifespan(app):
-        if not service._loaded:
-            await service.load()
-        yield
-        await service.close()
+        try:
+            if not service._loaded:
+                await service.load()
+            yield
+        finally:
+            await service.close()
 
     async def dispatch(request: Request):
         nonlocal graphql_adapter, short_codes
