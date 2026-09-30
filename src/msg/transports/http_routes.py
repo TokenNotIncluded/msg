@@ -6,6 +6,7 @@ import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from enum import Enum, StrEnum
+from html import escape
 from importlib.resources import files
 from urllib.parse import quote, unquote_to_bytes, urlencode, urlsplit
 
@@ -1778,6 +1779,29 @@ def create_app(service):
             if path == '/-' or path.startswith('/-/'):
                 raise Failure('not_found')
             require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+            if path in {'/robots.txt', '/sitemap.xml'}:
+                require(not request.url.query, 'unknown_query_parameter')
+                origin = service.settings.service_url.rstrip('/')
+                if path == '/robots.txt':
+                    payload = (
+                        f'User-agent: *\nAllow: /\nDisallow: /-/\nSitemap: {origin}/sitemap.xml\n'
+                    ).encode()
+                    media_type = 'text/plain'
+                else:
+                    # Only the public homepage is unconditional. Resource paths,
+                    # including rules, can change their ACL or be removed.
+                    payload = (
+                        '<?xml version="1.0" encoding="UTF-8"?>\n'
+                        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+                        f'  <url><loc>{escape(origin + "/")}</loc></url>\n'
+                        '</urlset>\n'
+                    ).encode()
+                    media_type = 'application/xml'
+                return Response(
+                    b'' if request.method == 'HEAD' else payload,
+                    media_type=media_type,
+                    headers={**BASE_HEADERS, 'Content-Length': str(len(payload))},
+                )
             if path == '/favicon.png':
                 headers = {**BASE_HEADERS, 'Content-Length': str(len(HOME_FAVICON))}
                 return Response(
