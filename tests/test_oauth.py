@@ -364,7 +364,7 @@ async def test_api_key_private_signature_rotation_delivery_and_header(oauth, tmp
 
 
 @pytest.mark.asyncio
-async def test_custodial_signup_login_and_device_consent_reuses_vault(oauth):
+async def test_custodial_signup_login_and_device_consent_reuses_vault(oauth, monkeypatch):
     app, _, _, http = oauth
     await http.get('/oauth/signup')
     binder = http.cookies.get('msg_login')
@@ -413,6 +413,21 @@ async def test_custodial_signup_login_and_device_consent_reuses_vault(oauth):
     assert response.status_code == 200, response.text
     async with app.metadata.transaction(write=False) as tx:
         assert tx.one('SELECT COUNT(*) FROM custodial_vault')[0] == 1
+        key_id = tx.one('SELECT signing_key_id FROM custodial_vault')[0]
+        assert (await tx.credential(key_id)).ceiling == ()
+    access = response.json()['access_token']
+    assert (
+        await http.get('/oauth/userinfo', headers={'Authorization': 'Bearer ' + access})
+    ).status_code == 200
+    # The vault never receives request grants to make login work. Current policy
+    # loss must invalidate already-issued custodial access without mutating reads.
+    from read_only_evidence import readonly_evidence
+
+    monkeypatch.setattr(app, 'temporary_ceiling', lambda: ())
+    monkeypatch.setattr(app.authenticator, 'temporary_ceiling', lambda: ())
+    async with readonly_evidence(app, monkeypatch):
+        denied = await http.get('/oauth/userinfo', headers={'Authorization': 'Bearer ' + access})
+        assert denied.status_code == 401 and denied.json()['error'] == 'invalid_token'
 
 
 @pytest.mark.parametrize(

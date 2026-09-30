@@ -1,4 +1,4 @@
-# MSG OAuth 登录与 API key
+# msgctl OAuth 登录与 API key
 
 MSG 可以作为 OAuth 2.0 / OpenID Connect 提供方。身份仍由现有 Ed25519 私钥或托管 vault 控制；OAuth 授权不会创建第二套账号、证书或业务权限。
 
@@ -113,3 +113,13 @@ API key / OAuth access token 采用 `credential_id.base64url_secret` 形式，�
 所有随机 token、cookie、授权码只存摘要；权限和来源信息保存在 PostgreSQL。认证记录与业务提交共享已有写锁，重复消费和并发刷新不能产生两个有效后继。登录端点带请求上限和到期清理，拒绝跨站 cookie 写入；HTTP 缓存关闭，浏览器引用来源隐藏。恢复隔离、过期运行 generation、来源密钥撤销或来源记录缺失均拒绝访问。
 
 参考：[OAuth 安全建议 RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html)、[设备码 RFC 8628](https://www.rfc-editor.org/rfc/rfc8628.html)、[OpenID Connect Core](https://openid.net/specs/openid-connect-core-1_0.html)。
+
+## 当前权限与只读信息
+
+非托管 OAuth 与 API key 的权限上限还须落在来源密钥当前的 operations、scope 和
+constraints 内；保持同一 key ID 或 auth_version 不会保留来源已失去的权限。
+托管 vault 的签名 key 本身没有请求 grants，已批准会话按捕获的上限与当前临时策略
+双重限制，同时检查活跃 vault、撤销、身份版本、会话及恢复状态；bootstrap token 的
+一小时自然到期不缩短已批准会话。策略放宽不会扩大既有会话捕获的上限。
+`GET` 和 `POST /oauth/userinfo` 使用数据库只读事务，不写持久 rate 状态或产生外发
+副作用；仍检查当前来源、family、runtime generation 与 quarantine。
