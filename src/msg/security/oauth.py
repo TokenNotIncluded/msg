@@ -15,9 +15,10 @@ from uuid import uuid4
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from msg.core.codec import b64, canonical, loads, parse_time, wire
+from msg.core.codec import b64, canonical, decode, loads, parse_time, wire
 from msg.core.errors import Failure, require
-from msg.core.models import Credential
+from msg.core.models import CapabilityGrant, Credential
+from msg.security.policy import constraints_subset, scope_subset
 from msg.security.quarantine import require_live_authority
 
 DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
@@ -67,7 +68,25 @@ def scopes_for(client, value):
     return scopes
 
 
-async def require_source(tx, body, now):
+async def require_ceiling(tx, ceiling, parent):
+    # A derived credential is a limit, never a durable copy of authority which
+    # its signing source has since lost. Reuse the same containment vocabulary
+    # as certificate/delegation validation, including scope and constraints.
+    for grant in ceiling:
+        require(
+            any([
+                allowed.capability == grant.capability
+                and allowed.version == grant.version
+                and grant.operations <= allowed.operations
+                and await scope_subset(grant.scope, allowed.scope, tx)
+                and constraints_subset(grant.constraints, allowed.constraints)
+                for allowed in parent
+            ]),
+            'invalid_grant',
+        )
+
+
+async def require_source(tx, body, now, *, custodial_ceiling):
     parent = await tx.credential(body['parent'])
     subject = await tx.subject(body['subject'])
     require(
@@ -85,19 +104,32 @@ async def require_source(tx, body, now):
             (subject.resource_id,),
         )
         require(subject.kind == 'custodial' and row == (parent.id, 'active'), 'invalid_grant')
+    # Vault keys deliberately carry no request grants. Custodial sessions retain
+    # their captured token limits under the current temporary policy, while the
+    # vault key above remains only their live identity/revocation binding.
+    await require_ceiling(
+        tx,
+        tuple(decode(CapabilityGrant, raw) for raw in body.get('ceiling', ())),
+        custodial_ceiling if body.get('custodial') else parent.ceiling,
+    )
     if body.get('session'):
         _, session = get(tx, body['session'], now)
         require(not session.get('revoked'), 'invalid_grant')
-        await require_source(tx, session, now)
+        await require_source(tx, session, now, custodial_ceiling=custodial_ceiling)
     return subject
 
 
-async def require_binding(tx, credential, now, config):
+async def require_binding(tx, credential, now, config, *, custodial_ceiling):
     api = tx.one('SELECT body FROM oauth_states WHERE id=?', ('api:' + credential.id,))
     if api is not None:
         source = loads(api[0])
         require(credential.source_credential_id == source['parent'], 'invalid_grant')
-        await require_source(tx, source, now)
+        await require_source(tx, source, now, custodial_ceiling=custodial_ceiling)
+        # API bindings predate OAuth families and store no captured ceiling.
+        # Their credential grants remain bounded by the current signing source.
+        await require_ceiling(
+            tx, credential.ceiling, (await tx.credential(source['parent'])).ceiling
+        )
     row = tx.one('SELECT body FROM oauth_states WHERE id=?', ('access:' + credential.id,))
     if row is None:
         require(
@@ -111,7 +143,10 @@ async def require_binding(tx, credential, now, config):
     require(credential.source_credential_id == family['parent'], 'invalid_grant')
     client = client_for(config, family['client_id'])
     require(set(family['scopes']) <= client.scopes and not family.get('revoked'), 'invalid_grant')
-    await require_source(tx, family, now)
+    await require_source(tx, family, now, custodial_ceiling=custodial_ceiling)
+    await require_ceiling(
+        tx, credential.ceiling, tuple(decode(CapabilityGrant, raw) for raw in family['ceiling'])
+    )
 
 
 class OAuthService:
@@ -241,7 +276,7 @@ class OAuthService:
             return None, 'authorization_pending'
         if body['status'] == 'denied':
             return None, 'access_denied'
-        await require_source(tx, body, now)
+        await require_source(tx, body, now, custodial_ceiling=self.app.temporary_ceiling())
         body['status'] = 'consumed'
         save(tx, locator['user'], body)
         if kind == 'login':
@@ -259,7 +294,9 @@ class OAuthService:
         id = state_id('session', cookie)
         expiry, body = get(tx, id, self.app.clock())
         require(not body.get('revoked'), 'invalid_grant')
-        await require_source(tx, body, self.app.clock())
+        await require_source(
+            tx, body, self.app.clock(), custodial_ceiling=self.app.temporary_ceiling()
+        )
         source = {
             name: body[name]
             for name in ('subject', 'parent', 'auth_version', 'custodial', 'ceiling', 'auth_time')
@@ -349,7 +386,7 @@ class OAuthService:
                 ),
                 'invalid_grant',
             )
-            await require_source(tx, body, now)
+            await require_source(tx, body, now, custodial_ceiling=self.app.temporary_ceiling())
             body['consumed'] = True
             body['family'] = 'family:' + uuid4().hex
             save(tx, id, body)
@@ -373,7 +410,7 @@ class OAuthService:
             require(not family.get('revoked'), 'invalid_grant')
             client = client_for(self.config, family['client_id'])
             require(set(family['scopes']) <= client.scopes, 'invalid_scope')
-            await require_source(tx, family, now)
+            await require_source(tx, family, now, custodial_ceiling=self.app.temporary_ceiling())
             old['used'] = True
             save(tx, id, old)
             # A refresh does not extend the family's absolute lifetime.
@@ -381,11 +418,10 @@ class OAuthService:
         return None, 'unsupported_grant_type'
 
     async def tokens(self, tx, source, *, family_id=None, expiry=None):
-        from msg.core.codec import decode
-        from msg.core.models import CapabilityGrant
-
         now = self.app.clock()
-        subject = await require_source(tx, source, now)
+        subject = await require_source(
+            tx, source, now, custodial_ceiling=self.app.temporary_ceiling()
+        )
         if family_id is None:
             family_id = 'family:' + uuid4().hex
             expiry = now + timedelta(seconds=self.config.session_ttl)
@@ -496,7 +532,9 @@ class OAuthService:
             'invalid_token',
         )
         try:
-            await require_binding(tx, credential, now, self.config)
+            await require_binding(
+                tx, credential, now, self.config, custodial_ceiling=self.app.temporary_ceiling()
+            )
         except Failure as exc:
             if exc.code in {'recovery_runtime_stale', 'recovery_quarantined'}:
                 raise

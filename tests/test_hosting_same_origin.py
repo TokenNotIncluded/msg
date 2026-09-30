@@ -91,6 +91,15 @@ async def test_same_domain_hosted_html_head_304_range_raw_and_no_write_route(ins
         partial = await http.get('/@web-owner/web/index.html', headers={'Range': 'bytes=0-14'})
         assert partial.status_code == 206 and partial.content == html[:15]
         isolated(partial)
+        for malformed in (
+            'bytes=' + '9' * 5000 + '-',
+            'bytes=0-' + '9' * 5000,
+            'bytes=-' + '9' * 5000,
+        ):
+            refused = await http.get('/@web-owner/web/index.html', headers={'Range': malformed})
+            assert refused.status_code == 416
+            assert refused.json()['error'] == 'range_not_satisfiable'
+            isolated(refused)
         raw = await http.get(f'/_read/{published}/raw')
         assert raw.status_code == 200
         assert 'attachment' in raw.headers['content-disposition']

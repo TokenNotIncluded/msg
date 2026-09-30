@@ -2431,7 +2431,11 @@ def create_app(service):
                 status = 200
                 requested_range = request.headers.get('range')
                 if requested_range and (request.headers.get('if-range') in {None, etag}):
-                    match = re.fullmatch(r'bytes=(\d*)-(\d*)', requested_range)
+                    match = (
+                        re.fullmatch(r'bytes=(\d*)-(\d*)', requested_range)
+                        if len(requested_range) <= 128
+                        else None
+                    )
                     require(match is not None and any(match.groups()), 'range_not_satisfiable')
                     left, right = match.groups()
                     if left:
