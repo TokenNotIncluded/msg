@@ -183,6 +183,8 @@ class EffectWorker:
                             return job, False
                     if running.get(ref.id, 0) >= limits[ref.id, ref.revision]:
                         continue
+                if self.stopping():
+                    return None, False
                 job = replace(
                     job,
                     state='running',
