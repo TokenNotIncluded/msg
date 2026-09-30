@@ -54,6 +54,37 @@ async def test_json_reference_contract_covers_the_current_schema(installed):
     assert actual == set(_JSON_IDENTITY_REFS)
 
 
+@pytest.mark.parametrize('reference', ['subject', 'ceiling'])
+async def test_migration_refuses_oauth_identity_references(installed, reference):
+    app, root = installed
+    _, _, _, _, bounty, order = await _market_accounts(app, root)
+    escrows = (
+        bounty.data['funding']['body']['to_subject'],
+        order.data['payment']['body']['to_subject'],
+    )
+    await _restore_legacy_escrow_identities(app, escrows)
+    body = (
+        {'subject': escrows[0]}
+        if reference == 'subject'
+        else {'ceiling': [{'scope': {'resource_id': escrows[0]}}]}
+    )
+    encoded = json.dumps(body)
+    async with app.metadata.transaction(write=True) as tx:
+        tx.execute(
+            'INSERT INTO oauth_states VALUES (?,?,?,?)',
+            ('migration-oauth', 'session', '2999-01-01T00:00:00Z', encoded),
+            write=True,
+        )
+    with pytest.raises(RuntimeError, match='active reference'):
+        PostgresMetadataStore(app.settings.server.postgres_dsn)
+    async with app.metadata.transaction(write=False) as tx:
+        assert (
+            tx.one('SELECT body FROM oauth_states WHERE id=?', ('migration-oauth',))[0] == encoded
+        )
+        assert tx.one('SELECT COUNT(*) FROM identities WHERE id IN (?,?)', escrows)[0] == 2
+        assert tx.one('SELECT COUNT(*) FROM ledger_accounts WHERE id IN (?,?)', escrows)[0] == 0
+
+
 def test_reference_paths_ignore_untyped_dictionary_keys():
     from msg.storage.ledger_migration import _values_at
 

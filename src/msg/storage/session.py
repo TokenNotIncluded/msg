@@ -449,7 +449,8 @@ class RelationalSession(ABC):
             require(
                 previous.subject_id == credential.subject_id
                 and previous.kind == credential.kind
-                and previous.verifier == credential.verifier,
+                and previous.verifier == credential.verifier
+                and previous.source_credential_id == credential.source_credential_id,
                 'credential_identity_immutable',
             )
         self.execute(

@@ -178,6 +178,7 @@ class Credential:
     not_before: datetime
     expires_at: datetime | None
     revoked_at: datetime | None
+    source_credential_id: ID | None = field(default=None, metadata={'omit_if_none': True})
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

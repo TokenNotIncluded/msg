@@ -54,6 +54,21 @@ def parser():
         help='Represent a principal authorized by an explicit delegation certificate.',
     )
     commands = cli.add_subparsers(dest='command', required=True)
+    login = commands.add_parser('login', help='Login once using an OAuth device code.')
+    login.add_argument('--no-browser', action='store_true')
+    login.add_argument('--scope', default='openid profile msg.read msg.write offline_access')
+    commands.add_parser('logout')
+    auth = commands.add_parser('auth').add_subparsers(dest='action', required=True)
+    auth.add_parser('status')
+    for action in ('request', 'approve', 'deny'):
+        auth.add_parser(action).add_argument('user_code')
+    api = commands.add_parser('api-key').add_subparsers(dest='action', required=True)
+    for action in ('create', 'rotate'):
+        key = api.add_parser(action)
+        key.add_argument('--ttl', type=int, default=86400)
+        key.add_argument('--ceiling', help='JSON ceiling; defaults to ordinary read operations.')
+    api.add_parser('revoke')
+    api.add_parser('show')
     identity = commands.add_parser('identity').add_subparsers(dest='action', required=True)
     identity.add_parser('new').add_argument('handle')
     identity.add_parser('temporary')
@@ -374,6 +389,7 @@ async def run(args):
 
         require(args.key.stat().st_mode & 0o077 == 0, 'unsafe_client_key_permissions')
         state.signer = Ed25519Signer.from_bytes(args.key.read_bytes())
+        client.signer_override = state.signer
         # Key override is invocation-only, never written back to the primary identity.
         state.data.pop('token', None)
     if args.certificate:
@@ -382,7 +398,15 @@ async def run(args):
         state.data['subject_id'] = args.as_subject
     try:
         command = args.command
-        if command == 'identity':
+        if command in {'login', 'logout', 'auth'}:
+            from msg.client_oauth import run_command
+
+            result = await run_command(client, args)
+        elif command == 'api-key':
+            from msg.client_api_keys import run_command
+
+            result = await run_command(client, args, arguments)
+        elif command == 'identity':
             if args.action == 'new':
                 result = await client.register(args.handle)
             elif args.action == 'temporary':

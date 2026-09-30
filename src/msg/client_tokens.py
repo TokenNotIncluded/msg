@@ -9,6 +9,7 @@ from msg.core.codec import b64, loads, unb64
 from msg.core.errors import Failure, require
 
 JOURNAL_OPERATIONS = {
+    'api-key-create.json': ('identity.token_create', 3),
     'temporary.json': ('identity.temporary', 3),
     'custodial-bootstrap.json': ('identity.custodial_create', 2),
     'token-rotation.json': ('identity.token_rotate', 2),

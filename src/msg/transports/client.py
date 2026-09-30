@@ -79,7 +79,11 @@ class HTTPTransport:
             require(isinstance(value, dict), 'invalid_server_response')
             if response.status_code >= 400 and 'status' not in value:
                 error = value.get('error')
-                code = error.get('code') if isinstance(error, dict) else None
+                code = (
+                    error
+                    if isinstance(error, str)
+                    else (error.get('code') if isinstance(error, dict) else None)
+                )
                 raise Failure(
                     safe_error_code(code, 'transport_error'),
                     retryable=response.status_code in {502, 503, 504},

@@ -370,6 +370,9 @@ async def validate_ceiling(app, ctx, tx, grants):
 
 def install(app):
     op, finish = registration(app, 'identity')
+    from msg.plugins.oauth_identity import install as install_oauth
+
+    install_oauth(app, op)
 
     @op(
         'identity.register',
@@ -2394,9 +2397,38 @@ def install(app):
         signature=True,
         version=2,
     )
+    @op(
+        'identity.token_create',
+        obj(
+            {
+                'nonce': BYTES,
+                'ceiling': GRANTS,
+                'ttl': {'type': 'integer', 'minimum': 1, 'maximum': 86400},
+                'recovery_secret': BYTES,
+                'previous_credential': IDENTIFIER,
+            },
+            ('nonce', 'ttl', 'recovery_secret'),
+        ),
+        signature=True,
+        version=3,
+    )
     async def token_create(ctx, request, tx):
         subject = await controlled_owner(app, ctx, request, tx)
-        ceiling = tuple(decode(CapabilityGrant, g) for g in request.arguments['ceiling'])
+        if request.contract_version == 3 and 'ceiling' not in request.arguments:
+            reads = frozenset(
+                f'{operation.name}@{operation.version}'
+                for operation in app.registry.operations()
+                if operation.effect == 'read'
+                and not operation.require_signature
+                and not operation.name.startswith(('identity.', 'root.', 'system.'))
+            )
+            ceiling = tuple(
+                replace(g, operations=g.operations & reads)
+                for g in ctx.principal.ceiling
+                if g.operations & reads
+            )
+        else:
+            ceiling = tuple(decode(CapabilityGrant, g) for g in request.arguments['ceiling'])
         await validate_ceiling(app, ctx, tx, ceiling)
         require(len(unb64(request.arguments['nonce'])) >= 24, 'invalid_bootstrap_nonce')
         credential = Credential(
@@ -2408,9 +2440,43 @@ def install(app):
             not_before=ctx.now,
             expires_at=ctx.now + timedelta(seconds=request.arguments['ttl']),
             revoked_at=None,
+            source_credential_id=ctx.principal.credential_id
+            if request.contract_version >= 3
+            else None,
         )
         await tx.save_credential(credential, subject.auth_version)
         app.record_token_delivery(tx, request, credential, ctx.now)
+        if request.contract_version >= 3:
+            from msg.security.oauth import put
+
+            put(
+                tx,
+                'api:' + credential.id,
+                'api',
+                credential.expires_at,
+                {
+                    'subject': subject.resource_id,
+                    'parent': ctx.principal.credential_id,
+                    'auth_version': subject.auth_version,
+                },
+            )
+            previous_id = request.arguments.get('previous_credential')
+            if previous_id is not None:
+                previous = await tx.credential(previous_id)
+                require(
+                    previous.kind == 'token'
+                    and previous.subject_id == subject.resource_id
+                    and previous.revoked_at is None,
+                    'credential_owner_required',
+                )
+                require(
+                    tx.one('SELECT id FROM oauth_states WHERE id=?', ('api:' + previous.id,))
+                    is not None,
+                    'api_key_required',
+                )
+                await tx.save_credential(
+                    replace(previous, revoked_at=ctx.now), subject.auth_version
+                )
         return HandlerOutput(
             data={
                 'subject_id': subject.resource_id,
@@ -2476,12 +2542,18 @@ def install(app):
             not_before=ctx.now,
             expires_at=old.expires_at,
             revoked_at=None,
+            source_credential_id=old.source_credential_id,
         )
         app.record_token_delivery(
             tx, request, credential, ctx.now, recovery_deadline=parse_time(row[2])
         )
         await tx.save_credential(credential, subject.auth_version)
         await tx.save_credential(replace(old, revoked_at=ctx.now), subject.auth_version)
+        api = tx.one('SELECT body FROM oauth_states WHERE id=?', ('api:' + old.id,))
+        if api is not None:
+            from msg.security.oauth import put
+
+            put(tx, 'api:' + credential.id, 'api', credential.expires_at, loads(api[0]))
         consumed = tx.execute(
             """UPDATE token_deliveries SET consumed_at=? WHERE credential_id=?
             AND consumed_at IS NULL""",

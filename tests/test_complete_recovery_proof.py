@@ -50,18 +50,30 @@ async def test_complete_proof_accepts_exact_disposable_state(complete_state):
 
 
 @pytest.mark.parametrize(
-    'change', ['extra_setting', 'extra_table', 'extra_column', 'wrong_pin', 'partial']
+    'change',
+    ['extra_setting', 'extra_table', 'extra_column', 'oauth_state', 'wrong_pin', 'partial'],
 )
 async def test_complete_proof_rejects_unaccounted_state(complete_state, change):
     app, root, packet, pin = complete_state
-    if change in {'extra_setting', 'extra_table', 'extra_column'}:
+    if change in {'extra_setting', 'extra_table', 'extra_column', 'oauth_state'}:
         async with app.metadata.transaction(write=True) as tx:
             if change == 'extra_setting':
                 tx.set_setting('recovery_promotion_attacker', {'authority': True})
             elif change == 'extra_table':
                 tx.execute('CREATE TABLE hidden_authority (id TEXT)', write=True)
-            else:
+            elif change == 'extra_column':
                 tx.execute('ALTER TABLE resources ADD COLUMN hidden_authority TEXT', write=True)
+            else:
+                tx.execute(
+                    'INSERT INTO oauth_states VALUES (?,?,?,?)',
+                    (
+                        'unaccounted-oauth-session',
+                        'session',
+                        '2999-01-01T00:00:00Z',
+                        canonical({'subject': 's_unaccounted'}).decode(),
+                    ),
+                    write=True,
+                )
     elif change == 'wrong_pin':
         from dataclasses import replace
 

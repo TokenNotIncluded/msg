@@ -210,6 +210,7 @@ class HostingRuntime:
         )
         self.authorizer = AuthorizationService(self.registry, self.certificates)
         self.authenticator.runtime_generation = self.runtime_generation
+        self.authenticator.oauth_config = self.settings.oauth
         self.authorizer.runtime_generation = self.runtime_generation
         self.require_ready(loading=True)
         self._loaded = True

@@ -16,6 +16,7 @@ from msg.security.quarantine import RuntimeGeneration, active as quarantine_acti
 from msg.security.token_delivery import recovery_verifier
 
 CUSTODIAL_SIGNED_WRITES = frozenset({
+    'identity.oauth_approve',
     'content.post_create',
     'content.post_edit',
     'content.file_put',
@@ -52,6 +53,7 @@ class AuthenticationService:
         )
         self.primary_ceiling, self.temporary_ceiling = primary_ceiling, temporary_ceiling
         self.runtime_generation = RuntimeGeneration()
+        self.oauth_config = None
 
     async def authenticate(self, request, session, *, entry):
         self.runtime_generation.require_current(session)
@@ -110,6 +112,9 @@ class AuthenticationService:
         if request.operation == 'identity.token_recover':
             require(proof is None and request.subject is not None, 'invalid_recovery_proof')
             old = await session.credential(request.arguments['credential_id'])
+            from msg.security.oauth import require_binding
+
+            await require_binding(session, old, now, self.oauth_config)
             require(
                 old.kind == 'token' and old.subject_id == request.subject, 'recovery_unavailable'
             )
@@ -186,6 +191,9 @@ class AuthenticationService:
             )
             method = 'token'
             ids = ()
+            from msg.security.oauth import require_binding
+
+            await require_binding(session, credential, now, self.oauth_config)
         else:
             raise Failure('invalid_proof')
         if credential.revoked_at is not None:
