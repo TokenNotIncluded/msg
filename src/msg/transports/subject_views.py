@@ -61,6 +61,8 @@ def subject_view_operation(path):
         if len(parts) == 2:
             return 'orders.payment' if parts[1] == '_payment' else 'delivery.get'
         return 'orders.get'
+    if name in {'public-balance', 'public-ledger'}:
+        return 'money.public_ledger' if name == 'public-ledger' else 'money.public_balance'
     if name in {'bal', 'balance', 'ledger'}:
         return 'money.ledger' if name == 'ledger' else 'money.balance'
     if name in SUBJECT_COLLABORATION_VIEWS:
