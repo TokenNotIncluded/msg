@@ -99,6 +99,9 @@ registered/custodial users start private and may choose publication using their
 own signed `money.visibility_set@1` request. A bank's private preference is saved
 but cannot hide its account while its bank role is active. Revocation immediately
 reverts to that user's saved preference; archived accounts are not published.
+Publication covers the full account history, including transactions before the
+opt-in or bank grant. Returning an ordinary account to private hides that full
+projection on subsequent reads; it cannot retract copies readers already saved.
 Existing finite credential ceilings need explicit renewal before using the new
 visibility operation; the server does not expand an old credential automatically.
 

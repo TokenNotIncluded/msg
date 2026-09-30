@@ -133,6 +133,14 @@ async def test_visibility_self_only_revoke_bank_and_archive(installed):
     await apply_money(app, root, action='bank_remove', operator='test', subject_id=bank)
     assert (await call(app, 'money.public_balance', {'subject_id': bank})).error.code == 'not_found'
     await call(app, 'money.visibility_set', {'visibility': 'public'}, key=key, subject=bank)
+    drained = await call(
+        app,
+        'money.transfer',
+        {'to_subject': other, 'currency_id': 'primary', 'amount_minor': 10_000_000_001},
+        key=key,
+        subject=bank,
+    )
+    assert drained.status == 'ok', wire(drained)
     async with app.metadata.transaction(write=False) as tx:
         preview = await archive_preview(tx, bank)
     await archive_account(app, bank, root, expected_digest=digest(preview), operator='test')
