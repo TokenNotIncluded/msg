@@ -135,6 +135,16 @@ async def validate_contract(app, tx, row):
     """Mutable accounting state cannot change a publisher's immutable terms."""
     from msg.market.catalog import read_listing_body
 
+    # A mixed restore must not redirect payouts, refunds or top-ups to another
+    # listing's escrow or a signable Subject account.
+    account = tx.one(
+        'SELECT kind,subject_id,source_id FROM ledger_accounts WHERE id=?',
+        (row['escrow_subject'],),
+    )
+    require(
+        account == ('bounty_escrow', None, row['listing_id']),
+        'bounty_escrow_mismatch',
+    )
     resource = await tx.resource(row['listing_id'])
     body, _ = await read_listing_body(app, tx, resource)
     require(
