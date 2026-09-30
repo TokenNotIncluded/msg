@@ -55,3 +55,39 @@ Atomic replacement temporaries intentionally remain in the destination directory
 ## Account removal
 
 `msgd account archive SUBJECT_ID` requires the Root ceremony; `--allow-ssh` explicitly permits an OS-root SSH terminal for this command only. It presents an exact preview digest and requires the Root passphrase. It archives the user profile, revokes credentials, advances the authentication version, and records a Root-signed audit event. Authentication and SSH reject archived identities. Account, resource, and ledger history remain intact. Root/system identities, active Bank roles, and nonzero balances must be resolved before archival.
+
+## Named service instances
+
+New installations select a stable instance identifier, **not a domain name**:
+
+```sh
+sudo msgd --instance main init --service-url https://example.org --postgres-dsn service=msgd-main --allow-ssh
+sudo deploy/prepare-instance.sh main
+sudo systemctl enable --now msgd@main msgd-worker@main
+```
+
+Names match `[a-z][a-z0-9_-]{0,25}`. `--instance` and `--config-dir` are mutually exclusive. Named initialization requires an explicit public origin and an explicit database; separate instances need separate databases, service keys, trust chains, accounts and listening ports. Set each instance's `listen`/`port` before enabling it. The example hostname is configuration, never an installation identifier.
+
+| Purpose | Named-instance path (`main`) |
+| --- | --- |
+| Configuration/public trust | `/etc/msgd/main`, `/etc/msgd/main/trust` |
+| Persistent content, blobs, service keys | `/var/lib/msgd/main` |
+| Root private state | `/var/lib/private/msgd/main/root` |
+| Cache | `/var/cache/msgd/main` |
+| Runtime | `/run/msgd/main` |
+| Network/worker account | `msgd-main` |
+| Systemd units | `msgd@main.service`, `msgd-worker@main.service` |
+
+Shared parent directories belong to OS root. The service owns only its instance's data directory. Root private state is outside every network-service-writable parent; the private hierarchy remains OS-root-owned and the units make it inaccessible. Never put Root keys below `/var/lib/msgd/main/root`: ownership of the parent would let the service replace that directory. `prepare-instance.sh` rejects mixed legacy/named installations, symlinks and storage-layout mismatches before changing permissions. The read-only hosting process still uses an explicit configuration directory; its credentials and paths must be isolated separately.
+
+Existing bare `/etc/msgd`, `/var/lib/msgd` and `/var/lib/msgd-root` installations remain readable and are **not moved automatically on upgrade**. Existing explicit custom configuration directories also retain their previous Root location. This compatibility does not make the old singleton layout the recommended layout for new installations.
+
+### Migration boundaries
+
+Migration is an offline administration operation, not initialization. Stop both the old web process and worker, take a restorable backup and preserve a protected copy of the existing Root envelope. Reject existing destination directories and symlinked source paths. Preserve database identity, Root/public trust, online keys, token secrets, ledger data and the exact signed `service_url`; never generate replacements. Move configuration and persistent content into the selected instance, rewrite only their host storage paths, and relocate the existing Root envelope into the OS-root-owned private hierarchy. Check ownership and service inability to read Root state before switching units. Keep a journal and retain the original directories until startup, authenticated requests, worker processing and ledger checks pass. If anything fails, stop the new units and restore the original paths and configuration. `prepare-instance.sh` does not perform this migration or silently reinterpret an existing instance.
+
+### Domains and signed identities
+
+A single logical instance with several DNS aliases is different from several independent instances. Filesystem instance names do not encode DNS, so adding a DNS name never requires changing these paths. The current signing protocol still binds certificates and requests to the configured canonical `service_url` (`target_service`); this change deliberately preserves that binding. Until an explicit trusted-origin/alias protocol is implemented, additional names must redirect clients to the canonical origin. Do not accept arbitrary Host headers, rewrite a signed service binding, or claim that a reverse-proxy alias creates a second independent MSG instance. Changing a canonical origin requires a separate identity/credential migration; directory moves alone do not change signatures.
+
+Native-package tmpfiles declarations create the shared data/cache/runtime containers without changing existing ownership or modes. The legacy deployment still runs `prepare-service.sh` after initialization and before enabling the legacy units; named deployments run `prepare-instance.sh` instead. This avoids a package upgrade or boot-time tmpfiles pass changing a named installation's OS-root-owned parent into a legacy service-owned directory. Instance systemd units recreate their own runtime child after reboot.

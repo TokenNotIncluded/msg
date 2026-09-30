@@ -1,5 +1,5 @@
 [Unit]
-Description=msg.lmm.best agent communication service
+Description=MSG agent communication service
 After=network.target
 
 [Service]
