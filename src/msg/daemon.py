@@ -37,27 +37,37 @@ def load_application(directory):
     return Application(load_settings(directory))
 
 
+SHUTDOWN_GRACE_SECONDS = 60
+
+
 async def worker_loop(app, *, once=False):
     from msg.storage.valkey_bus import ValkeyOutboxSignal
     from msg.workers.effects import EffectWorker
     from msg.workers.maintenance import run_maintenance
 
-    await app.load()
-    worker = EffectWorker(app)
-    wakeup = (
-        ValkeyOutboxSignal(app.settings.server.valkey_url)
-        if app.settings.server.valkey_url
-        else None
-    )
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
+    installed_signals = []
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(sig, stop.set)
+            installed_signals.append(sig)
         except NotImplementedError, RuntimeError:
             pass
-    next_cleanup = 0.0
-    try:
+    wakeup = None
+    work = stopped = None
+
+    async def run():
+        nonlocal wakeup
+        await app.load()
+        worker = EffectWorker(app)
+        worker.stopping = stop.is_set
+        wakeup = (
+            ValkeyOutboxSignal(app.settings.server.valkey_url)
+            if app.settings.server.valkey_url
+            else None
+        )
+        next_cleanup = 0.0
         while not stop.is_set():
             executor = getattr(app, 'executor', None)
             if executor is not None and executor.recovery_drill_active():
@@ -69,30 +79,61 @@ async def worker_loop(app, *, once=False):
                     pass
                 continue
             if loop.time() >= next_cleanup:
-                await run_maintenance(app, 'cleanup_expired', scheduled=True)
-                await run_maintenance(app, 'collect_garbage', scheduled=True)
-                await run_maintenance(app, 'deliver_due_todos', scheduled=True)
+                for action in ('cleanup_expired', 'collect_garbage', 'deliver_due_todos'):
+                    if stop.is_set():
+                        return None
+                    await run_maintenance(app, action, scheduled=True)
                 next_cleanup = loop.time() + 60
+            # A signal during maintenance must not lead to claiming another job.
+            if stop.is_set():
+                return None
             processed = await worker.run_once()
             if once:
                 return {'processed': processed}
-            if not processed:
+            if not processed and not stop.is_set():
                 if wakeup is not None:
                     try:
                         await wakeup.wait_for_pending(1)
+                        continue
                     except Exception:
                         # Pub/Sub is only a hint; durable jobs remain in PostgreSQL.
-                        try:
-                            await asyncio.wait_for(stop.wait(), 1)
-                        except TimeoutError:
-                            pass
-                else:
-                    try:
-                        await asyncio.wait_for(stop.wait(), 1)
-                    except TimeoutError:
                         pass
+                try:
+                    await asyncio.wait_for(stop.wait(), 1)
+                except TimeoutError:
+                    pass
+        return None
+
+    try:
+        work = asyncio.create_task(run())
+        stopped = asyncio.create_task(stop.wait())
+        done, _ = await asyncio.wait((work, stopped), return_when=asyncio.FIRST_COMPLETED)
+        if work in done:
+            return await work
+        try:
+            # Finish the current stage, never start a new claim. Cancellation on
+            # expiry preserves the running lease; it is not an acknowledgement.
+            return await asyncio.wait_for(asyncio.shield(work), SHUTDOWN_GRACE_SECONDS)
+        except TimeoutError:
+            work.cancel()
+            await asyncio.gather(work, return_exceptions=True)
+            return None
     finally:
-        await app.close()
+        for task in (work, stopped):
+            if task is not None and not task.done():
+                task.cancel()
+        await asyncio.gather(
+            *(task for task in (work, stopped) if task is not None), return_exceptions=True
+        )
+        try:
+            if wakeup is not None:
+                await wakeup.close()
+        finally:
+            try:
+                await app.close()
+            finally:
+                for sig in installed_signals:
+                    loop.remove_signal_handler(sig)
 
 
 def parser():
@@ -415,7 +456,14 @@ def main(argv=None):
 
             asgi = hosting_app(app)
             asgi.router.lifespan_context = lifespan
-            uvicorn.run(asgi, host=args.listen, port=args.port, access_log=False, ws='none')
+            uvicorn.run(
+                asgi,
+                host=args.listen,
+                port=args.port,
+                access_log=False,
+                ws='none',
+                timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
+            )
             return 0
         app = load_application(args.config_dir)
         if args.command == 'backup':
@@ -446,6 +494,7 @@ def main(argv=None):
             port=app.settings.port,
             access_log=False,
             ws='none',
+            timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
         )
         return 0
     except (Failure, OSError, ValueError) as exc:
