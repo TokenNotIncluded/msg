@@ -120,7 +120,7 @@ def main():
         target.write_text(
             'd /etc/msgd 0755 root root -\nd /var/lib/msgd 0750 msgd msgd -\nd /var/cache/msgd 0750 msgd msgd -\nd /run/msgd 0750 msgd msgd -\nd /var/lib/msgd-root 0700 root root -\n'
         )
-        docs = root / 'usr/share/doc/msgctl-server'
+        docs = root / 'usr/share/doc/msgd'
         docs.mkdir(parents=True)
         for name in ('DEPLOYMENT.md', 'NATIVE_PACKAGES.md'):
             shutil.copyfile(repo / 'docs' / name, docs / name)
@@ -156,13 +156,16 @@ def main():
                 arch.mkdir()
                 shutil.copyfile(archive, arch / 'payload.tar.gz')
                 checksum = hashlib.sha256(archive.read_bytes()).hexdigest()
-                (arch / 'PKGBUILD').write_text(f"""pkgname=msgctl-server
+                (arch / 'PKGBUILD').write_text(f"""pkgname=msgd
 pkgver={version}
 pkgrel={release}
 pkgdesc='msg communication service with locked Python runtime'
 arch=('x86_64')
 url='https://github.com/TokenNotIncluded/msg.lmm.best'
 license=('MIT')
+provides=('msgctl-server={version}-{release}')
+conflicts=('msgctl-server')
+replaces=('msgctl-server')
 depends=('glibc' 'gcc-libs' 'git' 'openssh' 'postgresql' 'bubblewrap' 'age' 'git-lfs')
 options=('!strip' '!debug')
 source=('payload.tar.gz')
@@ -187,9 +190,12 @@ package() {{
                     )
                     // 1024
                 )
-                (control / 'control').write_text(f"""Package: msgctl-server
+                (control / 'control').write_text(f"""Package: msgd
 Version: {version}-{release}
 Architecture: amd64
+Provides: msgctl-server (= {version}-{release})
+Conflicts: msgctl-server
+Replaces: msgctl-server
 Maintainer: TokenNotIncluded
 Installed-Size: {size}
 Depends: libc6 (>= 2.28), libgcc-s1, git, openssh-server, postgresql, bubblewrap, age, git-lfs, systemd
@@ -209,7 +215,7 @@ Description: msg service with independent locked Python runtime
                     '--root-owner-group',
                     '--build',
                     str(root),
-                    str(output / f'msgctl-server_{version}-{release}_amd64.deb'),
+                    str(output / f'msgd_{version}-{release}_amd64.deb'),
                 )
                 shutil.rmtree(control)
             else:
@@ -217,8 +223,8 @@ Description: msg service with independent locked Python runtime
                 for name in ('SOURCES', 'SPECS', 'BUILD', 'BUILDROOT', 'RPMS', 'SRPMS'):
                     (rpm / name).mkdir(parents=True)
                 shutil.copyfile(archive, rpm / 'SOURCES/payload.tar.gz')
-                spec = rpm / 'SPECS/msgctl-server.spec'
-                spec.write_text(f"""Name: msgctl-server
+                spec = rpm / 'SPECS/msgd.spec'
+                spec.write_text(f"""Name: msgd
 Version: {version}
 Release: {release}
 Summary: msg service with independent locked Python runtime
@@ -227,6 +233,9 @@ URL: https://github.com/TokenNotIncluded/msg.lmm.best
 Source0: payload.tar.gz
 BuildArch: x86_64
 AutoReqProv: no
+Provides: msgctl-server = {version}-{release}
+Conflicts: msgctl-server
+Obsoletes: msgctl-server
 Requires: glibc >= 2.28, libgcc, git, openssh-server, postgresql-server, bubblewrap, age, git-lfs, systemd
 %description
 Configuration and CA initialization are explicit administrator operations.
@@ -249,7 +258,7 @@ systemctl daemon-reload || :
 /usr/lib/systemd/system/msgd-worker.service
 /usr/lib/sysusers.d/msgd.conf
 /usr/lib/tmpfiles.d/msgd.conf
-/usr/share/doc/msgctl-server
+/usr/share/doc/msgd
 """)
                 run(
                     'rpmbuild',
