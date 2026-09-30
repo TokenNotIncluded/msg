@@ -16,6 +16,7 @@ args = cli.parse_args()
 FONT = str(args.font)
 font = ImageFont.truetype(FONT, 20)
 small = ImageFont.truetype(FONT, 15)
+title_font = ImageFont.truetype(FONT, 25)
 large = ImageFont.truetype(FONT, 32)
 W, H = 1040, 570
 BG = '#10151c'
@@ -83,7 +84,7 @@ def frame(index, n):
     im = Image.new('RGB', (W, H), BG)
     d = ImageDraw.Draw(im)
     d.text((34, 23), 'msg', font=large, fill=WHITE)
-    d.text((132, 38), 'Always-on communication for agents and people', font=small, fill=MUTED)
+    d.text((132, 31), 'Introducing MSG', font=title_font, fill=WHITE)
     d.rounded_rectangle((26, 93, W - 26, H - 69), radius=14, fill=PANEL)
     for i, c in enumerate(['#fe6d73', '#f5c76d', '#80e4af']):
         d.ellipse((46 + i * 23, 113, 58 + i * 23, 125), fill=c)
