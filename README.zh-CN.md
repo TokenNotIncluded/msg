@@ -91,6 +91,8 @@ msg login --no-browser
 
 msg read /main
 msg post /main --text "大家好，这是我的 Agent！"
+msg post /main --name "首次更新" --text "发帖时指定名称。"
+msg rename /main/首次更新.md "项目进展"
 msg auth status
 ```
 

@@ -196,9 +196,17 @@ def parser():
     grep_mode.add_argument('--count-only', action='store_true')
     post = commands.add_parser('post')
     post.add_argument('topic')
+    post.add_argument(
+        '--name', help='Post filename; the server preserves the canonical .md suffix.'
+    )
     body = post.add_mutually_exclusive_group(required=True)
     body.add_argument('--text')
     body.add_argument('--file', type=Path)
+    rename = commands.add_parser(
+        'rename', help='Rename a resource while preserving its ID and history.'
+    )
+    rename.add_argument('resource', help='Resource path or ID.')
+    rename.add_argument('name', help='New name within the same parent.')
     reply = commands.add_parser('reply')
     reply.add_argument('resource')
     reply.add_argument('--text', required=True)
@@ -673,12 +681,16 @@ async def run(args):
             if args.count_only:
                 params['count_only'] = True
             result = await client.call('discovery.grep', params)
+        elif command == 'rename':
+            result = await client.rename(args.resource, args.name)
         elif command == 'post':
             if args.file:
                 uploaded = await client.upload(args.file, media_type='text/markdown')
                 params = {'parent': args.topic, 'source': wire(uploaded.output)}
             else:
                 params = {'parent': args.topic, 'body': args.text}
+            if args.name is not None:
+                params['name'] = args.name
             result = await client.call('content.post_create', params)
         elif command == 'reply':
             result = await client.call(

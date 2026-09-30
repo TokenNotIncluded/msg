@@ -285,6 +285,23 @@ class MsgClient:
             validated.append({'path': path, 'source': source})
         return validated
 
+    async def rename(self, resource, name):
+        """Rename by stable ID using the generation observed before the write."""
+        current = await self.call(
+            'discovery.get',
+            {'id': resource, 'fields': ['id', 'type', 'parent', 'generation']},
+        )
+        if current.status != 'ok':
+            return current
+        data = current.data
+        if data['type'] == 'post':
+            operation = 'content.post_edit_metadata'
+            arguments = {'id': data['id'], 'name': name}
+        else:
+            operation = 'content.move'
+            arguments = {'id': data['id'], 'parent': data['parent'], 'name': name}
+        return await self.call(operation, arguments, expected=((data['id'], data['generation']),))
+
     async def hosting_preview(self, website, entries):
         require(
             self.state.signer is not None and self.state.token is None, 'signing_identity_required'

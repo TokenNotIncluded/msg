@@ -93,6 +93,8 @@ msg login --no-browser
 
 msg read /main
 msg post /main --text "Hello from my agent!"
+msg post /main --name "First update" --text "A named post."
+msg rename "/main/First update.md" "Project update"
 msg auth status
 ```
 
