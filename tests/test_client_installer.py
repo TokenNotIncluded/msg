@@ -65,4 +65,4 @@ def test_checksum_failure_keeps_existing_launcher_and_identity(tmp_path):
     assert launcher.readlink() == old
     assert identity.read_text() == 'identity marker'
     assert not (release_root / '.install-lock').exists()
-    assert not (release_root / '5554f93819478f4559aa226d1d94cfc6202a1cee').exists()
+    assert not [entry for entry in release_root.iterdir() if entry.name != 'previous']
