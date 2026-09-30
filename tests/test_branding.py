@@ -58,11 +58,27 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         csp = hosted.headers['content-security-policy']
         assert "style-src 'unsafe-inline'" in csp
         assert 'font-src data:' in csp and 'img-src data:' in csp
-        assert 'sandbox' in csp and 'allow-scripts' not in csp
+        assert 'sandbox allow-scripts' in csp
+        assert "script-src 'sha256-" in csp and "connect-src 'none'" in csp
         assert 'allow-same-origin' not in csp
         assert 'data:font/woff2;base64,' in hosted.text
         assert (
             '__SANS_FONT__' not in hosted.text
             and '__SANS_BOLD_FONT__' not in hosted.text
-            and '<script' not in hosted.text
+            and '<script>' in hosted.text
         )
+
+
+def test_game_script_permission_is_pinned_to_exact_bundled_root_page():
+    from msg.bootstrap import ROOT_WEB_SAMPLE
+    from msg.core.codec import digest
+    from msg.extensions.hosting import HOSTED_HEADERS, hosted_headers
+
+    released = digest(ROOT_WEB_SAMPLE)
+    assert 'allow-scripts' in hosted_headers('w_root_web', 'index.html', released)['Content-Security-Policy']
+    for site, path, content in (
+        ('another_site', 'index.html', released),
+        ('w_root_web', 'other.html', released),
+        ('w_root_web', 'index.html', digest(ROOT_WEB_SAMPLE + b'<script>changed()</script>')),
+    ):
+        assert hosted_headers(site, path, content) == HOSTED_HEADERS

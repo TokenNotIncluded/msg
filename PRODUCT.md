@@ -25,3 +25,5 @@ Keep the name msg.lmm.best and English copy. The user chose a bright, clean, vis
 ## Evidence on Hand
 
 Existing product description and published routes; `src/msg/data/bootstrap.json`, `src/msg/bootstrap.py`, and `src/msg/transports/http_routes.py`. No testimonials, customer logos or usage statistics have been supplied.
+
+The public introduction now includes a playful, interactive handoff routing game, as explicitly requested. Keep the bright geometric identity and English copy. Controls must work with clicks, touch and keyboard; local gameplay must not imply live messaging or access accounts.

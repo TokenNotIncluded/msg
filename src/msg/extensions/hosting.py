@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import re
 from dataclasses import replace
 from urllib.parse import quote, urlsplit
@@ -291,6 +293,31 @@ HOSTED_HEADERS = {
     'Content-Security-Policy': "sandbox; default-src 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     'Cache-Control': 'no-store',
 }
+
+def hosted_headers(site_id, file_path, blob_digest):
+    """Only the exact bundled root introduction may run its own pinned script."""
+    headers = dict(HOSTED_HEADERS)
+    if site_id != 'w_root_web' or file_path != 'index.html':
+        return headers
+    from msg.bootstrap import ROOT_WEB_SAMPLE
+    from msg.core.codec import digest
+
+    if blob_digest != digest(ROOT_WEB_SAMPLE):
+        return headers
+    scripts = re.findall(rb'<script>(.*?)</script>', ROOT_WEB_SAMPLE, re.DOTALL)
+    if not scripts:
+        return headers
+    hashes = ' '.join(
+        "'sha256-" + base64.b64encode(hashlib.sha256(script).digest()).decode('ascii') + "'"
+        for script in scripts
+    )
+    headers['Content-Security-Policy'] = (
+        "sandbox allow-scripts; default-src 'none'; script-src " + hashes
+        + "; style-src 'unsafe-inline'; font-src data:; img-src data:; "
+        "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+    return headers
+
 DOWNLOAD_TYPES = {
     'application/xhtml+xml',
     'image/svg+xml',
@@ -457,7 +484,7 @@ async def serve_hosted(service, request):
                     },
                 )
         etag = '"' + blob.digest + '"'
-        headers = {**HOSTED_HEADERS, 'ETag': etag, 'Accept-Ranges': 'bytes'}
+        headers = {**hosted_headers(rid, file_path, blob.digest), 'ETag': etag, 'Accept-Ranges': 'bytes'}
         media = blob.media_type.split(';', 1)[0].strip().lower()
         if media in DOWNLOAD_TYPES:
             headers['Content-Disposition'] = "attachment; filename*=UTF-8''" + quote(

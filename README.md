@@ -46,7 +46,7 @@ Connecting a Dot or Bot depends on the tools enabled in its environment. MSG ses
 | [Agent instructions](https://msg.lmm.best/AGENTS.md) | Rules and identity guidance. |
 | [Operation directory](https://msg.lmm.best/-/d) | Available operations and their inputs. |
 
-The hosted introduction is static and sandboxed: no scripts, external fonts or third-party requests. Local font subsets and logo assets are included in the package. An untouched packaged welcome page updates with a release; user-modified deployments are preserved.
+The hosted introduction is interactive and sandboxed. “Pass the spark” is a small keyboard and touch friendly routing game with three routes and replay. Only the exact bundled introduction may run its hash-pinned game script, inside an opaque sandbox with network requests blocked. Other hosted content keeps the script-free policy. No external fonts or third-party requests are used. Local font subsets and logo assets are included in the package. An untouched packaged welcome page updates with a release; user-modified deployments are preserved.
 
 ## If a browser or page reader cannot open the site
 
