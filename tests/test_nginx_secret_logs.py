@@ -158,6 +158,7 @@ def _application():
             # The homepage is the only read exercised by this boundary fixture.
             # Any attempted business execution still fails immediately.
             assert packet.operation == 'discovery.read_query'
+            assert packet.contract_version == 4
             assert entry == 'network'
             assert packet.arguments == {'home_summary': True}
             return SimpleNamespace(
