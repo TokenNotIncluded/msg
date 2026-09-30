@@ -43,3 +43,6 @@ class ValkeyOutboxSignal:
                 if message and message.get('type') == 'message':
                     return True
         return False
+
+    async def close(self) -> None:
+        await asyncio.to_thread(self.client.close)

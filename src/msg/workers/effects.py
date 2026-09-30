@@ -122,6 +122,7 @@ class EffectWorker:
         lease_seconds=120,
     ):
         self.app = app
+        self.stopping = lambda: False
         if tool_runner is None:
             from msg.workers.sandbox import BubblewrapRunner
 
@@ -142,6 +143,8 @@ class EffectWorker:
         from msg.extensions.tools import tool_concurrency
 
         async with self.app.metadata.transaction(write=True) as tx:
+            if self.stopping():
+                return None, False
             self.app.runtime_generation.require_current(tx)
             if quarantine_active(tx):
                 return None, False
@@ -540,6 +543,8 @@ class EffectWorker:
             await self._finish(job, 'done' if state == 'delivered' else 'failed', state)
 
     async def run_once(self):
+        if self.stopping():
+            return False
         await self.app.executor.require_current_runtime()
         if self.app.executor.recovery_drill_active():
             return False

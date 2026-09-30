@@ -119,3 +119,19 @@ msgd --config-dir /new/etc/msgd restore /secure-backup/service.zip --data-dir /n
 旧服务、解释器、数据和配置先保留。旧写入冻结后完成最终保护快照和增量核对；新 Root 的身份映射及旧内容归属按[导入流程](NEW_ROOT_LEGACY_IMPORT_RUNBOOK.md)核验，不能把旧权限字段当成新授权。只有本机 Root/基础 CA、依赖、隔离、日志链和实际功能验收通过才切代理 upstream；`nginx -t` 成功后 reload，并记录真实外部回读、服务版本和配置摘要，再启用已验收的后台服务。
 
 切流后尚无新业务写入时，可停止新服务并恢复旧 upstream/服务。已有新写入时，先冻结新 writer/worker并保护新 PostgreSQL/Git/CAS，核对数据差异后执行已验证的数据回迁或维持维护状态，不能直接退回旧 SQLite 丢弃新写入。新旧 Root 不同，回滚不会让新凭据自动被旧版接受。
+
+### Graceful service stop
+
+`msgd serve` and `msgd hosting` stop accepting connections on SIGTERM and
+allow in-flight HTTP work up to 60 seconds before cancellation. Their lifespan
+cleanup closes storage after draining. The worker stops starting maintenance
+and claiming effects, allows its current stage up to 60 seconds, then cancels
+it and closes storage and Valkey clients. Cancellation does not acknowledge
+an effect: a running lease remains durable and expires to `uncertain`, since
+an external side effect may already have happened.
+
+The three service units use `KillMode=mixed`: SIGTERM goes to the main process
+first so sandbox children are not terminated ahead of their parent.
+`TimeoutStopSec=90` bounds the entire shutdown, including cleanup; after this
+budget systemd kills remaining processes. This is a bounded drain, not an
+exactly-once guarantee for external effects.
