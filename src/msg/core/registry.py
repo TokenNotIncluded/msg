@@ -37,7 +37,13 @@ class Registry:
 
     def _insert(self, collection, spec, kind):
         require(not self._frozen, 'registry_frozen')
-        require(spec.version >= 1 and spec.name and '*' not in spec.name, 'invalid_registry_name')
+        require(
+            type(spec.version) is int
+            and spec.version >= 1
+            and spec.name
+            and '*' not in spec.name,
+            'invalid_registry_name',
+        )
         key = (spec.name, spec.version)
         require(key not in collection, 'duplicate_' + kind)
         collection[key] = spec
@@ -126,7 +132,11 @@ class Registry:
             )
         for item in (*manifest.resource_types, *manifest.capabilities, *manifest.operations):
             require(
-                item.version >= 1 and item.name and '*' not in item.name, 'invalid_registry_name'
+                type(item.version) is int
+                and item.version >= 1
+                and item.name
+                and '*' not in item.name,
+                'invalid_registry_name',
             )
         for item in manifest.operations:
             require(

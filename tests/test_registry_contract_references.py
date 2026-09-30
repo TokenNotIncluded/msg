@@ -108,3 +108,48 @@ def test_freeze_accepts_registered_content_constraints_and_operation_references(
     assert installed.resource_type('document') == resource
     assert installed.capability('document.read') == capability
     assert installed.operation('document.read') == operation
+
+
+@pytest.mark.parametrize('kind', ['resource_type', 'capability', 'operation'])
+@pytest.mark.parametrize('version', [True, False, 1.0, 1.5, '1', None, 0, -1])
+def test_registration_rejects_non_positive_integer_versions_without_inserting(kind, version):
+    resource, capability, operation = declarations()
+    spec = {'resource_type': resource, 'capability': capability, 'operation': operation}[kind]
+    installed = Registry()
+    register = getattr(installed, 'add_' + kind)
+    with pytest.raises(Failure, match='^invalid_registry_name$'):
+        register(replace(spec, version=version))
+    register(spec)
+    assert getattr(installed, kind)(spec.name) == spec
+
+
+@pytest.mark.parametrize('kind', ['resource_type', 'capability', 'operation'])
+@pytest.mark.parametrize('version', [True, 1.0, '1', None])
+def test_manifest_rejects_invalid_versions_before_registering_any_contract(kind, version):
+    resource, capability, operation = declarations()
+    values = {'resource_type': resource, 'capability': capability, 'operation': operation}
+    values[kind] = replace(values[kind], version=version)
+    installed = Registry()
+    manifest = PluginManifest(
+        name='identity',
+        version='1',
+        dependencies=(),
+        resource_types=(values['resource_type'],),
+        capabilities=(values['capability'],),
+        operations=(values['operation'],),
+        migrations=(),
+    )
+    with pytest.raises(Failure, match='^invalid_registry_name$'):
+        installed.add(manifest)
+    assert installed.resource_types() == ()
+    assert installed.capabilities() == ()
+    assert installed.operations() == ()
+    installed.add(
+        replace(
+            manifest,
+            resource_types=(resource,),
+            capabilities=(capability,),
+            operations=(operation,),
+        )
+    )
+    assert installed.operation(operation.name) == operation
