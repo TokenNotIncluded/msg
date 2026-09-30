@@ -20,7 +20,7 @@ New feature delivery does not establish every older production/recovery gate.
 | #212 public balance/ledger | Resolved via #208, privacy/permission regression and anonymous production reads. |
 | #213 graceful shutdown | Deployed with mixed kill and 90s stop budget; production in-flight drain evidence remains distinct from isolated SIGTERM tests. |
 | #214 recovery schema catalogue | Resolved: money_visibility is covered by catalogue and real recovery regression, included in production. No production promotion is claimed. |
-| #215 instance paths | #222 merged; C-locale CI regression is being repaired. Published release and production directory migration pending. |
+| #215 instance paths | #222 merged; #226 fixes its missing hosting-settings contract registration (25 real PostgreSQL hosting/recovery tests passed; new CI pending). These main-branch additions are not yet published or deployed; production directory migration pending. |
 | #216 same-instance domain aliases | Not implemented; client host aliases and server instance separation do not replace this contract. |
 | #217 archive retention / #220 retired apps | Cleanup not executed or verified. |
 | #218 PIN record location | Resolved privately from historical records; no secret or credential path is published. |
