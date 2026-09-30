@@ -54,8 +54,12 @@ __all__ = [
 async def public_account(tx, subject_id):
     """Current subject state and role govern publication on every read."""
     resource = await tx.resource(subject_id)
-    subject = await tx.subject(subject_id)
     require(resource.type == 'user' and resource.state == 'active', 'not_found')
+    require(
+        tx.one("SELECT 1 FROM identities WHERE id=? AND kind='subject'", (subject_id,)) is not None,
+        'not_found',
+    )
+    subject = await tx.subject(subject_id)
     require(
         subject_id == ROOT_SUBJECT or subject.kind in {'registered', 'custodial'},
         'not_found',
