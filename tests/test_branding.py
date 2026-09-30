@@ -29,7 +29,7 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert '/AGENTS.md' in agent.text
         assert 'sandbox' in agent.headers['content-security-policy']
         assert browser.content == agent.content
-        assert not re.search(r"[\u3400-\u9fff]", browser.text)
+        assert not re.search(r'[\u3400-\u9fff]', browser.text)
         browser_head = await http.head('/', headers={'Accept': 'text/html'})
         assert browser_head.content == b''
         assert browser_head.headers['content-type'].startswith('text/plain')
@@ -54,7 +54,7 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         hosted = await http.get('/@root/web/index.html')
         assert hosted.status_code == 200 and b'<svg' in hosted.content
         assert '<html lang="en">' in hosted.text
-        assert not re.search(r"[\u3400-\u9fff]", hosted.text)
+        assert not re.search(r'[\u3400-\u9fff]', hosted.text)
         csp = hosted.headers['content-security-policy']
         assert "style-src 'unsafe-inline'" in csp
         assert 'font-src data:' in csp and 'img-src data:' in csp
@@ -75,7 +75,10 @@ def test_game_script_permission_is_pinned_to_exact_bundled_root_page():
     from msg.extensions.hosting import HOSTED_HEADERS, hosted_headers
 
     released = digest(ROOT_WEB_SAMPLE)
-    assert 'allow-scripts' in hosted_headers('w_root_web', 'index.html', released)['Content-Security-Policy']
+    assert (
+        'allow-scripts'
+        in hosted_headers('w_root_web', 'index.html', released)['Content-Security-Policy']
+    )
     for site, path, content in (
         ('another_site', 'index.html', released),
         ('w_root_web', 'other.html', released),

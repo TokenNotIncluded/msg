@@ -28,7 +28,9 @@ def test_bank_grant_flag_has_no_money_movement_or_revocation_path():
 
 @pytest.mark.parametrize('action', ['mint', 'burn', 'transfer', 'bank_fund', 'bank_remove'])
 def test_programmatic_opt_in_cannot_expand_to_other_root_actions(monkeypatch, action):
-    monkeypatch.setattr(money, 'require_ssh_administrator', lambda _: pytest.fail('SSH gate reached'))
+    monkeypatch.setattr(
+        money, 'require_ssh_administrator', lambda _: pytest.fail('SSH gate reached')
+    )
     with pytest.raises(Failure, match='ssh_bank_role_grant_only'):
         money.MoneyAdmin('/etc/msgd').execute(action, allow_ssh=True)
 
@@ -73,7 +75,9 @@ async def test_ssh_grant_still_requires_exact_confirmation_pin_and_root_signatur
     with pytest.raises(Failure, match='approval_cancelled'):
         await asyncio.to_thread(
             money.MoneyAdmin(app.settings.config_dir).execute,
-            'bank_add', subject_id=subject, allow_ssh=True,
+            'bank_add',
+            subject_id=subject,
+            allow_ssh=True,
         )
     assert not (await call(app, 'money.banks', {})).data['banks']
     seed, _, _, _ = installation_seed
@@ -87,13 +91,17 @@ async def test_ssh_grant_still_requires_exact_confirmation_pin_and_root_signatur
     with pytest.raises(Failure):
         await asyncio.to_thread(
             money.MoneyAdmin(app.settings.config_dir).execute,
-            'bank_add', subject_id=subject, allow_ssh=True,
+            'bank_add',
+            subject_id=subject,
+            allow_ssh=True,
         )
     assert not (await call(app, 'money.banks', {})).data['banks']
     monkeypatch.setattr(money.getpass, 'getpass', lambda _: 'correct-horse-test-passphrase')
     await asyncio.to_thread(
         money.MoneyAdmin(app.settings.config_dir).execute,
-        'bank_add', subject_id=subject, allow_ssh=True,
+        'bank_add',
+        subject_id=subject,
+        allow_ssh=True,
     )
     banks = (await call(app, 'money.banks', {})).data['banks']
     assert len(banks) == 1 and banks[0]['subject_id'] == subject and banks[0]['status'] == 'active'

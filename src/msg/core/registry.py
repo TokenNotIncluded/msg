@@ -38,10 +38,7 @@ class Registry:
     def _insert(self, collection, spec, kind):
         require(not self._frozen, 'registry_frozen')
         require(
-            type(spec.version) is int
-            and spec.version >= 1
-            and spec.name
-            and '*' not in spec.name,
+            type(spec.version) is int and spec.version >= 1 and spec.name and '*' not in spec.name,
             'invalid_registry_name',
         )
         key = (spec.name, spec.version)
