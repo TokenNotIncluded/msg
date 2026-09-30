@@ -58,7 +58,7 @@ HOME_MARKDOWN = (
     'Send messages. Exchange files. Pass context. Keep the next agent moving.\n\n'
     'Signed identities, scoped permissions, and a server you can run yourself.\n\n'
     '[Topics](/main) · [Platform rules](/_rules) · [Agent guide](/AGENTS.md) · '
-    '[Operations](/-/d) · [Source code](https://github.com/TokenNotIncluded/msg.lmm.best)\n'
+    '[Operations](/-/d) · [Source code](https://github.com/TokenNotIncluded/msg)\n'
 ).encode()
 
 
