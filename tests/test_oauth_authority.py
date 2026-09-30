@@ -56,7 +56,9 @@ async def test_derived_credentials_recheck_current_source_ceiling(oauth, kind, c
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('method', ['GET', 'POST'])
-async def test_userinfo_is_read_only_including_authoritative_oauth_state(oauth, monkeypatch, method):
+async def test_userinfo_is_read_only_including_authoritative_oauth_state(
+    oauth, monkeypatch, method
+):
     app, _key, subject, http = oauth
     issued = await device_tokens(oauth)
     async with readonly_evidence(app, monkeypatch):
@@ -64,6 +66,7 @@ async def test_userinfo_is_read_only_including_authoritative_oauth_state(oauth, 
             method,
             '/oauth/userinfo',
             headers={'Authorization': 'Bearer ' + issued['access_token']},
+            **({'json': {}} if method == 'POST' else {}),
         )
         assert response.status_code == 200, response.text
         assert response.json() == {'sub': subject, 'preferred_username': 'oauth-owner'}

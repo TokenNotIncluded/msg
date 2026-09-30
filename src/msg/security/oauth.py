@@ -15,9 +15,10 @@ from uuid import uuid4
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
-from msg.core.codec import b64, canonical, loads, parse_time, wire
+from msg.core.codec import b64, canonical, decode, loads, parse_time, wire
 from msg.core.errors import Failure, require
-from msg.core.models import Credential
+from msg.core.models import CapabilityGrant, Credential
+from msg.security.policy import constraints_subset, scope_subset
 from msg.security.quarantine import require_live_authority
 
 DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
@@ -67,6 +68,24 @@ def scopes_for(client, value):
     return scopes
 
 
+async def require_ceiling(tx, ceiling, parent):
+    # A derived credential is a limit, never a durable copy of authority which
+    # its signing source has since lost. Reuse the same containment vocabulary
+    # as certificate/delegation validation, including scope and constraints.
+    for grant in ceiling:
+        require(
+            any([
+                allowed.capability == grant.capability
+                and allowed.version == grant.version
+                and grant.operations <= allowed.operations
+                and await scope_subset(grant.scope, allowed.scope, tx)
+                and constraints_subset(grant.constraints, allowed.constraints)
+                for allowed in parent.ceiling
+            ]),
+            'invalid_grant',
+        )
+
+
 async def require_source(tx, body, now):
     parent = await tx.credential(body['parent'])
     subject = await tx.subject(body['subject'])
@@ -78,6 +97,9 @@ async def require_source(tx, body, now):
         and parent.not_before <= now
         and (parent.expires_at is None or parent.expires_at > now),
         'invalid_grant',
+    )
+    await require_ceiling(
+        tx, tuple(decode(CapabilityGrant, raw) for raw in body.get('ceiling', ())), parent
     )
     if body.get('custodial'):
         row = tx.one(
@@ -98,6 +120,7 @@ async def require_binding(tx, credential, now, config):
         source = loads(api[0])
         require(credential.source_credential_id == source['parent'], 'invalid_grant')
         await require_source(tx, source, now)
+        await require_ceiling(tx, credential.ceiling, await tx.credential(source['parent']))
     row = tx.one('SELECT body FROM oauth_states WHERE id=?', ('access:' + credential.id,))
     if row is None:
         require(
@@ -112,6 +135,7 @@ async def require_binding(tx, credential, now, config):
     client = client_for(config, family['client_id'])
     require(set(family['scopes']) <= client.scopes and not family.get('revoked'), 'invalid_grant')
     await require_source(tx, family, now)
+    await require_ceiling(tx, credential.ceiling, await tx.credential(family['parent']))
 
 
 class OAuthService:
@@ -381,9 +405,6 @@ class OAuthService:
         return None, 'unsupported_grant_type'
 
     async def tokens(self, tx, source, *, family_id=None, expiry=None):
-        from msg.core.codec import decode
-        from msg.core.models import CapabilityGrant
-
         now = self.app.clock()
         subject = await require_source(tx, source, now)
         if family_id is None:
