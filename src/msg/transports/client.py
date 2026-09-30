@@ -11,6 +11,7 @@ from msg.core.codec import b64, canonical, decode, loads, wire
 from msg.core.errors import Failure, require
 from msg.core.models import TransportLimits
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
+from msg.service_origin import service_origin
 from msg.transports.packet import decode_result, require_url_safe_packet, safe_error_code
 from msg.transports.url_safety import require_safe_relative_url
 
@@ -19,28 +20,7 @@ class HTTPTransport:
     name = 'http'
 
     def __init__(self, server, *, http=None, max_response_bytes=1048576, max_path_bytes=8192):
-        require(
-            isinstance(server, str)
-            and all(ord(char) > 32 and ord(char) != 127 for char in server)
-            and '\\' not in server,
-            'invalid_server_url',
-        )
-        server = server.rstrip('/')
-        try:
-            parsed = urlsplit(server)
-            valid = (
-                parsed.scheme in {'https', 'http'}
-                and parsed.hostname
-                and parsed.username is None
-                and parsed.password is None
-                and not parsed.query
-                and not parsed.fragment
-                and parsed.path in {'', '/'}
-                and (parsed.port is None or parsed.port > 0)
-            )
-        except ValueError:
-            raise Failure('invalid_server_url') from None
-        require(valid, 'invalid_server_url')
+        server = service_origin(server)
         self.server = server
         self.http = http or httpx.AsyncClient(base_url=server, timeout=30, follow_redirects=False)
         self._owns_http = http is None

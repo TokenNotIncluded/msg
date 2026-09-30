@@ -43,16 +43,13 @@ remaining work; historical runs retain their original source provenance.
 Package integrity, health, doctor and isolated official selftest were verified
 for that installed release. Root trust and existing account keys were preserved.
 
-The September 30 read-only preflight found PostgreSQL 18, 87 tables, a typed
+The October 1 read-only preflight found PostgreSQL 18, 87 tables, a typed
 ledger with zero ledger entries and zero legacy escrow identities, and two finite
 CA certificates. This current database is not a legacy production snapshot. The protected legacy
 backup is SQLite (33 tables, no financial tables), so it cannot satisfy the old
 PostgreSQL escrow migration scenario.
 
-New `identity.rename@1` and `discovery.read_query@4` authority is absent from the
-installed signed CA snapshots. Existing certificates must not acquire it merely
-because code was updated. Root rotation invalidates old chains; an upgrade must
-first have a concrete, approved CA transition rather than silently changing trust.
+The older deployed dictionary currently returns `published_operation_changed`; main restores the immutable v1 contract. The compatible upgrade makes homepage v4 genuinely anonymous-only and excludes it from credential ceilings. An explicit `[identity] handle_rename_enabled = false` disables new rename authority where the installed signed CA has not authorized it. Existing grants, certificates, trust and Root keys are retained; enabling renaming still requires the appropriate signed CA policy. Production rollout and its doctor result remain separate verification steps.
 
 The shared Nginx global/pre-Host policy is now installed: inherited access logs
 keep only time/configured server/status/bytes and error text is suppressed.
@@ -71,3 +68,11 @@ recipients and target-topology durability measurements remain distinct requireme
 
 The previous progress snapshot is retained in Git history at `5dbc03b:PROGRESS.md`;
 its historical test counts must not be added to the current run.
+
+## SSH-inspired connections
+
+[Issue #221](https://github.com/TokenNotIncluded/msg.lmm.best/issues/221) tracks `msg user@host "command"`, SSH-style host aliases/configuration, one identity per canonical service domain and durable legacy migration. Empty commands open the TUI; destination usernames are checked through signed reads before requested actions. Domain paths isolate keys, tokens, certificates, journals and cache. The first connection requires an explicit service rather than defaulting to the public domain.
+
+The focused connection/config/path/registry regression selection passed 98 tests, including a real isolated signed post and wrong-user denial. Broader exact-head CI and installed-package acceptance are tracked separately. README, connection instructions and filesystem documentation are updated in English.
+
+A target-host isolated OpenSSH/PAM fixture also passed all seven Git/SSH/revocation checks, with temporary installation cleanup. It ran as the ordinary `arch` UID with the older installed runtime; it does not prove the production `msgd` service account can log in. The protected report is under `/var/backups/msgd/deployments/target-acceptance-20261001/`.

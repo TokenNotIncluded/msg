@@ -66,3 +66,19 @@ def test_freeze_rejects_missing_duplicate_or_empty_operation_rules(ids):
     with pytest.raises(Failure, match='^dangling_requires_rules$'):
         registry.freeze()
     assert not registry.frozen
+
+
+@pytest.mark.parametrize(
+    'options',
+    [
+        {'enabled': 'false'},
+        {'anonymous_only': 'true'},
+        {'anonymous_only': True},
+        {'anonymous_only': True, 'effect': 'read', 'signature': True},
+    ],
+)
+def test_freeze_rejects_unsafe_access_modes(options):
+    registry = assemble('identity.custom', **options)
+    with pytest.raises(Failure, match='^invalid_operation_access_mode$'):
+        registry.freeze()
+    assert not registry.frozen

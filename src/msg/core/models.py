@@ -379,6 +379,8 @@ class OperationSpec:
         [ExecutionContext, OperationRequest, MetadataSession], Awaitable[HandlerOutput]
     ]
     requires_rules: tuple[str, ...] = ('msg.protocol',)
+    enabled: bool = True
+    anonymous_only: bool = False
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

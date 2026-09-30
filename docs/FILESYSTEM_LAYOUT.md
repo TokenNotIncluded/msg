@@ -4,14 +4,14 @@ Host filesystem paths follow the [XDG Base Directory specification](https://spec
 
 ## Client
 
-`src/msg/paths.py` owns layout selection and private directory validation. Empty or relative XDG base variables use the standard defaults. `msg --profile NAME` appends `msg/profiles/NAME` to each base directory. Names allow letters, digits, underscores, and hyphens, up to 64 characters.
+`src/msg/paths.py` owns layout selection and private directory validation. Empty or relative XDG base variables use the standard defaults. Normal client paths append `msg/services/<canonical-domain>` to each base directory. One service origin has one identity; `--profile NAME` stores only a service-selection alias in configuration. Alias names allow letters, digits, underscores and hyphens, up to 64 characters. Choose an initial destination, `--server`, or `MSG_SERVER`; there is no hardcoded public service. See [connection configuration](CLIENT_CONNECTIONS.md) for SSH-style destinations and `Host` entries.
 
 | Purpose | Default directory | Contents |
 | --- | --- | --- |
-| Configuration | `~/.config/msg` | Reserved for configuration; never new private keys or tokens |
-| Durable identity data | `~/.local/share/msg` | Signing keys, encryption keys including rotated keys, CA keys, exported certificates, Bank approval records, retained custodial recovery history |
-| Persistent state | `~/.local/state/msg` | `client.json` (server binding, tokens and certificate IDs), registration and operation journals, OAuth sessions, upgrade locks |
-| Disposable cache | `~/.cache/msg` | Verified operation catalogs |
+| Configuration | `~/.config/msg` | SSH-style `config`, service-selection aliases and per-service configuration; never new private keys or tokens |
+| Durable identity data | `~/.local/share/msg/services/<domain>` | Signing keys, encryption keys including rotated keys, CA keys, exported certificates, Bank approval records, retained custodial recovery history |
+| Persistent state | `~/.local/state/msg/services/<domain>` | `client.json` (server binding, tokens and certificate IDs), registration and operation journals, OAuth sessions, upgrade locks |
+| Disposable cache | `~/.cache/msg/services/<domain>` | Verified operation catalogs |
 | Temporary work | `$XDG_RUNTIME_DIR/msg`, or Python's temporary directory | Unique private working directories, removed when the operation exits; Python honors `TMPDIR`, `TEMP`, and `TMP` |
 
 Application directories are owned by the invoking user and mode `0700`; credentials and session files are `0600`. Symlinked application directories are rejected before changing permissions. Generic XDG base directories are never chmodded by the client. A configured runtime directory must already be owned by the user and private. Do not put a profile in a shared directory.
@@ -19,11 +19,11 @@ Application directories are owned by the invoking user and mode `0700`; credenti
 Stop clients using the old profile before migrating:
 
 ```sh
-msg --profile lightjunction --migrate-from ~/.config/msg/profiles/archczy/lightjunction identity show
+msg --server https://msg.lmm.best --profile lightjunction --migrate-from ~/.config/msg/profiles/archczy/lightjunction identity show
 msg --profile lightjunction tui
 ```
 
-Migration checks every source file and every destination conflict before writing. It preserves keys and resumable journals, writes copies durably, verifies them, and only then removes original files. Identical copies from an interrupted migration are accepted; different credentials are never overwritten. Legacy catalog caches and nested profile containers remain in place and can be removed separately after migration. The default legacy `~/.config/msg/client.json` profile migrates automatically on first use. Explicit `--config-dir DIRECTORY` retains the old portable single-directory layout for existing integrations; it cannot be combined with `--profile` or `--migrate-from`.
+Migration checks every source file and every destination conflict before writing. It preserves keys and resumable journals, writes copies durably, verifies them, and only then removes original files. Identical copies from an interrupted migration are accepted; different credentials are never overwritten. Legacy catalog caches and nested profile containers remain in place and can be removed separately after migration. Legacy single-directory and split XDG profiles migrate to their recorded service on first use. A migration explicitly targeting a different service stops before creating destination files. Split-profile keys and state are copied and checked together; distinct identities for the same domain are never merged or overwritten. Explicit `--config-dir DIRECTORY` retains the old portable single-directory layout for existing integrations; it cannot be combined with `--profile` or `--migrate-from`.
 
 ## Service
 
@@ -42,7 +42,7 @@ Migration checks every source file and every destination conflict before writing
 | Runtime files | `/run/msgd` |
 | Protected deployment backups | `/var/backups/msgd` |
 
-Arch, Debian, and RPM packages share this layout. Package files belong to the package manager; service data and Root CA private state survive upgrades. The network service cannot access `/var/lib/msgd-root`. Root initialization intent now lives beside the protected root key, rather than under `/etc`. Recovery quarantine markers now live in the persistent data directory; old configuration-directory markers remain recognized. Both markers at once fail closed. The hosting reader's explicit recovery-marker configuration must point to the writer's marker.
+Arch, Debian, and RPM packages share this layout. Each installation requires an explicit service origin and has its own Root trust, CA policies and stored identities; the package name and source repository do not bind it to a public domain. Separate installations must use separate configuration, data and protected Root directories. `msgd init` requires `--service-url`; the source helper's example origin is loopback only. Package files belong to the package manager; service data and Root CA private state survive upgrades. The network service cannot access `/var/lib/msgd-root`. Root initialization intent now lives beside the protected root key, rather than under `/etc`. Recovery quarantine markers now live in the persistent data directory; old configuration-directory markers remain recognized. Both markers at once fail closed. The hosting reader's explicit recovery-marker configuration must point to the writer's marker.
 
 Explicit server storage paths must be absolute and cannot contain `..`. Custom configuration directories and isolated test installations remain supported. Missing staging paths derive from that installation's data location instead of silently using production storage. A custom configuration directory uses a sibling `<config-name>-root` directory for Root CA state. Existing `server.toml`, legacy embedded blob/repository layouts, and `/etc/msgd/root/key.json` remain compatibility inputs; migration must preserve their security boundaries.
 

@@ -376,7 +376,11 @@ def install(app):
 
     install_oauth(app, op)
 
-    @op('identity.rename', obj({'handle': STRING}, ('handle',)))
+    @op(
+        'identity.rename',
+        obj({'handle': STRING}, ('handle',)),
+        enabled=getattr(app.settings, 'handle_rename_enabled', True),
+    )
     async def rename(ctx, request, tx):
         subject = await controlled_owner(app, ctx, request, tx)
         require(subject.kind in {'registered', 'custodial'}, 'formal_identity_required')

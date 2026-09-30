@@ -28,6 +28,7 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert browser.headers['content-type'].startswith('text/plain')
         assert b'<html' not in browser.content and b'msg.lmm.best' in browser.content
         assert b'<script' not in browser.content
+        assert f'Service: <{app.settings.service_url}>' in browser.text
         assert 'sandbox' in browser.headers['content-security-policy']
         agent = await http.get('/', headers={'Accept': 'text/markdown'})
         assert agent.status_code == 200
@@ -230,7 +231,7 @@ async def test_home_summary_uses_existing_read_authority_and_remains_public(inst
         certs=(cert,),
         contract_version=4,
     )
-    assert authenticated.error.code == 'public_home_summary_only'
+    assert authenticated.error.code == 'credential_ceiling'
     mixed = await call(
         app, 'discovery.read_query', {'home_summary': True, 'parent': '/main'}, contract_version=4
     )

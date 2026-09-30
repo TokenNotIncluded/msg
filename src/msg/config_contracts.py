@@ -44,10 +44,11 @@ _SECTIONS = {
         'ports': ('tool_ports', None),
     },
     'identity': {
+        'handle_rename_enabled': ('handle_rename_enabled', 'authority_snapshot'),
         'credential_delivery_recovery_window': (
             'credential_delivery_recovery_window',
             'credential_delivery',
-        )
+        ),
     },
     'money': {
         name: ('money.' + name, 'money_config')

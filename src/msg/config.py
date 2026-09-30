@@ -10,11 +10,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from msg.config_contracts import configuration_keys, validate_sections
-from msg.core.errors import require
+from msg.core.errors import Failure, require
 from msg.core.models import MailConfig, ServerConfig, TransportLimits
 from msg.oauth_config import OAuthConfig, load_oauth
 from msg.paths import ROOT_PRIVATE_DIR, SERVER_CONFIG_DIR
 from msg.security.age_keys import encryption_key_id, public_from_recipient
+from msg.service_origin import service_origin
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +64,7 @@ class Settings:
     public_web_origin: str | None = None
     temporary_ttl: int = 3600
     credential_delivery_recovery_window: int = 900
+    handle_rename_enabled: bool = True
     transfer_ttl: int = 86400
     base_certificate_ttl: int = 2592000
     max_part_bytes: int = 65536
@@ -142,6 +144,8 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
     )
     window_minutes = int(window[:-1])
     require(1 <= window_minutes <= 60, 'invalid_credential_delivery_recovery_window')
+    handle_rename_enabled = identity.get('handle_rename_enabled', True)
+    require(type(handle_rename_enabled) is bool, 'invalid_handle_rename_enabled')
     hosting = data.get('hosting', {})
     require(
         isinstance(hosting, dict) and set(hosting) <= configuration_keys('hosting'),
@@ -192,7 +196,7 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
     )
     server = data.get('server', {})
     require(set(server) <= configuration_keys('server'), 'unknown_server_configuration')
-    service = server.get('service_url', 'https://msg.lmm.best')
+    service = server.get('service_url')
     require(isinstance(service, str), 'invalid_service_url')
     service = service.rstrip('/')
     url = urlsplit(service)
@@ -206,6 +210,10 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
         and not url.path,
         'invalid_service_url',
     )
+    try:
+        service_origin(service)
+    except Failure:
+        raise Failure('invalid_service_url') from None
     require(
         type(server.get('port', 8042)) is int and 1 <= server.get('port', 8042) <= 65535,
         'invalid_listen_port',
@@ -460,6 +468,7 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
         temporary_ttl=server.get('temporary_ttl', 3600),
         transfer_ttl=server.get('transfer_ttl', 86400),
         credential_delivery_recovery_window=window_minutes * 60,
+        handle_rename_enabled=handle_rename_enabled,
         max_part_bytes=limits.get('part_bytes', 65536),
         tool_timeout_ms=tools.get('timeout_ms', 10000),
         tool_max_response_bytes=tools.get('max_response_bytes', 4194304),
@@ -477,12 +486,13 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
 def write_example(
     config_dir,
     data_dir,
-    service_url='https://msg.lmm.best',
+    service_url='http://localhost:8042',
     *,
     postgres_dsn='service=msgd',
     valkey_url=None,
 ):
     """Local install helper: writes no private key or default PIN."""
+    service_url = service_origin(service_url)
     config_dir, data_dir = (
         Path(config_dir).expanduser().absolute(),
         Path(data_dir).expanduser().absolute(),
@@ -500,6 +510,7 @@ port = 8042
 
 [identity]
 credential_delivery_recovery_window = "15m"
+handle_rename_enabled = true
 
 [money]
 enabled = true

@@ -40,13 +40,20 @@ def parser():
     cli.add_argument('--config-dir', type=Path, help='Explicit portable legacy profile directory.')
     cli.add_argument(
         '--profile',
-        help='Named profile in the XDG configuration, data, state and cache directories.',
+        help='Named service alias; each service domain has one local identity.',
     )
     cli.add_argument(
         '--migrate-from', type=Path, help='Migrate an existing private profile into the XDG layout.'
     )
-    cli.add_argument('--server')
+    cli.add_argument(
+        '--server', help='Service origin; overrides MSG_SERVER and the saved selection.'
+    )
     cli.add_argument('--transport', choices=TRANSPORTS, default='http')
+    cli.add_argument(
+        '-F', '--connection-config', type=Path, help='SSH-style MSG host configuration.'
+    )
+    cli.add_argument('-l', '--user', help='Require this authenticated account username.')
+    cli.add_argument('-p', '--port', help='Service port for user@host connection syntax.')
     cli.add_argument(
         '--certificate',
         action='append',
@@ -54,7 +61,7 @@ def parser():
         help='Attach a registered certificate ID for this invocation.',
     )
     cli.add_argument(
-        '--key', type=Path, help='Use a local delegated/CA signing key for this invocation.'
+        '-i', '--key', type=Path, help='Use a local delegated/CA signing key for this invocation.'
     )
     cli.add_argument(
         '--as-subject',
@@ -427,10 +434,17 @@ async def run(args):
         state.data['subject_id'] = args.as_subject
     try:
         command = args.command
+        if args.user:
+            if command == 'identity' and args.action == 'new':
+                require(args.handle == args.user, 'connection_user_mismatch')
+            elif command != 'login':
+                await client.require_username(args.user)
         if command in {'login', 'logout', 'auth'}:
             from msg.client_oauth import run_command
 
             result = await run_command(client, args)
+            if args.user and command == 'login':
+                await client.require_username(args.user)
         elif command == 'api-key':
             from msg.client_api_keys import run_command
 
@@ -993,8 +1007,18 @@ async def run(args):
 
 
 def main(argv=None):
-    args = parser().parse_args(argv)
     try:
+        from msg.client_connection import expand_connection_args
+
+        argument_parser = parser()
+        commands = next(
+            action.choices
+            for action in argument_parser._actions
+            if isinstance(action, argparse._SubParsersAction)
+        )
+        args = argument_parser.parse_args(
+            expand_connection_args(sys.argv[1:] if argv is None else argv, commands)
+        )
         return asyncio.run(run(args))
     except Failure as exc:
         print(canonical({'status': 'error', 'error': exc.as_dict()}).decode(), file=sys.stderr)

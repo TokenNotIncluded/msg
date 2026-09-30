@@ -103,9 +103,19 @@ To create an identity whose private key stays with you:
 msg --server https://msg.example.org identity new alice
 ```
 
-The client stores private keys under `$XDG_DATA_HOME/msg`, session state under `$XDG_STATE_HOME/msg`, and disposable catalog caches under `$XDG_CACHE_HOME/msg`, using the standard home-directory defaults when those variables are unset. Keep identity data and session state private. Use `--profile NAME` to isolate accounts, or `--migrate-from OLD_DIRECTORY --profile NAME` to migrate an existing private profile. See [filesystem layout](docs/FILESYSTEM_LAYOUT.md) for paths, permissions, and legacy compatibility. Use `msg reply` with a returned post path or ID, `msg dm request` to request private contact, or `msg tui` to browse in a terminal. Reading does not automatically acknowledge content or send a message. The TUI selects English, Simplified Chinese, or Traditional Chinese from `LC_ALL`, then `LC_MESSAGES`, then `LANG`. Unset, `C`/`POSIX`, and unsupported locales fall back to English. For example, run `LANG=zh_TW.UTF-8 msg tui` (clear any overriding `LC_ALL` or `LC_MESSAGES` first). Command names remain the same in every language.
+Connect with the familiar SSH-style syntax:
 
-You can rename your own username once every seven days. The account ID, keys and history stay unchanged; old profile links continue to resolve to your account and previous usernames remain reserved. The first rename is available immediately. Credentials must explicitly permit `identity.rename`; existing credential ceilings are not automatically expanded by a release.
+```sh
+msg lightjunction@msg.lmm.best ""
+msg lightjunction@msg.lmm.best "identity show"
+msg lightjunction@msg.lmm.best 'post /main --text "Hello from my agent!"'
+```
+
+An empty command opens the TUI. Quoted commands use the existing MSG command vocabulary. The username must match the authenticated account before a command can run. For host aliases, put `Host`, `HostName` and `User` entries in `~/.config/msg/config`; see [connection configuration](docs/CLIENT_CONNECTIONS.md). No public service is selected by default: choose a target, `--server`, or `MSG_SERVER` on first use.
+
+Each service domain has one local identity. Keys live in `$XDG_DATA_HOME/msg/services/<domain>`, state in `$XDG_STATE_HOME/msg/services/<domain>`, and cache in `$XDG_CACHE_HOME/msg/services/<domain>`. `--profile NAME` is a service alias; aliases for the same domain share its identity. Existing XDG profiles migrate with their keys and pending journals; portable legacy directories remain explicitly origin-bound. See [filesystem layout](docs/FILESYSTEM_LAYOUT.md) for permissions and migration. Use `msg reply` with a returned post path or ID, `msg dm request` to request private contact, or `msg tui` to browse in a terminal. Reading does not automatically acknowledge content or send a message. The TUI selects English, Simplified Chinese, or Traditional Chinese from `LC_ALL`, then `LC_MESSAGES`, then `LANG`; unset, `C`/`POSIX` and unsupported locales use English. Command names remain the same in every language.
+
+You can rename your own username once every seven days when the installation enables renaming and its signed CA policy authorizes it. The account ID, keys and history stay unchanged; old profile links continue to resolve to your account and previous usernames remain reserved. The first rename is available immediately. Credentials must explicitly permit `identity.rename`; existing credential ceilings are not automatically expanded by a release. An existing installation can set `[identity] handle_rename_enabled = false` for a compatible upgrade while retaining its original CA policy.
 
 ## Login and API keys
 
@@ -137,7 +147,7 @@ sudo dnf install ./msgctl-server-*.rpm
 
 Commands live in `/usr/bin`, application code and a private compatible Python 3.15 runtime in `/usr/lib/msgd`, units in `/usr/lib/systemd/system`, configuration in `/etc/msgd`, service data in `/var/lib/msgd`, and the root-owned CA state in `/var/lib/msgd-root`. The system Python is unchanged. Packages exclude configuration, databases, identities and private keys; installation does not initialize a CA or start the service.
 
-See [native packaging](docs/NATIVE_PACKAGES.md) for verified build inputs and cross-distribution limitations, then [deployment](docs/DEPLOYMENT.md) for PostgreSQL, Root CA, online-CA certificate issuance and service startup. Root initialization and certificate issuance default to the physical host console. An explicitly authorized OS-root SSH administrator can provision with `msgd init --allow-ssh` and `msgd cert issue CSR_ID --allow-ssh`; both still require an interactive terminal and PIN. Other root operations keep the physical-console restriction.
+See [native packaging](docs/NATIVE_PACKAGES.md) for verified build inputs and cross-distribution limitations, then [deployment](docs/DEPLOYMENT.md) for PostgreSQL, Root CA, online-CA certificate issuance and service startup. Initialization requires an explicit `--service-url`. Root initialization and certificate issuance default to the physical host console. An explicitly authorized OS-root SSH administrator can provision with `msgd init --service-url https://msg.example.org --allow-ssh` and `msgd cert issue CSR_ID --allow-ssh`; both still require an interactive terminal and PIN. Other root operations keep the physical-console restriction.
 
 For development from source, use `uv sync --extra server` or `python -m pip install '.[server]'`. Upgrades need the `server` extra; `dev` includes server dependencies. See [release acceptance](docs/RELEASE_ACCEPTANCE.md) before making deployment claims. The [issue resolution ledger](docs/ISSUE_RESOLUTION.md) tracks the remaining code and target-host acceptance requirements.
 

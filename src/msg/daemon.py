@@ -106,7 +106,7 @@ def parser():
         'init', help='Initialize from the physical local console; no PIN arguments'
     )
     init.add_argument('--data-dir', type=Path, default=SERVER_DATA_DIR)
-    init.add_argument('--service-url', default='https://msg.lmm.best')
+    init.add_argument('--service-url', required=True, help='Public origin of this installation.')
     init.add_argument(
         '--allow-ssh',
         action='store_true',

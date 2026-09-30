@@ -296,16 +296,30 @@ def grant_for(spec, *, scope=None, operations=None):
 
 def primary_ceiling(registry, scope=None):
     # Explicit snapshot: future registry entries do not enter existing credentials.
+    eligible = credential_operations(registry)
     return tuple(
-        grant_for(spec, scope=scope) for spec in registry.capabilities() if spec.operations
+        grant_for(spec, scope=scope, operations=spec.operations & eligible)
+        for spec in registry.capabilities()
+        if spec.operations & eligible
+    )
+
+
+def credential_operations(registry):
+    # Declarations remain stable so historical signed snapshots still validate.
+    # Only enabled authenticated operations enter newly requested ceilings.
+    return frozenset(
+        f'{spec.name}@{spec.version}'
+        for spec in registry.operations()
+        if spec.enabled and not spec.anonymous_only
     )
 
 
 def base_grants(registry, scope=None):
+    eligible = credential_operations(registry)
     return tuple(
-        grant_for(spec, scope=scope)
+        grant_for(spec, scope=scope, operations=spec.operations & eligible)
         for spec in registry.capabilities()
-        if spec.name in BASE_FAMILIES and spec.operations
+        if spec.name in BASE_FAMILIES and spec.operations & eligible
     )
 
 
@@ -319,6 +333,7 @@ def temporary_ceiling(registry, scope=None):
         'identity.custodial_rewrap_ack@2',
         'identity.token_rotate@2',
     }
+    temporary &= credential_operations(registry)
     return tuple(
         grant_for(spec, scope=scope, operations=spec.operations & temporary)
         for spec in registry.capabilities()

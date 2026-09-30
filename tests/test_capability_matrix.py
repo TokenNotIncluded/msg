@@ -11,7 +11,12 @@ from msg.core.errors import Failure
 from msg.core.registry import Registry
 from msg.core.requests import request_for
 from msg.plugins.common import registration
-from msg.security.capabilities import base_grants, install_capabilities
+from msg.security.capabilities import (
+    base_grants,
+    install_capabilities,
+    primary_ceiling,
+    temporary_ceiling,
+)
 
 SPECIAL = (
     'resource.certified_write',
@@ -33,6 +38,27 @@ SPECIAL = (
     'system.config',
     'system.maintenance',
 )
+
+
+def test_disabled_and_anonymous_operations_never_enter_new_credentials():
+    registry = Registry()
+    op, finish = registration(SimpleNamespace(registry=registry), 'identity')
+
+    async def unused(*args):
+        raise AssertionError('capability assembly must not run business handlers')
+
+    op('identity.rename', {'type': 'object'}, enabled=False)(unused)
+    op('discovery.read_query', {'type': 'object'}, version=4, effect='read', anonymous_only=True)(
+        unused
+    )
+    op('content.post_create', {'type': 'object'})(unused)
+    finish()
+    install_capabilities(registry)
+    assert 'identity.rename@1' in registry.capability('identity.basic').operations
+    assert 'discovery.read_query@4' in registry.capability('discovery.basic').operations
+    for ceiling in (primary_ceiling, base_grants, temporary_ceiling):
+        operations = {operation for grant in ceiling(registry) for operation in grant.operations}
+        assert operations == {'content.post_create@1'}
 
 
 def test_special_operation_versions_never_enter_ordinary_base_grants():

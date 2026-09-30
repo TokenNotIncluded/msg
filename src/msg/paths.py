@@ -8,6 +8,7 @@ from pathlib import Path
 
 from msg.atomic_file import durable_write
 from msg.core.errors import require
+from msg.service_origin import service_namespace
 
 SERVER_CONFIG_DIR = Path('/etc/msgd')
 SERVER_DATA_DIR = Path('/var/lib/msgd')
@@ -43,16 +44,22 @@ class ClientPaths:
     portable: bool = False
 
     @classmethod
-    def discover(cls, directory=None, *, profile=None):
+    def discover(cls, directory=None, *, profile=None, server=None):
         if directory is not None:
-            require(profile is None, 'profile_conflicts_with_config_dir')
+            require(profile is None and server is None, 'profile_conflicts_with_config_dir')
             directory = Path(directory).expanduser().absolute()
             return cls(directory, directory, directory, directory / 'cache', True)
         require(
             profile is None or re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', profile),
             'invalid_profile_name',
         )
-        suffix = Path('msg') / 'profiles' / profile if profile else Path('msg')
+        suffix = (
+            Path('msg') / 'services' / service_namespace(server)
+            if server is not None
+            else Path('msg') / 'profiles' / profile
+            if profile
+            else Path('msg')
+        )
         return cls(
             xdg_directory('XDG_CONFIG_HOME', '.config') / suffix,
             xdg_directory('XDG_DATA_HOME', '.local/share') / suffix,
@@ -69,6 +76,8 @@ class ClientPaths:
                 private_directory(app)
                 if path.is_relative_to(app / 'profiles'):
                     private_directory(app / 'profiles')
+                if path.is_relative_to(app / 'services'):
+                    private_directory(app / 'services')
             private_directory(path)
 
     def temporary_parent(self):
@@ -104,10 +113,16 @@ class ClientPaths:
     def migrate(self, source):
         import fcntl
 
-        source = Path(source).expanduser().absolute()
-        if not source.exists():
+        sources = (
+            {source.data, source.state}
+            if isinstance(source, ClientPaths)
+            else {Path(source).expanduser().absolute()}
+        )
+        sources = {path for path in sources if path.exists()}
+        if not sources:
             return
-        directories = sorted({source, self.state}, key=str)
+        require(not sources & {self.data, self.state}, 'invalid_migration_source')
+        directories = sorted(sources | {self.data, self.state}, key=str)
         descriptors = []
         try:
             for directory in directories:
@@ -115,7 +130,7 @@ class ClientPaths:
                 fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                 descriptors.append(fd)
                 fcntl.flock(fd, fcntl.LOCK_EX)
-            self._migrate(source)
+            self._migrate(sources)
         finally:
             for fd in reversed(descriptors):
                 os.close(fd)
@@ -126,14 +141,14 @@ class ClientPaths:
         A crash leaves either identical copies or the old file. Retrying never
         generates a replacement identity or overwrites a different credential.
         """
-        source = Path(source).expanduser().absolute()
-        require(source not in {self.data, self.state}, 'invalid_migration_source')
-        if not source.exists():
-            return
-        private_directory(source)
         entries = []
-        for entry in source.iterdir():
-            if entry.name in {'cache', 'profiles'} and entry.is_dir() and not entry.is_symlink():
+        targets = {}
+        for entry in sorted(entry for directory in source for entry in directory.iterdir()):
+            if (
+                entry.name in {'cache', 'profiles', 'services'}
+                and entry.is_dir()
+                and not entry.is_symlink()
+            ):
                 continue  # Regenerable data is never part of identity migration.
             info = entry.lstat()
             require(
@@ -144,6 +159,11 @@ class ClientPaths:
                 'unsafe_legacy_client_file',
             )
             target = self.file(entry.name)
+            if target in targets:
+                require(
+                    entry.read_bytes() == targets[target].read_bytes(), 'client_migration_conflict'
+                )
+            targets[target] = entry
             if target.exists() or target.is_symlink():
                 current = target.lstat()
                 require(
@@ -162,8 +182,9 @@ class ClientPaths:
             require(target.read_bytes() == entry.read_bytes(), 'client_migration_conflict')
         for entry, _ in entries:
             entry.unlink()
-        fd = os.open(source, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+        for directory in source:
+            fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)

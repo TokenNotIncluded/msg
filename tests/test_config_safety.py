@@ -30,7 +30,7 @@ def test_reject_ambiguous_or_invalid_server_configuration(tmp_path, line):
 
 def test_same_service_origin_is_allowed_for_hosted_content(tmp_path):
     directory = tmp_path / 'config'
-    write_example(directory, tmp_path / 'data')
+    write_example(directory, tmp_path / 'data', 'https://msg.lmm.best')
     config = directory / 'msgd.toml'
     config.write_text(
         config.read_text().replace(
@@ -61,3 +61,16 @@ def test_legacy_filename_remains_readable_but_dual_configs_fail_closed(tmp_path)
         load_settings(directory)
     with pytest.raises(Failure):
         load_settings(tmp_path / 'config')
+
+
+def test_service_origin_is_explicit_and_example_is_local(tmp_path):
+    settings = write_example(tmp_path / 'etc', tmp_path / 'data')
+    assert settings.service_url == 'http://localhost:8042'
+    config = tmp_path / 'etc/msgd.toml'
+    config.write_text(
+        '\n'.join(
+            line for line in config.read_text().splitlines() if not line.startswith('service_url =')
+        )
+    )
+    with pytest.raises(Failure, match='invalid_service_url'):
+        load_settings(tmp_path / 'etc')

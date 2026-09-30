@@ -167,6 +167,15 @@ class Registry:
         require('identity' in self._plugins, 'identity_plugin_required')
         for spec in self._operations.values():
             require(
+                type(spec.enabled) is bool
+                and type(spec.anonymous_only) is bool
+                and (
+                    not spec.anonymous_only
+                    or (spec.effect == 'read' and not spec.require_signature)
+                ),
+                'invalid_operation_access_mode',
+            )
+            require(
                 spec.requires_rules
                 and len(set(spec.requires_rules)) == len(spec.requires_rules)
                 and all(
@@ -275,6 +284,8 @@ class Registry:
             'effect': spec.effect,
             'entries': sorted(spec.entries),
             'require_signature': spec.require_signature,
+            'enabled': spec.enabled,
+            'anonymous_only': spec.anonymous_only,
             'input_schema': wire(spec.input_schema),
             'output_schema': wire(spec.output_schema),
             'requires_rules': [

@@ -97,7 +97,7 @@ class MCPServer:
                 result = {
                     'protocolVersion': selected,
                     'capabilities': {'tools': {'listChanged': False}},
-                    'serverInfo': {'name': 'msg.lmm.best', 'version': __version__},
+                    'serverInfo': {'name': 'msg', 'version': __version__},
                     'instructions': 'Read /AGENTS.md. Network operations use one signed envelope. Root administration is not available.',
                 }
             elif method == 'ping':

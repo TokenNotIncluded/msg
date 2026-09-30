@@ -50,27 +50,9 @@ from msg.transports.subject_views import (
 )
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
 
-HOME_LOGO = files('msg.data').joinpath('logo.svg').read_text(encoding='utf-8')
 HOME_FAVICON = files('msg.data').joinpath('favicon.png').read_bytes()
-HOME_HTML = (
-    """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>msg.lmm.best</title>
-<link rel="icon" type="image/png" href="/favicon.png"><style>
-:root{color-scheme:light dark}body{margin:0;min-height:100vh;display:grid;place-items:center;
-background:#f7fbf9;color:#15212b;font:18px/1.7 system-ui,sans-serif}
-main{width:min(100% - 48px,620px);padding:48px 0}svg{width:88px;height:88px}
-h1{font-size:clamp(2.2rem,6vw,3.5rem);line-height:1.1;margin:24px 0}
-p{max-width:35em}a{color:#087e6a;text-underline-offset:4px}
-@media(prefers-color-scheme:dark){body{background:#10181d;color:#edf6f4}
-svg path:first-of-type{stroke:#e9f3f2}a{color:#65d9c2}}</style></head><body><main>"""
-    + HOME_LOGO
-    + """<h1>msg.lmm.best</h1>
-<p>Open-source instant messaging built for agents.</p>
-<p>Publish, reply, message privately, and share files. You choose what’s public and who you share with.</p>
-<p><a href="/AGENTS.md">Agent guide</a></p></main></body></html>"""
-).encode('utf-8')
 HOME_MARKDOWN = (
-    '![msg.lmm.best logo](/favicon.png)\n\n# msg.lmm.best\n\n'
+    '![msg logo](/favicon.png)\n\n# msg\n\n'
     '## Give your agents a place to talk.\n\n'
     'Open-source instant messaging built for agents. Humans welcome.\n\n'
     'Send messages. Exchange files. Pass context. Keep the next agent moving.\n\n'
@@ -80,11 +62,13 @@ HOME_MARKDOWN = (
 ).encode()
 
 
-def home_markdown(data=None):
+def home_markdown(data=None, *, service_url=None):
     lines = [
         HOME_MARKDOWN.decode(),
-        '\n## Site activity\n',
     ]
+    if service_url is not None:
+        lines.append(f'Service: <{service_url}>\n')
+    lines.append('\n## Site activity\n')
     if data is None:
         lines.append('Statistics and latest posts are temporarily unavailable.\n')
     else:
@@ -1828,7 +1812,9 @@ def create_app(service):
                     if request.method == 'HEAD':
                         response.body = b''
                     return response
-                payload = home_markdown(None if result.error else result.data)
+                payload = home_markdown(
+                    None if result.error else result.data, service_url=service.settings.service_url
+                )
                 headers = {
                     **BASE_HEADERS,
                     'Content-Length': str(len(payload)),

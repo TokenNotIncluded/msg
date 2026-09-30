@@ -10,7 +10,9 @@ from msg.core.errors import Failure
 
 @pytest.mark.parametrize('value', ['"false"', '1', '[]'])
 def test_mail_enable_requires_boolean_even_when_truthy(tmp_path, value):
-    (tmp_path / 'msgd.toml').write_text('[storage]\npostgres_dsn="service=msgd"\n')
+    (tmp_path / 'msgd.toml').write_text(
+        '[server]\nservice_url="https://service.example.org"\n[storage]\npostgres_dsn="service=msgd"\n'
+    )
     (tmp_path / 'mail.toml').write_text(
         'enabled=' + value + '\nhost="smtp.example.test"\n'
         'tls="starttls"\nsender="sender@example.test"\n'
@@ -21,7 +23,9 @@ def test_mail_enable_requires_boolean_even_when_truthy(tmp_path, value):
 
 @pytest.mark.parametrize('value', ['0', '65536', 'true', '"587"'])
 def test_mail_port_rejects_out_of_range_or_non_integer(tmp_path, value):
-    (tmp_path / 'msgd.toml').write_text('[storage]\npostgres_dsn="service=msgd"\n')
+    (tmp_path / 'msgd.toml').write_text(
+        '[server]\nservice_url="https://service.example.org"\n[storage]\npostgres_dsn="service=msgd"\n'
+    )
     (tmp_path / 'mail.toml').write_text(
         'enabled=true\nhost="smtp.example.test"\n'
         'tls="starttls"\nsender="sender@example.test"\nport=' + value + '\n'

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import os
 import re
+import stat
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -23,6 +24,7 @@ from msg.paths import ClientPaths
 from msg.security.age_keys import generate_age_key, recipient_from_identity
 from msg.security.crypto import Ed25519Signer, subject_id
 from msg.security.custodial_protocol import client_upgrade_proof
+from msg.service_origin import service_origin
 from msg.transports.client import GraphQLTransport, HTTPTransport, MCPHTTPTransport
 
 
@@ -36,20 +38,81 @@ def hash_file(path):
     return size, 'sha256:' + hashed.hexdigest()
 
 
+def private_client_json(path):
+    """Read selection/state metadata without following symlinks or unsafe file types."""
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        raise Failure('unsafe_client_state_permissions') from None
+    try:
+        info = os.fstat(descriptor)
+        require(
+            stat.S_ISREG(info.st_mode)
+            and info.st_uid == os.geteuid()
+            and info.st_mode & 0o077 == 0
+            and info.st_nlink == 1,
+            'unsafe_client_state_permissions',
+        )
+        with os.fdopen(descriptor, 'rb', closefd=False) as stream:
+            raw = stream.read(1048577)
+        require(len(raw) <= 1048576, 'client_state_too_large')
+        value = loads(raw)
+        require(isinstance(value, dict), 'invalid_client_state')
+        return value
+    finally:
+        os.close(descriptor)
+
+
 class ClientState:
     """Owned files only; a failed registration never loses its private key."""
 
     def __init__(self, directory=None, *, server=None, profile=None, migrate_from=None, paths=None):
+        require(directory is None or migrate_from is None, 'migration_conflicts_with_config_dir')
         require(
             migrate_from is None or (Path(migrate_from).expanduser() / 'client.json').is_file(),
             'client_migration_source_missing',
         )
-        self.paths = paths or ClientPaths.discover(directory, profile=profile)
+        selector = None
+        legacy = None
+        requested = server if server is not None else os.environ.get('MSG_SERVER')
+        if paths is None and directory is None:
+            previous = ClientPaths.discover(profile=profile)
+            # Profile names select a service, never a second identity for that service.
+            selector = previous.config / 'service.json'
+            selection = private_client_json(selector)
+            if selection is not None:
+                require(selection.get('version') == 1, 'unknown_client_state_version')
+            if migrate_from is not None:
+                legacy = Path(migrate_from).expanduser().absolute()
+                legacy_data = private_client_json(legacy / 'client.json')
+            else:
+                legacy_data = private_client_json(previous.state / 'client.json')
+                if legacy_data is not None:
+                    legacy = previous
+                else:
+                    legacy_data = private_client_json(previous.config / 'client.json')
+                    if legacy_data is not None:
+                        legacy = previous.config
+            selected = (
+                requested or (selection or {}).get('server') or (legacy_data or {}).get('server')
+            )
+            require(
+                selected is not None,
+                'server_required',
+                details={'options': ['--server', 'MSG_SERVER']},
+            )
+            server = service_origin(selected)
+            if legacy_data is not None and service_origin(legacy_data.get('server')) != server:
+                require(migrate_from is None, 'client_server_mismatch')
+                legacy = None
+            self.paths = ClientPaths.discover(server=server)
+        else:
+            self.paths = paths or ClientPaths.discover(directory, profile=profile)
         self.paths.prepare()
-        if not self.paths.portable:
-            legacy = migrate_from or (self.paths.config if profile is None else None)
-            if legacy is not None and (Path(legacy) / 'client.json').exists():
-                self.paths.migrate(legacy)
+        if legacy is not None:
+            self.paths.migrate(legacy)
         self.directory = self.paths.state
         self.path = self.file('client.json')
         self.key_path = self.file('identity.key')
@@ -63,13 +126,18 @@ class ClientState:
                 and self.path.stat().st_mode & 0o077 == 0,
                 'unsafe_client_state_permissions',
             )
-        self.data = loads(self.path.read_bytes()) if self.path.exists() else {'version': 1}
+        self.data = private_client_json(self.path) or {'version': 1}
         require(self.data.get('version') == 1, 'unknown_client_state_version')
+        selected = server or requested or self.data.get('server')
         require(
-            server is None or self.data.get('server', server) == server.rstrip('/'),
+            selected is not None, 'server_required', details={'options': ['--server', 'MSG_SERVER']}
+        )
+        selected = service_origin(selected)
+        require(
+            'server' not in self.data or service_origin(self.data['server']) == selected,
             'client_server_mismatch',
         )
-        self.server = self.data.get('server', server or 'https://msg.lmm.best').rstrip('/')
+        self.server = selected
         self.data['server'] = self.server
         self.signer = None
         self.encryption_recipient = None
@@ -94,6 +162,14 @@ class ClientState:
                 self.age_key_path.read_text().strip()
             )
         self._save()
+        if selector is not None:
+            from msg.paths import private_directory
+
+            private_directory(ClientPaths.discover().config)
+            if profile is not None:
+                private_directory(previous.config.parent)
+            private_directory(selector.parent)
+            durable_write(selector, canonical({'version': 1, 'server': self.server}), mode=0o600)
 
     def file(self, name):
         return self.paths.file(name)
@@ -531,6 +607,16 @@ class MsgClient:
                 details=dict(result.data or {}),
             )
         return result
+
+    async def require_username(self, username):
+        require(self.state.subject is not None, 'connection_identity_required')
+        current = self.checked(
+            await self.call('discovery.get', {'id': '/@' + username, 'fields': ['id', 'name']})
+        )
+        require(
+            current.data['id'] == self.state.subject and current.data['name'] == '@' + username,
+            'connection_user_mismatch',
+        )
 
     async def renew_certificate(self):
         require(

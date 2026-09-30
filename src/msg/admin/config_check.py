@@ -49,7 +49,7 @@ def _vectors():
             'invalid_redirect_uri',
         ),
         'server.service_url': (
-            'https://msg.lmm.best',
+            _REQUIRED,
             'https://config.invalid',
             'file:///tmp/x',
             'invalid_service_url',
@@ -58,7 +58,7 @@ def _vectors():
         'server.port': (8042, 65535, 0, 'invalid_listen_port'),
         'server.public_web_origin': (
             None,
-            'https://msg.lmm.best',
+            'https://service.example.org',
             'https://elsewhere.invalid',
             'hosting_origin_must_match_service',
         ),
@@ -116,6 +116,7 @@ def _vectors():
         'tools.max_response_bytes': (4194304, 1, 0, 'invalid_tool_limit'),
         'tools.methods': (['GET', 'HEAD'], ['GET'], ['EXEC'], 'invalid_tool_methods'),
         'tools.ports': ([80, 443], [65535], [0], 'invalid_tool_ports'),
+        'identity.handle_rename_enabled': (True, False, 'false', 'invalid_handle_rename_enabled'),
         'identity.credential_delivery_recovery_window': (
             900,
             '60m',
@@ -248,13 +249,19 @@ def configuration_selftest():
     results = {}
     with TemporaryDirectory(prefix='msg-config-selftest-') as temporary:
         directory = Path(temporary)
-        baseline = {'storage': {'postgres_dsn': 'service=msgd'}}
+        baseline = {
+            'server': {'service_url': 'https://service.example.org'},
+            'storage': {'postgres_dsn': 'service=msgd'},
+        }
         for field, (default, good, bad, error_code) in vectors.items():
             try:
                 _write(directory, baseline, None)
                 defaults = load_settings(directory)
                 if default is _REQUIRED:
-                    _write(directory, {}, None)
+                    missing = deepcopy(baseline)
+                    section, key = field.split('.')
+                    missing[section].pop(key)
+                    _write(directory, missing, None)
                     try:
                         load_settings(directory)
                     except Failure as exc:

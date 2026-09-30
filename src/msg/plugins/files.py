@@ -20,6 +20,8 @@ def install(app):
             effect=spec.effect,
             requirements=spec.requirements,
             signature=spec.require_signature,
+            enabled=spec.enabled,
+            anonymous_only=spec.anonymous_only,
             requires_rules=('msg.files', 'msg.read-write', 'msg.protocol'),
         )(spec.handler)
 

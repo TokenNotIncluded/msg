@@ -86,6 +86,7 @@ class OperationExecutor:
                 details={'contract_version': min_version} if min_version is not None else None,
             )
             require(entry in spec.entries, 'entry_not_allowed')
+            require(spec.enabled, 'operation_disabled')
             self.registry.validate(spec.input_schema, request.arguments)
             if self.recovery_drill_active():
                 require(spec.effect == 'read', 'writes_paused')
@@ -95,6 +96,14 @@ class OperationExecutor:
             async with self.metadata.transaction(write=spec.effect != 'read') as session:
                 self.runtime_generation.require_current(session)
                 principal = await self.authenticator.authenticate(request, session, entry=entry)
+                if spec.anonymous_only:
+                    require(
+                        principal.method == 'anonymous'
+                        and principal.actor is None
+                        and principal.subject is None
+                        and principal.credential_id is None,
+                        'anonymous_only',
+                    )
                 if spec.name in {'batch.atomic', 'file.batch'}:
                     # Validate the child set before an old cached parent result
                     # can bypass the handler's secret-delivery exclusion.

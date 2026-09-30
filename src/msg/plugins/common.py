@@ -445,6 +445,8 @@ def registration(app, name, dependencies=()):
         signature=False,
         version=1,
         requires_rules=None,
+        enabled=True,
+        anonymous_only=False,
     ):
         def decorate(handler):
             ref = ResourceRef(id='schema:' + opname + ':' + str(version))
@@ -460,6 +462,8 @@ def registration(app, name, dependencies=()):
                     require_signature=signature,
                     requirements=requirements,
                     handler=handler,
+                    enabled=enabled,
+                    anonymous_only=anonymous_only,
                     requires_rules=default_operation_rules(opname)
                     if requires_rules is None
                     else tuple(requires_rules),

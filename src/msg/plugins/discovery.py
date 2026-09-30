@@ -575,6 +575,7 @@ def install(app):
         obj({'home_summary': {'const': True}}, ('home_summary',)),
         effect='read',
         version=4,
+        anonymous_only=True,
     )
     async def home(ctx, request, tx):
         """Live counts and recent resources, filtered by current read access."""

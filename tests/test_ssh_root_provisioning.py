@@ -57,8 +57,12 @@ def test_ssh_provisioning_requires_interactive_pin(monkeypatch):
 
 
 def test_flag_only_available_for_init_and_issue():
-    assert parser().parse_args(['init', '--allow-ssh']).allow_ssh
+    assert (
+        parser()
+        .parse_args(['init', '--service-url', 'https://example.org', '--allow-ssh'])
+        .allow_ssh
+    )
     assert parser().parse_args(['cert', 'issue', 'csr_test', '--allow-ssh']).allow_ssh
-    assert not parser().parse_args(['init']).allow_ssh
+    assert not parser().parse_args(['init', '--service-url', 'https://example.org']).allow_ssh
     with pytest.raises(SystemExit):
         parser().parse_args(['root', 'rotate', '--allow-ssh'])

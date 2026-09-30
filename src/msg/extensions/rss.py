@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from email.utils import format_datetime
+from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
 
 from msg.core.codec import decode, digest, loads, wire
@@ -68,7 +69,11 @@ def register(app, op):
                 'digest': revision.manifest_digest,
             })
             last = [wire(resource.created_at), resource.id]
-        data = {'title': 'msg.lmm.best', 'home': app.settings.service_url, 'items': items}
+        data = {
+            'title': 'msg · ' + urlsplit(app.settings.service_url).netloc,
+            'home': app.settings.service_url,
+            'items': items,
+        }
         if more:
             cursor = app.cursors.encode('rss', binding, last)
             data.update(

@@ -1,7 +1,7 @@
 # Open issue resolution ledger · 2026-10-01
 
 Audit baseline: main `5688012` after PR #206. Of the 18 originally open issues,
-#200, #202 and #72 have been resolved and closed; 15 remain open. This ledger
+#200, #202 and #72 have been resolved and closed; 15 original acceptance issues remain open. New issue [#221](https://github.com/TokenNotIncluded/msg.lmm.best/issues/221) tracks the requested SSH-inspired connection design separately. This ledger
 keeps the original scope rather than turning green tests into blanket acceptance.
 
 ## Remaining requirements
@@ -21,7 +21,7 @@ keeps the original scope rather than turning green tests into blanket acceptance
 | [#81](https://github.com/TokenNotIncluded/msg.lmm.best/issues/81) events/notifications/collaboration | Current-attempt/deadline fences and controlled isolated sender tests | Event/state/privacy/current-permission assertion matrix; controlled target SMTP/Webhook success/failure/uncertain/retry/recovery evidence. No arbitrary production recipients. |
 | [#82](https://github.com/TokenNotIncluded/msg.lmm.best/issues/82) clients/tools/SSH/RSS | RSS issue resolved; XDG credentials/native layout, environment-based TUI locales, installed-client/SSH and sandbox regressions | Remaining view/output/retry/explicit-write clause map; target application SSH/PAM and bwrap resource/network-limit matrix. Administrator SSH port 22 is not the application's SSH endpoint. |
 | [#83](https://github.com/TokenNotIncluded/msg.lmm.best/issues/83) full design acceptance | Immutable published read contract repaired; exact 2,851+8 evidence gate; finite design inventory exists | All 564 design obligations need concrete positive/negative/concurrency/recovery assertions where applicable. Inventory navigation entries alone are not assertion coverage. Refresh outdated diagnostic-gap entries against actual main. |
-| [#84](https://github.com/TokenNotIncluded/msg.lmm.best/issues/84) production/recovery | Native 0.2.0 deployed; real package/health/doctor/selftest checks; protected release backup and rollback package retained | Legacy snapshot consistency and independently current authority; actual target capacity/resource exhaustion/shared-topology recovery, cutover and stopping criteria; latest CA transition remains unresolved. |
+| [#84](https://github.com/TokenNotIncluded/msg.lmm.best/issues/84) production/recovery | Native 0.2.0 deployed; real package/health/doctor/selftest checks; protected release backup and rollback package retained | Legacy snapshot consistency and independently current authority; actual target capacity/resource exhaustion/shared-topology recovery, cutover and stopping criteria; enabling new rename authority still requires a signed CA policy transition. |
 | [#85](https://github.com/TokenNotIncluded/msg.lmm.best/issues/85) architecture/test debt | Complete current CI, shared protected ledger/market owners and effect fences | Measure current duplication/hot paths and trace all convergence invariants; keep published versions/signatures and history. Green Ruff or smaller files are not architectural acceptance. |
 
 ## Concrete fixes in this pass
@@ -90,12 +90,6 @@ and notification scope is fulfilled; separate field gates stay in #70/#81/#84.
 
 ## Operator materials still needed
 
-Provide protected snapshot/checkpoint/retirement locations and source timestamps,
-or physical/serial console access, rather than transmitting secrets in chat.
-Without these materials, code work and isolated verification can continue, but
-real-snapshot/console/retirement requirements cannot honestly be marked complete.
+Real-snapshot/console/retirement acceptance requires protected materials with source timestamps and independently current evidence. Routine deployment decisions are delegated to the operator; unavailable evidence must remain explicitly unresolved rather than substituted with an SSH or fixture run.
 
-A blanket Root rotation would invalidate existing chains. The latest rename and
-homepage-v4 changes require an explicit compatible governance decision before
-deployment. Current source, deployed source and signed authority are reported
-separately; none of these issues authorizes inventing attestation evidence.
+A blanket Root rotation would invalidate existing chains. The compatible upgrade separates anonymous-only homepage v4 from credential permissions and explicitly disables renaming where the installed CA has not authorized it. It preserves published v1 meanings and existing signed authority; enabling the rename feature still requires the appropriate signed policy. Current source, deployed source and signed authority are reported separately. None of these issues authorizes inventing attestation evidence.
