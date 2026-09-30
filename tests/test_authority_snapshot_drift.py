@@ -92,7 +92,7 @@ async def test_explicitly_disabled_rename_preserves_old_ca_and_new_registration(
             result['ok']
             for name, result in diagnosed['checks'].items()
             if name != 'root_private_boundary'
-        ), diagnosed['checks']
+        ), {name: result for name, result in diagnosed['checks'].items() if not result['ok']}
         assert diagnosed['checks']['root_private_boundary']['ok'] == (os.geteuid() == 0)
         assert diagnosed['checks']['authority_snapshot']['ok']
         anonymous = await call(
