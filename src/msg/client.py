@@ -163,14 +163,7 @@ class ClientState:
         self.signer = None
         self.encryption_recipient = None
         if self.key_path.exists() or self.key_path.is_symlink():
-            require(
-                self.key_path.is_file()
-                and not self.key_path.is_symlink()
-                and self.key_path.stat().st_uid == os.geteuid()
-                and self.key_path.stat().st_mode & 0o077 == 0,
-                'unsafe_client_key_permissions',
-            )
-            self.signer = Ed25519Signer.from_bytes(self.key_path.read_bytes())
+            self.signer = private_identity_key(self.key_path)
         if self.age_key_path.exists() or self.age_key_path.is_symlink():
             require(
                 self.age_key_path.is_file()
@@ -533,9 +526,9 @@ class MsgClient:
             type(self.transport) in {HTTPTransport, GraphQLTransport, MCPHTTPTransport},
             'secure_channel_required',
         )
-        host = urlsplit(self.state.server).hostname
+        host = urlsplit(self.transport.endpoint).hostname
         require(
-            self.state.server.startswith('https://')
+            self.transport.endpoint.startswith('https://')
             or host in {'testserver', 'localhost', '127.0.0.1', '::1'},
             'secure_channel_required',
         )
