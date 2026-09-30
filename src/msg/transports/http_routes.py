@@ -2029,7 +2029,7 @@ def create_app(service):
                         media_type='application/json',
                         headers=headers,
                     )
-                if name in {'bal', 'balance', 'ledger'}:
+                if name in {'bal', 'balance', 'ledger', 'public-balance', 'public-ledger'}:
                     require(remainder in {None, '/', '/json'}, 'not_found')
                     require(b'%' not in raw_path, 'not_found')
                     operation = subject_route.name
@@ -2038,7 +2038,9 @@ def create_app(service):
                         len(pairs) == len({key for key, _ in pairs}), 'duplicate_query_parameter'
                     )
                     query = dict(pairs)
-                    require(not query or name == 'ledger', 'unknown_query_parameter')
+                    require(
+                        not query or name in {'ledger', 'public-ledger'}, 'unknown_query_parameter'
+                    )
                     require(set(query) <= {'cursor', 'limit'}, 'unknown_query_parameter')
                     args = {}
                     for field in ('cursor', 'limit'):
@@ -2048,6 +2050,9 @@ def create_app(service):
                     async with service.metadata.transaction(write=False) as tx:
                         subject_id = await tx.resolve('/@' + handle)
                         require((await tx.resource(subject_id)).type == 'user', 'not_found')
+                    public = name in {'public-balance', 'public-ledger'}
+                    if public:
+                        args['subject_id'] = subject_id
                     require(
                         service.registry.operation(operation).effect == 'read', 'effect_mismatch'
                     )
@@ -2067,7 +2072,8 @@ def create_app(service):
                     result = await service.executor.execute(packet, entry='network')
                     if result.error:
                         return json_response(result_wire(result), error_status(result.error.code))
-                    require(result.subject == subject_id, 'permission_denied')
+                    if not public:
+                        require(result.subject == subject_id, 'permission_denied')
                     value = wire(result.data)
                     payload = canonical(value)
                     require(len(payload) <= limits.max_response_bytes, 'response_too_large')

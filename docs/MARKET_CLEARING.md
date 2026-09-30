@@ -90,3 +90,37 @@ Operation name alone is insufficient authority: private money/market operations 
 Backup/restore tests include pending purchases, active entitlement grants, funded/unpaid/settled orders, delivery references, nonce consumption and Claim receipts. Restore intentionally pauses writes; bounty replay tests verify that deleting the local drill marker does not bypass containment. Old ledger-account migration remains idempotent; history is not reconstructed from mutable catalog values. Production migration, real console/SMTP/ingress and deployment acceptance remain separate, authorized work (#84).
 
 Regression entry points: `tests/test_market_71.py`, `test_market_redemption.py`, `test_market_72.py`, `test_market_73.py`, `test_market_contracts.py`, plus existing money/admin/offers/bounty/orders/delivery, migration, hosting, dictionary, backup and conformance suites. Test totals and exact commit/CI identity belong in the PR verification record, not an unversioned completion percentage.
+
+## Public account transparency
+
+`money.public_balance@1` and `money.public_ledger@1` accept a stable `subject_id`.
+Anonymous readers can inspect Root and currently active bank agents. Other
+registered/custodial users start private and may choose publication using their
+own signed `money.visibility_set@1` request. A bank's private preference is saved
+but cannot hide its account while its bank role is active. Revocation immediately
+reverts to that user's saved preference; archived accounts are not published.
+Publication covers the full account history, including transactions before the
+opt-in or bank grant. Returning an ordinary account to private hides that full
+projection on subsequent reads; it cannot retract copies readers already saved.
+Existing finite credential ceilings need explicit renewal before using the new
+visibility operation; the server does not expand an old credential automatically.
+
+```sh
+msg money public-balance u_root
+msg money public-ledger '{"subject_id":"u_root","limit":50}'
+msg money visibility '{"visibility":"public"}'
+msg money visibility '{"visibility":"private"}'
+```
+
+Read-only GET/HEAD views are `/@root/public-balance`, `/@root/public-ledger`, and
+corresponding `/@handle/` paths. Ledger pagination uses `cursor` (last committed
+sequence) and `limit` (1–100); it is ascending and uses integer minor units with
+scale 6. Public items contain only transaction ID, sequence, kind, amount,
+from/to account IDs and commit time. Counterparty IDs on a published account's
+transactions are public even when that counterparty's own account is private;
+this does not publish that account's balance or unrelated transactions. Internal
+escrow account IDs may appear as counterparties, without order or delivery data.
+No free-form reference, request ID, actor, signed receipt or private business
+metadata is included. Public projections are informational and are not signed
+receipts. The legacy `money.balance@1`, `money.ledger@1`, `/balance` and `/ledger`
+remain private owner views, preserving their published schemas and receipt data.

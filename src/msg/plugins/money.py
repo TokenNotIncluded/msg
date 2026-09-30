@@ -8,7 +8,7 @@ entry point, and are not reachable through this plugin.
 from __future__ import annotations
 
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import loads
+from msg.core.codec import loads, wire
 from msg.core.errors import require
 from msg.core.models import HandlerOutput
 
@@ -49,6 +49,28 @@ __all__ = [
     'clearing_decision',
     'install',
 ]
+
+
+async def public_account(tx, subject_id):
+    """Current subject state and role govern publication on every read."""
+    resource = await tx.resource(subject_id)
+    require(resource.type == 'user' and resource.state == 'active', 'not_found')
+    require(
+        tx.one("SELECT 1 FROM identities WHERE id=? AND kind='subject'", (subject_id,)) is not None,
+        'not_found',
+    )
+    subject = await tx.subject(subject_id)
+    require(
+        subject_id == ROOT_SUBJECT or subject.kind in {'registered', 'custodial'},
+        'not_found',
+    )
+    bank = tx.one(
+        "SELECT 1 FROM money_bank_roles WHERE subject_id=? AND status='active'", (subject_id,)
+    )
+    policy = tx.one('SELECT visibility FROM money_visibility WHERE subject_id=?', (subject_id,))
+    mandatory = subject_id == ROOT_SUBJECT or bank is not None
+    require(mandatory or (policy is not None and policy[0] == 'public'), 'not_found')
+    return 'root' if subject_id == ROOT_SUBJECT else 'bank' if bank else 'opt_in'
 
 
 def install(app):
@@ -134,6 +156,105 @@ def install(app):
                 'currency_id': CURRENCY_ID,
                 'items': items,
                 'next_cursor': rows[limit - 1][0] if len(rows) > limit else None,
+            }
+        )
+
+    @op('money.public_balance', obj({'subject_id': IDENTIFIER}, ('subject_id',)), effect='read')
+    async def public_balance(ctx, request, tx):
+        subject = request.arguments['subject_id']
+        reason = await public_account(tx, subject)
+        return HandlerOutput(
+            data={
+                'subject_id': subject,
+                'currency_id': CURRENCY_ID,
+                'scale': SCALE,
+                'balance_minor': _balance(tx, subject),
+                'publication': reason,
+            }
+        )
+
+    @op(
+        'money.public_ledger',
+        obj(
+            {
+                'subject_id': IDENTIFIER,
+                'cursor': {'type': 'integer', 'minimum': 0},
+                'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100},
+            },
+            ('subject_id',),
+        ),
+        effect='read',
+    )
+    async def public_ledger(ctx, request, tx):
+        subject = request.arguments['subject_id']
+        reason = await public_account(tx, subject)
+        cursor = request.arguments.get('cursor', 0)
+        limit = request.arguments.get('limit', 50)
+        # Never load receipts or free-form references into the public projection.
+        rows = tx.rows(
+            """SELECT seq,id,kind,amount_minor,debit_account,credit_account,committed_at
+                 FROM money_ledger WHERE seq>? AND (debit_account=? OR credit_account=?)
+                 ORDER BY seq LIMIT ?""",
+            (cursor, subject, subject, limit + 1),
+        )
+        return HandlerOutput(
+            data={
+                'subject_id': subject,
+                'currency_id': CURRENCY_ID,
+                'scale': SCALE,
+                'publication': reason,
+                'items': [
+                    {
+                        'ledger_sequence': row[0],
+                        'transaction_id': row[1],
+                        'kind': row[2],
+                        'amount_minor': row[3],
+                        'from_account': row[4],
+                        'to_account': row[5],
+                        'committed_at': row[6],
+                    }
+                    for row in rows[:limit]
+                ],
+                'next_cursor': rows[limit - 1][0] if len(rows) > limit else None,
+            }
+        )
+
+    @op(
+        'money.visibility_set',
+        obj({'visibility': {'enum': ['private', 'public']}}, ('visibility',)),
+        signature=True,
+        requirements=account_requirements,
+    )
+    async def visibility_set(ctx, request, tx):
+        subject = _owner(ctx)
+        identity = await tx.subject(subject)
+        resource = await tx.resource(subject)
+        require(
+            identity.kind in {'registered', 'custodial'}
+            and not identity.local_only
+            and resource.state == 'active',
+            'money_subject_required',
+        )
+        visibility = request.arguments['visibility']
+        tx.execute(
+            'INSERT INTO money_visibility(subject_id,visibility,updated_at) VALUES (?,?,?) '
+            'ON CONFLICT(subject_id) DO UPDATE SET visibility=excluded.visibility, '
+            'updated_at=excluded.updated_at',
+            (subject, visibility, wire(ctx.now)),
+            write=True,
+        )
+        mandatory = (
+            tx.one(
+                "SELECT 1 FROM money_bank_roles WHERE subject_id=? AND status='active'", (subject,)
+            )
+            is not None
+        )
+        return HandlerOutput(
+            data={
+                'subject_id': subject,
+                'visibility': visibility,
+                'effective_visibility': 'public' if mandatory else visibility,
+                'bank_publication_required': mandatory,
             }
         )
 
