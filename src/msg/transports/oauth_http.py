@@ -235,8 +235,11 @@ class OAuthBoundary:
                 ],
             })
         # Rate limits commit independently, including rejected code guesses.
-        async with self.service.metadata.transaction(write=True) as tx:
-            self.oauth.rate(tx, request.client.host if request.client else '')
+        # Userinfo is a read: do not mutate retained OAuth state during GET or
+        # POST reads. Authentication still checks the current source/family.
+        if path != '/oauth/userinfo':
+            async with self.service.metadata.transaction(write=True) as tx:
+                self.oauth.rate(tx, request.client.host if request.client else '')
         if path == '/oauth/login':
             require(request.method == 'GET', 'method_not_allowed')
             async with self.service.metadata.transaction(write=True) as tx:
@@ -346,7 +349,7 @@ class OAuthBoundary:
             'method_not_allowed',
         )
         args = await form(request) if request.method == 'POST' else {}
-        async with self.service.metadata.transaction(write=True) as tx:
+        async with self.service.metadata.transaction(write=path != '/oauth/userinfo') as tx:
             self.oauth.fence(tx)
             if path == '/oauth/device_authorization':
                 require(set(args) <= {'client_id', 'scope'}, 'invalid_request')

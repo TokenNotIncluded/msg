@@ -330,7 +330,7 @@ def hosted_range(request, size, etag):
     requested = request.headers.get('range')
     if not requested or request.headers.get('if-range') not in {None, etag}:
         return (0, size), 200, {}
-    match = re.fullmatch(r'bytes=(\d*)-(\d*)', requested)
+    match = re.fullmatch(r'bytes=(\d*)-(\d*)', requested) if len(requested) <= 128 else None
     require(match is not None and any(match.groups()), 'range_not_satisfiable')
     left, right = match.groups()
     if left:

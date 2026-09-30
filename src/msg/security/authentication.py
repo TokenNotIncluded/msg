@@ -114,7 +114,9 @@ class AuthenticationService:
             old = await session.credential(request.arguments['credential_id'])
             from msg.security.oauth import require_binding
 
-            await require_binding(session, old, now, self.oauth_config)
+            await require_binding(
+                session, old, now, self.oauth_config, custodial_ceiling=self.temporary_ceiling()
+            )
             require(
                 old.kind == 'token' and old.subject_id == request.subject, 'recovery_unavailable'
             )
@@ -193,7 +195,13 @@ class AuthenticationService:
             ids = ()
             from msg.security.oauth import require_binding
 
-            await require_binding(session, credential, now, self.oauth_config)
+            await require_binding(
+                session,
+                credential,
+                now,
+                self.oauth_config,
+                custodial_ceiling=self.temporary_ceiling(),
+            )
         else:
             raise Failure('invalid_proof')
         if credential.revoked_at is not None:
