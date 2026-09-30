@@ -674,7 +674,9 @@ class PostgresMetadataStore:
                 )
 
     async def close(self):
-        return None
+        close = getattr(self.signal, 'close', None)
+        if close is not None:
+            await close()
 
     def backup(self, destination: Path):
         """Write a pg_dump custom-format archive at *destination*.
