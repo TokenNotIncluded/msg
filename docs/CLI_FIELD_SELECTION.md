@@ -36,8 +36,24 @@ Server schema failures retain the normal error result and nonzero exit status.
 
 ## Optional local output processing
 
-Both options require explicit nonempty `--json FIELDS` on `msg call`; they are
-mutually exclusive. Bare field discovery cannot be combined with formatting.
+Both options require explicit nonempty `--json FIELDS` on the first `msg call`
+read; they are mutually exclusive. Bare field discovery cannot be combined
+with formatting. A canonical `discovery.read_query` continuation can instead
+format its cursor-bound fields without a new `--json` projection:
+
+```sh
+msg call discovery.read_query '{"cursor":"SERVER_RETURNED_CURSOR"}' \
+  --contract-version 3 --jq '.data.items[] | .name'
+```
+
+The continuation must contain only `cursor`, preserve the original contract
+version, and omit `--json` and `--return-field`. The client verifies the exact
+read-only operation/version from Registry again, then signs the unchanged
+cursor arguments. The server rechecks the cursor and current access; the client
+does not infer or change its projection or automatically follow another page.
+Other operations and mixed cursor/query arguments are rejected before network
+access. Schema errors remain normal error results without formatting.
+
 Only the returned authorized JSON envelope is processed, after a successful read.
 Server error envelopes remain unchanged and return a nonzero status.
 

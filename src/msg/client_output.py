@@ -11,17 +11,43 @@ from msg.core.codec import canonical
 from msg.core.errors import Failure, require
 
 
-async def json_fields(client, operation, version, arguments, selection):
-    """Return signed-query arguments or a discovery/error result, never both."""
-    require('fields' not in arguments and 'cursor' not in arguments, 'json_query_conflict')
+async def read_contract(client, operation, version):
+    """Discover the exact version and preserve unsuccessful server responses."""
     require(type(version) is int and version > 0, 'invalid_operation_version')
     response = await client.call('discovery.schema', {'operation': f'{operation}@{version}'})
     if response.status != 'ok':
-        return None, response
+        return response
     data = response.data
     require(isinstance(data, Mapping), 'invalid_read_response')
     spec = data.get('operation')
     require(isinstance(spec, Mapping) and spec.get('effect') == 'read', 'json_read_required')
+    require(
+        spec.get('name') == operation and spec.get('version') == version,
+        'invalid_read_response',
+    )
+    return response
+
+
+async def cursor_output(client, operation, version, arguments):
+    """Validate formatting for a bound ReadQuery cursor without a new projection."""
+    require(operation == 'discovery.read_query', 'cursor_output_read_required')
+    require(
+        set(arguments) == {'cursor'}
+        and isinstance(arguments['cursor'], str)
+        and bool(arguments['cursor']),
+        'cursor_query_mismatch',
+    )
+    response = await read_contract(client, operation, version)
+    return None if response.status == 'ok' else response
+
+
+async def json_fields(client, operation, version, arguments, selection):
+    """Return signed-query arguments or a discovery/error result, never both."""
+    require('fields' not in arguments and 'cursor' not in arguments, 'json_query_conflict')
+    response = await read_contract(client, operation, version)
+    if response.status != 'ok':
+        return None, response
+    data = response.data
     schema = data.get('input')
     require(isinstance(schema, Mapping), 'json_fields_unavailable')
     properties = schema.get('properties')

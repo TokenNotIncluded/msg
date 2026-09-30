@@ -28,13 +28,15 @@ class SchemaClient:
         self.result = SimpleNamespace(
             status=status,
             data={
-                'operation': {'effect': effect},
+                'operation': {'effect': effect, 'name': 'discovery.read_query', 'version': 3},
                 'input': {'properties': {'fields': {'items': {'enum': list(fields)}}}},
             },
         )
 
     async def call(self, operation, arguments):
         self.calls.append((operation, arguments))
+        name, _, version = arguments['operation'].rpartition('@')
+        self.result.data['operation'].update(name=name, version=int(version))
         return self.result
 
 
@@ -196,6 +198,19 @@ async def test_real_cli_json_discovery_projection_cursor_and_readonly_state(
             )
             assert status == 0 and set(next_page['data']['items'][0]) == {'id', 'name'}
             assert next_page['data']['items'][0]['id'] != page['data']['items'][0]['id']
+            for flag, expression in (
+                ('--jq', '.data.items[0].name'),
+                ('--template', '{{/data/items/0/name}}'),
+            ):
+                status, name = await invoke(
+                    'discovery.read_query',
+                    {'cursor': page['data']['cursor']},
+                    '--contract-version',
+                    '3',
+                    flag,
+                    expression,
+                )
+                assert status == 0 and name == next_page['data']['items'][0]['name']
             with pytest.raises(Failure, match='json_query_conflict'):
                 await invoke(
                     'discovery.read_query',

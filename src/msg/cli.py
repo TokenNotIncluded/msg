@@ -477,14 +477,17 @@ async def run(args):
                 rid, sep, generation = item.rpartition('=')
                 require(sep and generation.isdecimal(), 'invalid_expected_generation')
                 expected.append((rid, int(generation)))
-            require(
-                not (args.jq is not None or args.template is not None)
-                or args.json_fields not in {None, ''},
-                'json_fields_required',
-            )
             params = arguments(args.arguments)
             require(args.contract_version > 0, 'invalid_operation_version')
             result = None
+            formatted = args.jq is not None or args.template is not None
+            if formatted and args.json_fields is None and 'cursor' in params:
+                from msg.client_output import cursor_output
+
+                require(not args.return_field, 'json_query_conflict')
+                result = await cursor_output(client, args.operation, args.contract_version, params)
+            else:
+                require(not formatted or args.json_fields not in {None, ''}, 'json_fields_required')
             if args.json_fields is not None:
                 from msg.client_output import json_fields
 
