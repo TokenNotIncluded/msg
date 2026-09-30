@@ -4,10 +4,10 @@ After=network.target
 
 [Service]
 Type=simple
-User=msgd
-Group=msgd
-WorkingDirectory=/var/lib/msgd
-ExecStart=/usr/bin/msgd worker
+User=msgd-%i
+Group=msgd-%i
+WorkingDirectory=/var/lib/msgd/%i
+ExecStart=/usr/bin/msgd --instance %i worker
 # Signal the parent first so in-flight work can drain before killing children.
 KillSignal=SIGTERM
 KillMode=mixed
@@ -15,11 +15,15 @@ TimeoutStopSec=90
 Restart=on-failure
 RestartSec=3
 UMask=0077
+Environment=PGSERVICEFILE=/etc/msgd/%i/pg_service.conf
+Environment=PGPASSFILE=/etc/msgd/%i/pgpass
+RuntimeDirectory=msgd/%i
+RuntimeDirectoryMode=0750
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/lib/msgd
-InaccessiblePaths=/var/lib/msgd-root -/etc/msgd/root
+ReadWritePaths=/var/lib/msgd/%i /var/cache/msgd/%i /run/msgd/%i
+InaccessiblePaths=/var/lib/private/msgd -/etc/msgd/%i/root
 LimitCORE=0
 # Do not block user namespaces needed by bubblewrap. Isolation remains mandatory
 # inside the runner; an unavailable sandbox fails closed rather than falling back.

@@ -63,6 +63,16 @@ async def _provision(app, pin):
     """Initialize only an empty installation; partial state requires explicit recovery."""
     settings = app.settings
     protected = settings.root_private_dir
+    if settings.config_dir.parent == Path('/etc/msgd'):
+        # Named-instance Root state must never sit below a service-writable parent.
+        for directory in (Path('/var/lib/private'), *reversed(protected.parents[:3]), protected):
+            require(not directory.is_symlink(), 'unsafe_root_private_directory')
+            directory.mkdir(mode=0o700, exist_ok=True)
+            info = directory.stat()
+            require(
+                info.st_uid == 0 and info.st_mode & 0o022 == 0,
+                'unsafe_root_private_directory',
+            )
     marker = protected / 'initialization.pending'
     require(
         not root_envelope(settings.config_dir).exists()

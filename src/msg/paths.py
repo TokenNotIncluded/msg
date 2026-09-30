@@ -17,6 +17,31 @@ SERVER_CACHE_DIR = Path('/var/cache/msgd')
 SERVER_RUNTIME_DIR = Path('/run/msgd')
 
 
+@dataclass(frozen=True)
+class ServerPaths:
+    """Stable installation identifiers, deliberately independent of DNS names."""
+
+    config: Path
+    data: Path
+    root: Path
+    cache: Path
+    runtime: Path
+
+    @classmethod
+    def for_instance(cls, name):
+        require(
+            isinstance(name, str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,25}', name) is not None,
+            'invalid_instance_name',
+        )
+        return cls(
+            SERVER_CONFIG_DIR / name,
+            SERVER_DATA_DIR / name,
+            Path('/var/lib/private/msgd') / name / 'root',
+            SERVER_CACHE_DIR / name,
+            SERVER_RUNTIME_DIR / name,
+        )
+
+
 def private_directory(path):
     """Validate before chmod; never follow a symlink in an application directory."""
     path = Path(path).absolute()

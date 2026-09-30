@@ -13,7 +13,7 @@ from msg.config_contracts import configuration_keys, validate_sections
 from msg.core.errors import Failure, require
 from msg.core.models import MailConfig, ServerConfig, TransportLimits
 from msg.oauth_config import OAuthConfig, load_oauth
-from msg.paths import ROOT_PRIVATE_DIR, SERVER_CONFIG_DIR
+from msg.paths import ROOT_PRIVATE_DIR, SERVER_CONFIG_DIR, ServerPaths
 from msg.security.age_keys import encryption_key_id, public_from_recipient
 from msg.service_origin import service_origin
 
@@ -44,6 +44,8 @@ def root_private_dir(config_dir: Path) -> Path:
     directory = Path(config_dir)
     if directory == SERVER_CONFIG_DIR:
         return ROOT_PRIVATE_DIR
+    if directory.parent == SERVER_CONFIG_DIR:
+        return ServerPaths.for_instance(directory.name).root
     return directory.parent / (directory.name + '-root')
 
 
