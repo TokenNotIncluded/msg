@@ -123,7 +123,14 @@ def main():
         target = root / 'usr/lib/tmpfiles.d/msgd.conf'
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(
-            'd /etc/msgd 0755 root root -\nd /var/lib/private/msgd 0700 root root -\n'
+            'd /etc/msgd 0755 root root -\n'
+            # Create shared containers, preserving ownership/mode on upgrades.
+            # Legacy preparation owns its singleton; named preparation leaves
+            # containers OS-root-owned and owns only per-instance children.
+            'd /var/lib/msgd - - - -\n'
+            'd /var/cache/msgd - - - -\n'
+            'd /run/msgd - - - -\n'
+            'd /var/lib/private/msgd 0700 root root -\n'
         )
         docs = root / 'usr/share/doc/msgd'
         docs.mkdir(parents=True)
