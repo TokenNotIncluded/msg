@@ -179,7 +179,7 @@ async def apply_money(
     subject_id: str | None = None,
     expected_state: dict | None = None,
 ):
-    """Internal local use case; callers must establish the OS-console boundary.
+    """Internal Root use case; callers must establish the authorized OS terminal boundary.
 
     Each invocation creates a fresh local request id. PG serializes all writers,
     so balance and supply checks are re-evaluated within the committing transaction.
@@ -337,7 +337,7 @@ async def apply_money(
 async def _confirmed_money(app, action, *, operator, amount, subject_id, emit, confirm, unlock):
     """The command's approval pipeline, shared with an isolated TestConsole.
 
-    The production caller must establish the physical-console boundary first.
+    The production caller must establish the local or explicitly opted-in SSH boundary first.
     There is no network operation, config option or command flag selecting IO
     adapters. The diagnostic replaces only IO/unlock on its fresh Test Root.
     """
