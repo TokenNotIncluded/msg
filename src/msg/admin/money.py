@@ -1,4 +1,4 @@
-"""Root money administration, with an explicit SSH opt-in for Bank-role grants only."""
+"""Root money administration, with an explicit interactive SSH opt-in."""
 
 from __future__ import annotations
 
@@ -179,7 +179,7 @@ async def apply_money(
     subject_id: str | None = None,
     expected_state: dict | None = None,
 ):
-    """Internal local use case; callers must establish the OS-console boundary.
+    """Internal Root use case; callers must establish the authorized OS terminal boundary.
 
     Each invocation creates a fresh local request id. PG serializes all writers,
     so balance and supply checks are re-evaluated within the committing transaction.
@@ -337,7 +337,7 @@ async def apply_money(
 async def _confirmed_money(app, action, *, operator, amount, subject_id, emit, confirm, unlock):
     """The command's approval pipeline, shared with an isolated TestConsole.
 
-    The production caller must establish the physical-console boundary first.
+    The production caller must establish the local or explicitly opted-in SSH boundary first.
     There is no network operation, config option or command flag selecting IO
     adapters. The diagnostic replaces only IO/unlock on its fresh Test Root.
     """
@@ -426,7 +426,14 @@ class MoneyAdmin:
 
     def execute(self, action, *, amount=None, subject_id=None, allow_ssh=False):
         if allow_ssh:
-            require(action == 'bank_add' and amount is None, 'ssh_bank_role_grant_only')
+            require(
+                action in {'mint', 'burn', 'transfer', 'bank_add', 'bank_remove', 'bank_fund'},
+                'invalid_money_action',
+            )
+            require(
+                action not in {'bank_add', 'bank_remove'} or amount is None,
+                'invalid_money_amount',
+            )
             operator = require_ssh_administrator(self.config_dir)
         else:
             operator = require_local_console(self.config_dir)

@@ -9,7 +9,7 @@
 | 私有 Python 3.15 运行时 | `/usr/lib/msgd/python3.15/` |
 | systemd 单元 | `/usr/lib/systemd/system/msgd*.service` |
 | 用户和目录定义 | `/usr/lib/sysusers.d/msgd.conf`、`/usr/lib/tmpfiles.d/msgd.conf` |
-| 文档及构建摘要 | `/usr/share/doc/msgctl-server/` |
+| 文档及构建摘要 | `/usr/share/doc/msgd/` |
 | 管理员配置及公共信任 | `/etc/msgd/` |
 | 业务持久数据 | `/var/lib/msgd/` |
 | 根私有材料 | `/var/lib/msgd-root/`，root:root 0700 |
@@ -28,14 +28,16 @@ python packaging/build-native.py \
   --source-revision COMMIT_AND_PATCH_DIGEST --output /build/packages --format all
 ```
 
-构建输入必须从已通过验收的产物取得，不能复制生产 venv。wheel 和依赖锁校验失败会停止；Python 精确版本和输入摘要写入 `/usr/share/doc/msgctl-server/build.json`。原生扩展须在兼容基线构建。软件包生成不代表已在每种发行版完成安装验收。
+构建输入必须从已通过验收的产物取得，不能复制生产 venv。wheel 和依赖锁校验失败会停止；Python 精确版本和输入摘要写入 `/usr/share/doc/msgd/build.json`。原生扩展须在兼容基线构建。软件包生成不代表已在每种发行版完成安装验收。
 
 ```sh
-sudo pacman -U ./msgctl-server-*.pkg.tar.zst
-sudo apt install ./msgctl-server_*.deb
-sudo dnf install ./msgctl-server-*.rpm
+sudo pacman -U ./msgd-*.pkg.tar.zst
+sudo apt install ./msgd_*.deb
+sudo dnf install ./msgd-*.rpm
 ```
 
 Arch 的 systemd hooks 处理用户、目录与单元重载。Debian/RPM 安装脚本执行 sysusers、tmpfiles 和 daemon-reload。首次配置数据库、初始化 CA、整理服务权限及启动服务，按 DEPLOYMENT.md 完成。软件包不包含数据库、PIN、证书、私钥和用户身份，不自动初始化 CA 或启动服务。
 
 升级前保存保护备份，停止 writer/worker，再用包管理器升级并启动验证；卸载前停止服务。卸载保留 `/etc/msgd`、`/var/lib/msgd` 和 `/var/lib/msgd-root`。从旧 `/opt/msgd` 包升级时，包管理器删除其拥有的旧代码，管理员归档不归软件包所有的旧发布记录后移除空 `/opt/msgd` 目录，不能删除业务或根私有数据。
+
+The native server package is named `msgd`; the Python wheel remains `msgctl`. Packages declare the previous `msgctl-server` name as provided and conflicting, with replacement/obsoletion metadata for migration. Install through the package manager so shared files transfer ownership rather than installing both packages side by side. On Arch, if `pacman -U` requests removal of the conflicting `msgctl-server` package, confirm that replacement; repository upgrades also recognize `replaces`. Neither package owns generated configuration, keys, database contents or other runtime state, and uninstall hooks do not delete them. The rename does not change `/etc/msgd`, `/var/lib/msgd`, `/var/lib/msgd-root`, service names or executable names.
