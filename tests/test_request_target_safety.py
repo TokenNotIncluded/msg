@@ -1,4 +1,4 @@
-"""Raw URL boundaries without a database; no business execution is simulated."""
+"""Raw URL boundaries without a database; only homepage discovery is stubbed."""
 
 from types import SimpleNamespace
 from uuid import uuid4
@@ -16,8 +16,35 @@ from msg.transports.packet import require_url_safe_packet
 
 def boundary_service():
     """Only health/root and rejection paths are usable on this service."""
+
+    class HomepageExecutor:
+        async def require_current_runtime(self):
+            pass
+
+        def recovery_drill_active(self):
+            return False
+
+        async def execute(self, packet, *, entry):
+            # The homepage is the only read exercised by this boundary fixture.
+            # Any attempted business execution still fails immediately.
+            assert packet.operation == 'discovery.home'
+            assert entry == 'network'
+            assert not packet.arguments
+            return SimpleNamespace(
+                error=None,
+                data={
+                    'posts': 0,
+                    'posts_today': 0,
+                    'users': 0,
+                    'date': '2026-09-30',
+                    'timezone': 'Asia/Taipei',
+                    'latest': [],
+                },
+            )
+
     return SimpleNamespace(
         _loaded=True,
+        executor=HomepageExecutor(),
         settings=SimpleNamespace(
             service_url='http://testserver',
             server=SimpleNamespace(
