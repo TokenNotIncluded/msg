@@ -19,8 +19,9 @@ remaining work; historical runs retain their original source provenance.
 - PR #206 restores the published `discovery.read_query@1` schema, introduces
   anonymous-only homepage summaries at v4, preserves decoded short-code versions,
   and checks the configured restore marker before removing it in the rehearsal.
-- PR #205 is being checked against the corrected main. Its old failing checks
-  are not acceptance of the newly combined source.
+- PR #205 passed every current-head check and was merged as `36119c5`.
+  It restores public GET/HEAD `robots.txt` and a homepage-only sitemap.
+  Independent main acceptance remains separate from the PR run.
 
 ## Resolved issues
 
@@ -44,7 +45,9 @@ for that installed release. Root trust and existing account keys were preserved.
 
 The September 30 read-only preflight found PostgreSQL 18, 87 tables, a typed
 ledger with zero ledger entries and zero legacy escrow identities, and two finite
-CA certificates. This current database is not a legacy production snapshot.
+CA certificates. This current database is not a legacy production snapshot. The protected legacy
+backup is SQLite (33 tables, no financial tables), so it cannot satisfy the old
+PostgreSQL escrow migration scenario.
 
 New `identity.rename@1` and `discovery.read_query@4` authority is absent from the
 installed signed CA snapshots. Existing certificates must not acquire it merely

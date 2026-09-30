@@ -9,7 +9,7 @@ keeps the original scope rather than turning green tests into blanket acceptance
 | Issue | Current evidence | Work needed before closure |
 | --- | --- | --- |
 | [#64](https://github.com/TokenNotIncluded/msg.lmm.best/issues/64) ingress secrets | Actual nginx/listener inventory; loopback writer; site logs off; global main error suppression and safe inherited HTTP log format installed; actual configuration test/reload/site checks and isolated metrics/redaction regression passed | Complete all default-vhost and upstream/collector inventory and controlled whole-chain sentinel/error evidence. The installed shared policy does not certify an external collector. |
-| [#65](https://github.com/TokenNotIncluded/msg.lmm.best/issues/65) legacy ledger | Read-only target inventory: typed schema, zero ledger rows/legacy escrows; fixed-old-source fixture and migration rollback tests exist | Protected real legacy snapshot with provenance/freeze point; isolated migration, exact receipts/rows/sequences, interruption/retry/concurrency and rollback. Current empty ledger is not an old snapshot. |
+| [#65](https://github.com/TokenNotIncluded/msg.lmm.best/issues/65) legacy ledger | Read-only target inventory: typed schema, zero ledger rows/legacy escrows; fixed-old-source fixture and migration rollback tests exist | Protected real old PostgreSQL ledger snapshot with provenance/freeze point; isolated migration/rollback. The server legacy backup was inspected read-only: SQLite, 33 tables, no financial tables. That backup and the current empty ledger cannot substitute for this scenario. |
 | [#68](https://github.com/TokenNotIncluded/msg.lmm.best/issues/68) historical ciphertext | Existing custodial inventory/ACK/rewrap/retirement tests and root-signed backup-retirement verification | Match every original scenario to its assertion; real retained ciphertext decrypted by its authorized client; independently bounded backup-retirement facts. No key destruction is inferred. |
 | [#69](https://github.com/TokenNotIncluded/msg.lmm.best/issues/69) revocation after restore | Proof/current-authority reconcile/promotion code exists; installed restore checks retain quarantine after marker removal | Full scenario-to-assertion review; actual independently current checkpoint outside the rollback set, protected snapshot and controlled-console promotion. Do not repeat the obsolete claim that promotion has no implementation. |
 | [#70](https://github.com/TokenNotIncluded/msg.lmm.best/issues/70) Root/CA governance | Target inventory found Root and online CA with finite signed policies; no trust changes; latest-operation gaps identified | Exact signed grants/scopes/constraints/depth/expiry inventory and approved per-chain reissue/revoke plan; full lifecycle matrix and real VT/serial success. SSH opt-ins do not prove physical-console success. |
@@ -56,6 +56,21 @@ The complete target CA report is stored privately at
 `~/.local/state/msg/admin/archczy/preflight-20261001.json` (0600). It contains both
 CA signed-policy snapshots, including scopes/constraints/validity/depth, and records
 `mutation_performed=false` and `decision=blocked`. No CA key was unlocked.
+
+The capability builder also had a version-dependent exclusion defect: only v1
+of privileged purge/chown operations was excluded from ordinary base grants.
+A new assembly regression first failed with v2 in the base set, then passed after
+excluding every registered version by name. Dedicated privileged capabilities
+still retain both versions, and ordinary content operations remain in base grants.
+All 32 capability/old-authority/online-CA/delegation-depth regressions passed.
+This fixes the future-version ceiling defect; it does not claim an exploit in
+currently deployed v1 handlers or change existing signed certificates.
+
+PR #205 passed every current-head check and was merged at `36119c5`. It restores
+anonymous GET/HEAD crawler discovery, listing only the unconditional homepage.
+The targeted crawler/branding/dictionary selection passed all 32 tests. Its full
+run is [36756860534](https://github.com/TokenNotIncluded/msg.lmm.best/actions/runs/36756860534);
+independent merged-main acceptance is a separate check.
 
 ## Verified source evidence
 

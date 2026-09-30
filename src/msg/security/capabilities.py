@@ -187,7 +187,7 @@ def install_capabilities(registry):
     network_constraints = ResourceRef(id='schema:network-constraints')
     registry.add_schema(network_constraints, NETWORK_CONSTRAINTS)
     for name, selectors in BASE_FAMILIES.items():
-        names = _selected(operations, selectors) - frozenset(f'{n}@1' for n in EXCLUDED_BASE)
+        names = _selected(operations, selectors) - _selected(operations, EXCLUDED_BASE)
         if names:
             registry.add_capability(
                 CapabilitySpec(
