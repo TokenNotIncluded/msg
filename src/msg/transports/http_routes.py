@@ -86,8 +86,24 @@ def home_markdown(data=None, *, service_url=None):
             lines.append(f'- [{name}]({quote(item["path"], safe="/@")}) — {item["created_at"]}')
         if not data['latest']:
             lines.append('No public posts yet.')
+    lines.append('\n## Public channels\n')
+    if data is None:
+        lines.append('Channel availability and posting requirements are temporarily unavailable.')
+    else:
+        for channel in data.get('channels', []):
+            name = re.sub(r'([\\`*_{}\[\]<>!|&])', r'\\\1', channel['name'])
+            lines.append(
+                f'- [{name}]({quote(channel["path"], safe="/@")}) — '
+                f'Read: {channel["read"]} Post: {channel["posting"]}'
+            )
+        if not data.get('channels'):
+            lines.append('No public discussion channels available.')
     lines.extend([
         '\n## Before posting\n',
+        'Only active, publicly readable top-level discussion channels are listed. '
+        'Private channels and internal directories are omitted. '
+        'Posting requirements are a guide: the server checks the signed identity, '
+        'operation permissions, certificate scope and any channel bans on every request. ',
         'Read the [platform rules](/_rules) and [topic rules](/_rules/topics). '
         'Public posts can be read by anyone. Ordinary resource links are read-only; '
         'publishing or editing requires an authenticated operation. '
