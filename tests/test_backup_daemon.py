@@ -69,6 +69,8 @@ def test_unattended_init_never_generates_root_or_accepts_pin_flag(tmp_path):
         'init',
         '--data-dir',
         str(tmp_path / 'data'),
+        '--service-url',
+        'https://unattended.example.org',
     ]
     env = {**os.environ, 'PYTHONPATH': str(Path(__file__).parents[1] / 'src')}
     result = subprocess.run(base, input='', text=True, capture_output=True, env=env)
