@@ -1621,7 +1621,10 @@ def install(app):
                 else any(term in whole for term in terms)
             ):
                 continue
-            if exact and exact not in whole:
+            # Fields are separate documents for phrase matching. Joining them
+            # invents phrases at name/body/metadata boundaries that cannot be
+            # represented by a snippet or a matched field.
+            if exact and not any(exact in value for value in lowered.values()):
                 continue
             if any(term in whole for term in excluded):
                 continue
