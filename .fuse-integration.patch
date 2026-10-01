@@ -1,0 +1,103 @@
+diff --git a/pyproject.toml b/pyproject.toml
+index 9d926d9..503df93 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -25,6 +25,7 @@ msg = "msg.cli:main"
+ msgd = "msg.daemon:main"
+ 
+ [project.optional-dependencies]
++fuse = ["mfusepy>=3.1.1,<4"]
+ server = [
+     "starlette>=0.50,<2",
+     "uvicorn>=0.38,<1",
+diff --git a/src/msg/cli.py b/src/msg/cli.py
+index 3156250..8af61c6 100644
+--- a/src/msg/cli.py
++++ b/src/msg/cli.py
+@@ -507,6 +507,9 @@ def parser():
+     from msg.client_yubikey import add_commands as add_yubikey_commands
+ 
+     add_yubikey_commands(commands)
++    from msg.client_mount import add_commands as add_mount_commands
++
++    add_mount_commands(commands)
+     return cli
+ 
+ 
+@@ -581,6 +584,10 @@ async def run(args):
+                 require(args.handle == args.user, 'connection_user_mismatch')
+             elif command != 'login':
+                 await client.require_username(args.user)
++        if command == 'mount':
++            from msg.client_mount import run_mount
++
++            return await run_mount(client, args)
+         if command in {'login', 'logout', 'auth'}:
+             from msg.client_oauth import run_command
+ 
+diff --git a/src/msg/plugins/files.py b/src/msg/plugins/files.py
+index f56bedb..018fe3d 100644
+--- a/src/msg/plugins/files.py
++++ b/src/msg/plugins/files.py
+@@ -43,9 +43,13 @@ def install(app):
+     @op('file.stat', obj({'id': IDENTIFIER}, ('id',)), effect='read')
+     async def stat(ctx, request, tx):
+         spec = app.registry.operation('discovery.get')
+-        return await spec.handler(
++        result = await spec.handler(
+             ctx, replace(request, arguments={**request.arguments, 'view': 'meta'}), tx
+         )
++        resource_type = app.registry.resource_type(
++            result.data['type'], result.data['type_version']
++        )
++        return replace(result, data={**result.data, 'container': resource_type.container})
+ 
+     @op(
+         'file.write',
+diff --git a/uv.lock b/uv.lock
+index 7da9be3..b47431a 100644
+--- a/uv.lock
++++ b/uv.lock
+@@ -471,6 +471,15 @@ wheels = [
+     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+ ]
+ 
++[[package]]
++name = "mfusepy"
++version = "3.1.1"
++source = { registry = "https://pypi.org/simple" }
++sdist = { url = "https://files.pythonhosted.org/packages/91/47/746287c8962274f73ee25edb3840d80899464bfffbe2c435424c2d60a071/mfusepy-3.1.1.tar.gz", hash = "sha256:338ece54513d7d1a5e9492837679a0c7432ecf96a03490a2683a1ce1d19570e1", size = 34549, upload-time = "2026-03-13T00:36:52.636Z" }
++wheels = [
++    { url = "https://files.pythonhosted.org/packages/c5/d5/56bc9326bf75f7ea0f4fe1178f5c9f20d1a1e15e288ecf66088513538ccd/mfusepy-3.1.1-py3-none-any.whl", hash = "sha256:69fb70cfc7f7cce595e6ff586f8451d8298f01f18286a157f24f564b24ec5a37", size = 28264, upload-time = "2026-03-13T00:36:51.843Z" },
++]
++
+ [[package]]
+ name = "more-itertools"
+ version = "11.1.0"
+@@ -509,6 +518,9 @@ dev = [
+     { name = "uvicorn" },
+     { name = "valkey" },
+ ]
++fuse = [
++    { name = "mfusepy" },
++]
+ server = [
+     { name = "aiohttp" },
+     { name = "dnspython" },
+@@ -530,6 +542,7 @@ requires-dist = [
+     { name = "httpx", specifier = ">=0.28,<1" },
+     { name = "jsonschema", specifier = ">=4.25,<5" },
+     { name = "markdown-it-py", marker = "extra == 'server'", specifier = ">=4,<5" },
++    { name = "mfusepy", marker = "extra == 'fuse'", specifier = ">=3.1.1,<4" },
+     { name = "msgctl", extras = ["server"], marker = "extra == 'dev'" },
+     { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.3,<4" },
+     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4" },
+@@ -543,7 +556,7 @@ requires-dist = [
+     { name = "valkey", marker = "extra == 'server'", specifier = ">=6.1,<7" },
+     { name = "yubikey-manager", specifier = ">=5.8,<6" },
+ ]
+-provides-extras = ["server", "dev"]
++provides-extras = ["fuse", "server", "dev"]
+ 
+ [[package]]
+ name = "multidict"

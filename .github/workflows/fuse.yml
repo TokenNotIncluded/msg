@@ -1,0 +1,30 @@
+name: FUSE mount
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: fuse-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  kernel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install native FUSE and optional package
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq fuse3 libpcsclite-dev swig
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --extra fuse --python "$(command -v python)"
+          test -c /dev/fuse
+      - name: Verify real kernel mount, byte reads and unmount
+        run: uv run --locked --extra dev --extra fuse python scripts/check_fuse_mount.py
