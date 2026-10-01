@@ -49,7 +49,7 @@ async def test_real_private_contact_still_hides_name_and_path(installed, monkeyp
     post = await call(
         app,
         'content.post_create',
-        {'parent': '/main', 'body': 'Readable reference with a private contact'},
+        {'parent': '/main', 'body': '# Reference\n\nReadable reference with a private contact'},
         key=author_key,
         subject=author,
     )

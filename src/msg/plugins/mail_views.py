@@ -11,6 +11,9 @@ from msg.core.post_preview import post_preview
 async def contact(app, ctx, request, tx, subject):
     from msg.plugins.discovery import visible
 
+    # Worker reminders and settlement notices have no sending account.
+    if subject is None:
+        return {'name': 'System notification'}
     if await visible(app, ctx, request, tx, subject):
         resource = await tx.resource(subject)
         return {'name': resource.name, 'path': await tx.path(subject)}
