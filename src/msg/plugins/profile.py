@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 from msg.core.codec import decode, loads, wire
 from msg.core.errors import require
 from msg.core.identifiers import hex_id
-from msg.core.models import Resource, Revision
+from msg.core.models import Resource, ResourceRef, Revision
 from msg.core.post_preview import post_preview
 
 
@@ -58,7 +58,45 @@ async def account_activity(app, ctx, request, tx, subject_id):
             })
         if len(rows) < 128:
             break
-    return {'post_count': count, 'latest_posts': latest}
+    bio = ''
+    bio_path = None
+    row = tx.one(
+        "SELECT id FROM resources WHERE parent=? AND name='BIO.md' AND state='active'",
+        (subject_id,),
+    )
+    if row and await visible(app, ctx, request, tx, row[0]):
+        resource = await tx.resource(row[0])
+        if resource.revision:
+            revision = await tx.revision(ResourceRef(id=resource.id))
+            if revision.content.media_type in {'text/plain', 'text/markdown'}:
+                raw = b''.join([
+                    piece
+                    async for piece in app.contents.read(
+                        revision.content, (0, min(revision.content.size, 8192))
+                    )
+                ])
+                bio = raw.decode('utf-8', errors='replace')
+                bio_path = '/@' + (await tx.resource(subject_id)).name.lstrip('@') + '/BIO.md'
+    counts = {}
+    for label, own, other in (
+        ('following_count', 'follower', 'target'),
+        ('follower_count', 'target', 'follower'),
+    ):
+        total = 0
+        for (rid,) in tx.rows(f'SELECT {other} FROM agent_follows WHERE {own}=?', (subject_id,)):
+            require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+            if (await tx.resource(rid)).state != 'active' or not await visible(
+                app, ctx, request, tx, rid
+            ):
+                continue
+            if tx.one(
+                'SELECT 1 FROM dm_blocks WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)',
+                (subject_id, rid, rid, subject_id),
+            ):
+                continue
+            total += 1
+        counts[label] = total
+    return {'post_count': count, 'latest_posts': latest, 'bio': bio, 'bio_path': bio_path, **counts}
 
 
 def markdown_text(value):
@@ -77,12 +115,23 @@ def profile_markdown(data):
         )
 
     activity = data['profile']
+    path = quote('/' + data['name'], safe='/@')
     output = [
         '# ' + markdown_text(data['name']),
         '',
         '- Account: ' + markdown_text(data.get('kind', 'registered')),
         '- Joined: ' + date(data['created_at']) + ' (Asia/Taipei)',
         '- Visible posts: ' + str(activity['post_count']),
+        '',
+        f'[Following / 关注 · {activity.get("following_count", 0)}]({path}/follows) · [Followers / 粉丝 · {activity.get("follower_count", 0)}]({path}/followers)',
+        '',
+        '## Bio / 简介',
+        '',
+        markdown_text(activity.get('bio', '')) or 'No bio yet. / 暂未填写简介。',
+        '',
+        f'[BIO.md]({path}/BIO.md)'
+        if activity.get('bio_path')
+        else '[Add a bio / 填写简介](https://github.com/TokenNotIncluded/msg/blob/main/docs/PROFILES.md)',
         '',
         '## Latest posts',
         '',
@@ -100,4 +149,31 @@ def profile_markdown(data):
         output.append(f'- [{markdown_text(item["name"])}]({quote(item["path"], safe="/@*")})')
     if not data.get('items'):
         output.append('No visible resources.')
+    return '\n'.join(output) + '\n'
+
+
+def follows_markdown(data, *, incoming=False, limit=20):
+    path = quote(data['path'], safe='/@')
+    profile = path.rsplit('/', 1)[0]
+    label = 'Followers / 粉丝' if incoming else 'Following / 关注'
+    output = [
+        f'# {profile.removeprefix("/")} · {label}',
+        '',
+        f'[Profile / 个人页]({profile}) · [Following / 关注]({profile}/follows) · [Followers / 粉丝]({profile}/followers)',
+        '',
+    ]
+    for item in data.get('items', []):
+        output.append(
+            f'- [{markdown_text(item["name"])}]({quote(item["path"], safe="/@")})'
+            + (' · Mutual / 互相关注' if item.get('mutual') else '')
+        )
+    if not data.get('items'):
+        output.append('No accounts yet. / 暂无用户。')
+    if data.get('has_more'):
+        from urllib.parse import urlencode
+
+        output.extend([
+            '',
+            f'[Next page / 下一页]({path}?{urlencode({"after": data["after"], "limit": limit})})',
+        ])
     return '\n'.join(output) + '\n'
