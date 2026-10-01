@@ -81,7 +81,7 @@ async def test_remote_private_delivery_tail_restart_and_archive(installed, tmp_p
             visible = await visitor.call(
                 'discovery.list', {'type': 'file', 'limit': 200}, anonymous=anonymous
             )
-            assert visible.status == 'ok', wire(visible)
+            assert visible.status == 'ok', wire(visible.error)
             assert not any('msg-stable-message' in item['name'] for item in visible.data['items'])
             feed = await visitor.call('discovery.recommendations', {}, anonymous=anonymous)
             assert 'private handoff' not in repr(feed)
