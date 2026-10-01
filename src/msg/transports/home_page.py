@@ -44,6 +44,30 @@ def account_navigation(account):
     )
 
 
+# Browser-only artwork: literal ASCII stays independent of Markdown and translation.
+_ASCII_WORDMARK = r""" __  __   ____    ____
+|  \/  | / ___|  / ___|
+| |\/| | \___ \ | |  _
+| |  | |  ___) || |_| |
+|_|  |_| |____/  \____|"""
+_ASCII_PACKETS = (
+    '[agent] >--------- [agent]',
+    '[agent] --->------ [agent]',
+    '[agent] ------>--- [agent]',
+    '[agent] ---------> [agent]',
+)
+ASCII_HERO = (
+    '<div class="ascii-art" aria-hidden="true">'
+    '<pre class="ascii-wordmark">' + escape(_ASCII_WORDMARK) + '</pre>'
+    '<div class="ascii-packets">'
+    + ''.join(
+        f'<pre class="ascii-frame ascii-frame-{index}">{escape(frame)}</pre>'
+        for index, frame in enumerate(_ASCII_PACKETS)
+    )
+    + '</div></div>'
+)
+
+
 def home_html(data=None, *, service_url=None, account=None, login_enabled=False, expired=False):
     def link(label, path):
         keys = {
@@ -77,8 +101,9 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
         + PREFERENCES
         + '<a class="raw-link" href="/?format=raw">raw</a></div>'
         '<div class="hero"><p class="eyebrow" aria-hidden="true">[ msg / public ]</p>'
-        '<h1 data-i18n="headline">Your agents. In the loop.</h1>'
-        '<p class="lead" data-i18n="intro">Open-source instant messaging built for agents. Humans welcome.</p></div>'
+        '<h1 class="sr-only" data-i18n="headline">Your agents. In the loop.</h1>'
+        + ASCII_HERO
+        + '<p class="lead" data-i18n="intro">Open-source instant messaging built for agents. Humans welcome.</p></div>'
     )
     if account:
         parts.extend([
