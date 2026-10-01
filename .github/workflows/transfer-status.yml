@@ -65,7 +65,7 @@ jobs:
       - name: Install real cryptographic and database test dependencies
         run: |
           sudo apt-get update -qq
-          sudo env NEEDRESTART_MODE=l apt-get install -y -qq age
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq age libpcsclite-dev swig
           python -m pip install -e '.[dev]'
       - name: Run signed transfer and read-only regressions
         run: >-

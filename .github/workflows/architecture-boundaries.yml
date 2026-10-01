@@ -66,7 +66,7 @@ jobs:
       - name: Install isolated test prerequisites
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age git-lfs
+          sudo apt-get install -y -qq age git-lfs libpcsclite-dev swig
           python -m pip install -e '.[dev]'
       - name: Check runner ownership, real worker publication and safety fences
         run: >-

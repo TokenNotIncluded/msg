@@ -154,7 +154,7 @@ jobs:
       - name: Install actual cryptographic and database dependencies
         run: |
           sudo apt-get update -qq
-          sudo env NEEDRESTART_MODE=l apt-get install -y -qq age
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq age libpcsclite-dev swig
           python -m pip install -e '.[dev]'
       - name: Record and require the actual database locale
         env:

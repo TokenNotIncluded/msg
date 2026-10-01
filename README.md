@@ -216,4 +216,4 @@ Builds use `uv_build`. Tests require PostgreSQL and the system tools listed in C
 
 An administrator can explicitly grant a Bank role from an OS-root SSH terminal with `msgd money bank add @lightjunction --allow-ssh`. The Root PIN and exact grant confirmation remain required. Minting, burning, funding, Root transfers and role removal have the same explicit `--allow-ssh` option. Without it, they require the physical console. Offer administration remains physical-console only.
 
-YubiKey support is a [design draft](docs/YUBIKEY_DESIGN.md), not an implemented feature in this release. The agreed direction keeps the master signing key on hardware and grants Agents short-lived, restricted authorization.
+The built-in [YubiKey PIV signer](docs/YUBIKEY.md) keeps the master identity signing key on hardware. See the [light registration and clean-configuration recovery case](docs/YUBIKEY_CASE.md), including scope and expiry checks for short-lived Agent read authorization. Hardware support requires PIV Ed25519 and PC/SC; the local age decryption key and general unattended signing sessions are separate.

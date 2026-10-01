@@ -33,7 +33,7 @@ jobs:
       - name: Install locked development dependencies
         run: |
           sudo apt-get update -qq
-          sudo env NEEDRESTART_MODE=l apt-get install -y -qq postgresql-client-16 age nginx openssl git-lfs bubblewrap apparmor-profiles
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq postgresql-client-16 age nginx openssl git-lfs bubblewrap apparmor-profiles libpcsclite-dev swig
           echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
           sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
           python -m pip install uv==0.12.20

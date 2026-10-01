@@ -44,7 +44,7 @@ jobs:
       - name: Install isolated test dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age
+          sudo apt-get install -y -qq age libpcsclite-dev swig
           python -m pip install -e '.[dev]'
       - name: Bind evidence to checkout and requested head
         env:

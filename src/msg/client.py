@@ -135,6 +135,7 @@ class ClientState:
                     current.get('subject_id')
                     or current.get('token')
                     or self.paths.file('identity.key').exists()
+                    or self.paths.file('hardware-signer.json').exists()
                     or self.paths.file('oauth-session.json').exists()
                 ):
                     # The per-service identity is already established. A leftover
@@ -150,6 +151,7 @@ class ClientState:
         self.path = self.file('client.json')
         self.key_path = self.file('identity.key')
         self.age_key_path = self.file('encryption.agekey')
+        self.hardware_path = self.file('hardware-signer.json')
         self.pending_path = self.file('registration.json')
         if self.path.exists() or self.path.is_symlink():
             require(
@@ -174,7 +176,15 @@ class ClientState:
         self.data['server'] = self.server
         self.signer = None
         self.encryption_recipient = None
-        if self.key_path.exists() or self.key_path.is_symlink():
+        if self.hardware_path.exists() or self.hardware_path.is_symlink():
+            from msg.client_yubikey import YubiKeySigner
+
+            require(
+                not (self.key_path.exists() or self.key_path.is_symlink()),
+                'client_key_backend_conflict',
+            )
+            self.signer = YubiKeySigner.from_descriptor(private_client_json(self.hardware_path))
+        elif self.key_path.exists() or self.key_path.is_symlink():
             self.signer = private_identity_key(self.key_path)
         if self.age_key_path.exists() or self.age_key_path.is_symlink():
             require(
@@ -227,8 +237,21 @@ class ClientState:
         durable_write(self.path, canonical(self.data), mode=0o600)
 
     def save_signer(self, signer):
-        require(not self.key_path.exists(), 'identity_key_already_exists')
-        durable_write(self.key_path, signer.private_bytes(), mode=0o600)
+        from msg.client_yubikey import YubiKeySigner
+
+        require(
+            not (
+                self.key_path.exists()
+                or self.key_path.is_symlink()
+                or self.hardware_path.exists()
+                or self.hardware_path.is_symlink()
+            ),
+            'identity_key_already_exists',
+        )
+        if isinstance(signer, YubiKeySigner):
+            durable_write(self.hardware_path, canonical(signer.descriptor()), mode=0o600)
+        else:
+            durable_write(self.key_path, signer.private_bytes(), mode=0o600)
         self.signer = signer
 
     def ensure_encryption_key(self):
