@@ -1160,6 +1160,9 @@ def create_app(service):
                 headers = {**BASE_HEADERS, 'Vary': 'Accept', 'Cache-Control': 'private, no-cache'}
                 if browser_html:
                     headers.update(HOME_BROWSER_HEADERS)
+                    headers['Content-Security-Policy'] = headers['Content-Security-Policy'].replace(
+                        "form-action 'none'", "form-action 'self'"
+                    )
                 return Response(
                     b'' if request.method == 'HEAD' else payload,
                     media_type='text/html'
