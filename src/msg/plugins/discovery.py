@@ -360,6 +360,14 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
     if resource.type == 'user':
         subject = await tx.subject(rid)
         meta.update(kind=subject.kind, local_only=subject.local_only)
+        if ctx.principal.subject == rid and (not fields or 'groups' in fields):
+            meta['groups'] = []
+            for membership in await tx.memberships(rid):
+                if membership.status == 'active' and await visible(
+                    app, ctx, request, tx, membership.organization_id
+                ):
+                    group = await tx.resource(membership.organization_id)
+                    meta['groups'].append({'name': group.name, 'path': await tx.path(group.id)})
         if not fields or 'profile' in fields:
             from msg.plugins.profile import account_activity
 
@@ -502,6 +510,7 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'kind',
         'local_only',
         'profile',
+        'groups',
         'list_operation',
         'summary',
         'change_note',

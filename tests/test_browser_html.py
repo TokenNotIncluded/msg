@@ -103,3 +103,19 @@ async def test_readable_dm_channel_metadata_and_raw(oauth):
         key=other_key,
         subject=other,
     )
+
+
+@pytest.mark.asyncio
+async def test_own_groups_are_visible_in_browser_but_not_public_profile(oauth):
+    from msg.plugins.identity import set_member
+
+    app, _, subject, http = oauth
+    async with app.metadata.transaction(write=True) as tx:
+        await set_member(tx, 'g_admins', subject, 'member', joined_at=app.clock())
+    public = await http.get('/@oauth-owner/json')
+    assert 'groups' not in public.json()
+    await browser_login(oauth)
+    home = await http.get('/', headers={'Accept': 'text/html'})
+    assert 'href="/&amp;admins"' in home.text and '&amp;admins' in home.text
+    mine = await http.get('/@oauth-owner/json')
+    assert {'name': '&admins', 'path': '/&admins'} in mine.json()['groups']
