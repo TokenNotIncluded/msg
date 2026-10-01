@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 
 from msg.bootstrap import ROOT_WEB_SAMPLE
 from msg.core.codec import b64, decode, digest
@@ -207,7 +207,7 @@ try:
         errors = []
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto(SERVICE + '/@root/web/')
-        page.wait_for_function("document.querySelector('#counts').textContent.includes('36 STARS')")
+        expect(page.locator('#counts')).to_contain_text('36 STARS')
         assert page.locator('#space').get_attribute('data-renderer') == 'webgl'
         page.screenshot(path=str(OUTPUT / 'desktop-fixture.png'))
         before = page.locator('#space').screenshot()
@@ -223,30 +223,24 @@ try:
         page.click('#detail-close')
         page.click('#catalog-toggle')
         page.locator('#catalog-items button').nth(37).click()
-        page.wait_for_function(
-            "document.querySelector('#detail-body').textContent.includes('onerror')"
-        )
+        expect(page.locator('#detail-body')).to_contain_text('onerror')
         assert page.evaluate('window.__injected === undefined')
         assert page.locator('#detail-body img').count() == 0
         page.get_by_role('button', name='Follow the reply').click()
-        assert page.locator('#progress-label').inner_text().startswith('4 / 6')
+        expect(page.locator('#progress-label')).to_contain_text('4 / 6')
         page.click('#detail-close')
         page.click('#private-tab')
-        page.wait_for_function("document.querySelector('#status').textContent.includes('Sign in')")
+        expect(page.locator('#status')).to_contain_text('Sign in')
         assert PRIVATE_BODY not in page.content()
         context.add_cookies([{'name': 'fixture_session', 'value': 'owner', 'url': SERVICE}])
         page.click('#private-tab')
-        page.wait_for_function(
-            "document.querySelector('#counts').textContent.includes('YOUR CONVERSATIONS')"
-        )
+        expect(page.locator('#counts')).to_contain_text('YOUR CONVERSATIONS')
         page.click('#catalog-toggle')
         page.locator('#catalog-items button').nth(1).click()
-        page.wait_for_function(
-            "document.querySelector('#detail-body').textContent.includes('PRIVATE FIXTURE')"
-        )
+        expect(page.locator('#detail-body')).to_contain_text('PRIVATE FIXTURE')
         page.screenshot(path=str(OUTPUT / 'private-fixture.png'))
         page.click('#public-tab')
-        page.wait_for_function("document.querySelector('#counts').textContent.includes('STARS')")
+        expect(page.locator('#counts')).to_contain_text('STARS')
         assert PRIVATE_BODY not in page.content()
         assert not [cookie for method, path, cookie in REQUESTS if path == '/_universe' and cookie]
         page.click('#compose-open')
@@ -259,10 +253,10 @@ try:
             'buffer': KEY.private_bytes(),
         })
         page.click('#connect')
-        page.wait_for_function("!document.querySelector('#key-dialog').open")
+        expect(page.locator('#key-dialog')).not_to_be_visible()
         assert page.locator('#key-file').input_value() == ''
         page.click('#send')
-        page.wait_for_function("!document.querySelector('#composer').open")
+        expect(page.locator('#composer')).not_to_be_visible()
         assert len(SENT) == 1 and SENT[0].arguments['body'] == 'A signed browser signal: 宇宙 🌟'
         page.set_viewport_size({'width': 390, 'height': 844})
         page.click('#home')
