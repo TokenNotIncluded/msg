@@ -3,7 +3,9 @@
 This is a client adapter, not an identity type. The server authenticates every
 operation as the owning account. Read calls never create resources. Inbox
 cursors use the existing committed event stream, scoped to the account and
-mailbox. Timestamp ties and concurrent inserts cannot skip messages.
+mailbox. Timestamp ties and concurrent inserts cannot skip messages. Stored
+records bind to the immutable account ID, so changing a handle keeps mailboxes
+and history intact; qualified addresses always show the current handle.
 """
 
 import re
@@ -18,7 +20,8 @@ from msg.core.errors import Failure, require
 class RemoteAgents:
     def __init__(self, client, username=None):
         self.client = client
-        self.username = username.removeprefix('@') if username else None
+        self._explicit_username = username.removeprefix('@') if username else None
+        self.username = self._explicit_username
 
     async def _identity(self):
         require(self.client.state.subject is not None, 'connection_identity_required')
@@ -27,7 +30,10 @@ class RemoteAgents:
         )
         name = value['name']
         require(name.startswith('@'), 'subagent_account_required')
-        require(self.username is None or self.username == name[1:], 'connection_user_mismatch')
+        require(
+            self._explicit_username is None or self._explicit_username == name[1:],
+            'connection_user_mismatch',
+        )
         self.username = name[1:]
         return '/@' + self.username + '/files/agents'
 
@@ -107,7 +113,7 @@ class RemoteAgents:
             raise Failure('invalid_subagent_message') from exc
         return meta, value
 
-    async def _put(self, parent, name, value):
+    async def _put(self, parent, name, value, *, existing_match=None):
         result = await self.client.call(
             'file.create',
             {
@@ -121,7 +127,10 @@ class RemoteAgents:
             if result.error.code != 'constraint_conflict':
                 self.client.checked(result)
             meta, existing = await self._json(parent + '/' + name)
-            require(existing == value, 'subagent_message_id_conflict')
+            require(
+                existing_match(meta, existing) if existing_match is not None else existing == value,
+                'subagent_message_id_conflict',
+            )
             return meta
         meta = await self._meta(parent + '/' + name)
         require(
@@ -129,16 +138,52 @@ class RemoteAgents:
         )
         return meta
 
-    async def _agent(self, root, name, *, active=True):
-        await self._directory(root + '/' + name)
-        meta, config = await self._json(root + '/' + name + '/agent.json')
+    def _stored_label(self, identity):
+        require(
+            isinstance(identity, str) and identity.startswith('@') and identity.count('#') == 1,
+            'invalid_subagent_message',
+        )
+        account, label = identity.split('#')
+        require(
+            bool(re.fullmatch(r'@[A-Za-z0-9][A-Za-z0-9_-]*', account)), 'invalid_subagent_message'
+        )
+        return self._label(label)
+
+    def _config(self, meta, config, name):
+        # Legacy handles are display text. Only the already-verified private
+        # leaf's stable owner decides which account this record belongs to.
+        require(meta['owner'] == self.client.state.subject, 'subagent_private_namespace_conflict')
         require(
             isinstance(config, dict)
-            and config.get('version') == 1
-            and config.get('identity') == self._full(name)
+            and type(config.get('version')) is int
             and isinstance(config.get('archived'), bool),
             'invalid_subagent_message',
         )
+        if config['version'] == 1:
+            require(
+                set(config) == {'version', 'identity', 'archived'}
+                and self._stored_label(config['identity']) == name,
+                'invalid_subagent_message',
+            )
+        else:
+            require(
+                config['version'] == 2
+                and set(config) == {'version', 'owner', 'name', 'archived'}
+                and config['owner'] == self.client.state.subject
+                and config['name'] == name,
+                'invalid_subagent_message',
+            )
+        return {
+            'version': 2,
+            'owner': self.client.state.subject,
+            'name': name,
+            'archived': config['archived'],
+        }
+
+    async def _agent(self, root, name, *, active=True):
+        await self._directory(root + '/' + name)
+        meta, value = await self._json(root + '/' + name + '/agent.json')
+        config = self._config(meta, value, name)
         require(not active or not config['archived'], 'subagent_archived')
         return meta, config
 
@@ -146,8 +191,13 @@ class RemoteAgents:
         root = await self._root(create=True)
         name = self._label(name)
         await self._directory(root + '/' + name, create=True)
-        config = {'version': 1, 'identity': self._full(name), 'archived': False}
-        await self._put(root + '/' + name, 'agent.json', config)
+        config = {'version': 2, 'owner': self.client.state.subject, 'name': name, 'archived': False}
+        await self._put(
+            root + '/' + name,
+            'agent.json',
+            config,
+            existing_match=lambda meta, existing: self._config(meta, existing, name) == config,
+        )
         return {'name': name, 'identity': self._full(name), 'archived': False}
 
     async def _children(self, parent, resource_type):
@@ -180,7 +230,7 @@ class RemoteAgents:
                 _, config = await self._agent(root, name, active=False)
                 values.append({
                     'name': name,
-                    'identity': config['identity'],
+                    'identity': self._full(name),
                     'archived': config['archived'],
                 })
         return sorted(values, key=lambda item: item['name'])
@@ -216,31 +266,45 @@ class RemoteAgents:
         await self._agent(root, sender)
         await self._agent(root, recipient)
         value = {
-            'version': 1,
+            'version': 2,
+            'owner': self.client.state.subject,
             'id': message_id,
-            'from': self._full(sender),
-            'to': self._full(recipient),
+            'from': sender,
+            'to': recipient,
             'message': message,
         }
-        meta = await self._put(root + '/' + recipient, 'msg-' + message_id + '.json', value)
+        meta = await self._put(
+            root + '/' + recipient,
+            'msg-' + message_id + '.json',
+            value,
+            existing_match=lambda meta, existing: (
+                self._event(meta, existing, recipient) == self._event(meta, value, recipient)
+            ),
+        )
         return self._event(meta, value, recipient)
 
     def _event(self, meta, value, recipient):
+        require(meta['owner'] == self.client.state.subject, 'subagent_private_namespace_conflict')
         require(
-            isinstance(value, dict) and set(value) == {'version', 'id', 'from', 'to', 'message'},
+            isinstance(value, dict) and type(value.get('version')) is int,
             'invalid_subagent_message',
         )
-        require(
-            type(value['version']) is int
-            and value['version'] == 1
-            and value['to'] == self._full(recipient),
-            'invalid_subagent_message',
-        )
-        require(
-            isinstance(value['from'], str) and value['from'].startswith('@' + self.username + '#'),
-            'invalid_subagent_message',
-        )
-        self._label(value['from'])
+        if value['version'] == 1:
+            require(
+                set(value) == {'version', 'id', 'from', 'to', 'message'}, 'invalid_subagent_message'
+            )
+            sender = self._stored_label(value['from'])
+            target = self._stored_label(value['to'])
+        else:
+            require(
+                value['version'] == 2
+                and set(value) == {'version', 'owner', 'id', 'from', 'to', 'message'}
+                and value['owner'] == self.client.state.subject,
+                'invalid_subagent_message',
+            )
+            sender, target = self._label(value['from']), self._label(value['to'])
+            require(sender == value['from'] and target == value['to'], 'invalid_subagent_message')
+        require(target == recipient, 'invalid_subagent_message')
         require(
             isinstance(value['id'], str)
             and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,64}', value['id']))
@@ -256,11 +320,20 @@ class RemoteAgents:
         return {
             'type': 'subagent.message',
             'id': value['id'],
-            'from': value['from'],
-            'to': value['to'],
+            'from': self._full(sender),
+            'to': self._full(target),
             'message': value['message'],
             'created_at': meta['created_at'],
         }
+
+    def _legacy_scope_matches(self, saved, scope, agent):
+        return (
+            isinstance(saved, dict)
+            and set(saved) == {'server', 'owner', 'to'}
+            and saved['server'] == scope['server']
+            and saved['owner'] == scope['owner']
+            and self._stored_label(saved['to']) == agent
+        )
 
     async def inbox(self, agent, cursor=None, limit=50, tail=False):
         root = await self._root()
@@ -270,7 +343,7 @@ class RemoteAgents:
         scope = {
             'server': self.client.state.server,
             'owner': self.client.state.subject,
-            'to': self._full(agent),
+            'agent': agent,
         }
         sync_cursor = None
         if cursor is not None:
@@ -278,7 +351,10 @@ class RemoteAgents:
                 saved = loads(unb64(cursor, limit=65536))
                 require(
                     saved['version'] == 1
-                    and saved['scope'] == scope
+                    and (
+                        saved['scope'] == scope
+                        or self._legacy_scope_matches(saved['scope'], scope, agent)
+                    )
                     and isinstance(saved['sync_cursor'], str),
                     'invalid_subagent_cursor',
                 )
