@@ -4,7 +4,7 @@ import re
 from datetime import UTC, datetime
 from html import escape
 from string import punctuation
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 from zoneinfo import ZoneInfo
 
 from msg.transports.browser_style import (
@@ -43,6 +43,7 @@ def account_navigation(account):
         f'<a href="{path}/dm" data-i18n="dm">Direct messages</a> '
         f'<a href="{path}/follows" data-i18n="follows">Following</a> '
         f'<a href="{path}/followers" data-i18n="followers">Followers</a> '
+        f'<a href="{path}/bal" data-i18n="wallet">Wallet</a> '
         '<a href="/oauth/logout" data-i18n="logout">Sign out</a>' + group_links
     )
 
@@ -58,14 +59,17 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
             'Topics': 'topics',
             'Rules': 'rules',
             'Feed': 'feed',
+            'Search': 'search_submit',
             'Following': 'follows',
             'Followers': 'followers',
+            'Wallet': 'wallet',
         }
         marker = f' data-i18n="{keys[label]}"' if label in keys else ''
         return f'<a{marker} href="{escape(quote(path, safe="/@*&"), quote=True)}">{escape(str(label))}</a>'
 
     parts = [
         SKIP_LINK + '<header class="site-header">' + BRAND_LINK + '<nav aria-label="Primary">',
+        link('Search', '/search'),
         link('Feed', '/feed'),
         link('Topics', '/topics'),
         link('Rules', '/_rules'),
@@ -96,6 +100,7 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
             link('Outbox', path + '/out'),
             link('Following', path + '/follows'),
             link('Followers', path + '/followers'),
+            link('Wallet', path + '/bal'),
             *(link(group['name'], group['path']) for group in account.get('groups', [])),
             '</nav></section>',
         ])
@@ -190,7 +195,16 @@ def display_time(value):
 
 
 def document_html(
-    markdown, *, title='msg', account=None, resource=None, raw_path='/', raw_query='', controls=''
+    markdown,
+    *,
+    title='msg',
+    account=None,
+    resource=None,
+    raw_path='/',
+    raw_query='',
+    controls='',
+    body_html=None,
+    service_url=None,
 ):
     from markdown_it import MarkdownIt
 
@@ -215,25 +229,35 @@ def document_html(
         for key in ['id', 'revision', 'modified_at']:
             metadata += f'<dt>{escape(key)}</dt><dd>{escape(str(resource.get(key, "")))}</dd>'
         metadata += '</dl></details></aside>'
-    body = MarkdownIt('commonmark', {'html': False}).enable('table').render(markdown)
+    body = (
+        MarkdownIt('commonmark', {'html': False}).enable('table').render(markdown)
+        if body_html is None
+        else body_html
+    )
     raw_url = escape(
         quote(raw_path, safe='/@*&') + '?' + (raw_query + '&' if raw_query else '') + 'format=raw',
         quote=True,
     )
+    share_url = urljoin(service_url or '', quote(raw_path, safe='/@*&'))
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{escape(title)}</title><link rel="icon" href="/favicon.png">'
+        '<link rel="search" type="application/opensearchdescription+xml" title="MSG" href="/opensearch.xml">'
         f'<style>{THEME_CSS}</style></head><body class="page-document">'
         + SKIP_LINK
         + '<header class="site-header">'
         + BRAND_LINK
         + '<nav aria-label="Account">'
         + account_navigation(account)
-        + '</nav></header>'
-        '<main><div class="toolbar">'
+        + '</nav><div class="toolbar document-toolbar">'
         + PREFERENCES
+        + '<div class="document-actions">'
+        '<button type="button" id="msg-copy-document" title="Copy text / 复制正文"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg><span class="sr-only" data-i18n="copy_document">Copy text</span></button>'
+        f'<button type="button" id="msg-share-document" data-share-path="{escape(share_url, quote=True)}" title="Share / 分享"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3m-4 4 4-4 4 4M5 12v8h14v-8"/></svg><span class="sr-only" data-i18n="share_document">Share</span></button>'
         + f'<a class="raw-link" href="{raw_url}">raw</a></div>'
+        '</div></header><main><p id="msg-document-status" class="document-status" role="status" aria-live="polite"></p>'
+        f'<textarea id="msg-document-source" aria-label="Markdown source" readonly hidden>{escape(markdown)}</textarea>'
         f'<div id="content" class="prose" tabindex="-1">{controls}{metadata}{body}</div></main>'
         f'{WEBMCP_TAG}</body></html>'
     ).encode()
@@ -288,7 +312,7 @@ def resource_markdown(value, fallback):
     return fallback
 
 
-def mailbox_html(value, name, *, account=None):
+def mailbox_html(value, name, *, account=None, service_url=None):
     title = {
         'in': '收件箱 / Inbox',
         'inbox': '收件箱 / Inbox',
@@ -322,4 +346,10 @@ def mailbox_html(value, name, *, account=None):
     if value.get('cursor'):
         path = value['path'] + '?cursor=' + quote(value['cursor'], safe='')
         lines.extend(['', f'[下一页 / Next page]({path})'])
-    return document_html('\n'.join(lines), title=title, account=account, raw_path=value['path'])
+    return document_html(
+        '\n'.join(lines),
+        title=title,
+        account=account,
+        raw_path=value['path'],
+        service_url=service_url,
+    )

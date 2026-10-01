@@ -96,6 +96,14 @@ def add_commands(commands):
                     type=int,
                     help='Explicit published operation version; never changes the signed input silently.',
                 )
+            if group == 'money' and action == 'transfer':
+                cmd.add_argument(
+                    'amount', nargs='?', help='Currency units when the first argument is @username.'
+                )
+                cmd.add_argument('--reference', default='')
+            if group == 'money' and action == 'ledger':
+                cmd.add_argument('--limit', type=int, default=20)
+                cmd.add_argument('--cursor', type=int, default=0)
             if group == 'store' and action == 'update':
                 cmd.add_argument('--generation', type=int, required=True)
 
@@ -184,6 +192,17 @@ async def entitlement_intent(client, params):
 
 
 async def run_command(client, args, parse_arguments):
+    if args.command == 'money' and (
+        args.action == 'balance'
+        or (args.action == 'ledger' and args.payload == '{}')
+        or (args.action == 'transfer' and args.amount is not None)
+    ):
+        from msg.client_money import run_command as run_wallet_command
+
+        require(getattr(args, 'contract_version', None) in {None, 1}, 'invalid_contract_version')
+        if args.action == 'transfer':
+            args.recipient = args.payload
+        return await run_wallet_command(client, args)
     operation, field = COMMANDS[args.command][args.action]
     if operation is None:
         return await prove_bounty(client, args.value, args.request_id)
