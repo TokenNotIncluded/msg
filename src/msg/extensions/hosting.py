@@ -303,7 +303,7 @@ HOSTED_HEADERS = {
 
 
 def hosted_headers(site_id, file_path, blob_digest):
-    """Only the exact bundled root introduction may run its own pinned script."""
+    """Only the exact release-owned universe may run pinned, same-origin code."""
     headers = dict(HOSTED_HEADERS)
     if site_id != 'w_root_web' or file_path != 'index.html':
         return headers
@@ -320,10 +320,10 @@ def hosted_headers(site_id, file_path, blob_digest):
         for script in scripts
     )
     headers['Content-Security-Policy'] = (
-        "sandbox allow-scripts; default-src 'none'; script-src "
+        "sandbox allow-scripts allow-same-origin; default-src 'none'; script-src "
         + hashes
         + "; style-src 'unsafe-inline'; font-src data:; img-src data:; "
-        "connect-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        "connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
     )
     return headers
 

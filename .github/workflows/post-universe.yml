@@ -1,0 +1,81 @@
+name: Post universe
+on:
+  push:
+    branches: [feat/post-universe]
+  pull_request:
+    paths:
+      - 'src/msg/data/root-web*'
+      - 'src/msg/bootstrap.py'
+      - 'src/msg/transports/**'
+      - 'src/msg/extensions/hosting.py'
+      - 'tests/test_universe*'
+      - 'tests/test_branding.py'
+      - 'tests/test_root_web_release.py'
+      - 'tests/test_hosting_same_origin.py'
+      - 'scripts/check_universe*'
+      - '.github/workflows/post-universe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: post-universe-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest -d postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install project and browser verification tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+          uv run --with playwright==1.58.0 python -m playwright install --with-deps chromium
+      - name: Verify backend, privacy, CSP and real signature interoperability
+        run: |
+          mkdir -p artifacts
+          uv run pytest tests/test_universe.py tests/test_branding.py tests/test_root_web_release.py tests/test_browser_workspace.py tests/test_hosting_same_origin.py --junitxml=artifacts/universe-tests.xml
+      - name: Verify native 3D and browser interactions under production CSP
+        if: always()
+        env:
+          PYTHONPATH: src
+        run: uv run --with playwright==1.58.0 python scripts/check_universe_browser.py
+      - name: Inspect Python formatting
+        if: always()
+        run: |
+          uv run ruff check src/msg/transports/universe.py tests/test_universe.py scripts/check_universe_browser.py
+          uv run ruff format --check src/msg/bootstrap.py src/msg/transports/http_routes.py src/msg/transports/universe.py tests/test_universe.py scripts/check_universe_browser.py
+      - name: Preserve safe formatting suggestions
+        if: failure()
+        run: |
+          mkdir -p artifacts
+          uv run ruff check src/msg/transports/universe.py tests/test_universe.py scripts/check_universe_browser.py --fix --no-unsafe-fixes || true
+          uv run ruff format src/msg/bootstrap.py src/msg/transports/http_routes.py src/msg/transports/universe.py tests/test_universe.py scripts/check_universe_browser.py
+          git diff --binary > artifacts/universe-format.patch
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: post-universe-evidence
+          path: artifacts/
+          retention-days: 7
