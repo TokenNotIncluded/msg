@@ -296,6 +296,11 @@ class ReadOnlyMount:
         self.handles = {}
         self.next_handle = 1
 
+    def init_with_config(self, connection, config):
+        # libfuse 3 requires the init handshake to agree with -o max_read.
+        if connection is not None and hasattr(connection, 'max_read'):
+            connection.max_read = READ_BYTES
+
     def invoke(self, coroutine):
         async def bounded():
             async with asyncio.timeout(self.timeout):
@@ -461,10 +466,10 @@ async def serve_mount(binding, operations, mountpoint):
         # Native libfuse normally handles SIGINT itself. Cancellation from an
         # embedding application must not leave its worker mounted indefinitely.
         for _ in range(100):
-            if task.done() or os.path.ismount(mountpoint):
+            if task.done() or await asyncio.to_thread(os.path.ismount, mountpoint):
                 break
             await asyncio.sleep(0.02)
-        if not task.done() and os.path.ismount(mountpoint):
+        if not task.done() and await asyncio.to_thread(os.path.ismount, mountpoint):
             executable = shutil.which('fusermount3') or shutil.which('fusermount')
             command = (
                 [executable, '-u', '--', str(mountpoint)]
