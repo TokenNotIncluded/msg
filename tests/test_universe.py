@@ -1,0 +1,224 @@
+"""Universe is a public read projection, never a second identity/ACL system."""
+
+from dataclasses import replace
+
+import httpx
+import pytest
+from test_oauth import browser_login, oauth as oauth
+from test_service import call, register
+
+from msg.bootstrap import ROOT_WEB_SAMPLE
+from msg.core.codec import digest
+from msg.extensions.hosting import HOSTED_HEADERS, hosted_headers
+from msg.transports.http import create_app
+
+
+@pytest.mark.asyncio
+async def test_public_universe_excludes_private_posts_and_private_ancestors(installed):
+    app, _ = installed
+    key, subject, _ = await register(app, 'star-author')
+    public = await call(
+        app,
+        'content.post_create',
+        {'parent': '/main', 'body': '# Visible star'},
+        key=key,
+        subject=subject,
+    )
+    secret = await call(
+        app,
+        'content.post_create',
+        {'parent': '/main', 'body': '# SECRET STAR'},
+        key=key,
+        subject=subject,
+    )
+    assert public.status == secret.status == 'ok'
+    async with app.metadata.transaction(write=True) as tx:
+        resource = await tx.resource(secret.resources[0].id)
+        await tx.replace(
+            replace(resource, mode=0o600, generation=resource.generation + 1), resource.generation
+        )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        stars = await http.get('/_universe?kind=users')
+        assert stars.status_code == 200, stars.text
+        assert subject in [item['id'] for item in stars.json()['items']]
+        posts = await http.get('/_universe?kind=posts')
+        assert posts.status_code == 200, posts.text
+        assert 'Visible star' in posts.text and 'SECRET STAR' not in posts.text
+        assert secret.resources[0].id not in posts.text
+        assert posts.json()['items'][0]['author']['id'] == subject
+        assert posts.headers['cache-control'] == 'private, no-store'
+        head = await http.head('/_universe?kind=posts')
+        assert head.status_code == 200 and not head.content
+        for query in (
+            'kind=users&kind=posts',
+            'kind=secret',
+            'kind=posts&limit=999999',
+            'kind=posts&cursor=invalid',
+        ):
+            assert (await http.get('/_universe?' + query)).status_code == 400
+        assert (await http.post('/_universe')).status_code == 405
+        assert (await http.get('/_universe/me?subject=' + subject)).status_code == 400
+        async with app.metadata.transaction(write=True) as tx:
+            topic = await tx.resource(await tx.resolve('/main'))
+            await tx.replace(
+                replace(topic, mode=0o700, generation=topic.generation + 1), topic.generation
+            )
+        assert not (await http.get('/_universe?kind=posts')).json()['items']
+
+
+@pytest.mark.asyncio
+async def test_universe_private_view_uses_only_current_browser_identity(oauth):
+    app, key, subject, http = oauth
+    other_key, other, _ = await register(app, 'other-star')
+    request = await call(
+        app,
+        'communication.dm_request',
+        {'recipient': other, 'introduction': 'PRIVATE INTRO'},
+        key=key,
+        subject=subject,
+        contract_version=2,
+    )
+    assert request.status == 'ok', request.error
+    rid = request.data['conversation_id']
+    anonymous = await http.get('/_universe/me')
+    assert anonymous.json()['account'] is None
+    assert rid not in anonymous.text
+    await browser_login(oauth)
+    private = await http.get('/_universe/me')
+    assert private.status_code == 200, private.text
+    assert private.json()['account']['id'] == subject
+    assert private.json()['conversations'][0]['conversation_id'] == rid
+    public = await http.get('/_universe?kind=posts')
+    assert rid not in public.text and 'PRIVATE INTRO' not in public.text
+    assert (await http.get('/_universe/me?subject=' + other)).status_code == 400
+    assert 'no-store' in private.headers['cache-control']
+    http.cookies.clear()
+    assert (await http.get('/_universe/me')).json()['conversations'] == []
+
+
+def test_only_exact_release_gets_trusted_universe_origin():
+    headers = hosted_headers('w_root_web', 'index.html', digest(ROOT_WEB_SAMPLE))
+    csp = headers['Content-Security-Policy']
+    assert 'sandbox allow-scripts allow-same-origin' in csp
+    assert "connect-src 'self'" in csp
+    assert "script-src 'sha256-" in csp and "'unsafe-eval'" not in csp
+    for site, path, body in [
+        ('other', 'index.html', ROOT_WEB_SAMPLE),
+        ('w_root_web', 'different.html', ROOT_WEB_SAMPLE),
+        ('w_root_web', 'index.html', ROOT_WEB_SAMPLE + b'changed'),
+    ]:
+        assert hosted_headers(site, path, digest(body)) == HOSTED_HEADERS
+    assert b'__UNIVERSE_' not in ROOT_WEB_SAMPLE
+    assert b'canvas' in ROOT_WEB_SAMPLE and b'constellation' in ROOT_WEB_SAMPLE
+
+
+@pytest.mark.asyncio
+async def test_browser_signature_interoperates_with_real_executor(installed):
+    import json
+    import subprocess
+    from importlib.resources import files
+
+    from test_service import NOW
+
+    from msg.core.codec import b64, decode
+    from msg.core.models import OperationRequest
+
+    app, _ = installed
+    key, subject, _ = await register(app, 'browser-signer')
+    program = """
+    const fs = require('node:fs');
+    const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+    const OriginalDate = Date;
+    globalThis.Date = class extends OriginalDate {
+      constructor(...args) { super(...(args.length ? args : [input.now])); }
+      static now() { return new OriginalDate(input.now).getTime(); }
+    };
+    eval(input.model);
+    (async () => {
+      const seed = Uint8Array.from(Buffer.from(input.seed, 'base64url'));
+      const signer = await MSGUniverse.importSigner(seed, input.identity);
+      if (seed.some(Boolean) || signer.key.extractable) throw new Error('key handling');
+      const packet = await MSGUniverse.packet(signer, input.service,
+        'content.post_create', {parent:'/main', body:'A star: 宇宙 🌟'}, 'browser-proof');
+      console.log(JSON.stringify(packet));
+    })().catch(error => { console.error(error.message); process.exitCode = 1; });
+    """
+    completed = subprocess.run(
+        ['node', '-e', program],
+        input=json.dumps({
+            'model': files('msg.data').joinpath('root-web-model.js').read_text(),
+            'now': NOW.isoformat(),
+            'seed': b64(key.private_bytes()),
+            'service': app.settings.service_url,
+            'identity': {
+                'subject_id': subject,
+                'key_id': key.key_id,
+                'public_key': b64(key.public_key),
+                'retired_at': None,
+            },
+        }),
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=15,
+    )
+    packet = decode(OperationRequest, json.loads(completed.stdout))
+    result = await app.executor.execute(packet)
+    assert result.status == 'ok', result.error
+    repeated = await app.executor.execute(packet)
+    assert repeated.status == 'ok' and repeated.replayed
+    read = await call(app, 'discovery.get', {'id': result.resources[0].id})
+    assert read.data['content'] == 'A star: 宇宙 🌟'
+
+
+@pytest.mark.asyncio
+async def test_universe_cursor_is_bound_and_reply_targets_are_filtered(installed):
+    from msg.core.codec import canonical
+
+    app, _ = installed
+    key, subject, _ = await register(app, 'reply-star')
+    target = await call(
+        app,
+        'content.post_create',
+        {'parent': '/main', 'body': 'private parent'},
+        key=key,
+        subject=subject,
+    )
+    reply = await call(
+        app,
+        'discussion.reply',
+        {'target': {'id': target.resources[0].id}, 'body': 'public reply'},
+        key=key,
+        subject=subject,
+    )
+    assert reply.status == 'ok', reply.error
+    async with app.metadata.transaction(write=True) as tx:
+        resource = await tx.resource(target.resources[0].id)
+        await tx.replace(
+            replace(resource, mode=0o600, generation=resource.generation + 1), resource.generation
+        )
+    for index in range(25):
+        created = await call(
+            app,
+            'content.post_create',
+            {'parent': '/main', 'body': 'Signal ' + str(index)},
+            key=key,
+            subject=subject,
+        )
+        assert created.status == 'ok', created.error
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        first = (await http.get('/_universe?kind=posts')).json()
+        assert len(first['items']) == 24 and first['cursor']
+        cursor = first['cursor']
+        rejected = await http.get('/_universe', params={'kind': 'users', 'cursor': cursor})
+        assert rejected.status_code == 400
+        second = (await http.get('/_universe', params={'kind': 'posts', 'cursor': cursor})).json()
+        items = first['items'] + second['items']
+        assert len({item['id'] for item in items}) == len(items) == 26
+        visible_reply = next(item for item in items if item['id'] == reply.resources[0].id)
+        assert visible_reply['reply_to'] is None
+        assert target.resources[0].id.encode() not in canonical(items)

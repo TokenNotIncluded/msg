@@ -166,7 +166,15 @@ The board has one keyboard entry: only the node currently holding the spark has 
 
 ### Bundled-page script boundary
 
-Only `w_root_web` at `index.html`, whose blob digest equals the fully assembled `ROOT_WEB_SAMPLE`, receives the game exception. `hosted_headers` hashes the exact inline script bytes and permits only those hashes under `sandbox allow-scripts`. No `allow-same-origin` is granted. `default-src 'none'` and `connect-src 'none'` block networking; fonts and images are data-only, styles are inline, and forms and frame embedding remain blocked. Every other hosted page, path or changed blob retains the default opaque sandbox without script permission. This is a local game exception, not a general hosted-script capability.
+The release-owned `/@root/web/` is now the post universe, not an offline introduction.
+Only `w_root_web/index.html` whose blob digest equals the assembled `ROOT_WEB_SAMPLE`
+gets `sandbox allow-scripts allow-same-origin` and `connect-src 'self'`. Inline script
+bytes are separately SHA-256 pinned. No other website, path or modified blob inherits
+that permission. All other hosted pages keep the original opaque sandbox. External
+assets, forms, framing and base URLs remain forbidden. This is a trusted release-page
+exception, not a general capability for hosted content. Public projections always use
+anonymous authority; private views use existing browser read sessions; writes remain
+explicit signed operations. See `docs/post-universe.md` for the full contract.
 
 ## Do's and Don'ts
 
