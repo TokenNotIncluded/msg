@@ -118,6 +118,33 @@ class ClientPaths:
                 private_directory(path.parent.parent)
             private_directory(path)
 
+    def account_names(self):
+        """Inspect a service's saved accounts without creating or migrating files."""
+        names = set()
+        for base in {self.config, self.data, self.state}:
+            root = base / 'accounts'
+            for parent in (root, *root.parents):
+                require(not parent.is_symlink(), 'unsafe_client_directory')
+            if not root.exists():
+                continue
+            info = root.stat()
+            require(
+                stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid(),
+                'unsafe_client_directory',
+            )
+            for entry in root.iterdir():
+                info = entry.lstat()
+                require(not stat.S_ISLNK(info.st_mode), 'unsafe_client_directory')
+                if not stat.S_ISDIR(info.st_mode):
+                    continue
+                require(
+                    info.st_uid == os.geteuid() and info.st_mode & 0o077 == 0,
+                    'unsafe_client_directory',
+                )
+                self.discover(account=entry.name)
+                names.add(entry.name)
+        return sorted(names)
+
     def temporary_parent(self):
         value = os.environ.get('XDG_RUNTIME_DIR')
         if not value or not Path(value).is_absolute():

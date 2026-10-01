@@ -163,6 +163,17 @@ class ClientState:
                 require(account_selection.get('version') == 1, 'unknown_client_state_version')
                 ClientPaths.discover(server=server, account=account_selection.get('account', ''))
             old_service = private_client_json(service_paths.state / 'client.json')
+            if (
+                account is None
+                and account_selection is None
+                and old_service is None
+                and migrate_from is None
+            ):
+                require(
+                    not service_paths.account_names(),
+                    'local_account_selection_required',
+                    details={'options': ['account list', 'account use NAME', '--account NAME']},
+                )
             self.account = (
                 account
                 if account is not None
@@ -173,16 +184,21 @@ class ClientState:
                 )
             )
             self.paths = ClientPaths.discover(server=server, account=self.account)
+            if account is None and account_selection is not None and migrate_from is None:
+                require(
+                    private_client_json(self.paths.state / 'client.json') is not None,
+                    'local_account_not_found',
+                )
             if (
                 old_service is not None
                 and migrate_from is None
                 and (self.account == old_service.get('handle') or self.account == 'default')
             ):
                 legacy = service_paths
-            if account is not None and legacy is not None and migrate_from is None:
+            if legacy is not None and migrate_from is None:
                 source_state = legacy.state if isinstance(legacy, ClientPaths) else legacy
                 source_data = private_client_json(source_state / 'client.json') or {}
-                if account not in {'default', source_data.get('handle')}:
+                if self.account not in {'default', source_data.get('handle')}:
                     legacy = None
             if legacy is not None and migrate_from is None:
                 current = private_client_json(self.paths.state / 'client.json')

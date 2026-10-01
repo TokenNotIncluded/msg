@@ -56,6 +56,8 @@ jobs:
         run: >-
           uv run --locked --extra dev python -m pytest
           tests/test_service_aliases.py tests/test_client_connection.py
+          tests/test_client_accounts.py tests/test_client_account_recovery.py
+          tests/test_client_paths.py
           tests/test_hosting_alias_ingress.py tests/test_backup_daemon.py
           tests/test_config_safety.py tests/test_configuration_field_contracts.py
           tests/test_execution_composition.py tests/test_cli_cursor_output.py
