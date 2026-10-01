@@ -25,7 +25,8 @@ def streaming_request(headers=(), chunks=(b'abc',)):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('declared', [b'0', b'2', b'4'])
 async def test_declared_and_received_content_length_must_match(declared):
-    request, _ = streaming_request([(b'content-length', declared)])+    with pytest.raises(Failure, match='invalid_request'):
+    request, _ = streaming_request([(b'content-length', declared)])
+    with pytest.raises(Failure, match='invalid_request'):
         await body_bytes(request, 64)
 
 
