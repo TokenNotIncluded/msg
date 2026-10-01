@@ -119,6 +119,7 @@ class EffectWorker:
         tool_runner: ToolRunner | None = None,
         mail_sender=None,
         webhook_sender=None,
+        websub_sender=None,
         lease_seconds=120,
     ):
         self.app = app
@@ -137,6 +138,11 @@ class EffectWorker:
 
             webhook_sender = WebhookSender()
         self.webhook_sender = webhook_sender
+        if websub_sender is None:
+            from msg.extensions.websub import WebSubSender
+
+            websub_sender = WebSubSender()
+        self.websub_sender = websub_sender
         self.lease_seconds = lease_seconds
 
     async def _claim(self):
@@ -155,8 +161,26 @@ class EffectWorker:
             ):
                 job = await tx.job(raw_id)
                 if job.lease_until is None or job.lease_until <= self.app.clock():
-                    await tx.save_job(replace(job, state='uncertain', lease_until=None))
-                    tx.set_setting('job_status:' + job.id, {'code': 'expired_execution_lease'})
+                    state, code = 'uncertain', 'expired_execution_lease'
+                    next_at = job.next_attempt_at
+                    if job.kind == 'websub':
+                        exhausted = job.attempts >= 8
+                        state = 'failed' if exhausted else 'pending'
+                        if exhausted:
+                            code = 'websub_attempts_exhausted'
+                        else:
+                            next_at = self.app.clock() + timedelta(
+                                seconds=min(3600, 30 * 2 ** max(0, job.attempts - 1))
+                            )
+                    await tx.save_job(
+                        replace(
+                            job,
+                            state=state,
+                            lease_until=None,
+                            next_attempt_at=next_at,
+                        )
+                    )
+                    tx.set_setting('job_status:' + job.id, {'code': code})
                     return job, False
                 if job.kind == 'tool':
                     running[job.arguments['tool']['id']] = (
@@ -580,6 +604,20 @@ class EffectWorker:
                 await self._market_mail(job)
             elif job.kind == 'mail':
                 await self._mail(job)
+            elif job.kind == 'websub':
+                hub = job.arguments['hub']
+                require(hub in self.app.settings.websub_hubs, 'websub_hub_removed')
+                require(
+                    job.arguments['topic'] == self.app.settings.service_url + '/rss.xml',
+                    'invalid_websub_topic',
+                )
+                state = await self.websub_sender.send(hub, job.arguments['topic'])
+                if state == 'retry':
+                    await self._retry(job, 'websub_retry_scheduled', 'websub_attempts_exhausted')
+                else:
+                    await self._finish(
+                        job, 'done' if state == 'delivered' else 'failed', 'websub_' + state
+                    )
             elif job.kind == 'webhook':
                 await self._webhook(job)
             elif job.kind == 'git.push':

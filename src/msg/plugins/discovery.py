@@ -32,6 +32,7 @@ from msg.core.codec import (
     wire as wire,
 )
 from msg.core.errors import Failure as Failure, require as require
+from msg.core.identifiers import hex_id
 from msg.core.models import (
     Credential,
     HandlerOutput as HandlerOutput,
@@ -168,7 +169,7 @@ async def metadata(tx, r):
         data.update(
             size=rev.content.size, media_type=rev.content.media_type, digest=rev.content.digest
         )
-        for field in ('change_note', 'source_kind', 'source_version', 'source_digest'):
+        for field in ('summary', 'change_note', 'source_kind', 'source_version', 'source_digest'):
             value = getattr(rev, field)
             if value is not None:
                 data[field] = value
@@ -418,10 +419,14 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         rev = await tx.revision(ResourceRef(id=rid, revision=revision))
         meta.update(
             revision=rev.id,
+            revision_created_at=wire(rev.created_at),
             digest=rev.content.digest,
             size=rev.content.size,
             media_type=rev.content.media_type,
         )
+        meta.pop('summary', None)
+        if rev.summary is not None:
+            meta['summary'] = rev.summary
         textual = rev.content.media_type.startswith('text/') or rev.content.media_type in {
             'application/json',
             'application/msg-template',
@@ -459,6 +464,9 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'type',
         'name',
         'revision',
+        'created_at',
+        'modified_at',
+        'revision_created_at',
         'generation',
         'path',
         'content',
@@ -472,6 +480,7 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'kind',
         'local_only',
         'list_operation',
+        'summary',
         'change_note',
         'source_kind',
         'source_version',
@@ -612,7 +621,7 @@ def install(app):
                 if len(latest) < 5:
                     latest.append({
                         'name': resource.name,
-                        'path': short_subject_path(await tx.path(rid)),
+                        'path': '/*' + hex_id(rid),
                         'created_at': resource.created_at.astimezone(timezone).isoformat(),
                     })
             if len(rows) < 128:
@@ -634,27 +643,36 @@ def install(app):
             chain = (*await tx.ancestors(resource.id), resource)
             mode = resource.mode
             if resource.id == 't_last_will':
-                posting = 'Use the signed legacy directive operation; ordinary posts are disabled.'
+                posting = 'legacy directive'
             elif not tx.setting('policy:' + resource.id, {}).get('editable', True):
-                posting = 'Posting is frozen.'
+                posting = 'frozen'
             elif mode & 0o003 == 0o003:
-                posting = 'Authenticated identity and authorization to create posts.'
+                posting = 'identity'
             elif mode & 0o030 == 0o030:
-                posting = (
-                    'Owner or authorized group; authorization to create posts is required.'
-                    if mode & 0o300 == 0o300
-                    else 'Authorized group; authorization to create posts is required.'
-                )
+                posting = 'owner / group' if mode & 0o300 == 0o300 else 'group'
             elif mode & 0o300 == 0o300:
-                posting = 'Channel owner; authorization to create posts is required.'
+                posting = 'owner'
             else:
-                posting = 'Read-only; ordinary posting is disabled.'
+                posting = 'closed'
             if any(item.mode & 0o4000 for item in chain):
-                posting += ' A scoped certified-write certificate is also required.'
+                posting += ' +cert'
             channels.append({
                 'name': resource.name,
                 'path': short_subject_path(await tx.path(resource.id)),
                 'read': 'Public; no login required.',
+                'mode': f'{mode:04o}',
+                'about': {
+                    'certified': 'Certificate-gated discussion',
+                    'intro': 'Introductions',
+                    'last-will': 'Signed legacy directives',
+                    'main': 'General discussion',
+                    'relief': 'Relief requests',
+                    'sos': 'Requests for help',
+                    'store': 'Store listings',
+                    'templates': 'Reusable templates',
+                    'tmp': 'Temporary posts',
+                    'wiki': 'Community guidance',
+                }.get(resource.name, 'Discussion'),
                 'posting': posting,
             })
         return HandlerOutput(
@@ -2231,6 +2249,7 @@ def install(app):
             old, new = args['old_revision'], args['new_revision']
         before = await tx.revision(ResourceRef(id=rid, revision=old))
         after = await tx.revision(ResourceRef(id=rid, revision=new))
+        old, new = before.id, after.id
         for revision in (before, after):
             require(
                 revision.content.media_type.startswith('text/')
@@ -2258,6 +2277,8 @@ def install(app):
             'to': wire(ResourceRef(id=rid, revision=new)),
             'diff': ''.join(lines[offset : offset + limit]),
         }
+        if before.summary != after.summary:
+            data['summary'] = {'from': before.summary, 'to': after.summary}
         for label, revision in (('from_source', before), ('to_source', after)):
             source = {
                 name: getattr(revision, name)

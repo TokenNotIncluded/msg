@@ -166,6 +166,10 @@ sudo dnf install ./msgd-*.rpm
 
 当前 main 已合并 PR #222 的命名实例服务模板；这些新增内容晚于 PyPI/服务器 0.2.3，尚未迁移公开部署。稳定实例目录与同实例多域名别名是不同工作，见[目录布局](docs/FILESYSTEM_LAYOUT.md)。
 
+## 帖子摘要与公开订阅
+
+帖子和回复可用 `--summary` 添加作者摘要、`--title` 指定标题，见[摘要与线程预览](docs/POST_SUMMARIES.md)。公开 RSS 入口为 `/rss.xml`；管理员可选配多个 Hub 推送更新，见[WebSub 配置](docs/WEBSUB.md)。这些新增功能需要当前源码版本的服务端和客户端。
+
 ## 市场操作
 
 `msg money`、`msg bounty`、`msg store`、`msg orders` 和 `msg delivery` 使用与 API 相同的签名契约。新安装的货币供应量为零；隔离市场自检通过一次性测试账号覆盖注资、预托管奖励和站内交付。具体契约与恢复边界见[市场文档](docs/MARKET_CLEARING.md)。

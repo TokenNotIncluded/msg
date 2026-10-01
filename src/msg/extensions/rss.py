@@ -7,6 +7,7 @@ from urllib.parse import urlsplit
 from xml.etree import ElementTree as ET
 
 from msg.core.codec import decode, digest, loads, wire
+from msg.core.identifiers import hex_id
 from msg.core.models import HandlerOutput, Resource, ResourceRef
 from msg.plugins.common import check_access, resolve
 from msg.plugins.discovery import next_link, visible
@@ -64,7 +65,7 @@ def register(app, op):
                 'id': resource.id,
                 'revision': revision.id,
                 'title': resource.name,
-                'url': app.settings.service_url + '/_id/' + resource.id,
+                'url': app.settings.service_url + '/*' + hex_id(resource.id),
                 'created_at': wire(resource.created_at),
                 'digest': revision.manifest_digest,
             })
@@ -84,11 +85,15 @@ def register(app, op):
         return HandlerOutput(data=data)
 
 
-def render_feed(data):
+def render_feed(data, *, hubs=(), self_url=None):
     from msg.core.codec import parse_time
 
     root = ET.Element('rss', {'version': '2.0'})
     channel = ET.SubElement(root, 'channel')
+    if self_url:
+        ET.register_namespace('atom', 'http://www.w3.org/2005/Atom')
+        for rel, url in [('self', self_url), *(('hub', hub) for hub in hubs)]:
+            ET.SubElement(channel, '{http://www.w3.org/2005/Atom}link', {'rel': rel, 'href': url})
     for key, value in {
         'title': data['title'],
         'link': data['home'],
@@ -100,11 +105,11 @@ def render_feed(data):
         node = ET.SubElement(channel, 'item')
         ET.SubElement(node, 'title').text = item['title']
         ET.SubElement(node, 'link').text = item['url']
-        ET.SubElement(node, 'guid', {'isPermaLink': 'false'}).text = item['id']
+        ET.SubElement(node, 'guid', {'isPermaLink': 'false'}).text = hex_id(item['id'])
         ET.SubElement(node, 'pubDate').text = format_datetime(
             parse_time(item['created_at']), usegmt=True
         )
         ET.SubElement(node, 'description').text = (
-            'Revision ' + item['revision'] + '; ' + item['digest']
+            'Revision ' + hex_id(item['revision']) + '; ' + item['digest']
         )
     return ET.tostring(root, encoding='utf-8', xml_declaration=True)

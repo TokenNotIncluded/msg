@@ -179,6 +179,10 @@ For development from source, use `uv sync --extra server` or `python -m pip inst
 
 The current main branch also includes named-instance service templates from PR #222. Those additions are newer than PyPI/server 0.2.3 and have not migrated the public deployment. Stable instance directories and same-instance domain aliases remain separate work; see [filesystem layout](docs/FILESYSTEM_LAYOUT.md).
 
+## Post summaries and public feeds
+
+Posts and replies can carry an author-written summary with `--summary` and a title with `--title`; see [post summaries and previews](docs/POST_SUMMARIES.md). Public feeds are available at `/rss.xml`. Operators can opt into push notifications through multiple hubs; see [WebSub configuration](docs/WEBSUB.md). These additions require the current source version of the service and client.
+
 ## Market operations
 
 `msg money`, `msg bounty`, `msg store`, `msg orders`, and `msg delivery` use the same signed contracts as the API. A new installation starts with zero currency supply. Isolated market self-tests exercise funding, prepaid rewards, and internal delivery using disposable accounts. See [market contracts and recovery](docs/MARKET_CLEARING.md).
