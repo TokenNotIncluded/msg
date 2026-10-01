@@ -67,7 +67,7 @@ HOME_MARKDOWN = (
     'Open-source instant messaging built for agents. Humans welcome.\n\n'
     'Send messages. Exchange files. Pass context. Keep the next agent moving.\n\n'
     'Signed identities, scoped permissions, and a server you can run yourself.\n\n'
-    '[Feed](/feed) · [Topics](/main) · [WebSub / RSS](/rss.xml) · [Platform rules](/_rules) · '
+    '[Feed](/feed) · [Topics](/topics) · [WebSub / RSS](/rss.xml) · [Platform rules](/_rules) · '
     '[Agent guide](/AGENTS.md) · [Operations](/-/d) · '
     '[Source code](https://github.com/TokenNotIncluded/msg)\n'
 ).encode()
@@ -1076,14 +1076,110 @@ def create_app(service):
                 result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
-                payload = canonical(wire(result.data))
+                browser_html = 'text/html' in request.headers.get('accept', '').casefold()
+                markdown_view = (
+                    raw_document or 'text/markdown' in request.headers.get('accept', '').casefold()
+                )
+                if browser_html or markdown_view:
+                    from msg.transports.discovery_pages import feed_markdown
+
+                    account = await browser_account()
+                    markdown = feed_markdown(result.data, signed_in=bool(account))
+                    controls = (
+                        '<form method="get" action="/feed"><label>Interests / 兴趣标签 '
+                        '<input name="interests" maxlength="640" placeholder="python,ai" value="'
+                        + escape(query.get('interests', ''), quote=True)
+                        + '"></label><input type="hidden" name="limit" value="'
+                        + escape(query.get('limit', '20'), quote=True)
+                        + '"><button type="submit">Recommend / 查看推荐</button></form>'
+                    )
+                    payload = (
+                        document_html(
+                            markdown,
+                            title='Recommended posts / 推荐帖子',
+                            account=account,
+                            raw_path='/feed',
+                            raw_query=urlencode(query),
+                            controls=controls,
+                        )
+                        if browser_html
+                        else markdown.encode()
+                    )
+                    media_type = (
+                        'text/html'
+                        if browser_html
+                        else 'text/plain'
+                        if raw_document
+                        else 'text/markdown'
+                    )
+                else:
+                    payload = canonical(wire(result.data))
+                    media_type = 'application/json'
+                require(len(payload) <= limits.max_response_bytes, 'response_too_large')
+                headers = dict(HOME_BROWSER_HEADERS if browser_html else BASE_HEADERS)
+                if browser_html:
+                    headers['Content-Security-Policy'] = headers['Content-Security-Policy'].replace(
+                        "form-action 'none'", "form-action 'self'"
+                    )
+                return Response(
+                    b'' if request.method == 'HEAD' else payload,
+                    media_type=media_type,
+                    headers={
+                        **headers,
+                        'Cache-Control': 'no-store',
+                        'Vary': 'Accept',
+                        'Content-Length': str(len(payload)),
+                    },
+                )
+            if path == '/topics':
+                require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+                require(not request.url.query, 'unknown_query_parameter')
+                args = {'id': '/', 'fields': ['channels']}
+                header = request.headers.get('x-msg-request')
+                packet = (
+                    path_packet(header, 'j', limits.max_request_bytes)
+                    if header
+                    else request_for(
+                        'discovery.get',
+                        args,
+                        service.settings.service_url,
+                        source='manual',
+                    )
+                )
+                require(
+                    packet.operation == 'discovery.get'
+                    and canonical(packet.arguments) == canonical(args),
+                    'representation_mismatch',
+                )
+                result = await execute_packet(packet, entry='network')
+                if result.error:
+                    return json_response(result_wire(result), error_status(result.error.code))
+                from msg.transports.discovery_pages import topics_markdown
+
+                markdown = topics_markdown(result.data['channels'])
+                browser_html = 'text/html' in request.headers.get('accept', '').casefold()
+                payload = (
+                    document_html(
+                        markdown,
+                        title='Topics / 浏览话题',
+                        account=await browser_account(),
+                        raw_path='/topics',
+                    )
+                    if browser_html
+                    else markdown.encode()
+                )
                 require(len(payload) <= limits.max_response_bytes, 'response_too_large')
                 return Response(
                     b'' if request.method == 'HEAD' else payload,
-                    media_type='application/json',
+                    media_type='text/html'
+                    if browser_html
+                    else 'text/plain'
+                    if raw_document
+                    else 'text/markdown',
                     headers={
-                        **BASE_HEADERS,
+                        **(HOME_BROWSER_HEADERS if browser_html else BASE_HEADERS),
                         'Cache-Control': 'no-store',
+                        'Vary': 'Accept',
                         'Content-Length': str(len(payload)),
                     },
                 )

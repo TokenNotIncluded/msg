@@ -7,6 +7,7 @@ from msg.algorithm import ALGORITHM_VERSION, Candidate, rank
 from msg.core.codec import wire
 from msg.core.identifiers import hex_id
 from msg.core.models import HandlerOutput, Principal, ResourceRef
+from msg.core.post_preview import post_preview
 from msg.core.read_query import ReadBudget
 from msg.core.tags import normalize_tag
 from msg.plugins.common import operation_id
@@ -135,13 +136,18 @@ def install(app, op):
             title = resource.name.removesuffix('.md')
             if not re.fullmatch(r'p_[0-9a-f]{32}', title):
                 item['title'] = title
+            if await visible(app, public, request, tx, revision.author):
+                item['author_name'] = (await tx.resource(revision.author)).name
             if revision.summary:
                 item['summary'] = revision.summary
             elif revision.content.media_type.startswith('text/') and revision.content.size <= 32768:
                 body = (await app.contents.read_bytes(revision.content, limit=32768)).decode(
                     'utf-8'
                 )
-                item['summary'] = body[:20] + ('…' if len(body) > 20 else '')
+                preview = post_preview(resource.name, body)
+                item.setdefault('title', preview['title'])
+                item['summary'] = preview['excerpt'] or body[:180]
+            item.setdefault('title', post_preview(resource.name, revision.summary or '')['title'])
             items.append(item)
         data = {
             'algorithm': 'msg for bot need',
