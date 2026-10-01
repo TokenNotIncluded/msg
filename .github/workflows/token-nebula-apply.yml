@@ -19,7 +19,7 @@ jobs:
           import base64, json, lzma, subprocess, tarfile
           from pathlib import Path
           shas = ['daaa09ec6b46ceac9911c0599743c723c47bb69b','df8f8fbf68fa168f9abdd3034aedb9f48706d362','c36075b2a2793ed46ee64b76e73135b8f693af2b','f5414d0626e01ef92ba1840cca1fd26915fbd3d8']
-          text = ''.join(json.loads(subprocess.check_output(['gh','api','repos/TokenNotIncluded/msg/git/blobs/'+s]))['content'] for s in shas)
+          text = ''.join(base64.b64decode(json.loads(subprocess.check_output(['gh','api','repos/TokenNotIncluded/msg/git/blobs/'+s]))['content']).decode() for s in shas)
           data = base64.b64decode(text)
           Path('/tmp/nebula.tar.xz').write_bytes(data)
           with tarfile.open('/tmp/nebula.tar.xz','r:xz') as t:
