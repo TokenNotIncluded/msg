@@ -92,10 +92,9 @@ from msg.security.policy import STICKY
 
 
 def topic_admin(tx, topic, subject):
-    row = tx.one(
-        'SELECT role,status FROM topic_memberships WHERE topic=? AND subject=?', (topic, subject)
-    )
-    return row == ('admin', 'active')
+    from msg.plugins.board_presentation import is_admin
+
+    return is_admin(tx, topic, subject)
 
 
 def topic_member(tx, topic, subject):
@@ -368,8 +367,13 @@ async def editable_resource(app, ctx, request, tx, identifier):
     """One authority and lifecycle boundary for body replacement and patch."""
     resource = await tx.resource(await resolve(tx, identifier))
     require(resource.type in {'post', 'file'} and resource.state == 'active', 'not_editable')
+    from msg.plugins.board_presentation import protect_edit
+
+    presentation = await protect_edit(tx, ctx, resource)
     chain = (*await tx.ancestors(resource.id), resource)
-    require(not any(item.id == 't_last_will' for item in chain), 'legacy_directive_only')
+    require(
+        presentation or not any(item.id == 't_last_will' for item in chain), 'legacy_directive_only'
+    )
     require(
         resource.id != 'r_agents' and all(item.id != 'r_rules' for item in chain),
         'system_managed_resource',
@@ -377,7 +381,9 @@ async def editable_resource(app, ctx, request, tx, identifier):
     await require_unmanaged_personal(tx, resource)
     await check_access(app, ctx, request, tx, resource.id, 'write')
     await assert_generation(request, resource)
-    require((await topic_policy(tx, resource)).get('editable', True), 'content_frozen')
+    require(
+        presentation or (await topic_policy(tx, resource)).get('editable', True), 'content_frozen'
+    )
     return resource
 
 
@@ -388,7 +394,7 @@ async def prepare_text_patch(app, ctx, request, tx, args, *, post_only=False):
         require(resource.type == 'post', 'not_editable')
     current = await tx.revision(ResourceRef(id=resource.id, revision=resource.revision))
     media = current.content.media_type
-    require(media in {'text/plain', 'text/markdown'}, 'text_patch_required')
+    require(media in {'text/plain', 'text/markdown', 'image/svg+xml'}, 'text_patch_required')
     patch = args.get('patch')
     if patch is not None:
         validate_patch(patch)
@@ -518,7 +524,8 @@ def install(app):
         require(resource.type == 'topic' and resource.state == 'active', 'topic_not_active')
         from msg.core.wiki import protect_wiki
 
-        protect_wiki((*await tx.ancestors(resource.id), resource), operation_id(request))
+        if ctx.principal.subject != ROOT_SUBJECT:
+            protect_wiki((*await tx.ancestors(resource.id), resource), operation_id(request))
         await require_unmanaged_personal(tx, resource)
         require(
             ctx.principal.subject is not None and ctx.principal.actor == ctx.principal.subject,

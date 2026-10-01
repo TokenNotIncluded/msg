@@ -522,6 +522,29 @@ class RootAdmin:
             )
         )
 
+    def appoint_board_admin(self, topic, subject, *, replace_admins=False):
+        operator = self._provisioning_operator()
+        from msg.admin.boards import appoint_administrator
+        from msg.security.root_files import read_private
+
+        async def execute():
+            app = self._app()
+            try:
+                await app.load()
+                signer = Ed25519Signer.from_bytes(
+                    open_private_key(
+                        loads(read_private(root_envelope(self.config_dir))),
+                        getpass.getpass('Root PIN/passphrase: '),
+                    )
+                )
+                return await appoint_administrator(
+                    app, topic, subject, signer, replace_admins=replace_admins, operator=operator
+                )
+            finally:
+                await app.close()
+
+        return asyncio.run(execute())
+
     def archive_account(self, subject_id):
         operator = self._provisioning_operator()
         from msg.admin.accounts import archive_account, archive_preview

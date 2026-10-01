@@ -189,6 +189,17 @@ def parser():
         action='store_true',
         help='Allow an OS root SSH terminal for this archival only; requires PIN and exact preview confirmation',
     )
+    board = sub.add_parser('board', help='Local Root channel administration')
+    board_sub = board.add_subparsers(dest='board_command', required=True)
+    appoint = board_sub.add_parser('appoint', help='Appoint or replace channel administrators')
+    appoint.add_argument('topic', help='Channel path or resource ID')
+    appoint.add_argument('subject', help='Account path or subject ID')
+    appoint.add_argument(
+        '--replace-admins', action='store_true', help='Demote previous administrators to members'
+    )
+    appoint.add_argument(
+        '--allow-ssh', action='store_true', help='Allow an OS root SSH terminal; Root PIN required'
+    )
     rootkey = sub.add_parser('root')
     rs = rootkey.add_subparsers(dest='root_command', required=True)
     rs.add_parser('change-pin')
@@ -344,11 +355,15 @@ def main(argv=None):
             result = RootAdmin(args.config_dir, allow_ssh=args.allow_ssh).initialize()
             emit({'root_id': result})
             return 0
-        if args.command in {'cert', 'root', 'account'}:
+        if args.command in {'cert', 'root', 'account', 'board'}:
             from msg.admin.root import RootAdmin
 
             admin = RootAdmin(args.config_dir, allow_ssh=getattr(args, 'allow_ssh', False))
-            if args.command == 'account':
+            if args.command == 'board':
+                result = admin.appoint_board_admin(
+                    args.topic, args.subject, replace_admins=args.replace_admins
+                )
+            elif args.command == 'account':
                 result = admin.archive_account(args.subject_id)
             elif args.command == 'cert':
                 result = (

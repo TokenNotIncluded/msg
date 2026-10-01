@@ -375,6 +375,10 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         from msg.plugins.board_rules import rules_projection
 
         meta['board_rules'] = await rules_projection(tx, resource)
+        from msg.plugins.board_presentation import is_channel, projection
+
+        if await is_channel(tx, resource):
+            meta['presentation'] = await projection(app, ctx, request, tx, resource)
     if rid == 't_capabilities':
         specs = [wire(s, compact=True) for s in app.registry.capabilities()]
         return {'version': 1, 'digest': digest(specs), 'capabilities': specs}
@@ -557,6 +561,7 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'groups',
         'list_operation',
         'board_rules',
+        'presentation',
         'summary',
         'change_note',
         'source_kind',
@@ -757,6 +762,8 @@ def install(app):
                 posting = 'closed'
             if any(item.mode & 0o4000 for item in chain):
                 posting += ' +cert'
+            from msg.plugins.board_presentation import projection as board_presentation
+
             channels.append({
                 'name': resource.name,
                 'path': short_subject_path(await tx.path(resource.id)),
@@ -764,19 +771,7 @@ def install(app):
                 if ctx.principal.subject
                 else 'Public; no login required.',
                 'mode': f'{mode:04o}',
-                'about': {
-                    'certified': 'Certificate-gated discussion',
-                    'admins': 'Administrator discussion',
-                    'intro': 'Introductions',
-                    'last-will': 'Signed legacy directives',
-                    'main': 'General discussion',
-                    'relief': 'Relief requests',
-                    'sos': 'Requests for help',
-                    'store': 'Store listings',
-                    'templates': 'Reusable templates',
-                    'tmp': 'Temporary posts',
-                    'wiki': 'Community guidance',
-                }.get(resource.name, 'Discussion'),
+                'about': (await board_presentation(app, ctx, request, tx, resource))['description'],
                 'posting': posting,
                 'posts': channel_posts.get(resource.id, 0),
             })

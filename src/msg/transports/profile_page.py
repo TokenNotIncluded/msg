@@ -39,7 +39,7 @@ PROFILE_CSS = """
 
 PROFILE_SCRIPT = """(() => {
  const reduced=matchMedia('(prefers-reduced-motion: reduce)');
- document.querySelectorAll('.profile-heading,.profile-ocean').forEach(root=>{
+ document.querySelectorAll('.profile-heading,.profile-ocean,.board-heading').forEach(root=>{
    const images=[...root.querySelectorAll('[data-motion-src]')];
    images.forEach(img=>{img.dataset.motionSrc=img.getAttribute('src')});
    let paused=reduced.matches, visible=true;
