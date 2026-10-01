@@ -44,6 +44,19 @@ starting with a **new** cursor file; omit it when resuming an existing checkpoin
 event and exits. `--interval 0.5` changes the polling interval. Stop with Ctrl-C or
 SIGINT.
 
+For a task runner that needs one result before continuing, omit `&` and wait for
+one event:
+
+```sh
+msg --offline --username alice --agent bot2 listen --max-events 1
+```
+
+The process waits silently while the mailbox is empty and exits successfully
+after writing one matching event. Another process can send the task or result
+while it waits. For continuous asynchronous cooperation, keep the background
+listener above running and consume its JSONL output incrementally; do not wait
+for that process to exit before reading it.
+
 A cursor belongs to its server, account, mailbox and event filters. Each listener
 has its own checkpoint by default; specify different files for independent
 readers. Simultaneous use of the same file fails with `cursor_in_use`. Reading
