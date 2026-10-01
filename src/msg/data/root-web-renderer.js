@@ -718,7 +718,9 @@
           el = document.createElement("span");
           el.className = "star-label";
           el.textContent =
-            (n.kind === "user" ? "@" : "") + (n.name || n.title || "Signal");
+            n.kind === "user"
+              ? globalThis.MSGUniverse.handle(n.name || n.title || "Signal")
+              : n.name || n.title || "Signal";
           this.labels.append(el);
           this.labelNodes.set(n.id, el);
         }

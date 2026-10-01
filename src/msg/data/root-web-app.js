@@ -98,6 +98,18 @@
         },
         ...(options.packet ? { body: JSON.stringify(options.packet) } : {}),
       });
+      const contentType = response.headers.get("content-type") || "";
+      if (!/^application\/(?:[a-z0-9.+-]+\+)?json(?:;|$)/i.test(contentType)) {
+        await response.body?.cancel();
+        const attempt = options.attempt || 0;
+        if (!options.packet && attempt < 2 && (response.ok || response.status >= 500)) {
+          await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+          if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
+          return await json(path, { ...options, attempt: attempt + 1 });
+        }
+        throw new Error("The MSG data service returned an unexpected page (HTTP " +
+          response.status + "). Please reconnect shortly.");
+      }
       // A bounded reader also rejects oversized responses without accumulating them.
       const reader = response.body.getReader(),
         chunks = [];
@@ -120,9 +132,12 @@
         joined.set(chunk, offset);
         offset += chunk.length;
       }
-      const data = JSON.parse(
-        new TextDecoder("utf-8", { fatal: true }).decode(joined),
-      );
+      let data;
+      try {
+        data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(joined));
+      } catch {
+        throw new Error("The MSG data service returned invalid data. Please reconnect shortly.");
+      }
       if (!response.ok || data.status === "error" || data.error)
         throw new Error(
           typeof data.error === "string"
@@ -208,7 +223,7 @@
         : [...state.users.values()].map((u) => ({ ...u, kind: "user" }));
     for (const item of entries) {
       const b = button(
-        (item.kind === "user" ? "@" : "") + (item.name || item.title),
+        item.kind === "user" ? M.handle(item.name || item.title) : item.name || item.title,
         () => select(item, true),
         container,
       );
@@ -224,7 +239,7 @@
         );
         b.className = "catalog-item";
         b.append(
-          text("small", post.author ? "@" + post.author.name : "Public post"),
+          text("small", post.author ? M.handle(post.author.name) : "Public post"),
         );
       }
     if (!entries.length)
@@ -371,6 +386,8 @@
       const page = await json("/_universe/me", { private: true });
       if (epoch !== state.epoch || document.hidden) return;
       if (!page.account) {
+        $("account-link").textContent = "Sign in ↗";
+        $("account-link").href = "/login";
         notice(
           "Sign in to view your own conversations. Public exploration needs no account.",
           true,
@@ -383,7 +400,8 @@
       state.mode = "private";
       modeUI();
       renderer.travel([0, 0, 0], 225);
-      $("account-link").textContent = "@" + page.account.name;
+      $("account-link").textContent = M.handle(page.account.name);
+      $("account-link").href = safePath("/" + M.handle(page.account.name));
       notice("Private view. Only your conversations are loaded.");
       privacyTimer = setInterval(async () => {
         const expected = state.account?.id;
@@ -456,7 +474,7 @@
               ? "REPLY"
               : "POST";
     $("detail-title").textContent =
-      (item.kind === "user" ? "@" : "") + (item.name || item.title || "Signal");
+      item.kind === "user" ? M.handle(item.name || item.title || "Signal") : item.name || item.title || "Signal";
     renderGraph();
     renderer.setFocus(item.id);
     if (approach)
@@ -744,7 +762,7 @@
       )
       .slice(0, 25))
       button(
-        item.name ? "@" + item.name : item.title,
+        item.name ? M.handle(item.name) : item.title,
         () => select(item, true),
         results,
       ).className = "catalog-item";
@@ -1076,7 +1094,7 @@
     if (document.hidden || e.type === "pagehide") {
       const wasPrivate = state.mode === "private";
       publicMode(false);
-      $("account-link").textContent = "Sign in ↗";
+      // Clear private content without pretending the persistent cookie was deleted.
       if (renderer.software)
         renderer.context.clearRect(
           0,
