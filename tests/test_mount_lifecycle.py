@@ -48,7 +48,9 @@ async def test_cancellation_checks_mount_off_the_sdk_loop(monkeypatch, tmp_path)
     monkeypatch.setattr(asyncio, 'create_subprocess_exec', unmount)
     operations = ReadOnlyMount(None, asyncio.get_running_loop())
     operations.handles[1] = object()
-    task = asyncio.create_task(serve_mount(SimpleNamespace(FUSE=native_mount), operations, tmp_path))
+    task = asyncio.create_task(
+        serve_mount(SimpleNamespace(FUSE=native_mount), operations, tmp_path)
+    )
     try:
         assert await asyncio.to_thread(started.wait, 2)
         task.cancel()
