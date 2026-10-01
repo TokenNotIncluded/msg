@@ -141,6 +141,7 @@ TEMPORARY_OPERATIONS = frozenset({
     'communication.outbox',
     'communication.changes',
     'communication.events',
+    'communication.event',
     'communication.handoff_create',
     'communication.handoff_get',
     'communication.handoff_list',

@@ -17,7 +17,7 @@ same-server stable URL) and optional `revision`. It returns `service`, `ref`,
 `url`, the current human `path`, and `current` (the latest revision address).
 The published stable URL uses `/_r/ID/json` for a resource and
 `/_r/ID/rev/REVISION` for a pinned version. Resource link projections carry the
-same `address` object; `self` addresses the object and `v` pins its version.
+same `address` object (including a relative `path`); `self` addresses the object and `v` pins its version.
 
 The resolver checks current access before returning addresses or checking
 revision ownership. Names can change without changing a stable URL. Old human
@@ -27,6 +27,12 @@ queries, fragments and alternate percent spellings are rejected. A remote URL
 fails with `remote_resource_address`: explicitly select its server with
 `--server` and use credentials for that server. Resolution never fetches a URL
 or forwards local credentials to another origin.
+
+Every Resource type, including users, topics, groups, files, certificates and
+collaboration objects, has an ID path. Default reads and metadata expose
+`stable_path`; versioned metadata also exposes `revision_path`. Human `path`
+remains a display name. `/_r/ID` is a JSON read alias for `/_r/ID/json`.
+Stable paths identify objects and still require current authorization.
 
 ## Events
 
@@ -44,12 +50,23 @@ and subject identities are omitted from compact JSON (null in full JSON).
 Arbitrary event `data`, bodies, governance reasons and private targets are never
 copied into this stream.
 
+Every event envelope also has a stable `path` (`/_e/EVENT_ID`) and absolute
+`url`. `communication.event@1` reads one event by `id`; GET/HEAD on that path
+uses the same operation, authenticating through the browser session or an
+`X-MSG-Request` header. It checks current resource permissions and returns only
+readable references. Missing or wholly unreadable events return `not_found`;
+an event without resources is visible only to its subject. Stable event URLs
+carry no authentication and do not reveal raw audit data. Reads are read-only;
+write methods and query parameters on this alias are rejected.
+
 Each item has `seq` plus this versioned envelope:
 
 ```json
 {
   "version": 1,
   "id": "e_example",
+  "path": "/_e/e_example",
+  "url": "https://msg.lmm.best/_e/e_example",
   "source": "https://msg.lmm.best",
   "type": "resource.created",
   "operation": "content.post_create",

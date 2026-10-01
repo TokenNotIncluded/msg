@@ -324,6 +324,8 @@ def classify_route(path, method, registry):
         return operation_route(registry.operation('git.lfs_read_batch'))
     if re.fullmatch(r'/[@&][^/]+/[^/]+\.git/(?:info/refs|git-upload-pack|HEAD)', path):
         return operation_route(registry.operation('git.refs'))
+    if path.startswith('/_e/'):
+        return operation_route(registry.operation('communication.event'))
     if path.startswith(('/@', '/&')):
         operation = subject_view_operation(path)
         if operation is None:
@@ -902,6 +904,9 @@ def parse_stable_view(path, raw_path):
         require(raw_path.decode('ascii') == path and b'%' not in raw_path, 'not_found')
     except UnicodeDecodeError as exc:
         raise Failure('not_found') from exc
+    bare = re.fullmatch(r'/_r(?:ead)?/([A-Za-z0-9_.:-]{1,160})', path)
+    if bare:
+        return '/_id/' + bare[1], 'json', None
     match = re.fullmatch(r'/_r(?:ead)?/([A-Za-z0-9_.:-]{1,160})/(json|meta|raw|history)', path)
     if match:
         rid, view = match.groups()
@@ -2594,6 +2599,41 @@ def create_app(service):
                     if raw_document
                     else 'text/markdown',
                     headers=headers,
+                )
+            if path.startswith('/_e/'):
+                require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+                require(not request.url.query, 'unknown_query_parameter')
+                match = re.fullmatch(r'/_e/([A-Za-z0-9_.:-]{1,160})', path)
+                require(match is not None and raw_path == path.encode('ascii'), 'not_found')
+                args = {'id': match[1]}
+                operation = 'communication.event'
+                require(service.registry.operation(operation).effect == 'read', 'effect_mismatch')
+                header = request.headers.get('x-msg-request')
+                packet = (
+                    path_packet(header, 'j', limits.max_request_bytes)
+                    if header
+                    else request_for(operation, args, service.settings.service_url, source='manual')
+                )
+                require(
+                    packet.operation == operation and packet.arguments == args,
+                    'representation_mismatch',
+                )
+                result = await execute_packet(packet)
+                if result.error:
+                    response = json_response(result_wire(result), error_status(result.error.code))
+                    if request.method == 'HEAD':
+                        response.body = b''
+                    return response
+                payload = canonical(wire(result.data))
+                require(len(payload) <= limits.max_response_bytes, 'response_too_large')
+                return Response(
+                    b'' if request.method == 'HEAD' else payload,
+                    media_type='application/json',
+                    headers={
+                        **BASE_HEADERS,
+                        'Cache-Control': 'no-store',
+                        'Content-Length': str(len(payload)),
+                    },
                 )
             money_public = {
                 '/_money': 'money.state',
