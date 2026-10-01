@@ -146,3 +146,64 @@ def test_restored_key_without_state_still_requires_account_selection(home):
     with pytest.raises(Failure, match='local_account_selection_required'):
         ClientState()
     assert snapshot(home) == before
+    assert run_command(args())['accounts'] == [
+        {
+            'account': 'alice',
+            'handle': None,
+            'subject_id': None,
+            'selected': False,
+            'signer': 'software',
+        }
+    ]
+    assert snapshot(home) == before
+
+
+def test_listing_another_service_does_not_change_remembered_service(home, monkeypatch):
+    alice = registered('alice')
+    run_command(args('use', name='alice'))
+    monkeypatch.delenv('MSG_SERVER')
+    before = snapshot(home)
+    request = args()
+    request.server = 'https://other.example.org'
+    assert run_command(request) == {'server': request.server, 'accounts': []}
+    assert snapshot(home) == before
+    assert ClientState().subject == alice.subject
+
+
+@pytest.mark.parametrize('base', ['config', 'data', 'state'])
+def test_listing_rejects_symlinked_account_roots_without_changing_target(home, base):
+    registered('alice')
+    service = ClientPaths.discover(server=SERVER)
+    directory = getattr(service, base) / 'accounts'
+    target = directory.with_name('saved-accounts')
+    directory.rename(target)
+    directory.symlink_to(target, target_is_directory=True)
+    before = snapshot(target)
+    with pytest.raises(Failure, match='unsafe_client_directory'):
+        run_command(args())
+    assert snapshot(target) == before
+
+
+def test_explicit_import_restores_missing_selected_state_with_same_key(home):
+    alice = registered('alice')
+    run_command(args('use', name='alice'))
+    backup = ClientState(home / 'backup')
+    backup.save_signer(alice.signer)
+    backup.data.update(alice.data)
+    backup._save()
+    alice.path.unlink()
+    run_command(args('import', name='alice', directory=backup.directory))
+    restored = ClientState()
+    assert restored.subject == alice.subject
+    assert restored.signer.public_key == alice.signer.public_key
+
+
+@pytest.mark.parametrize('version', [None, 2])
+def test_listing_rejects_unknown_selection_version_without_changes(home, version):
+    registered('alice')
+    marker = ClientPaths.discover(server=SERVER).config / 'current-account.json'
+    durable_write(marker, canonical({'version': version, 'account': 'alice'}), mode=0o600)
+    before = snapshot(home)
+    with pytest.raises(Failure, match='unknown_client_state_version'):
+        run_command(args())
+    assert snapshot(home) == before
