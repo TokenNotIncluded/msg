@@ -48,11 +48,11 @@ def assemble():
     ):
         css = css.replace(token, base64.b64encode((DATA / name).read_bytes()).decode())
     scripts = '\n'.join(
-        (DATA / ('root-web-' + name + '.js')).read_text()
-        for name in ('model', 'renderer', 'app')
+        (DATA / ('root-web-' + name + '.js')).read_text() for name in ('model', 'renderer', 'app')
     )
     return (
-        page.replace('__LOGO__', (DATA / 'logo.svg').read_text())
+        page
+        .replace('__LOGO__', (DATA / 'logo.svg').read_text())
         .replace('__UNIVERSE_STYLE__', css)
         .replace('__UNIVERSE_SCRIPT__', scripts)
         .encode()
@@ -69,10 +69,43 @@ CSP = (
     "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 )
 NAMES = [
-    'root', 'lightjunction', 'ada', 'kei', 'orbit', 'lin', 'atlas', 'echo', 'nova',
-    'sol', 'mira', 'ion', 'sage', 'pico', 'pixel', 'alba', 'lyra', 'vega', 'rem',
-    'aiko', 'ember', 'quill', 'neon', 'kira', 'rune', 'flux', 'noor', 'cleo',
-    'cass', 'nero', 'ash', 'odin', 'luna', 'iris', 'aster', 'sora', 'cosmo',
+    'root',
+    'lightjunction',
+    'ada',
+    'kei',
+    'orbit',
+    'lin',
+    'atlas',
+    'echo',
+    'nova',
+    'sol',
+    'mira',
+    'ion',
+    'sage',
+    'pico',
+    'pixel',
+    'alba',
+    'lyra',
+    'vega',
+    'rem',
+    'aiko',
+    'ember',
+    'quill',
+    'neon',
+    'kira',
+    'rune',
+    'flux',
+    'noor',
+    'cleo',
+    'cass',
+    'nero',
+    'ash',
+    'odin',
+    'luna',
+    'iris',
+    'aster',
+    'sora',
+    'cosmo',
 ]
 
 
@@ -99,7 +132,9 @@ def facts(i):
             'amount_minor': str(i * 12400000),
             'scale': 6,
             'code': 'MSG',
-        } if i % 3 != 2 else {'visibility': 'private'},
+        }
+        if i % 3 != 2
+        else {'visibility': 'private'},
     }
 
 
@@ -111,11 +146,19 @@ POSTS = [
     {
         'id': 'p_fixture_' + str(i),
         'path': '/main/fixture-' + str(i) + '.md',
-        'title': ['Between two thoughts', 'A small map of somewhere', 'Geometry of a question'][i % 3],
+        'title': ['Between two thoughts', 'A small map of somewhere', 'Geometry of a question'][
+            i % 3
+        ],
         'excerpt': 'Isolated local fixture. Not live user activity.',
         'author': {k: USERS[1 + i % (len(USERS) - 1)][k] for k in ('id', 'name', 'path')},
         'created_at': stamp(-i * 300),
-        'reply_to': {'id': 'p_fixture_' + str(i - 1), 'path': '/main/fixture-' + str(i - 1) + '.md', 'name': 'Fixture'} if i else None,
+        'reply_to': {
+            'id': 'p_fixture_' + str(i - 1),
+            'path': '/main/fixture-' + str(i - 1) + '.md',
+            'name': 'Fixture',
+        }
+        if i
+        else None,
     }
     for i in range(24)
 ]
@@ -152,8 +195,12 @@ class Handler(BaseHTTPRequestHandler):
                 if 'author' in query:
                     items = [p for p in POSTS if p['author']['id'] == query['author'][0]]
                 data = {
-                    'version': 1, 'kind': kind, 'items': items, 'cursor': None,
-                    'service': SERVICE, 'generated_at': stamp(),
+                    'version': 1,
+                    'kind': kind,
+                    'items': items,
+                    'cursor': None,
+                    'service': SERVICE,
+                    'generated_at': stamp(),
                     'author': query.get('author', [None])[0],
                     **({'anchor': USERS[0]} if kind == 'users' and 'ids' not in query else {}),
                 }
@@ -162,21 +209,34 @@ class Handler(BaseHTTPRequestHandler):
                 if 'fixture_session=owner' in self.headers.get('Cookie', ''):
                     account = deepcopy(USERS[1])
                     account['star']['balance'] = {
-                        'visibility': 'self', 'amount_minor': '9223372036854775807',
-                        'scale': 6, 'code': 'MSG',
+                        'visibility': 'self',
+                        'amount_minor': '9223372036854775807',
+                        'scale': 6,
+                        'code': 'MSG',
                     }
                 data = {
-                    'version': 1, 'account': account,
-                    'conversations': [CONVERSATION] if account else [], 'service': SERVICE,
+                    'version': 1,
+                    'account': account,
+                    'conversations': [CONVERSATION] if account else [],
+                    'service': SERVICE,
                 }
             elif path.path == CONVERSATION['path'] + '/json':
-                data = {'conversation': {
-                    'state': 'active', 'messages': [{
-                        'id': 'p_private_fixture', 'path': '/private-fixture.md',
-                        'title': 'Private satellite', 'body': PRIVATE_BODY,
-                        'author': {'name': 'ada'}, 'created_at': stamp(),
-                    }], 'older_messages': False,
-                }}
+                data = {
+                    'conversation': {
+                        'state': 'active',
+                        'messages': [
+                            {
+                                'id': 'p_private_fixture',
+                                'path': '/private-fixture.md',
+                                'title': 'Private satellite',
+                                'body': PRIVATE_BODY,
+                                'author': {'name': 'ada'},
+                                'created_at': stamp(),
+                            }
+                        ],
+                        'older_messages': False,
+                    }
+                }
             elif path.path.startswith('/_r/'):
                 data = {'content': '<img src=x onerror="window.injected=true"> Not executable.'}
             body = json.dumps(data).encode()
@@ -224,7 +284,13 @@ def navigate(page):
     # sandbox and frame-ancestors require response headers and cannot be tested
     # by set_content. Keep the script pin, styles and all network restrictions.
     policy = CSP.split('; ', 1)[1].replace("; frame-ancestors 'none'", '')
-    content = PAGE.decode().replace('<head>', '<head><meta http-equiv="Content-Security-Policy" content="' + html.escape(policy, quote=True) + '">', 1)
+    content = PAGE.decode().replace(
+        '<head>',
+        '<head><meta http-equiv="Content-Security-Policy" content="'
+        + html.escape(policy, quote=True)
+        + '">',
+        1,
+    )
     page.set_content(content)
 
 
@@ -253,15 +319,22 @@ def run():
         context, page, errors = open_page(browser)
         renderer = page.locator('#space').get_attribute('data-renderer')
         assert renderer == os.environ.get('MSG_NEBULA_EXPECT_RENDERER', 'webgl'), renderer
-        assert page.evaluate("getComputedStyle(document.querySelector('#universe')).backgroundColor") == 'rgb(0, 0, 0)'
-        assert page.evaluate("getComputedStyle(document.querySelector('.coordinates')).opacity") == '1'
+        assert (
+            page.evaluate("getComputedStyle(document.querySelector('#universe')).backgroundColor")
+            == 'rgb(0, 0, 0)'
+        )
+        assert (
+            page.evaluate("getComputedStyle(document.querySelector('.coordinates')).opacity") == '1'
+        )
         page.screenshot(path=str(OUTPUT / '01-entry.png'))
         page.mouse.move(650, 400)
         page.mouse.move(720, 420)
         expect(page.locator('body')).to_have_class('exploring')
         expect(page.locator('.coordinates')).to_have_attribute('aria-hidden', 'true')
         assert page.evaluate("document.querySelector('.coordinates').inert")
-        assert page.evaluate("getComputedStyle(document.querySelector('.coordinates')).opacity") == '0'
+        assert (
+            page.evaluate("getComputedStyle(document.querySelector('.coordinates')).opacity") == '0'
+        )
         page.screenshot(path=str(OUTPUT / '02-field.png'))
         checks.append('black background, token overlay, intro dismissal/inertness')
         page.click('#help-toggle')
@@ -278,7 +351,9 @@ def run():
         page.screenshot(path=str(OUTPUT / '03-root.png'))
         page.click('#detail-close')
         page.click('#catalog-toggle')
-        page.locator('#catalog-items button').filter(has_text=re.compile(r'^@lightjunction')).click()
+        page.locator('#catalog-items button').filter(
+            has_text=re.compile(r'^@lightjunction')
+        ).click()
         expect(page.locator('.identity-status')).to_contain_text('CERTIFICATE ACTIVE')
         expect(page.locator('.identity-facts')).to_contain_text('12.4 MSG')
         page.screenshot(path=str(OUTPUT / '04-certificate.png'))
@@ -310,7 +385,9 @@ def run():
         # Test time-based transitions using a controllable browser wall clock.
         page.clock.install(time=NOW)
         page.click('#catalog-toggle')
-        page.locator('#catalog-items button').filter(has_text=re.compile(r'^@lightjunction')).click()
+        page.locator('#catalog-items button').filter(
+            has_text=re.compile(r'^@lightjunction')
+        ).click()
         expect(page.locator('.identity-status')).to_contain_text('CERTIFICATE ACTIVE')
         # Prevent refresh; an outage must not leave an eternal certificate/presence badge.
         if OFFLINE_DOM:
@@ -340,7 +417,9 @@ def run():
         checks.append('390px layout, keyboard catalog')
         mobile.close()
         # An independent context forces only WebGL to fail; Canvas is still real.
-        fallback = browser.new_context(viewport={'width': 1440, 'height': 900}, reduced_motion='reduce')
+        fallback = browser.new_context(
+            viewport={'width': 1440, 'height': 900}, reduced_motion='reduce'
+        )
         fallback_script = """(() => {
           const original = HTMLCanvasElement.prototype.getContext;
           HTMLCanvasElement.prototype.getContext = function(type, ...args) {
@@ -363,7 +442,9 @@ def run():
         moving.mouse.move(650, 400)
         moving.mouse.move(720, 420)
         moving.wait_for_timeout(250)
-        opacity = float(moving.locator('.coordinates').evaluate('(el) => getComputedStyle(el).opacity'))
+        opacity = float(
+            moving.locator('.coordinates').evaluate('(el) => getComputedStyle(el).opacity')
+        )
         assert 0 < opacity < 1, opacity
         moving.wait_for_timeout(1000)
         expect(moving.locator('.coordinates')).to_have_css('opacity', '0')
@@ -371,7 +452,19 @@ def run():
         checks.append('real fade transition; reduced-motion immediate dismissal')
         animated.close()
         browser.close()
-    (OUTPUT / 'checks.json').write_text(json.dumps({'checks': checks, 'data': 'synthetic, local only', 'renderer': renderer, 'mode': 'offline DOM with fetch fixtures; no HTTP sandbox validation' if OFFLINE_DOM else 'local HTTP fixture and response CSP'}, indent=2))
+    (OUTPUT / 'checks.json').write_text(
+        json.dumps(
+            {
+                'checks': checks,
+                'data': 'synthetic, local only',
+                'renderer': renderer,
+                'mode': 'offline DOM with fetch fixtures; no HTTP sandbox validation'
+                if OFFLINE_DOM
+                else 'local HTTP fixture and response CSP',
+            },
+            indent=2,
+        )
+    )
     print('PASSED:', '; '.join(checks))
 
 

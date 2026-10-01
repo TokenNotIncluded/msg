@@ -348,7 +348,6 @@ def _dm_notice(tx, ctx, request, recipient, resource):
     )
 
 
-
 def presence_record(tx, subject, now):
     """Shared read-only TTL projection; callers must authorize subject access."""
     row = tx.one('SELECT expires_at,body FROM presence WHERE subject=?', (subject,))
