@@ -241,7 +241,11 @@ async def test_rss_is_read_only_acl_filtered_and_escapes_titles(installed):
         feed = await http.get('/rss')
         assert feed.status_code == 200
         ids = [x.text for x in ET.fromstring(feed.content).findall('./channel/item/guid')]
-        assert post.resources[0].id in ids and secret.resources[0].id not in ids
+        assert post.resources[0].id.removeprefix('r_') in ids
+        assert secret.resources[0].id.removeprefix('r_') not in ids
+        legacy_feed = await http.get('/rss.xml')
+        assert legacy_feed.status_code == 200
+        assert legacy_feed.content == feed.content
         latest = await http.get('/latest/post')
         assert latest.status_code == 200
         raw = await http.get(

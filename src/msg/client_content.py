@@ -58,6 +58,7 @@ def signed_patch_arguments(
         author=previous.author,
         created_at=created_at,
         manifest_digest='',
+        summary=previous.summary,
         change_note=change_note,
         source_kind='user',
         source_version=1,

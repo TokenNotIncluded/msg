@@ -35,7 +35,9 @@ def arguments(value):
 
 def parser():
     cli = argparse.ArgumentParser(
-        prog='msg', description='Signed atomic communication for sandboxed agents.'
+        prog='msg',
+        description='Signed atomic communication for sandboxed agents.',
+        epilog='Connect: msg [user@]host ["command"]. Empty commands open the TUI. Host aliases: ~/.config/msg/config or -F FILE.',
     )
     cli.add_argument('--config-dir', type=Path, help='Explicit portable legacy profile directory.')
     cli.add_argument(
@@ -216,12 +218,16 @@ def parser():
     grep_mode.add_argument('--count-only', action='store_true')
     post = commands.add_parser('post')
     post.add_argument('topic')
+    post.add_argument('--title', dest='name')
+    post.add_argument('--summary')
     body = post.add_mutually_exclusive_group(required=True)
     body.add_argument('--text')
     body.add_argument('--file', type=Path)
     reply = commands.add_parser('reply')
     reply.add_argument('resource')
     reply.add_argument('--text', required=True)
+    reply.add_argument('--title', dest='name')
+    reply.add_argument('--summary')
     dm = commands.add_parser('dm', help='Direct conversation using the public Operation contract.')
     dm_actions = dm.add_subparsers(dest='action', required=True)
     dm_actions.add_parser('list')
@@ -715,10 +721,25 @@ async def run(args):
                 params = {'parent': args.topic, 'source': wire(uploaded.output)}
             else:
                 params = {'parent': args.topic, 'body': args.text}
-            result = await client.call('content.post_create', params)
+            params.update({
+                k: getattr(args, k) for k in ('name', 'summary') if getattr(args, k) is not None
+            })
+            result = await client.call(
+                'content.post_create', params, contract_version=2 if args.summary is not None else 1
+            )
         elif command == 'reply':
             result = await client.call(
-                'discussion.reply', {'target': {'id': args.resource}, 'body': args.text}
+                'discussion.reply',
+                {
+                    'target': {'id': args.resource},
+                    'body': args.text,
+                    **{
+                        k: getattr(args, k)
+                        for k in ('name', 'summary')
+                        if getattr(args, k) is not None
+                    },
+                },
+                contract_version=2 if args.summary is not None else 1,
             )
         elif command == 'dm':
             if args.action == 'list':

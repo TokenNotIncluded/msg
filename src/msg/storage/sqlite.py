@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager, closing
 from pathlib import Path
 
 from msg.core.errors import Failure, require
+from msg.core.identifiers import hex_id
 from msg.core.query import QueryResult, SqlParameters
 from msg.storage.query import SessionQueryResult
 from msg.storage.session import RelationalSession
@@ -226,6 +227,8 @@ CREATE INDEX IF NOT EXISTS sync_checkpoints_subject ON sync_checkpoints(subject,
 
 
 class SqliteSession(RelationalSession):
+    hex_reference_sql = 'msg_hex_id(id)'
+
     def __init__(self, connection, *, write: bool):
         super().__init__(write=write)
         self._connection = connection
@@ -267,6 +270,7 @@ class SqliteMetadataStore:
             self.path, timeout=self.busy_timeout, isolation_level=None, check_same_thread=False
         )
         try:
+            conn.create_function('msg_hex_id', 1, hex_id, deterministic=True)
             conn.execute('PRAGMA foreign_keys=ON')
             conn.execute('PRAGMA synchronous=FULL')
         except BaseException:

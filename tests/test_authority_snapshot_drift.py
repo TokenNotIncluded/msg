@@ -226,8 +226,8 @@ async def test_old_signed_ca_snapshots_are_diagnosed_without_repair(installed):
     async with app.metadata.transaction(write=False) as tx:
         assert tuple(tx.rows('SELECT id,body FROM certificates ORDER BY id')) == old_rows
     assert app.settings.trust_file.read_bytes() == old_trust
-    # A new identity would need the current base grants. The old issuer cannot
-    # silently obtain sharing.basic merely because the code now knows it.
+    # Registration remains available with the old issuer's signed grant
+    # intersection, without silently adding newly introduced authority.
     applicant = Ed25519Signer.generate()
     _, recipient = generate_age_key()
     result = await call(
@@ -242,6 +242,14 @@ async def test_old_signed_ca_snapshots_are_diagnosed_without_repair(installed):
         subject=subject_id(applicant.public_key),
         contract_version=2,
     )
-    assert result.status == 'error' and result.error.code == 'issuance_scope_exceeded', wire(result)
+    assert result.status == 'ok', wire(result)
     async with app.metadata.transaction(write=False) as tx:
-        assert tuple(tx.rows('SELECT id,body FROM certificates ORDER BY id')) == old_rows
+        for identifier, body in old_rows:
+            assert tx.one('SELECT body FROM certificates WHERE id=?', (identifier,))[0] == body
+        issued = await tx.certificate(result.data['certificate_id'])
+        assert all(grant.capability != 'sharing.basic' for grant in issued.grants)
+        assert all(
+            grant.capability != 'system.config'
+            or 'system.share_links_set@1' not in grant.operations
+            for grant in issued.grants
+        )

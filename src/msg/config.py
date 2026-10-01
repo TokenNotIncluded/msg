@@ -95,6 +95,7 @@ class Settings:
     hosting_recovery_marker: Path | None = None
     hosting_content_group_read: bool = False
     oauth: OAuthConfig = OAuthConfig()
+    websub_hubs: tuple[str, ...] = ()
 
     @property
     def config_dir(self):
@@ -470,6 +471,15 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
         public_web is None or public_web.rstrip('/') == service.rstrip('/'),
         'hosting_origin_must_match_service',
     )
+    websub = data.get('websub', {})
+    require(set(websub) <= configuration_keys('websub'), 'unknown_websub_configuration')
+    hubs = websub.get('hubs', [])
+    require(isinstance(hubs, list) and len(hubs) <= 16, 'invalid_websub_hubs')
+    from msg.workers.webhook import validate_endpoint
+
+    for hub in hubs:
+        validate_endpoint(hub)
+    hubs = tuple(dict.fromkeys(hubs))
     return Settings(
         server=ServerConfig(
             config_dir=config_dir,
@@ -491,6 +501,7 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
         ),
         service_url=service,
         service_aliases=aliases,
+        websub_hubs=hubs,
         listen=server.get('listen', '127.0.0.1'),
         port=server.get('port', 8042),
         public_web_origin=public_web,

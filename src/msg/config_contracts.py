@@ -21,6 +21,7 @@ _SECTIONS = {
         'temporary_ttl': ('temporary_ttl', None),
         'transfer_ttl': ('transfer_ttl', None),
     },
+    'websub': {'hubs': ('websub_hubs', None)},
     'storage': {
         'postgres_dsn': ('server.postgres_dsn', 'storage'),
         'valkey_url': ('server.valkey_url', 'valkey'),
