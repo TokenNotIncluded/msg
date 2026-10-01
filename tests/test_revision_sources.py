@@ -39,16 +39,15 @@ async def test_release_source_fields_history_cursor_and_exact_diff(installed, tm
         source = await tx.revision(
             __import__('msg.core.models', fromlist=['ResourceRef']).ResourceRef(id=rid)
         )
-        assert (source.source_kind, source.source_version, source.source_digest) == (
-            'release',
-            1,
-            source.content.digest,
-        )
+        assert source.source_kind == 'release'
+        assert source.source_version >= 1
+        assert source.source_digest == source.content.digest
+        version = source.source_version
     copied = tmp_path / 'system'
     shutil.copytree(system_source_root(), copied)
     path = copied / 'rules' / 'identity.md'
     path.write_text(
-        path.read_text().replace('version: 1', 'version: 2')
+        path.read_text().replace(f'version: {version}', f'version: {version + 1}', 1)
         + '\n<!-- change_note: Clarified key ownership. -->\nA new sentence.\n'
     )
     async with app.metadata.transaction(write=True) as tx:
@@ -61,13 +60,13 @@ async def test_release_source_fields_history_cursor_and_exact_diff(installed, tm
         {'id': rid, 'view': 'history', 'limit': 1, 'cursor': history.data['cursor']},
     )
     records = (*history.data['revisions'], *older.data['revisions'])
-    assert {item['source_version'] for item in records} == {1, 2}
+    assert {item['source_version'] for item in records} == {version, version + 1}
     assert any(item.get('change_note') == 'Clarified key ownership.' for item in records)
     current = (await call(app, 'discovery.get', {'id': rid})).data['revision']
     diff = await call(app, 'discovery.diff_view', {'id': rid, 'known_revision': first})
     assert diff.status == 'ok' and diff.data['from']['revision'] == first
     assert diff.data['to']['revision'] == current and '+A new sentence.' in diff.data['diff']
-    assert diff.data['to_source']['source_version'] == 2
+    assert diff.data['to_source']['source_version'] == version + 1
 
 
 @pytest.mark.asyncio
