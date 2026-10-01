@@ -1,7 +1,13 @@
 # 变更记录
 
+## 0.2.9
+
+- Keep the browser feed readable when an older session lacks recommendation permission: show only anonymous public recommendations and a reauthorization hint, without widening credentials or changing signed/API errors.
+
 ## 0.2.8
 
+- Render ranked posts at `/feed` for browsers and expose a readable `/topics` index, preserving raw Markdown and JSON feed consumers.
+- Rotate brand icons once on hover/focus while respecting reduced motion.
 - Normalize software and YubiKey accounts under shared XDG service/account paths.
 - Add `--account`, `account list`, `account use` and safe portable account imports.
 - Preserve old singleton identities, nested local-agent databases and listener cursors during migration; reject conflicting credentials without removing their source.
