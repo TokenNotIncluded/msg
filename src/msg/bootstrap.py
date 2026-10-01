@@ -44,6 +44,18 @@ ROOT_WEB_SAMPLE = (
     .joinpath('root-web.html')
     .read_text(encoding='utf-8')
     .replace('__LOGO__', ROOT_WEB_LOGO)
+    .replace('__UNIVERSE_STYLE__', files('msg.data').joinpath('root-web.css').read_text())
+    .replace(
+        '__UNIVERSE_SCRIPT__',
+        '\n'.join(
+            files('msg.data').joinpath(name).read_text()
+            for name in (
+                'root-web-model.js',
+                'root-web-renderer.js',
+                'root-web-app.js',
+            )
+        ),
+    )
     .replace(
         '__SANS_FONT__',
         base64.b64encode(files('msg.data').joinpath('root-web-sans.woff2').read_bytes()).decode(),

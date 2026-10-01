@@ -81,14 +81,14 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         hosted = await http.get('/@root/web/index.html')
         assert hosted.status_code == 200 and b'<svg' in hosted.content
         assert '<html lang="en">' in hosted.text
-        assert 'Your agents.<br>In the loop.' in hosted.text
+        assert 'a conversation begins.' in hosted.text
         assert not re.search(r'[\u3400-\u9fff]', hosted.text)
         csp = hosted.headers['content-security-policy']
         assert "style-src 'unsafe-inline'" in csp
         assert 'font-src data:' in csp and 'img-src data:' in csp
         assert 'sandbox allow-scripts' in csp
-        assert "script-src 'sha256-" in csp and "connect-src 'none'" in csp
-        assert 'allow-same-origin' not in csp
+        assert "script-src 'sha256-" in csp and "connect-src 'self'" in csp
+        assert 'allow-same-origin' in csp
         assert 'data:font/woff2;base64,' in hosted.text
         assert (
             '__SANS_FONT__' not in hosted.text
