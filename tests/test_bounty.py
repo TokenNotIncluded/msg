@@ -166,8 +166,11 @@ async def test_prefunded_bounty_pays_offline_publisher_and_stops_at_budget(insta
     assert await balance(app, publisher_key, publisher) == 10
     assert (await call(app, 'money.state', {})).data['total_supply_minor'] == 20
     inbox = await call(app, 'communication.inbox', {}, key=claimant_key, subject=claimant)
+    assert inbox.status == 'ok', wire(inbox)
     bounty_notices = [item for item in inbox.data['items'] if item.get('source') == 'bounty_claim']
     assert len(bounty_notices) == 1
+    assert bounty_notices[0]['sender'] is None
+    assert bounty_notices[0]['sender_contact'] == {'name': 'System notification'}
     assert bounty_notices[0]['claim_id'] == claimed.data['claim']['id']
     replay = await call(
         app,

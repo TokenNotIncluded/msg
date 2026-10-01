@@ -8,6 +8,7 @@ from test_service import NOW
 
 from msg.client import ClientState, MsgClient
 from msg.client_subagents_remote import RemoteAgents
+from msg.core.codec import wire
 from msg.core.errors import Failure
 from msg.transports.client import HTTPTransport
 from msg.transports.http import create_app
@@ -80,7 +81,7 @@ async def test_remote_private_delivery_tail_restart_and_archive(installed, tmp_p
             visible = await visitor.call(
                 'discovery.list', {'type': 'file', 'limit': 200}, anonymous=anonymous
             )
-            assert visible.status == 'ok'
+            assert visible.status == 'ok', wire(visible)
             assert not any('msg-stable-message' in item['name'] for item in visible.data['items'])
             feed = await visitor.call('discovery.recommendations', {}, anonymous=anonymous)
             assert 'private handoff' not in repr(feed)
