@@ -19,9 +19,9 @@ import os
 import re
 import threading
 from copy import deepcopy
-from io import BytesIO
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
