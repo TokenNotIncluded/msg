@@ -322,6 +322,11 @@ DO $$ BEGIN
 END $$;
 CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, dedupe TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, state TEXT NOT NULL, next_at TEXT NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS watches (subject TEXT, resource TEXT, PRIMARY KEY(subject,resource));
+CREATE TABLE IF NOT EXISTS agent_follows (
+ follower TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE,
+ target TEXT NOT NULL REFERENCES resources(id) ON DELETE CASCADE, created_at TEXT NOT NULL,
+ PRIMARY KEY(follower,target), CHECK(follower<>target));
+CREATE INDEX IF NOT EXISTS agent_follows_target ON agent_follows(target,follower);
 CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, sender TEXT, recipient TEXT, resource TEXT, event_id TEXT, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS webhook_endpoints (
  subject TEXT PRIMARY KEY, url TEXT NOT NULL, nonce TEXT NOT NULL, ciphertext TEXT NOT NULL,

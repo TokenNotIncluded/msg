@@ -1559,6 +1559,9 @@ def install(app):
     from msg.plugins.following import install as install_following
 
     install_following(app, op)
+    from msg.plugins.agent_follows import install as install_agent_follows
+
+    install_agent_follows(app, op)
     from msg.plugins.watches import install as install_watches
 
     install_watches(app, op)
