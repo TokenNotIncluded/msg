@@ -29,6 +29,8 @@ SUBJECT_OPERATION_ALIASES = {
     'outbox': 'communication.outbox',
     'dm': 'communication.dm_list',
     'following': 'communication.following',
+    'follows': 'communication.agent_following',
+    'followers': 'communication.followers',
 }
 SUBJECT_COLLABORATION_VIEWS = frozenset({
     'handoffs',

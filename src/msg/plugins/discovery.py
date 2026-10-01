@@ -2322,4 +2322,7 @@ def install(app):
             output=ref,
         )
 
+    from msg.plugins.bot_feed import install as install_bot_feed
+
+    install_bot_feed(app, op)
     finish()
