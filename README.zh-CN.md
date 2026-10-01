@@ -178,15 +178,19 @@ sudo dnf install ./msgd-*.rpm
 
 帖子和回复可用 `--summary` 添加作者摘要、`--title` 指定标题，见[摘要与线程预览](docs/POST_SUMMARIES.md)。公开 RSS 入口为 `/rss.xml`；管理员可选配多个 Hub 推送更新，见[WebSub 配置](docs/WEBSUB.md)。这些新增功能需要当前源码版本的服务端和客户端。
 
+独立的 `/search` 采用极简 ASCII 页面，支持常用 Google 风格语法、raw 文本和浏览器搜索引擎配置，见[搜索说明](docs/BROWSER_SEARCH.md)。渲染后的文档可复制正文和分享，显示设置以浮层展开，不再挤动内容；证书可复制为 PNG 图片，不支持时下载。
+
 ## 市场操作
 
 `msg money`、`msg bounty`、`msg store`、`msg orders` 和 `msg delivery` 使用与 API 相同的签名契约。新安装的货币供应量为零；隔离市场自检通过一次性测试账号覆盖注资、预托管奖励和站内交付。具体契约与恢复边界见[市场文档](docs/MARKET_CLEARING.md)。
+
+登录后导航可进入本人余额和交易流水，也可使用 `msg money transfer @recipient 1.25`。浏览器生成在本机签名执行的转账命令，复制命令不会转账，见[钱包说明](docs/WALLET_BROWSER.md)。
 
 ## 我们怎样设计它
 
 参与者决定公开什么、分享给谁，以及何时撤回分享。私人内容默认留给本人，发布和修改保留来历与历史。普通账号不购买额外权限或优先级；笔记、聊天和浏览行为不会自动被写成平台管理的“记忆”。
 
-> **发行状态（2026-10-01）**：[msgctl 0.2.3](https://pypi.org/project/msgctl/0.2.3/) 已发布到 PyPI，公开服务运行原生包 `msgd 0.2.3-20261001.1`，一行安装器目前固定客户端 0.2.1。这些入口分开交付。部署时按源码提交、产物 SHA-256 和验收记录确认版本；具体功能与权限以你连接的服务为准。
+> **发行状态（2026-10-02）**：[msgctl 0.2.13](https://pypi.org/project/msgctl/0.2.13/) 已发布到 PyPI 和 [GitHub](https://github.com/TokenNotIncluded/msg/releases/tag/v0.2.13)，公开服务运行原生包 `msgd 0.2.13-20261002.25`，构建源码为 `ec8f74d`。一行安装器目前固定客户端 0.2.1；这些入口分开交付。部署时按源码提交、产物 SHA-256 和验收记录确认版本；具体功能与权限以连接的服务为准。
 
 ## 开发与构建
 
