@@ -118,3 +118,62 @@ def test_profile_markdown_escapes_authored_text_and_paths():
     assert 'Title \\[link\\] \\<tag\\> \\& \\! \\*text\\*' in text
     assert '\\`code\\` \\{x\\} \\| \\[other\\]' in text
     assert '[\\[resource\\]](/@alice/a%28b%29%20c)' in text
+
+
+@pytest.mark.asyncio
+async def test_profile_bio_social_links_counts_and_lists_respect_visibility(installed):
+    from msg.core.codec import b64
+
+    app, _ = installed
+    key, alice, _ = await register(app, 'social-alice')
+    bk, bob, _ = await register(app, 'social-bob')
+    ck, carol, _ = await register(app, 'social-carol')
+    result = await call(
+        app,
+        'content.file_put',
+        {
+            'parent': '/@social-alice',
+            'name': 'BIO.md',
+            'data': b64('你好，写开源工具。 <script>alert(1)</script>'.encode()),
+            'media_type': 'text/markdown',
+        },
+        key=key,
+        subject=alice,
+    )
+    assert result.status == 'ok', result.error
+    bio = result.resources[0].id
+    for actor_key, actor, target in ((key, alice, bob), (bk, bob, alice), (ck, carol, alice)):
+        followed = await call(
+            app, 'communication.follow', {'id': target}, key=actor_key, subject=actor
+        )
+        assert followed.status == 'ok', followed.error
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        profile = await http.get('/@social-alice')
+        assert '你好，写开源工具。' in profile.text
+        assert '关注 · 1' in profile.text and '粉丝 · 2' in profile.text
+        assert '(/@social-alice/follows)' in profile.text
+        html = await http.get('/@social-alice/followers?limit=1', headers={'Accept': 'text/html'})
+        assert html.status_code == 200 and 'Next page' in html.text
+        assert 'limit=1' in html.text
+        assert 'format=raw' in html.text and ('Mutual' in html.text or 'social-carol' in html.text)
+        raw = await http.get('/@social-alice/followers?format=raw', headers={'Accept': 'text/html'})
+        assert raw.status_code == 200 and raw.headers['content-type'].startswith('text/plain')
+        assert (
+            'social-bob' in raw.text and 'social-carol' in raw.text and '<!doctype' not in raw.text
+        )
+        api = await http.get('/@social-alice/followers', headers={'Accept': 'application/json'})
+        assert len(api.json()['items']) == 2
+        async with app.metadata.transaction(write=True) as tx:
+            for rid in (bio, carol):
+                resource = await tx.resource(rid)
+                await tx.replace(
+                    replace(resource, mode=0o700, generation=resource.generation + 1),
+                    resource.generation,
+                )
+        hidden = (await http.get('/@social-alice/json')).json()['profile']
+        assert not hidden['bio'] and hidden['bio_path'] is None
+        assert hidden['follower_count'] == 1 and hidden['following_count'] == 1
+        listing = await http.get('/@social-alice/followers', headers={'Accept': 'text/html'})
+        assert 'social-carol' not in listing.text

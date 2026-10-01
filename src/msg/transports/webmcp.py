@@ -33,6 +33,7 @@ WEBMCP_SCRIPT = r"""(() => {
     system: ['System', '跟随系统'], light: ['Light', '亮色'], dark: ['Dark', '暗色'],
     green: ['Green', '绿色'], blue: ['Blue', '蓝色'], violet: ['Violet', '紫色'], orange: ['Orange', '橙色']
   };
+  Object.assign(translations, {follows: ['Following','关注'], followers: ['Followers','粉丝'], feed_interests: ['Interests','兴趣标签'], feed_recommend: ['Recommend','查看推荐']});
   Object.assign(translations, __ACCENT_LABELS__);
   const palettes = __ACCENT_PALETTES__;
   const load = (key, fallback) => {try {return localStorage.getItem(key) || fallback;} catch {return fallback;}};

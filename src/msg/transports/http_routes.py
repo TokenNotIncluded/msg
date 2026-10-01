@@ -1106,12 +1106,12 @@ def create_app(service):
                         markdown += '[Sign in again](/login). / 当前浏览器授权无法使用个性化推荐，现显示公开推荐；[重新登录](/login)。'
 
                     controls = (
-                        '<form method="get" action="/feed"><label>Interests / 兴趣标签 '
-                        '<input name="interests" maxlength="640" placeholder="python,ai" value="'
+                        '<form class="feed-filter" method="get" action="/feed"><label for="feed-interests" data-i18n="feed_interests">Interests</label><div class="feed-filter-row">'
+                        '<input id="feed-interests" name="interests" maxlength="640" placeholder="python, ai" value="'
                         + escape(query.get('interests', ''), quote=True)
-                        + '"></label><input type="hidden" name="limit" value="'
+                        + '"><input type="hidden" name="limit" value="'
                         + escape(query.get('limit', '20'), quote=True)
-                        + '"><button type="submit">Recommend / 查看推荐</button></form>'
+                        + '"><button type="submit" data-i18n="feed_recommend">Recommend</button></div></form>'
                     )
                     payload = (
                         document_html(
@@ -2853,7 +2853,24 @@ def create_app(service):
                         + ('/' + key_suffix if key_suffix else '')
                     )
                     browser_html = 'text/html' in request.headers.get('accept', '').casefold()
-                    etag = '"' + digest([value, browser_html])[7:] + '"'
+                    follow_view = operation in {
+                        'communication.agent_following',
+                        'communication.followers',
+                    }
+                    follow_markdown = None
+                    if follow_view:
+                        from msg.plugins.profile import follows_markdown
+
+                        follow_markdown = follows_markdown(
+                            value,
+                            incoming=operation == 'communication.followers',
+                            limit=args.get('limit', 20),
+                        )
+                    markdown_view = (
+                        raw_document
+                        or 'text/markdown' in request.headers.get('accept', '').casefold()
+                    )
+                    etag = '"' + digest([value, browser_html, markdown_view])[7:] + '"'
                     headers = {**BASE_HEADERS, 'ETag': etag, 'Cache-Control': 'private, no-cache'}
                     headers['Vary'] = 'Accept'
                     if browser_html:
@@ -2864,6 +2881,13 @@ def create_app(service):
                         mailbox_html(value, name, account=await browser_account())
                         if browser_html and name in {'in', 'inbox', 'out', 'outbox', 'dm'}
                         else document_html(
+                            follow_markdown,
+                            account=await browser_account(),
+                            raw_path=value['path'],
+                            raw_query=urlencode(dict(request.query_params)),
+                        )
+                        if browser_html and follow_view
+                        else document_html(
                             '# '
                             + value['path']
                             + '\n\n```json\n'
@@ -2871,6 +2895,8 @@ def create_app(service):
                             + '\n```'
                         )
                         if browser_html
+                        else follow_markdown.encode()
+                        if follow_view and markdown_view
                         else canonical(value)
                     )
                     require(len(payload) <= limits.max_response_bytes, 'response_too_large')
@@ -2880,6 +2906,8 @@ def create_app(service):
                         if browser_html
                         else 'text/plain'
                         if raw_document
+                        else 'text/markdown'
+                        if follow_view and markdown_view
                         else 'application/json',
                         headers=headers,
                     )

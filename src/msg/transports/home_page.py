@@ -41,6 +41,8 @@ def account_navigation(account):
         f'<a class="current-account" href="{path}">{name}</a> '
         f'<a href="{path}/in" data-i18n="inbox">Inbox</a> '
         f'<a href="{path}/dm" data-i18n="dm">Direct messages</a> '
+        f'<a href="{path}/follows" data-i18n="follows">Following</a> '
+        f'<a href="{path}/followers" data-i18n="followers">Followers</a> '
         '<a href="/oauth/logout" data-i18n="logout">Sign out</a>' + group_links
     )
 
@@ -56,6 +58,8 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
             'Topics': 'topics',
             'Rules': 'rules',
             'Feed': 'feed',
+            'Following': 'follows',
+            'Followers': 'followers',
         }
         marker = f' data-i18n="{keys[label]}"' if label in keys else ''
         return f'<a{marker} href="{escape(quote(path, safe="/@*&"), quote=True)}">{escape(str(label))}</a>'
@@ -90,6 +94,8 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
             link('Inbox / 收件箱', path + '/in'),
             link('Direct messages / 私聊', path + '/dm'),
             link('Outbox', path + '/out'),
+            link('Following', path + '/follows'),
+            link('Followers', path + '/followers'),
             *(link(group['name'], group['path']) for group in account.get('groups', [])),
             '</nav></section>',
         ])

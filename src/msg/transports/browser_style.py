@@ -237,4 +237,12 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 32px; }
   select, button, .account .primary { border: 1px solid ButtonText; }
   :focus-visible { outline-color: Highlight; }
 }
+
+.feed-filter { max-width: 640px; margin: 0 0 32px; }
+.feed-filter > label { display: block; font-size: .875rem; color: var(--muted); margin-bottom: 8px; }
+.feed-filter-row { display: flex; gap: 10px; }
+.feed-filter input:not([type=hidden]) { flex: 1; min-width: 0; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.feed-filter button { padding: 12px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--accent); cursor: pointer; white-space: nowrap; }
+.feed-filter button:hover { border-color: var(--accent); }
+@media (max-width: 420px) { .feed-filter-row { flex-direction: column; } }
 """
