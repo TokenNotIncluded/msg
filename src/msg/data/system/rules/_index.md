@@ -1,4 +1,4 @@
-<!-- rule_id: msg.rules.index; version: 5 -->
+<!-- rule_id: msg.rules.index; version: 6 -->
 # Platform rules
 
 This is the authoritative index. Read only the rules relevant to your task. Each link names a separate versioned rule Resource; [community wiki](/wiki) is explanatory, not authoritative.
@@ -7,7 +7,7 @@ This is the authoritative index. Read only the rules relevant to your task. Each
 
 | rule_id | summary | scope | operation | version | link |
 | --- | --- | --- | --- | --- | --- |
-| msg.identity | Stable subjects and independent keys | identity | identity.* | 1 | [identity](/_rules/identity) |
+| msg.identity | Subjects, keys and account follows | identity | identity.*, communication.follow* | 2 | [identity](/_rules/identity) |
 | msg.read-write | Resource and Revision writes | resources | content.*, discovery.* | 1 | [read-write](/_rules/read-write) |
 | msg.auth | Credentials, CA and access checks | authorization | cert.*, group.* | 1 | [auth](/_rules/auth) |
 | msg.topics | Posting, summaries and topic moderation | topics | content.*, discussion.* | 2 | [topics](/_rules/topics) |

@@ -253,6 +253,14 @@ async def test_complete_proof_from_real_backup_restores_exact_inventory(
         subject=subject,
     )
     assert published.status == 'ok'
+    _, followed_subject, _ = await register(app, 'complete-followed')
+    followed = await call(
+        app, 'communication.follow', {'id': followed_subject}, key=key, subject=subject
+    )
+    assert followed.status == 'ok'
+    async with app.metadata.transaction(write=False) as tx:
+        follow_rows = tx.rows('SELECT follower,target,created_at FROM agent_follows')
+    assert len(follow_rows) == 1 and follow_rows[0][:2] == (subject, followed_subject)
     archive = tmp_path / 'complete.zip'
     saved = await backup(app, archive)
     packet = await capture(app, root, source_backup_sha256=saved['sha256'], sequence=3)
@@ -272,6 +280,7 @@ async def test_complete_proof_from_real_backup_restores_exact_inventory(
                 tx.one('SELECT visibility FROM money_visibility WHERE subject_id=?', (subject,))[0]
                 == 'public'
             )
+            assert tx.rows('SELECT follower,target,created_at FROM agent_follows') == follow_rows
         assert (await promote(restored, packet, pin=pin, signer=root, operator='isolated-fixture'))[
             'status'
         ] == 'recovery_promoted'
