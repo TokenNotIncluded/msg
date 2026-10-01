@@ -16,14 +16,11 @@
     };
   }
   function position(id) {
-    const r = random(id),
-      radius = 22 + Math.sqrt(r()) * 128,
-      angle = r() * TAU;
-    return [
-      Math.cos(angle) * radius,
-      (r() - 0.5) * 64,
-      Math.sin(angle) * radius,
-    ];
+    if (id === 'u_root') return [0, 0, 0];
+    const r = random(id), radius = 38 + Math.cbrt(r()) * 128;
+    const angle = r() * TAU, elevation = (r() - .5) * 1.45;
+    return [Math.cos(angle) * Math.cos(elevation) * radius,
+      Math.sin(elevation) * radius, Math.sin(angle) * Math.cos(elevation) * radius];
   }
   function satellite(id, center, time = 0) {
     const r = random(id),
@@ -34,6 +31,66 @@
       center[1] + Math.sin(angle * 1.5) * (2 + r() * 6),
       center[2] + Math.sin(angle) * radius,
     ];
+  }
+  // Versioned visual space, independent of page ordering or account wealth.
+  function nebula(count = 1800) {
+    const rng = random('msg:token-manifold:v2:not-accounts'), cloud = [];
+    for (let i = 0; i < count; i++) {
+      const t = rng() * TAU, band = i % 3, spread = 3 + rng() * 14;
+      const x = Math.sin(t) * (102 + band * 15);
+      const y = Math.sin(t * 2) * 24 + (band - 1) * 17;
+      const z = Math.cos(t) * 66 + Math.sin(t * 3) * 18;
+      cloud.push(x + (rng() - .5) * spread, y + (rng() - .5) * spread,
+        z + (rng() - .5) * spread, .85, .85, .85,
+        .12 + rng() * .3, .3 + rng() * .65);
+    }
+    return cloud;
+  }
+  const validTime = (value) => typeof value === 'string' ? Date.parse(value) : NaN;
+  function reserve(value) {
+    const hidden = { known: false, label: 'Not public', fraction: 0 };
+    if (!value || !['public', 'self'].includes(value.visibility)) return hidden;
+    const { amount_minor: raw, scale, code } = value;
+    if (typeof raw !== 'string' || !/^\d{1,19}$/.test(raw) ||
+        !Number.isInteger(scale) || scale < 0 || scale > 12 ||
+        typeof code !== 'string' || !/^[A-Za-z0-9_-]{1,16}$/.test(code)) return hidden;
+    const amount = BigInt(raw);
+    if (amount > 9223372036854775807n) return hidden;
+    const divisor = 10n ** BigInt(scale);
+    const whole = (amount / divisor).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const decimal = scale ? (amount % divisor).toString().padStart(scale, '0').replace(/0+$/, '') : '';
+    // Approximation is exclusively geometric. The amount above stays integer-exact.
+    const units = Number(amount) / 10 ** scale;
+    return { known: true, label: whole + (decimal ? '.' + decimal : '') + ' ' + code,
+      fraction: amount === 0n ? 0 : Math.min(1, .08 + .92 * Math.log10(1 + units) / 4),
+      visibility: value.visibility };
+  }
+  function appearance(node, now = Date.now()) {
+    const facts = node.star || {}, root = node.id === 'u_root';
+    const checked = validTime(facts.checked_at);
+    const fresh = Number.isFinite(checked) && checked <= now + 1000 && now - checked < 90000;
+    const certificate = facts.certificate || {};
+    const certified = fresh && certificate.state === 'valid' && validTime(certificate.expires_at) > now;
+    const presence = facts.presence || {}, reported = validTime(presence.updated_at);
+    const live = fresh && presence.self_reported === true && reported <= now &&
+      validTime(presence.expires_at) > now && ['available', 'busy', 'away'].includes(presence.state);
+    const posted = validTime(facts.last_public_post_at);
+    const recency = fresh && posted <= now ? Math.exp(-(now - posted) / 172800000) : 0;
+    const light = live ? ({ available: 1, busy: .84, away: .52 })[presence.state] : .30 + .48 * recency;
+    const gemColors = [[.93, .77, .49], [.71, .84, .70], [.84, .73, .90], [.91, .65, .52]];
+    const tint = gemColors[Math.floor(random(node.id)() * gemColors.length)];
+    const balance = facts.balance?.visibility === 'self' && node.kind !== 'private'
+      ? null : fresh ? facts.balance : null;
+    return {
+      root, certified, stale: !fresh,
+      radius: root ? 5.4 : certified ? 2.05 : 1.5,
+      color: root ? [1, .98, .94] : certified ? tint : [.84, .84, .82],
+      light: root ? 1 : light,
+      pulse: root ? .035 : live && presence.state !== 'away' ? .045 : 0,
+      presenceLabel: live ? presence.state[0].toUpperCase() + presence.state.slice(1) + ' · self-reported' : 'Presence unknown',
+      certificateLabel: certified ? 'Valid certificate' : fresh && certificate.state === 'none' ? 'No active public certificate' : 'Certificate status unknown',
+      reserve: reserve(balance),
+    };
   }
   function graph(users, posts, time, focus) {
     const stars = users.map((user) => ({
@@ -218,6 +275,9 @@
     handle,
     random,
     position,
+    nebula,
+    appearance,
+    reserve,
     satellite,
     graph,
     canonical,

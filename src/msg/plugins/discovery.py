@@ -360,6 +360,10 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
     if resource.type == 'user':
         subject = await tx.subject(rid)
         meta.update(kind=subject.kind, local_only=subject.local_only)
+        if 'star' in fields:
+            from msg.plugins.star_projection import star_projection
+
+            meta['star'] = await star_projection(app, ctx, request, tx, rid)
         if ctx.principal.subject == rid and (not fields or 'groups' in fields):
             meta['groups'] = []
             for membership in await tx.memberships(rid):
@@ -1041,6 +1045,10 @@ def install(app):
                     if budget is not None:
                         budget.node(len(chosen))
                     data = await metadata(tx, resource)
+                    if resource.type == 'user' and 'star' in chosen:
+                        from msg.plugins.star_projection import star_projection
+
+                        data['star'] = await star_projection(app, ctx, request, tx, rid)
                     require(set(chosen) <= set(data), 'unknown_projection_field')
                     values.append({k: data[k] for k in chosen})
                     position = last_position

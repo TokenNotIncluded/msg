@@ -1,20 +1,48 @@
-# Post universe: /@root/web/
+# Token field: /@root/web/
 
-Direction superseded by the user's 2026-10-01 request: an explorable 3D post
-universe, not an introductory landing page or a game appended to one.
+## Confirmed direction — 2026-10-01
 
-Restrained charcoal space, warm ivory geometry, pale blue replies, ample negative
-space. Accounts are luminous geometric stars. Posts are orbiting satellites.
-Actual reply relations connect constellations; scenery is never fake activity.
-Stable positions make return visits navigable. Approach and reading are the main
-actions; the visit-only expedition encourages exploration without fake rewards.
+User asked to refine the explorable 3D post universe into a black-and-white token
+nebula rather than a blue, realistic galaxy. Pure black stage, geometric clarity,
+sparse ASCII matter, restrained identity color. Fewer persistent explanations.
+No new marketing sections, synthetic users, activity statistics or stock imagery.
 
-Real public data is anonymous-only; private mail is a separate session-authorized
-orbit. Signed posting is explicit. See `docs/post-universe.md` for the trust
-boundary, input controls, reduced motion and read/write contracts. The exact
-release-owned page is hash-pinned and trusted for same-origin reads and signed
-writes; every other hosted page retains its original opaque sandbox.
+## Visual semantics
 
-Verify desktop, 390px mobile, keyboard catalog, reduced motion, WebGL restoration,
-software 3D fallback, script injection, private data disposal and genuine Ed25519
-packet interoperability. Screenshots using fixtures must be labeled as such.
+The immutable root subject is a white geometric star at the origin with a layered
+corona. Active public certificates add modest size, a colored crystal, hexagonal
+seal and diamond mark. Brightness independently follows expiring self-reported
+presence and recent readable public posts. Missing evidence is unknown, not an
+assertion that a person is offline. Public balance uses a thin segmented reserve
+arc, never body size; precise units and configured currency appear on selection.
+Hidden and zero reserves are different. Own private balance belongs only to the
+session owner's private orbit and never to the public graph.
+
+Certificate authorization uses the existing chain validator. The graphic never
+confers permission or a reputation score. Labels, posts and amounts use text nodes;
+no user HTML is inserted. Decorative token glyphs have no identity semantics.
+
+## Interaction and density
+
+Opening hint and exploration mission fade on real interaction and stay dismissed
+for the visit. Help and current mission progress are recoverable with `?`. Core
+navigation, search and posting controls remain visible. Desktop hover has sparse
+labels; mobile selection moves above the detail sheet. Search/catalog offer
+keyboard alternatives. Reduced motion removes decorative motion and transitions.
+Canvas fallback uses the same visual semantics as WebGL. No network/CDN assets.
+
+## Retained security boundary
+
+Only the exact assembled release page receives same-origin connections and pinned
+inline script permission. Arbitrary hosted or edited root pages retain the original
+opaque sandbox. The refinement does not broaden that exception or introduce a
+write route. Private state is separate, no-store, periodically revalidated and
+cleared on hiding/switching. Public observations expire after 90 seconds without a
+refresh; server TTLs and certificate expiry take precedence sooner.
+
+## Evidence
+
+Local Node behavior tests and `scripts/check_nebula_browser.py`. Browser fixtures
+are labeled synthetic, not live account data. The restricted local environment
+supports offline DOM / Canvas verification only; HTTP/WebGL and PostgreSQL tests
+must be separately run before deployment. See `docs/post-universe.md`.
