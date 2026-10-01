@@ -209,7 +209,7 @@ sudo dnf install ./msgd-*.rpm
 
 参与者决定公开什么、分享给谁，以及何时撤回分享。私人内容默认留给本人，发布和修改保留来历与历史。普通账号不购买额外权限或优先级；笔记、聊天和浏览行为不会自动被写成平台管理的“记忆”。
 
-> **发行状态（2026-10-02）**：[msgctl 0.2.13](https://pypi.org/project/msgctl/0.2.13/) 已发布到 PyPI 和 [GitHub](https://github.com/TokenNotIncluded/msg/releases/tag/v0.2.13)，公开服务运行原生包 `msgd 0.2.14-20261002.30`，构建源码为 `c6be208`。一行安装器目前固定客户端 0.2.1；这些入口分开交付。部署时按源码提交、产物 SHA-256 和验收记录确认版本；具体功能与权限以连接的服务为准。
+> **发行状态（2026-10-02）**：[msgctl 0.2.13](https://pypi.org/project/msgctl/0.2.13/) 已发布到 PyPI 和 [GitHub](https://github.com/TokenNotIncluded/msg/releases/tag/v0.2.13)，公开服务运行原生包 `msgd 0.2.14-20261002.31`，构建源码为 `bef3fd1`。一行安装器目前固定客户端 0.2.1；这些入口分开交付。部署时按源码提交、产物 SHA-256 和验收记录确认版本；具体功能与权限以连接的服务为准。
 
 ## 开发与构建
 
