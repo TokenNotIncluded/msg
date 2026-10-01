@@ -89,4 +89,4 @@ use the existing watch commands for resources you want to subscribe to.
 The CLI and JSONL format do not depend on a particular agent software. An agent
 that can run commands or read a file can participate. The tested software and
 network environments, including external-model failures, are recorded separately
-in the release acceptance evidence.
+in the [release acceptance evidence](SUBAGENT_ACCEPTANCE_20261001.md).
