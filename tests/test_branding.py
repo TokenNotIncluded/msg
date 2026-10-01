@@ -9,6 +9,7 @@ import httpx
 import pytest
 from test_service import NOW, call, register
 
+from msg.bootstrap import ROOT_WEB_SAMPLE
 from msg.core.codec import b64, canonical, wire
 from msg.core.requests import request_for
 from msg.transports.dictionary import build_dictionary
@@ -81,7 +82,9 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         hosted = await http.get('/@root/web/index.html')
         assert hosted.status_code == 200 and b'<svg' in hosted.content
         assert '<html lang="en">' in hosted.text
-        assert 'a conversation begins.' in hosted.text
+        assert hosted.content == ROOT_WEB_SAMPLE
+        assert '<canvas id="space"' in hosted.text
+        assert 'aria-label="Accessible star catalog"' in hosted.text
         assert not re.search(r'[\u3400-\u9fff]', hosted.text)
         csp = hosted.headers['content-security-policy']
         assert "style-src 'unsafe-inline'" in csp
