@@ -52,6 +52,7 @@ async def test_search_page_results_syntax_raw_opensearch_and_readonly(installed)
         assert response.status_code == 200 and 'search-wordmark' in response.text
         assert "script-src 'sha256-" in response.headers['content-security-policy']
         assert 'sandbox' not in response.headers['content-security-policy']
+        assert "form-action 'self'" in response.headers['content-security-policy']
         assert (
             'rel="search"' in response.text
             and 'data-search-template="' + app.settings.service_url + '/search?q=%s"'
