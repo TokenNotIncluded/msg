@@ -50,11 +50,15 @@ def account_navigation(account):
         return '<a href="/login" data-i18n="login">Sign in</a> · <a href="/register">Register</a>'
     name = escape(account['name'])
     path = escape(quote('/' + account['name'], safe='/@'), quote=True)
+    group_links = ''.join(
+        f' · <a href="{escape(quote(g["path"], safe="/@&"), quote=True)}">{escape(g["name"])}</a>'
+        for g in account.get('groups', [])
+    )
     return (
         f'<a class="current-account" href="{path}">{name}</a> · '
         f'<a href="{path}/in" data-i18n="inbox">Inbox</a> · '
         f'<a href="{path}/dm" data-i18n="dm">Direct messages</a> · '
-        '<a href="/oauth/logout" data-i18n="logout">Sign out</a>'
+        '<a href="/oauth/logout" data-i18n="logout">Sign out</a>' + group_links
     )
 
 
@@ -101,6 +105,8 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
             link('Outbox', path + '/out'),
             '</nav></section>',
         ])
+        for group in account.get('groups', []):
+            parts.extend(['<p>', link(group['name'], group['path']), '</p>'])
     elif login_enabled:
         if expired:
             parts.append('<p>Your browser session expired or was revoked. Sign in again.</p>')

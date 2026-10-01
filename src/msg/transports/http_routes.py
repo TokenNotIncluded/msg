@@ -87,6 +87,16 @@ def home_markdown(data=None, *, service_url=None, account=None, login_enabled=Fa
             f'\n[Inbox]({path}/in) · [Direct messages]({path}/dm) · '
             f'[Outbox]({path}/out) · [Sign out](/oauth/logout)\n',
             'These links use your browser session and current permissions.\n',
+            'Groups: '
+            + ' · '.join(
+                '['
+                + group['name'].replace('&', r'\&')
+                + ']('
+                + quote(group['path'], safe='/@&')
+                + ')'
+                for group in account.get('groups', [])
+            )
+            + '\n',
         ])
     elif login_enabled:
         if expired:
@@ -891,7 +901,7 @@ def create_app(service):
             identity = await execute_packet(
                 request_for(
                     'discovery.get',
-                    {'id': browser[0], 'fields': ['id', 'name']},
+                    {'id': browser[0], 'fields': ['id', 'name', 'groups']},
                     service.settings.service_url,
                     source='manual',
                 )
@@ -2134,7 +2144,7 @@ def create_app(service):
                     identity = await execute_packet(
                         request_for(
                             'discovery.get',
-                            {'id': browser[0], 'fields': ['id', 'name']},
+                            {'id': browser[0], 'fields': ['id', 'name', 'groups']},
                             service.settings.service_url,
                             source='manual',
                         )
