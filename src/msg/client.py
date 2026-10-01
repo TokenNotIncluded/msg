@@ -685,6 +685,8 @@ class MsgClient:
         )
         if result.status == 'ok':
             self.state.accept_identity(result)
+            self.state.data['handle'] = handle
+            self.state._save()
             self.state.pending_path.unlink(missing_ok=True)
         return result
 

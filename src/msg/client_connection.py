@@ -94,6 +94,8 @@ def expand_connection_args(argv, commands):
         '--migrate-from': 'migrate_from',
         '--certificate': 'certificate',
         '--as-subject': 'as_subject',
+        '--agent': 'agent',
+        '--username': 'username',
     }
     index = 0
     while index < len(argv) and argv[index].startswith('-'):

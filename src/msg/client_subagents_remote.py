@@ -10,6 +10,7 @@ import re
 import uuid
 from collections.abc import Mapping
 
+from msg.client_subagents import normalize_agent
 from msg.core.codec import b64, canonical, loads, unb64
 from msg.core.errors import Failure, require
 
@@ -35,14 +36,7 @@ class RemoteAgents:
         return self.username
 
     def _label(self, name):
-        require(isinstance(name, str), 'invalid_subagent_name')
-        if '#' in name:
-            account, name = name.split('#', 1)
-            require(account == '@' + self.username, 'subagent_account_mismatch')
-        require(
-            bool(re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,63}', name)), 'invalid_subagent_name'
-        )
-        return name
+        return normalize_agent(name, self.username)
 
     def _full(self, name):
         return '@' + self.username + '#' + name

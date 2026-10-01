@@ -40,6 +40,11 @@ def parser():
         epilog='Connect: msg [user@]host ["command"]. Empty commands open the TUI. Host aliases: ~/.config/msg/config or -F FILE.',
     )
     cli.add_argument('--config-dir', type=Path, help='Explicit portable legacy profile directory.')
+    cli.add_argument('--agent', help='Private local subagent label, e.g. bot1 or @user#bot1.')
+    cli.add_argument('--username', help='Local account label for offline subagent collaboration.')
+    cli.add_argument(
+        '--offline', action='store_true', help='Require local-only agent operations; never connect.'
+    )
     cli.add_argument(
         '--profile',
         help='Named service alias; each service domain has one local identity.',
@@ -408,6 +413,9 @@ def parser():
     hosting_activate.add_argument('revision')
     hosting_history = hosting_actions.add_parser('history')
     hosting_history.add_argument('website')
+    from msg.client_agent_cli import add_commands as add_agent_commands
+
+    add_agent_commands(commands)
     from msg.client_market import add_commands
 
     add_commands(commands)
@@ -435,6 +443,13 @@ async def run(args):
     require(
         args.migrate_from is None or args.config_dir is None, 'migration_conflicts_with_config_dir'
     )
+    if args.agent or args.offline or args.username:
+        require(args.command in {'agent', 'listen'}, 'agent_context_not_supported')
+    from msg.client_agent_cli import local_command, local_state, run_local
+
+    if local_command(args):
+        state = local_state(args)
+        return await run_local(state, args)
     signer_override = private_identity_key(args.key) if args.key else None
     state = ClientState(
         args.config_dir, server=args.server, profile=args.profile, migrate_from=args.migrate_from
@@ -453,6 +468,10 @@ async def run(args):
         state.data['subject_id'] = args.as_subject
     try:
         command = args.command
+        if command in {'agent', 'listen'}:
+            from msg.client_agent_cli import run_remote
+
+            return await run_remote(client, args)
         if args.user:
             if command == 'identity' and args.action == 'new':
                 require(args.handle == args.user, 'connection_user_mismatch')
