@@ -1,0 +1,43 @@
+name: Post universe
+on:
+  push:
+    branches: [feat/post-universe]
+  pull_request:
+    paths:
+      - 'src/msg/data/root-web*'
+      - 'src/msg/web/**'
+      - 'src/msg/extensions/hosting.py'
+      - 'tests/test_universe*'
+      - 'scripts/check_universe*'
+      - '.github/workflows/post-universe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: post-universe-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Archive exact source for reproducible review
+        run: git archive --format=tar.gz HEAD -o /tmp/post-universe-source.tar.gz
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: post-universe-source
+          path: /tmp/post-universe-source.tar.gz
+          retention-days: 7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install project
+        run: |
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+      - name: Verify hosted-page boundaries
+        run: uv run pytest tests/test_branding.py tests/test_root_web_release.py
