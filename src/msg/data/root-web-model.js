@@ -2,6 +2,9 @@
 (() => {
   "use strict";
   const TAU = Math.PI * 2;
+  function handle(name) {
+    return "@" + String(name || "").replace(/^\/?@+/, "");
+  }
   function random(seed) {
     let h = 2166136261;
     for (const c of seed) h = Math.imul(h ^ c.codePointAt(0), 16777619);
@@ -212,6 +215,7 @@
   }
   globalThis.MSGUniverse = Object.freeze({
     TAU,
+    handle,
     random,
     position,
     satellite,
