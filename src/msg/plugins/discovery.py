@@ -40,6 +40,7 @@ from msg.core.models import (
     ResourceRef as ResourceRef,
     Revision as Revision,
 )
+from msg.core.post_preview import post_preview
 from msg.core.read_query import (
     MAX_READ_DEPTH,
     NESTED_FIELDS,
@@ -359,6 +360,10 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
     if resource.type == 'user':
         subject = await tx.subject(rid)
         meta.update(kind=subject.kind, local_only=subject.local_only)
+        if not fields or 'profile' in fields:
+            from msg.plugins.profile import account_activity
+
+            meta['profile'] = await account_activity(app, ctx, request, tx, rid)
     if (
         resource.name == 'keys'
         and resource.parent is not None
@@ -415,6 +420,22 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
                 break
         meta['items'] = values
         meta['list_operation'] = next_link(app, 'discovery.list', {'parent': rid})
+        if not fields:
+            from msg.plugins.mail_views import conversation_view, message_preview
+
+            conversation = await conversation_view(app, ctx, request, tx, rid, values)
+            if conversation is not None:
+                meta['conversation'] = conversation
+            else:
+                for item in values:
+                    if item['type'] == 'post':
+                        preview = await message_preview(app, ctx, request, tx, item['id'])
+                        if preview is not None:
+                            item['preview'] = {
+                                key: value
+                                for key, value in preview.items()
+                                if key not in {'body', 'id', 'path', 'truncated'}
+                            }
     elif resource.revision:
         rev = await tx.revision(ResourceRef(id=rid, revision=revision))
         meta.update(
@@ -470,6 +491,7 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'generation',
         'path',
         'content',
+        'conversation',
         'items',
         'keys',
         'certificates',
@@ -479,6 +501,7 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'transfer_operation',
         'kind',
         'local_only',
+        'profile',
         'list_operation',
         'summary',
         'change_note',
@@ -594,6 +617,7 @@ def install(app):
         posts = posts_today = users = 0
         latest = []
         channels = []
+        channel_posts = {}
         position = None
         while True:
             require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
@@ -617,10 +641,26 @@ def install(app):
                     users += (await tx.subject(rid)).kind != 'system'
                     continue
                 posts += 1
+                for ancestor in await tx.ancestors(rid):
+                    if ancestor.type == 'topic' and ancestor.parent == ROOT_SPACE:
+                        channel_posts[ancestor.id] = channel_posts.get(ancestor.id, 0) + 1
                 posts_today += resource.created_at.astimezone(timezone).date() == today
                 if len(latest) < 5:
+                    body = ''
+                    if resource.revision:
+                        revision = await tx.revision(ResourceRef(id=rid))
+                        if revision.content.media_type.startswith('text/'):
+                            # Read only a small prefix, after the public-read check.
+                            raw = b''.join([
+                                piece
+                                async for piece in app.contents.read(
+                                    revision.content, (0, min(revision.content.size, 8192))
+                                )
+                            ])
+                            body = raw.decode('utf-8', errors='ignore')
                     latest.append({
                         'name': resource.name,
+                        **post_preview(resource.name, body),
                         'path': '/*' + hex_id(rid),
                         'created_at': resource.created_at.astimezone(timezone).isoformat(),
                     })
@@ -674,6 +714,7 @@ def install(app):
                     'wiki': 'Community guidance',
                 }.get(resource.name, 'Discussion'),
                 'posting': posting,
+                'posts': channel_posts.get(resource.id, 0),
             })
         return HandlerOutput(
             data={

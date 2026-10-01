@@ -24,7 +24,7 @@ async def test_public_channels_show_current_read_and_post_requirements(installed
     for private in ('/private', '/admins', '/tools', '/_ca', '/.agents'):
         assert private not in channels
     assert all(
-        set(channel) == {'name', 'path', 'read', 'posting', 'mode', 'about'}
+        set(channel) == {'name', 'path', 'read', 'posting', 'mode', 'about', 'posts'}
         for channel in channels.values()
     )
 
@@ -76,6 +76,7 @@ def test_channel_names_and_paths_are_escaped_and_failure_is_honest():
                 'posting': 'closed',
                 'mode': '0555',
                 'about': 'Discussion',
+                'posts': 0,
             }
         ],
     }

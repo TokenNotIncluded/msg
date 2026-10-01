@@ -73,6 +73,35 @@ def test_migration_conflict_retains_every_source_file(xdg_home):
     assert old.key_path.exists() and old.path.exists()
 
 
+def test_initialized_service_ignores_leftover_legacy_identity(xdg_home):
+    current = ClientState(server='https://work.example.org')
+    current.save_signer(Ed25519Signer.generate())
+    current.ensure_encryption_key()
+    public = current.signer.public_key
+    recipient = current.encryption_recipient
+    old = ClientState(ClientPaths.discover().config)
+    old.save_signer(Ed25519Signer.generate())
+    before = {path.name: path.read_bytes() for path in old.directory.iterdir() if path.is_file()}
+    default = ClientState()
+    assert default.signer.public_key == public
+    assert default.encryption_recipient == recipient
+    assert before == {
+        path.name: path.read_bytes() for path in old.directory.iterdir() if path.is_file()
+    }
+    with pytest.raises(Failure, match='client_migration_conflict'):
+        ClientState(migrate_from=old.directory)
+
+
+def test_uninitialized_service_still_imports_legacy_identity(xdg_home):
+    ClientState(server='https://work.example.org')
+    old = ClientState(ClientPaths.discover().config)
+    old.save_signer(Ed25519Signer.generate())
+    public = old.signer.public_key
+    default = ClientState()
+    assert default.signer.public_key == public
+    assert not old.key_path.exists()
+
+
 def test_symlink_directory_is_rejected_without_chmod_target(xdg_home):
     target = xdg_home / 'target'
     target.mkdir(mode=0o755)

@@ -120,6 +120,20 @@ async def require_source(tx, body, now, *, custodial_ceiling):
 
 
 async def require_binding(tx, credential, now, config, *, custodial_ceiling):
+    browser = tx.one('SELECT body FROM oauth_states WHERE id=?', ('browser:' + credential.id,))
+    if browser is not None:
+        require(config is not None and config.enabled, 'oauth_disabled')
+        source = loads(browser[0])
+        require(
+            credential.source_credential_id == source['parent']
+            and credential.subject_id == source['subject'],
+            'invalid_grant',
+        )
+        await require_source(tx, source, now, custodial_ceiling=custodial_ceiling)
+        await require_ceiling(
+            tx, credential.ceiling, tuple(decode(CapabilityGrant, raw) for raw in source['ceiling'])
+        )
+        return
     api = tx.one('SELECT body FROM oauth_states WHERE id=?', ('api:' + credential.id,))
     if api is not None:
         source = loads(api[0])
@@ -134,6 +148,7 @@ async def require_binding(tx, credential, now, config, *, custodial_ceiling):
     if row is None:
         require(
             not credential.id.startswith('t_oauth_')
+            and not credential.id.startswith('t_browser_')
             and (credential.source_credential_id is None or api is not None),
             'invalid_grant',
         )
@@ -285,7 +300,44 @@ class OAuthService:
             parent = await tx.credential(body['parent'])
             if parent.expires_at is not None:
                 session_expiry = min(session_expiry, parent.expires_at)
-            put(tx, state_id('session', cookie), 'session', session_expiry, body)
+            session_id = state_id('session', cookie)
+            credential_id = 't_browser_' + uuid4().hex
+            operations = {
+                f'{op.name}@{op.version}'
+                for op in self.app.registry.operations()
+                if op.effect == 'read'
+                and not op.require_signature
+                and not op.anonymous_only
+                and not op.name.startswith(('identity.', 'root.', 'system.'))
+            }
+            ceiling = tuple(
+                replace(g, operations=g.operations & operations)
+                for raw in body['ceiling']
+                if (g := decode(CapabilityGrant, raw)).operations & operations
+            )
+            await tx.save_credential(
+                Credential(
+                    id=credential_id,
+                    subject_id=body['subject'],
+                    kind='token',
+                    verifier=hashlib.sha256(self.browser_secret(cookie)).digest(),
+                    ceiling=ceiling,
+                    not_before=now,
+                    expires_at=session_expiry,
+                    revoked_at=None,
+                    source_credential_id=body['parent'],
+                ),
+                body['auth_version'],
+            )
+            body['browser_credential'] = credential_id
+            put(tx, session_id, 'session', session_expiry, body)
+            put(
+                tx,
+                'browser:' + credential_id,
+                'browser',
+                session_expiry,
+                dict(body, session=session_id),
+            )
             return {'cookie': cookie, 'expires': session_expiry}, None
         return await self.tokens(tx, body), None
 
@@ -302,6 +354,29 @@ class OAuthService:
             for name in ('subject', 'parent', 'auth_version', 'custodial', 'ceiling', 'auth_time')
         }
         return expiry, dict(source, session=id)
+
+    def browser_secret(self, cookie):
+        return hmac.digest(
+            self.app._token_secret, b'msg-browser-read-v1:' + cookie.encode(), 'sha256'
+        )
+
+    async def browser_credentials(self, tx, cookie):
+        _, source = await self.session(tx, cookie)
+        _, body = get(tx, source['session'], self.app.clock())
+        require('browser_credential' in body, 'invalid_grant')
+        credential = await tx.credential(body['browser_credential'])
+        require(
+            credential.revoked_at is None and credential.expires_at > self.app.clock(),
+            'invalid_grant',
+        )
+        await require_binding(
+            tx,
+            credential,
+            self.app.clock(),
+            self.config,
+            custodial_ceiling=self.app.temporary_ceiling(),
+        )
+        return source['subject'], credential.id, self.browser_secret(cookie)
 
     def authorization(self, args):
         require(

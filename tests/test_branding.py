@@ -1,4 +1,4 @@
-"""The homepage is Markdown even for browsers; hosted files keep their own media type."""
+"""Browsers receive the rendered homepage; agents receive Markdown."""
 
 import re
 from dataclasses import replace
@@ -25,11 +25,12 @@ async def test_logo_is_packaged_and_served_read_only(installed):
     ) as http:
         browser = await http.get('/', headers={'Accept': 'text/html'})
         assert browser.status_code == 200
-        assert browser.headers['content-type'].startswith('text/plain')
-        assert b'<html' not in browser.content and browser.content.startswith(b'# msg\n')
-        assert b'<script' not in browser.content
-        assert f'Service: <{app.settings.service_url}>' in browser.text
-        assert 'sandbox' in browser.headers['content-security-policy']
+        assert browser.headers['content-type'].startswith('text/html')
+        assert b'<html' in browser.content and b'<table>' in browser.content
+        assert b'document.modelContext' in browser.content
+        assert f'Service: {app.settings.service_url}' in browser.text
+        assert 'sandbox' not in browser.headers['content-security-policy']
+        assert "script-src 'sha256-" in browser.headers['content-security-policy']
         agent = await http.get('/', headers={'Accept': 'text/markdown'})
         assert agent.status_code == 200
         assert agent.headers['content-type'].startswith('text/markdown')
@@ -42,10 +43,11 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert 'Public users: 0' in agent.text
         assert 'No public posts yet.' in agent.text
         assert (
-            '| [main](/main) | General discussion | [1777](/main/meta) | identity |' in agent.text
+            '| [main](/main) | General discussion | 0 | [1777](/main/meta) | identity |'
+            in agent.text
         )
         assert (
-            '| [certified](/certified) | Certificate-gated discussion | [5777](/certified/meta) | identity +cert |'
+            '| [certified](/certified) | Certificate-gated discussion | 0 | [5777](/certified/meta) | identity +cert |'
             in agent.text
         )
         assert agent.text.count('Writes require identity') == 1
@@ -53,21 +55,21 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert 'Asia/Taipei' in agent.text
         assert browser.headers['cache-control'] == 'no-store'
         assert 'sandbox' in agent.headers['content-security-policy']
-        assert browser.content == agent.content
-        assert not re.search(r'[\u3400-\u9fff]', browser.text)
+        assert browser.content != agent.content
+        assert 'Vary' in browser.headers
         browser_head = await http.head('/', headers={'Accept': 'text/html'})
         assert browser_head.content == b''
-        assert browser_head.headers['content-type'].startswith('text/plain')
+        assert browser_head.headers['content-type'].startswith('text/html')
         assert browser_head.headers['content-length'] == str(len(browser.content))
         assert (await http.post('/', content=b'overwrite')).status_code == 405
         for path in ('/AGENTS.md', '/main', '/_rules'):
             document = await http.get(path, headers={'Accept': 'text/html'})
             assert document.status_code == 200
-            assert document.headers['content-type'].startswith('text/plain')
+            assert document.headers['content-type'].startswith('text/html')
             markdown = await http.get(path, headers={'Accept': 'text/markdown'})
             assert markdown.headers['content-type'].startswith('text/markdown')
-            assert document.content == markdown.content
-            assert 'sandbox' in document.headers['content-security-policy']
+            assert b'<main>' in document.content and document.content != markdown.content
+            assert 'sandbox' not in document.headers['content-security-policy']
             assert document.headers['x-content-type-options'] == 'nosniff'
             assert 'sandbox' in markdown.headers['content-security-policy']
         favicon = await http.get('/favicon.png')
@@ -153,6 +155,8 @@ async def test_home_counts_dates_recent_posts_and_current_public_access(installe
         assert 'Total public posts: 7' in response.text
         assert 'Posts today: 6' in response.text
         assert 'Public users: 1' in response.text
+        assert '| [main](/main) | General discussion | 7 |' in response.text
+        assert '| [intro](/intro) | Introductions | 0 |' in response.text
         assert 'Today: 2026-09-27 (Asia/Taipei)' in response.text
         latest = response.text.split('## Latest posts')[1]
         assert all(paths[f'recent-{i}'] in latest for i in range(1, 6))
@@ -205,6 +209,117 @@ def test_home_statistics_failure_keeps_rules_and_does_not_report_false_counts():
     assert '[WebSub / RSS](/rss.xml)' in page
     assert 'Total public posts: 0' not in page
     assert 'No public posts yet.' not in page
+
+
+@pytest.mark.parametrize(
+    ('name', 'body', 'title', 'excerpt'),
+    [
+        (
+            'p_' + 'a' * 32 + '.md',
+            '# Real **title**\n\nA [useful](https://example.org) preview.',
+            'Real title',
+            'A useful preview.',
+        ),
+        (
+            'p_' + 'a' * 32 + '.md',
+            'A post without a heading.\n\nMore context.',
+            'A post without a heading.',
+            'More context.',
+        ),
+        ('p_' + 'a' * 32 + '.md', '', 'Untitled post', ''),
+        (
+            'Named post.md',
+            '---\nsecret: metadata\n---\n```md\n# Code\n```\n# Actual title\nText',
+            'Actual title',
+            'Text',
+        ),
+    ],
+)
+def test_post_previews(name, body, title, excerpt):
+    from msg.core.post_preview import post_preview
+
+    assert post_preview(name, body) == {'title': title, 'excerpt': excerpt}
+
+
+def test_post_preview_limits_and_home_escaping():
+    from msg.core.post_preview import post_preview
+    from msg.transports.http_routes import home_markdown
+
+    preview = post_preview('generated.md', '# ' + '标' * 120 + '\n' + '文' * 240)
+    assert len(preview['title']) == 96 and preview['title'].endswith('…')
+    assert len(preview['excerpt']) == 180 and preview['excerpt'].endswith('…')
+    page = home_markdown({
+        'posts': 1,
+        'posts_today': 1,
+        'users': 1,
+        'date': '2026-10-01',
+        'timezone': 'Asia/Taipei',
+        'latest': [
+            {
+                'name': 'internal.md',
+                'title': '[title]<script>',
+                'excerpt': '[preview](evil) &copy;\n# injected',
+                'path': '/*abc',
+                'created_at': '2025-10-01T14:29:39.770001+08:00',
+            }
+        ],
+    }).decode()
+    assert r'\[title\]\<script\>' in page
+    assert r'\[preview\](evil) \&copy; # injected' in page
+    assert '2025-10-01 14:29' in page and '770001' not in page
+
+
+@pytest.mark.asyncio
+async def test_home_preview_and_channel_counts_include_public_replies(installed):
+    app, _ = installed
+    key, uid, cert = await register(app, 'preview-author')
+    parent = await call(
+        app,
+        'content.post_create',
+        {
+            'parent': '/main',
+            'body': '# Human title\n\nReadable preview with [link](https://example.org).',
+        },
+        key=key,
+        subject=uid,
+        certs=(cert,),
+    )
+    assert parent.status == 'ok', parent.error
+    rid = parent.resources[0].id
+    reply = await call(
+        app,
+        'discussion.reply',
+        {'target': {'id': rid}, 'body': '# A reply\n\nReply preview.'},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+    )
+    assert reply.status == 'ok', reply.error
+    secret = await call(
+        app,
+        'content.post_create',
+        {'parent': '/main', 'body': '# Private title\n\nPrivate preview.'},
+        key=key,
+        subject=uid,
+        certs=(cert,),
+    )
+    assert secret.status == 'ok', secret.error
+    async with app.metadata.transaction(write=True) as tx:
+        resource = await tx.resource(secret.resources[0].id)
+        await tx.replace(
+            replace(resource, mode=0o600, generation=resource.generation + 1), resource.generation
+        )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        page = (await http.get('/')).text
+        assert '[Human title](/*' in page and '[A reply](/*' in page
+        assert 'Readable preview with link.' in page
+        assert 'Private title' not in page and 'Private preview' not in page
+        assert '| [main](/main) | General discussion | 2 |' in page
+        latest = page.split('## Latest posts')[1].split('## Channels')[0]
+        assert '.md]' not in latest and '+08:00' not in latest
+        assert '09-27 08:00' in latest
 
 
 def test_game_script_permission_is_pinned_to_exact_bundled_root_page():

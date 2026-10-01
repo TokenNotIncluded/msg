@@ -16,9 +16,11 @@ from msg.core.errors import Failure, require
 from msg.core.models import TokenProof
 from msg.core.requests import request_for
 from msg.security.oauth import DEVICE_GRANT, OAuthService, get, save, secret, state_id
+from msg.transports.home_page import PREFERENCES, THEME_CSS
 from msg.transports.http_common import body_bytes
 from msg.transports.packet import decode_packet
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
+from msg.transports.webmcp import WEBMCP_HASH, WEBMCP_TAG
 
 HEADERS = {
     'Cache-Control': 'no-store',
@@ -27,7 +29,7 @@ HEADERS = {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; "
-    "script-src 'nonce-msg'; connect-src 'self'; form-action 'self'; "
+    f"script-src 'nonce-msg' 'sha256-{WEBMCP_HASH}'; connect-src 'self'; form-action 'self'; "
     "frame-ancestors 'none'; base-uri 'none'",
 }
 
@@ -38,19 +40,26 @@ def json(value, status=200):
 
 def page(title, body):
     return HTMLResponse(
-        '<!doctype html><html lang="zh"><meta charset="utf-8">'
+        '<!doctype html><html lang="en"><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<title>' + escape(title) + '</title><style>'
         'body{font:17px system-ui;background:#faf9f6;color:#252525;margin:0;}'
         'main{max-width:540px;margin:12vh auto;padding:32px;line-height:1.7;}'
         'h1{font-size:30px;}code{font-size:21px;word-break:break-all;}'
         'button,input,textarea{font:inherit;padding:10px 16px;margin:8px 0;}'
-        'button{cursor:pointer;}a{color:inherit;}</style><main><h1>'
+        'button{cursor:pointer;}a{color:inherit;}' + THEME_CSS + '</style><main>'
+        '<nav><a href="/">msg / Home</a> · <a href="/register">Register</a> · <a href="?format=raw">raw</a></nav>'
+        + PREFERENCES
+        + '<h1>'
         + escape(title)
         + '</h1>'
         + body
-        + '</main></html>',
-        headers=HEADERS,
+        + '</main>'
+        + WEBMCP_TAG
+        + '</html>',
+        # Form POSTs need a non-opaque Origin for the same-origin CSRF fence.
+        # no-referrer makes navigation POST origins null in Chromium.
+        headers={**HEADERS, 'Referrer-Policy': 'strict-origin'},
     )
 
 
@@ -122,13 +131,72 @@ class OAuthBoundary:
             return
         request = Request(scope, receive)
         path = request.url.path
-        oauth_path = path.startswith('/oauth/') or path in {
-            '/.well-known/oauth-authorization-server',
-            '/.well-known/openid-configuration',
-        }
+        oauth_path = (
+            path == '/login'
+            or path.startswith('/oauth/')
+            or path
+            in {
+                '/.well-known/oauth-authorization-server',
+                '/.well-known/openid-configuration',
+            }
+        )
         bearer = request.headers.get('authorization')
         if not oauth_path and not (bearer and path.startswith('/-/p/')):
-            await self.app(scope, receive, send)
+            cookie = request.cookies.get(self.session_cookie, '')
+            browser_read = (
+                cookie
+                and request.method in {'GET', 'HEAD'}
+                and self.oauth.config.enabled
+                and not path.startswith('/-/')
+                and not request.headers.get('x-msg-request')
+                and not bearer
+            )
+            if browser_read:
+                try:
+                    require_safe_request_target(
+                        scope.get('raw_path') or path.encode(),
+                        scope.get('query_string', b''),
+                        maximum=self.service.settings.server.limits.max_path_bytes,
+                    )
+                    require_matching_host(
+                        request.headers.getlist('host'), urlsplit(self.service.settings.service_url)
+                    )
+                    require(
+                        request.headers.get('origin') in {None, self.service.settings.service_url},
+                        'forbidden_origin',
+                    )
+                    async with self.service.metadata.transaction(write=False) as tx:
+                        credentials = await self.oauth.browser_credentials(tx, cookie)
+                    scope.setdefault('state', {})['msg_browser_credentials'] = credentials
+                except Failure as exc:
+                    if exc.code not in {'invalid_grant', 'credential_not_found'}:
+                        status = (
+                            503
+                            if exc.code in {'recovery_quarantined', 'recovery_runtime_stale'}
+                            else 400
+                        )
+                        await json({'error': exc.code}, status)(scope, receive, send)
+                        return
+                    scope.setdefault('state', {})['msg_browser_expired'] = True
+
+                async def private_send(message):
+                    if message['type'] == 'http.response.start':
+                        headers = [
+                            (k, v) for k, v in message['headers'] if k.lower() != b'cache-control'
+                        ]
+                        message = dict(
+                            message,
+                            headers=headers
+                            + [
+                                (b'cache-control', b'private, no-store'),
+                                (b'vary', b'Cookie'),
+                            ],
+                        )
+                    await send(message)
+
+                await self.app(scope, receive, private_send)
+            else:
+                await self.app(scope, receive, send)
             return
         try:
             raw = scope.get('raw_path') or path.encode()
@@ -182,6 +250,22 @@ class OAuthBoundary:
                     return {'type': 'http.request', 'body': data, 'more_body': False}
 
                 await self.app(scope, bound_receive, send)
+                return
+            if (path.startswith('/oauth/') or path == '/login') and (
+                request.method in {'GET', 'HEAD'} and request.query_params.get('format') == 'raw'
+            ):
+                from starlette.responses import PlainTextResponse
+
+                require(
+                    request.query_params.multi_items() == [('format', 'raw')], 'invalid_request'
+                )
+                response = PlainTextResponse(
+                    '# Sign in to MSG\n\nOpen /login, then confirm its code with `msg auth approve XXXXXXXX`.\n\nUse your registered CLI profile. New users: /register.\n',
+                    headers=HEADERS,
+                )
+                if request.method == 'HEAD':
+                    response.body = b''
+                await response(scope, receive, send)
                 return
             require(self.oauth.config.enabled, 'oauth_disabled')
             response = await self.dispatch(request)
@@ -240,24 +324,28 @@ class OAuthBoundary:
         if path != '/oauth/userinfo':
             async with self.service.metadata.transaction(write=True) as tx:
                 self.oauth.rate(tx, request.client.host if request.client else '')
-        if path == '/oauth/login':
+        if path in {'/login', '/oauth/login'}:
             require(request.method == 'GET', 'method_not_allowed')
             async with self.service.metadata.transaction(write=True) as tx:
                 self.oauth.fence(tx)
-                value, code, _ = self.oauth.pending(tx, kind='login')
+                value, code, _ = self.oauth.pending(
+                    tx, kind='login', scope='openid profile msg.read'
+                )
             response = page(
-                '登录 MSG',
-                '<p>在已登录的 CLI 中确认这次浏览器登录：</p><code>msg auth approve '
+                'Sign in to MSG',
+                '<p>Approve this browser sign-in from a signed-in CLI:</p><code>msg auth approve '
                 + escape(code)
-                + '</code><p id="status">等待确认…</p><p><a href="/oauth/signup">'
-                '没有身份？申请托管 key</a></p><script nonce="msg">'
+                + '</code><p>This browser can read content, your inbox, and direct messages you have permission to access. Only approve if you opened this page.</p>'
+                '<p><a href="/register">Register using the CLI</a> · <a href="/login?format=raw">raw</a></p><p id="status">Waiting for approval…</p><p><a href="/oauth/signup">'
+                'No identity? Create a hosted identity</a></p><script nonce="msg">'
                 'const c=' + canonical(csrf(value)).decode() + ';'
                 'const poll=async()=>{const r=await fetch("/oauth/login/poll",{method:"POST",'
                 'headers:{"Content-Type":"application/json"},body:JSON.stringify({csrf:c})});'
                 'const d=await r.json();if(d.logged_in){document.getElementById("status").textContent='
-                '"登录完成。返回原授权页面继续。";return;}if(["authorization_pending","slow_down"].includes(d.error))'
+                '"Signed in.";const a=document.createElement("a");a.href="/";a.textContent="Back to home";'
+                'document.getElementById("status").append(" ",a);return;}if(["authorization_pending","slow_down"].includes(d.error))'
                 '{setTimeout(poll,d.error==="slow_down"?15000:5000);}else{document.getElementById("status").textContent='
-                '"登录未完成，请重新打开本页。";}};setTimeout(poll,5000);</script>',
+                '"Sign-in was not completed. Please reopen this page.";}};setTimeout(poll,5000);</script>',
             )
             self.cookie(response, self.login_cookie, value, 600)
             return response
@@ -265,12 +353,12 @@ class OAuthBoundary:
             if request.method == 'GET':
                 binder = secret()
                 response = page(
-                    '申请托管 key',
-                    '<p>服务器会保管签名和加密密钥。之后可升级为自行保管。</p>'
+                    'Create a hosted identity',
+                    '<p>The server will store your signing and encryption keys. You can switch to managing your own keys later.</p>'
                     '<form method="post">'
                     + fields({'csrf': csrf(binder)})
-                    + '<input name="handle" placeholder="身份名称" required pattern="[a-z][a-z0-9-]{1,40}">'
-                    '<br><button>创建身份并登录</button></form>',
+                    + '<input name="handle" placeholder="Identity handle" required pattern="[a-z][a-z0-9-]{1,40}">'
+                    '<br><button>Create identity and sign in</button></form>',
                 )
                 self.cookie(response, self.login_cookie, binder, 600)
                 return response
@@ -314,8 +402,8 @@ class OAuthBoundary:
                 logged, error = await self.oauth.pending_result(tx, value, 'msg-cli', 'login')
                 require(error is None, 'server_error')
             response = page(
-                '登录完成',
-                '<p>托管身份已创建。返回原授权页面继续。请保存登录态，退出后需用已授权 CLI 登录。</p>',
+                'Signed in',
+                '<p>Your hosted identity has been created. Return to the authorization page to continue. Keep this browser session; after signing out, you will need a signed-in CLI to sign in again.</p>',
             )
             self.cookie(
                 response,
@@ -344,6 +432,16 @@ class OAuthBoundary:
             return response
         if path in {'/oauth/authorize', '/oauth/device'}:
             return await self.consent(request)
+        if path == '/oauth/logout' and request.method == 'GET':
+            cookie = request.cookies.get(self.session_cookie, '')
+            async with self.service.metadata.transaction(write=False) as tx:
+                await self.oauth.session(tx, cookie)
+            return page(
+                'Sign out of MSG',
+                '<form method="post" action="/oauth/logout">'
+                + fields({'csrf': csrf(cookie)})
+                + '<button>Confirm sign-out</button></form>',
+            )
         require(
             request.method == 'POST' or (path == '/oauth/userinfo' and request.method == 'GET'),
             'method_not_allowed',
@@ -444,9 +542,9 @@ class OAuthBoundary:
                 code = auth_args.get('user_code', '').upper().replace('-', '')
                 if not code:
                     return page(
-                        '设备登录',
-                        '<form method="get"><input name="user_code" placeholder="验证码" required>'
-                        '<button>继续</button></form>',
+                        'Device sign-in',
+                        '<form method="get"><input name="user_code" placeholder="Approval code" required>'
+                        '<button>Continue</button></form>',
                     )
                 _, pending = get(tx, state_id('user', code), self.service.clock())
                 require(
@@ -467,24 +565,24 @@ class OAuthBoundary:
                     raise
                 require(request.method == 'GET', 'invalid_grant')
                 return page(
-                    '登录后继续',
-                    '<p>' + escape(client.name) + ' 请求使用你的 MSG 身份。</p>'
-                    '<p><a href="/oauth/login" target="_blank" rel="noopener">打开登录页面</a></p>'
-                    '<p>登录完成后，<a href="'
+                    'Sign in to continue',
+                    '<p>' + escape(client.name) + ' requests access to your MSG identity.</p>'
+                    '<p><a href="/oauth/login" target="_blank" rel="noopener">Open sign-in page</a></p>'
+                    '<p>After signing in, <a href="'
                     + escape(str(request.url), quote=True)
-                    + '">刷新继续</a>。</p>',
+                    + '">refresh to continue</a>.</p>',
                 )
             if request.method == 'GET':
                 return page(
-                    '授权给 ' + client.name,
-                    '<p>身份：'
+                    'Authorize ' + client.name,
+                    '<p>Identity: '
                     + escape(source['subject'])
-                    + '</p><p>权限：'
+                    + '</p><p>Permissions: '
                     + escape(' '.join(scopes))
                     + '</p><form method="post">'
                     + fields(dict(auth_args, csrf=csrf(cookie)))
-                    + '<button name="decision" value="approve">同意</button> '
-                    '<button name="decision" value="deny">拒绝</button></form>',
+                    + '<button name="decision" value="approve">Approve</button> '
+                    '<button name="decision" value="deny">Deny</button></form>',
                 )
             self.require_csrf(request, args, self.session_cookie)
             require(args.get('decision') in {'approve', 'deny'}, 'invalid_request')
@@ -494,7 +592,7 @@ class OAuthBoundary:
                     pending.update(source)
                 pending['status'] = 'approved' if args['decision'] == 'approve' else 'denied'
                 save(tx, id, pending)
-                return page('已确认', '<p>可以返回 CLI 继续。</p>')
+                return page('Confirmed', '<p>You can return to the CLI to continue.</p>')
             redirect = {'state': auth_args['state']}
             if args['decision'] == 'approve':
                 auth_args.setdefault('scope', 'openid profile')
