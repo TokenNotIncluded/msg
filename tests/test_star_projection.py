@@ -54,9 +54,7 @@ async def test_certificate_badge_rechecks_chain_key_time_and_readability(
         elif broken == 'key':
             credential = await tx.credential(key.key_id)
             identity = await tx.subject(subject)
-            await tx.save_credential(
-                replace(credential, revoked_at=NOW), identity.auth_version
-            )
+            await tx.save_credential(replace(credential, revoked_at=NOW), identity.auth_version)
         elif broken == 'hidden':
             resource = await tx.resource(cid)
             await tx.replace(
@@ -77,8 +75,12 @@ async def test_star_presence_uses_existing_ttl_without_status_text(installed):
     set_result = await call(
         app,
         'communication.presence_set',
-        {'state': 'available', 'ttl': 30, 'message': 'private-working-note',
-         'capabilities_hint': ['implementation-detail']},
+        {
+            'state': 'available',
+            'ttl': 30,
+            'message': 'private-working-note',
+            'capabilities_hint': ['implementation-detail'],
+        },
         key=key,
         subject=subject,
     )
@@ -97,8 +99,11 @@ async def test_private_posts_and_hidden_ancestors_do_not_light_public_stars(inst
     app, _ = installed
     key, subject, _ = await register(app, 'field-activity')
     post = await call(
-        app, 'content.post_create', {'parent': '/main', 'body': 'Private activity'},
-        key=key, subject=subject,
+        app,
+        'content.post_create',
+        {'parent': '/main', 'body': 'Private activity'},
+        key=key,
+        subject=subject,
     )
     assert post.status == 'ok', wire(post)
     assert (await star(app, subject))['last_public_post_at'] == wire(NOW)
@@ -127,7 +132,9 @@ async def test_reserve_uses_current_publication_policy_and_lossless_minor_units(
     )
     assert result.status == 'ok', wire(result)
     assert (await star(app, subject))['balance'] == {
-        'visibility': 'public', 'amount_minor': str(amount), 'scale': 6,
+        'visibility': 'public',
+        'amount_minor': str(amount),
+        'scale': 6,
         'code': app.settings.money.code,
     }
     result = await call(
@@ -154,10 +161,13 @@ async def test_root_anchor_refresh_boundaries_and_hidden_user_removal(installed)
         assert refreshed.json()['items'][0]['star']['role'] == 'user'
         assert 'anchor' not in refreshed.json()
         for query in (
-            {'ids': ''}, {'ids': subject + ',' + subject},
+            {'ids': ''},
+            {'ids': subject + ',' + subject},
             {'ids': ','.join('u_' + str(i) for i in range(101))},
-            {'ids': subject, 'cursor': 'invalid'}, {'ids': subject, 'kind': 'posts'},
-            {'ids': '/@field-bounds'}, {'ids': subject, 'author': subject},
+            {'ids': subject, 'cursor': 'invalid'},
+            {'ids': subject, 'kind': 'posts'},
+            {'ids': '/@field-bounds'},
+            {'ids': subject, 'author': subject},
         ):
             assert (await http.get('/_universe', params=query)).status_code == 400
         assert (await http.head('/_universe', params={'ids': subject})).content == b''
@@ -182,7 +192,10 @@ async def test_owner_reserve_requires_current_browser_session_and_never_joins_pu
     account = private.json()['account']
     assert account['id'] == subject
     assert account['star']['balance'] == {
-        'visibility': 'self', 'amount_minor': '0', 'scale': 6, 'code': app.settings.money.code,
+        'visibility': 'self',
+        'amount_minor': '0',
+        'scale': 6,
+        'code': app.settings.money.code,
     }
     public = await http.get('/_universe', params={'ids': subject})
     assert public.json()['items'][0]['star']['balance'] == {'visibility': 'private'}
