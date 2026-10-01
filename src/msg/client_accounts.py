@@ -10,6 +10,21 @@ from msg.paths import ClientPaths, private_directory
 from msg.service_origin import service_origin
 
 
+def selected_service(args):
+    previous = ClientPaths.discover(profile=args.profile)
+    selection = private_client_json(previous.config / 'service.json')
+    if selection is not None:
+        require(selection.get('version') == 1, 'unknown_client_state_version')
+    server = args.server or os.environ.get('MSG_SERVER') or (selection or {}).get('server')
+    if server is None:
+        legacy = private_client_json(previous.state / 'client.json')
+        if legacy is None:
+            legacy = private_client_json(previous.config / 'client.json')
+        server = (legacy or {}).get('server')
+    require(server is not None, 'server_required')
+    return service_origin(server)
+
+
 def run_command(args):
     require(args.config_dir is None, 'account_conflicts_with_config_dir')
     if args.action == 'import':
@@ -30,48 +45,47 @@ def run_command(args):
             'handle': state.data.get('handle'),
         }
     if args.action == 'use':
-        previous = ClientPaths.discover(profile=args.profile)
-        server = (
-            args.server
-            or os.environ.get('MSG_SERVER')
-            or (private_client_json(previous.config / 'service.json') or {}).get('server')
-        )
-        require(server is not None, 'server_required')
-        server = service_origin(server)
+        server = selected_service(args)
         paths = ClientPaths.discover(server=server, account=args.name)
         saved = private_client_json(paths.state / 'client.json')
         require(saved is not None, 'local_account_not_found')
+        require(saved.get('subject_id') is not None, 'local_account_not_authenticated')
         selected = ClientState(server=server, profile=args.profile, account=args.name)
         require(selected.subject is not None, 'local_account_not_authenticated')
         marker = ClientPaths.discover(server=server).config / 'current-account.json'
         private_directory(marker.parent)
         durable_write(marker, canonical({'version': 1, 'account': args.name}), mode=0o600)
         return {'account': args.name, 'server': server, 'handle': selected.data.get('handle')}
-    # Resolve the selected service and safely migrate its old singleton layout.
-    state = ClientState(server=args.server, profile=args.profile, account=args.account)
-    service = ClientPaths.discover(server=state.server)
+    server = selected_service(args)
+    service = ClientPaths.discover(server=server)
     marker = service.config / 'current-account.json'
-    selection = private_client_json(marker) or {'account': 'default'}
-    root = service.state / 'accounts'
+    selection = private_client_json(marker)
+    if selection is not None:
+        require(selection.get('version') == 1, 'unknown_client_state_version')
+        ClientPaths.discover(server=server, account=selection.get('account', ''))
+    names = service.account_names()
+    selected = (selection or {}).get('account')
+    if args.account is not None:
+        ClientPaths.discover(server=server, account=args.account)
+        require(args.account in names, 'local_account_not_found')
+        selected = args.account
     result = []
-    for directory in sorted(root.iterdir()):
-        require(not directory.is_symlink(), 'unsafe_client_directory')
-        if not directory.is_dir():
-            continue
-        # Validate each account name and directory without loading/exporting keys.
-        paths = ClientPaths.discover(server=state.server, account=directory.name)
+    for name in names:
+        paths = ClientPaths.discover(server=server, account=name)
         saved = private_client_json(paths.state / 'client.json')
-        if saved is None:
-            continue
+        if saved is not None:
+            require(saved.get('version') == 1, 'unknown_client_state_version')
+            require(service_origin(saved.get('server')) == server, 'client_server_mismatch')
+        saved = saved or {}
         result.append({
-            'account': directory.name,
+            'account': name,
             'handle': saved.get('handle'),
             'subject_id': saved.get('subject_id'),
-            'selected': directory.name == selection['account'],
+            'selected': name == selected,
             'signer': 'yubikey'
             if paths.file('hardware-signer.json').exists()
             else 'software'
             if paths.file('identity.key').exists()
             else None,
         })
-    return {'server': state.server, 'accounts': result}
+    return {'server': server, 'accounts': result}
