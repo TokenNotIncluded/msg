@@ -48,6 +48,7 @@ from msg.transports.http_common import (
 )
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, path_packet, require_url_safe_packet
+from msg.transports.permissions_page import PERMISSIONS_MARKDOWN
 from msg.transports.read_tree_path import decode_read_tree_path
 from msg.transports.register_page import registration_markdown
 from msg.transports.subject_views import (
@@ -141,9 +142,14 @@ def home_markdown(data=None, *, service_url=None, account=None, login_enabled=Fa
     if data and data.get('channels'):
         lines.append('\n## Channels\n')
         lines.append(
-            'Public read. Post counts include publicly readable posts and replies. '
-            'Writes require identity and current authorization; +cert adds a scoped certificate. '
-            'Mode links show owner, group and permissions.\n'
+            (
+                'Current identity access. Post counts include readable posts and replies. '
+                if account
+                else 'Public read. Post counts include publicly readable posts and replies. '
+            )
+            + 'Writes require identity and current authorization; +cert adds a scoped certificate. '
+            'Mode links show owner, group and permissions. '
+            '[Permission bits explained / 权限位说明](/help/permissions).\n'
         )
         lines.append('| Channel | About | Posts | Mode | Post |')
         lines.append('| --- | --- | ---: | --- | --- |')
@@ -158,8 +164,8 @@ def home_markdown(data=None, *, service_url=None, account=None, login_enabled=Fa
     )
     lines.extend([
         '\n## Before posting\n',
-        'Only active, publicly readable top-level discussion channels are listed. '
-        'Private channels and internal directories are omitted. '
+        'Only active top-level discussion channels readable by the current visitor are listed. '
+        'Sign in to include authorized private channels; internal directories and direct messages are omitted. '
         'Posting requirements are a guide: the server checks the signed identity, '
         'operation permissions, certificate scope and any channel bans on every request. ',
         'Read the [platform rules](/_rules) and [topic rules](/_rules/topics). '
@@ -2058,13 +2064,20 @@ def create_app(service):
             if path == '/-' or path.startswith('/-/'):
                 raise Failure('not_found')
             require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
-            if path == '/register':
+            if path in {'/register', '/help/permissions'}:
                 require(not request.url.query, 'unknown_query_parameter')
-                markdown = registration_markdown(service.settings.service_url)
+                markdown = (
+                    registration_markdown(service.settings.service_url)
+                    if path == '/register'
+                    else PERMISSIONS_MARKDOWN
+                )
                 browser_html = 'text/html' in request.headers.get('accept', '').casefold()
                 payload = (
                     document_html(
-                        markdown, title='Register', account=await browser_account(), raw_path=path
+                        markdown,
+                        title='Register' if path == '/register' else 'Permissions',
+                        account=await browser_account(),
+                        raw_path=path,
                     )
                     if browser_html
                     else markdown.encode()
@@ -2138,6 +2151,7 @@ def create_app(service):
                     if request.method == 'HEAD':
                         response.body = b''
                     return response
+                home_data = None if result.error else result.data
                 account = None
                 browser = request.scope.get('state', {}).get('msg_browser_credentials')
                 if browser:
@@ -2151,10 +2165,20 @@ def create_app(service):
                     )
                     if not identity.error:
                         account = identity.data
+                        channels = await execute_packet(
+                            request_for(
+                                'discovery.get',
+                                {'id': '/', 'fields': ['channels']},
+                                service.settings.service_url,
+                                source='manual',
+                            )
+                        )
+                        if not result.error and not channels.error:
+                            home_data = {**result.data, 'channels': channels.data['channels']}
                 browser_html = 'text/html' in request.headers.get('accept', '').casefold()
                 renderer = home_html if browser_html else home_markdown
                 payload = renderer(
-                    None if result.error else result.data,
+                    home_data,
                     service_url=service.settings.service_url,
                     account=account,
                     login_enabled=getattr(
