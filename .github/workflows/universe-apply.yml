@@ -19,13 +19,13 @@ jobs:
           POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U msgtest"
+          --health-cmd "pg_isready -U msgtest -d postgres"
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
       MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
     steps:
       - uses: actions/checkout@v7
-      - name: Apply immutable reviewed patch
+      - name: Apply immutable reviewed source patch
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -37,8 +37,8 @@ jobs:
           patch = lzma.decompress(base64.b64decode(data))
           assert hashlib.sha256(patch).hexdigest() == 'f10bbd0ff73b3ed8f91c40ac821db35d390fa28ba81b2e672e8c10dc78987710'
           Path('/tmp/universe.patch').write_bytes(patch)
-          subprocess.run(['git', 'apply', '--check', '/tmp/universe.patch'], check=True)
-          subprocess.run(['git', 'apply', '/tmp/universe.patch'], check=True)
+          subprocess.run(['git', 'apply', '--exclude=.github/workflows/*', '--check', '/tmp/universe.patch'], check=True)
+          subprocess.run(['git', 'apply', '--exclude=.github/workflows/*', '/tmp/universe.patch'], check=True)
           PY
       - uses: actions/setup-python@v7
         with:
@@ -48,16 +48,15 @@ jobs:
         run: |
           python -m pip install uv==0.12.20
           uv sync --locked --extra dev --python "$(command -v python)"
-          uv run ruff check --fix --no-unsafe-fixes src/msg/transports/universe.py tests/test_universe.py scripts/check_universe_browser.py || true
+          uv run ruff check --fix --no-unsafe-fixes src/msg/transports/universe.py tests/test_universe.py scripts/check_universe_browser.py
           uv run ruff format src/msg/bootstrap.py src/msg/transports/http_routes.py src/msg/transports/universe.py src/msg/extensions/hosting.py tests/test_universe.py tests/test_branding.py scripts/check_universe_browser.py
           npx --yes prettier@3.6.2 --write src/msg/data/root-web-model.js src/msg/data/root-web-renderer.js src/msg/data/root-web-app.js src/msg/data/root-web.css
           node --check src/msg/data/root-web-model.js
           node --check src/msg/data/root-web-renderer.js
           node --check src/msg/data/root-web-app.js
-      - name: Publish source on feature branch and remove this one-time helper
+      - name: Publish source only on feature branch
         run: |
-          git rm .github/workflows/universe-apply.yml
-          git add .github/workflows/post-universe.yml .impeccable/surfaces/root-web.md DESIGN.md docs/post-universe.md scripts/check_universe_browser.py src/msg/bootstrap.py src/msg/data/root-web* src/msg/extensions/hosting.py src/msg/transports/http_routes.py src/msg/transports/universe.py tests/test_branding.py tests/test_universe.py
+          git add .impeccable/surfaces/root-web.md DESIGN.md docs/post-universe.md scripts/check_universe_browser.py src/msg/bootstrap.py src/msg/data/root-web* src/msg/extensions/hosting.py src/msg/transports/http_routes.py src/msg/transports/universe.py tests/test_branding.py tests/test_universe.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m 'feat: replace root introduction with an explorable 3D post universe'
