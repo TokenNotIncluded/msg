@@ -50,7 +50,9 @@ def inspect_mount(path):
         stream.seek(12345)
         assert stream.read(2345) == BODY[12345:14690]
     for operation in (
-        lambda: target.write_bytes(b'no'), target.unlink, lambda: (path / 'new').mkdir()
+        lambda: target.write_bytes(b'no'),
+        target.unlink,
+        lambda: (path / 'new').mkdir(),
     ):
         try:
             operation()
