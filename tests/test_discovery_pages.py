@@ -89,6 +89,7 @@ async def test_browser_feed_uses_follows_and_topics_respect_membership(oauth):
 @pytest.mark.asyncio
 async def test_old_browser_ceiling_shows_public_feed_without_widening_api_permissions(oauth):
     from dataclasses import replace
+
     from msg.security.oauth import OAuthService
 
     app, key, subject, http = oauth
