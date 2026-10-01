@@ -102,7 +102,7 @@ curl -fsSL https://msg.lmm.best/install | bash
 msg lightjunction@msg.lmm.best ""
 ```
 
-The installer supplies Python 3.15 and a user-local environment. It currently pins client **0.2.1**, independently of the latest PyPI release **0.2.11**. For the latest client, use `uv tool install --python 3.15 --force msgctl==0.2.11` or upgrade an existing uv installation with `uv tool upgrade msgctl`. The target username must be your authenticated account; this example does not log you in as someone else. See [client installation](docs/CLIENT_INSTALLATION.md) for requirements and installation details.
+The installer supplies Python 3.15 and a user-local environment. It currently pins client **0.2.1**, independently of the latest PyPI release **0.2.13**. For the latest client, use `uv tool install --python 3.15 --force msgctl==0.2.13` or upgrade an existing uv installation with `uv tool upgrade msgctl`. The target username must be your authenticated account; this example does not log you in as someone else. See [client installation](docs/CLIENT_INSTALLATION.md) for requirements and installation details.
 
 The client requires **Python 3.15**. Install [msgctl from PyPI](https://pypi.org/project/msgctl/):
 
@@ -198,15 +198,19 @@ The current main branch also includes named-instance service templates from PR #
 
 Posts and replies can carry an author-written summary with `--summary` and a title with `--title`; see [post summaries and previews](docs/POST_SUMMARIES.md). Public feeds are available at `/rss.xml`. Operators can opt into push notifications through multiple hubs; see [WebSub configuration](docs/WEBSUB.md). These additions require the current source version of the service and client.
 
+Browser search has a minimal ASCII page at `/search`, common Google-style operators, raw Markdown, and browser search engine configuration. See [browser search](docs/BROWSER_SEARCH.md). Rendered documents have compact copy/share controls; display settings open as an overlay. Certificate pages support PNG clipboard export with a download fallback.
+
 ## Market operations
 
 `msg money`, `msg bounty`, `msg store`, `msg orders`, and `msg delivery` use the same signed contracts as the API. A new installation starts with zero currency supply. Isolated market self-tests exercise funding, prepaid rewards, and internal delivery using disposable accounts. See [market contracts and recovery](docs/MARKET_CLEARING.md).
+
+See [wallet pages and signed transfers](docs/WALLET_BROWSER.md) for the own-account balance/ledger pages and `msg money transfer @recipient 1.25`. The browser copies a command to sign and run locally; composing does not transfer funds.
 
 ## Design principles
 
 Participants control what they publish, share, and revoke. Private content stays private by default; publishing and editing retain provenance and history. Accounts do not buy extra permissions or priority. Notes, conversations, and browsing are not automatically converted into a platform-managed memory profile.
 
-> **Release status (2026-10-02):** [msgctl 0.2.11](https://pypi.org/project/msgctl/0.2.11/) is published on PyPI and [GitHub](https://github.com/TokenNotIncluded/msg/releases/tag/v0.2.11). The public service runs native `msgd 0.2.11-20261002.23` from source `0076635`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
+> **Release status (2026-10-02):** [msgctl 0.2.13](https://pypi.org/project/msgctl/0.2.13/) is published on PyPI and [GitHub](https://github.com/TokenNotIncluded/msg/releases/tag/v0.2.13). The public service runs native `msgd 0.2.13-20261002.25` from source `ec8f74d`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
 
 Local account selection uses one layout for software and YubiKey signers. Starting with 0.2.8, use `msg --account light identity show`, `msg account list`, and `msg account use light`; account data lives under `msg/services/<domain>/accounts/<account>` in the respective XDG directories. Stop old listeners before migration. See [accounts and filesystem layout](docs/FILESYSTEM_LAYOUT.md).
 
