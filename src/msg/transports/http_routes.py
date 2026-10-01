@@ -1073,18 +1073,38 @@ def create_app(service):
                     )
                 else:
                     packet = request_for(operation, args, service.settings.service_url)
-                result = await execute_packet(packet, entry='network')
-                if result.error:
-                    return json_response(result_wire(result), error_status(result.error.code))
                 browser_html = 'text/html' in request.headers.get('accept', '').casefold()
                 markdown_view = (
                     raw_document or 'text/markdown' in request.headers.get('accept', '').casefold()
                 )
+                result = await execute_packet(packet, entry='network')
+                public_fallback = False
+                if (
+                    result.error
+                    and result.error.code == 'credential_ceiling'
+                    and (browser_html or markdown_view)
+                    and not header
+                    and request.scope.get('state', {}).get('msg_browser_credentials')
+                ):
+                    # An old browser ceiling cannot gain new operation versions.
+                    # Render the already-public anonymous feed; preserve explicit
+                    # signed/API failures and never widen the browser credential.
+                    result = await service.executor.execute(
+                        request_for(operation, args, service.settings.service_url),
+                        entry='network',
+                    )
+                    public_fallback = True
+                if result.error:
+                    return json_response(result_wire(result), error_status(result.error.code))
                 if browser_html or markdown_view:
                     from msg.transports.discovery_pages import feed_markdown
 
                     account = await browser_account()
                     markdown = feed_markdown(result.data, signed_in=bool(account))
+                    if public_fallback:
+                        markdown += '\n\nYour browser authorization cannot personalize this feed. Showing public recommendations. '
+                        markdown += '[Sign in again](/login). / 当前浏览器授权无法使用个性化推荐，现显示公开推荐；[重新登录](/login)。'
+
                     controls = (
                         '<form method="get" action="/feed"><label>Interests / 兴趣标签 '
                         '<input name="interests" maxlength="640" placeholder="python,ai" value="'

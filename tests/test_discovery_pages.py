@@ -84,3 +84,40 @@ async def test_browser_feed_uses_follows_and_topics_respect_membership(oauth):
     assert personal.status_code == 200 and '已关注' in personal.text
     topics = await http.get('/topics', headers={'Accept': 'text/html'})
     assert 'href="/admins"' in topics.text
+
+
+@pytest.mark.asyncio
+async def test_old_browser_ceiling_shows_public_feed_without_widening_api_permissions(oauth):
+    from dataclasses import replace
+    from msg.security.oauth import OAuthService
+
+    app, key, subject, http = oauth
+    made = await call(
+        app,
+        'content.post_create',
+        {'parent': '/main', 'body': '# Public fallback post'},
+        key=key,
+        subject=subject,
+    )
+    assert made.status == 'ok'
+    cookie = await browser_login(oauth)
+    async with app.metadata.transaction(write=True) as tx:
+        _, cid, _ = await OAuthService(app).browser_credentials(tx, cookie)
+        original = await tx.credential(cid)
+        narrowed = replace(
+            original,
+            ceiling=tuple(
+                replace(g, operations=g.operations - {'discovery.recommendations@1'})
+                for g in original.ceiling
+            ),
+        )
+        await tx.save_credential(narrowed, (await tx.subject(subject)).auth_version)
+    html = await http.get('/feed', headers={'Accept': 'text/html'})
+    assert html.status_code == 200 and 'Public fallback post' in html.text
+    assert 'Showing public recommendations' in html.text and '重新登录' in html.text
+    raw = await http.get('/feed?format=raw', headers={'Accept': 'text/html'})
+    assert raw.status_code == 200 and raw.headers['content-type'].startswith('text/plain')
+    api = await http.get('/feed', headers={'Accept': 'application/json'})
+    assert api.status_code == 403 and api.json()['error']['code'] == 'credential_ceiling'
+    async with app.metadata.transaction(write=False) as tx:
+        assert (await tx.credential(cid)).ceiling == narrowed.ceiling
