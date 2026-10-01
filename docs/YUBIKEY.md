@@ -13,7 +13,7 @@ sudo systemctl enable --now pcscd.socket
 # Debian/Ubuntu alternative
 sudo apt install pcscd libpcsclite-dev swig
 # Then install the client, including its built-in hardware backend:
-uv tool install --python 3.15 --refresh-package msgctl msgctl==0.2.8
+uv tool install --python 3.15 --refresh-package msgctl msgctl==0.2.9
 ```
 
 The native server is not needed on the client computer. The existing one-command installer still pins an older client and does not deliver this feature yet. Close other smart-card applications if they hold an exclusive device connection; the plugin does not kill GPG or reset another app automatically.
