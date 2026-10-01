@@ -2812,6 +2812,25 @@ def create_app(service):
                             operation, args, service.settings.service_url, source='manual'
                         )
                     result = await execute_packet(packet, entry='network')
+                    follow_public_fallback = False
+                    if (
+                        result.error
+                        and result.error.code == 'credential_ceiling'
+                        and operation
+                        in {'communication.agent_following', 'communication.followers'}
+                        and (
+                            raw_document
+                            or 'text/html' in request.headers.get('accept', '').casefold()
+                            or 'text/markdown' in request.headers.get('accept', '').casefold()
+                        )
+                        and not header
+                        and request.scope.get('state', {}).get('msg_browser_credentials')
+                    ):
+                        result = await service.executor.execute(
+                            request_for(operation, args, service.settings.service_url),
+                            entry='network',
+                        )
+                        follow_public_fallback = True
                     if result.error:
                         return json_response(result_wire(result), error_status(result.error.code))
                     if operation in {
@@ -2866,6 +2885,8 @@ def create_app(service):
                             incoming=operation == 'communication.followers',
                             limit=args.get('limit', 20),
                         )
+                    if follow_markdown is not None and follow_public_fallback:
+                        follow_markdown += '\n当前浏览器授权无法读取个人列表，现显示公开可见关系。 / Showing public relationships because this browser authorization lacks the operation. [申请新授权 / Sign in](/login).\n'
                     markdown_view = (
                         raw_document
                         or 'text/markdown' in request.headers.get('accept', '').casefold()

@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import httpx
 import pytest
+from test_oauth import browser_login, oauth as oauth
 from test_service import call, register
 
 from msg.core.codec import canonical
@@ -177,3 +178,45 @@ async def test_profile_bio_social_links_counts_and_lists_respect_visibility(inst
         assert hidden['follower_count'] == 1 and hidden['following_count'] == 1
         listing = await http.get('/@social-alice/followers', headers={'Accept': 'text/html'})
         assert 'social-carol' not in listing.text
+
+
+@pytest.mark.asyncio
+async def test_old_browser_social_authorization_uses_public_read_without_expanding_ceiling(oauth):
+    from msg.security.oauth import OAuthService
+
+    app, key, subject, http = oauth
+    bk, bob, _ = await register(app, 'old-browser-followed')
+    made = await call(app, 'communication.follow', {'id': bob}, key=key, subject=subject)
+    assert made.status == 'ok'
+    cookie = await browser_login(oauth)
+    async with app.metadata.transaction(write=True) as tx:
+        _, cid, _ = await OAuthService(app).browser_credentials(tx, cookie)
+        original = await tx.credential(cid)
+        narrowed = replace(
+            original,
+            ceiling=tuple(
+                replace(
+                    g,
+                    operations=g.operations
+                    - {'communication.agent_following@1', 'communication.followers@1'},
+                )
+                for g in original.ceiling
+            ),
+        )
+        await tx.save_credential(narrowed, (await tx.subject(subject)).auth_version)
+    html = await http.get('/@oauth-owner/follows', headers={'Accept': 'text/html'})
+    assert html.status_code == 200 and 'old-browser-followed' in html.text
+    assert 'Showing public relationships' in html.text
+    raw = await http.get('/@oauth-owner/follows?format=raw', headers={'Accept': 'text/html'})
+    assert raw.status_code == 200 and raw.headers['content-type'].startswith('text/plain')
+    api = await http.get('/@oauth-owner/follows', headers={'Accept': 'application/json'})
+    assert api.status_code == 403 and api.json()['error']['code'] == 'credential_ceiling'
+    async with app.metadata.transaction(write=False) as tx:
+        assert (await tx.credential(cid)).ceiling == narrowed.ceiling
+        resource = await tx.resource(bob)
+    async with app.metadata.transaction(write=True) as tx:
+        await tx.replace(
+            replace(resource, mode=0o700, generation=resource.generation + 1), resource.generation
+        )
+    hidden = await http.get('/@oauth-owner/follows', headers={'Accept': 'text/html'})
+    assert hidden.status_code == 200 and 'old-browser-followed' not in hidden.text
