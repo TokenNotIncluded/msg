@@ -23,7 +23,7 @@ from msg.constants import (
     ROOT_SUBJECT as ROOT_SUBJECT,
     TOOLS_SPACE as TOOLS_SPACE,
 )
-from msg.core.addressing import resource_address
+from msg.core.addressing import resource_address, resource_path
 from msg.core.codec import (
     b64,
     canonical as canonical,
@@ -166,6 +166,9 @@ async def visible(app, ctx, request, tx, rid):
 async def metadata(tx, r):
     data = wire(r)
     data['path'] = short_subject_path(await tx.path(r.id))
+    data['stable_path'] = resource_path(ResourceRef(id=r.id))
+    if r.revision:
+        data['revision_path'] = resource_path(ResourceRef(id=r.id, revision=r.revision))
     if r.revision:
         rev = await tx.revision(ResourceRef(id=r.id))
         data.update(
@@ -355,7 +358,12 @@ async def filtered_tools(app, ctx, request, tx):
 async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=()):
     resource = await tx.resource(rid)
     if rid == TOOLS_SPACE:
-        return {'id': rid, 'type': 'topic', 'items': await filtered_tools(app, ctx, request, tx)}
+        return {
+            'id': rid,
+            'type': 'topic',
+            'stable_path': resource_path(ResourceRef(id=rid)),
+            'items': await filtered_tools(app, ctx, request, tx),
+        }
     await check_access(app, ctx, request, tx, rid, 'read')
     require(resource.state != 'purged', 'resource_purged')
     meta = await metadata(tx, resource)
@@ -478,6 +486,7 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
     elif resource.revision:
         rev = await tx.revision(ResourceRef(id=rid, revision=revision))
         meta.update(
+            revision_path=resource_path(ResourceRef(id=rid, revision=rev.id)),
             revision=rev.id,
             revision_created_at=wire(rev.created_at),
             digest=rev.content.digest,
@@ -531,6 +540,8 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'revision_created_at',
         'generation',
         'path',
+        'stable_path',
+        'revision_path',
         'content',
         'conversation',
         'items',
@@ -868,6 +879,8 @@ def install(app):
         # preserve optional nulls. Match either exact public representation only
         # after the current projection has passed authorization. Never normalize
         # stored Revision/signature bytes or use a cache hint as authority.
+        if not a.get('fields'):
+            data = {'stable_path': resource_path(ResourceRef(id=rid)), **data}
         known = a.get('known_digest')
         if known is not None and (
             known == digest(data) or known == digest(wire(data, compact=True))

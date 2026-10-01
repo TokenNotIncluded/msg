@@ -13,7 +13,52 @@ from msg.plugins.discovery import next_link, visible
 from msg.plugins.schemas import STRING, obj
 
 
+async def readable(app, ctx, request, tx, rid):
+    if rid is None:
+        return False
+    try:
+        resource = await tx.resource(rid)
+        return resource.state != 'purged' and await visible(app, ctx, request, tx, rid)
+    except Failure as exc:
+        if exc.code in {'not_found', 'resource_purged', 'ancestor_inactive'}:
+            return False
+        raise
+
+
 def install(app, op):
+    @op(
+        'communication.event',
+        obj({'id': {'type': 'string', 'pattern': '^[A-Za-z0-9_.:-]{1,160}$'}}, ('id',)),
+        effect='read',
+    )
+    async def event_get(ctx, request, tx):
+        subject = ctx.principal.subject
+        require(subject is not None, 'authentication_required')
+        await app.authorizer.require_base(ctx.principal, operation_id(request), subject, tx)
+        row = tx.one('SELECT seq,body FROM events WHERE id=?', (request.arguments['id'],))
+        require(row is not None, 'not_found')
+        event = decode(Event, loads(row[1]))
+        refs = tuple([
+            ref for ref in event.resources if await readable(app, ctx, request, tx, ref.id)
+        ])
+        require(refs or (not event.resources and event.subject == subject), 'not_found')
+        return HandlerOutput(
+            data={
+                'seq': row[0],
+                **event_envelope(
+                    event,
+                    app.settings.service_url,
+                    refs,
+                    actor=event.actor
+                    if await readable(app, ctx, request, tx, event.actor)
+                    else None,
+                    subject=event.subject
+                    if await readable(app, ctx, request, tx, event.subject)
+                    else None,
+                ),
+            }
+        )
+
     @op(
         'communication.events',
         obj({
@@ -65,17 +110,6 @@ def install(app, op):
             require(type(position) is int and position >= floor, 'resync_required')
             expires = parse_time(saved['expires_at'])
 
-        async def readable(rid):
-            if rid is None:
-                return False
-            try:
-                resource = await tx.resource(rid)
-                return resource.state != 'purged' and await visible(app, ctx, request, tx, rid)
-            except Failure as exc:
-                if exc.code in {'not_found', 'resource_purged', 'ancestor_inactive'}:
-                    return False
-                raise
-
         items = []
         limit = request.arguments.get('limit', 50)
         rows = tx.rows(
@@ -87,7 +121,7 @@ def install(app, op):
             event = decode(Event, loads(raw))
             permitted = []
             for ref in event.resources:
-                if not await readable(ref.id):
+                if not await readable(app, ctx, request, tx, ref.id):
                     continue
                 ancestors = {r.id for r in await tx.ancestors(ref.id)}
                 if scope is not None:
@@ -119,8 +153,12 @@ def install(app, op):
                     event,
                     app.settings.service_url,
                     permitted,
-                    actor=event.actor if await readable(event.actor) else None,
-                    subject=event.subject if await readable(event.subject) else None,
+                    actor=event.actor
+                    if await readable(app, ctx, request, tx, event.actor)
+                    else None,
+                    subject=event.subject
+                    if await readable(app, ctx, request, tx, event.subject)
+                    else None,
                 )
                 items.append({'seq': seq, **envelope})
                 if len(items) >= limit:

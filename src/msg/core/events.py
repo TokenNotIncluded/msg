@@ -31,8 +31,12 @@ def event_envelope(event, service, resources, *, actor=None, subject=None):
     from msg.core.addressing import resource_address, service_origin
     from msg.core.codec import wire
 
+    origin = service_origin(service)
+    path = '/_e/' + event.id
     return {
         'version': 1,
+        'path': path,
+        'url': origin + path,
         'id': event.id,
         'source': service_origin(service),
         'type': RESOURCE_EVENT_TYPES.get(event.type, event.type),

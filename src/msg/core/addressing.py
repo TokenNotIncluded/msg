@@ -35,16 +35,21 @@ def service_origin(service):
     return parsed.scheme + '://' + host
 
 
-def resource_address(service, ref):
+def resource_path(ref):
     require(re.fullmatch(IDENTIFIER, ref.id) is not None, 'invalid_resource_id')
     require(
         ref.revision is None or re.fullmatch(IDENTIFIER, ref.revision) is not None,
         'invalid_revision_id',
     )
-    origin = service_origin(service)
     path = '/_r/' + ref.id
     path += '/rev/' + ref.revision if ref.revision is not None else '/json'
-    return {'service': origin, 'ref': wire(ref), 'url': origin + path}
+    return path
+
+
+def resource_address(service, ref):
+    origin = service_origin(service)
+    path = resource_path(ref)
+    return {'service': origin, 'ref': wire(ref), 'path': path, 'url': origin + path}
 
 
 def parse_address(value, service):

@@ -36,6 +36,7 @@ def install(app, op):
             data={
                 **resource_address(app.settings.service_url, ref),
                 'path': await tx.path(rid),
+                'stable_path': resource_address(app.settings.service_url, ref)['path'],
                 'current': resource_address(
                     app.settings.service_url, ResourceRef(id=rid, revision=resource.revision)
                 ),

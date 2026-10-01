@@ -390,7 +390,7 @@ async def test_events_empty_page_advances_past_bounded_hidden_history(installed)
                 type='content.post_edit',
                 time=NOW,
                 request_id='after-hidden',
-                actor=subject,
+                signer=key,
                 subject=subject,
                 resources=post.resources,
                 data={},
@@ -434,3 +434,143 @@ async def test_events_empty_page_advances_past_bounded_hidden_history(installed)
 )
 def test_plain_paths_preserve_existing_names(path):
     assert parse_address(path, 'https://example.org') == (path, None)
+
+
+async def test_stable_paths_cover_resource_types_and_bare_alias(installed):
+    from msg.constants import PUBLIC_GROUP
+
+    app, _ = installed
+    key, subject, cert = await register(app, 'stable-all-types')
+    post = await new_post(app, key, subject, cert)
+    targets = (
+        '/',
+        '/main',
+        subject,
+        PUBLIC_GROUP,
+        cert,
+        post.resources[0].id,
+        '/_rules/protocol',
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)),
+        base_url=app.settings.service_url,
+    ) as http:
+        for target in targets:
+            meta = await call(
+                app,
+                'discovery.get',
+                {'id': target, 'view': 'meta'},
+                key=key,
+                subject=subject,
+                certs=(cert,),
+            )
+            assert meta.status == 'ok', wire(meta)
+            rid = meta.data['id']
+            assert meta.data['stable_path'] == '/_r/' + rid + '/json'
+            packet = app.registry.operation('discovery.get')
+            assert packet.effect == 'read'
+            # Current anonymous authorization is identical at either alias.
+            canonical = await http.get(meta.data['stable_path'])
+            bare = await http.get('/_r/' + rid)
+            assert bare.status_code == canonical.status_code
+            assert bare.content == canonical.content
+            if canonical.status_code == 200:
+                assert canonical.json()['stable_path'] == meta.data['stable_path']
+            if meta.data.get('revision'):
+                assert meta.data['revision_path'] == '/_r/' + rid + '/rev/' + meta.data['revision']
+            resolved = await call(
+                app, 'discovery.resolve', {'address': rid}, key=key, subject=subject, certs=(cert,)
+            )
+            assert resolved.status == 'ok', wire(resolved)
+            assert resolved.data['stable_path'] == meta.data['stable_path']
+            assert resolved.data['current']['path'].startswith('/_r/' + rid + '/')
+
+
+async def test_stable_event_path_lookup_header_binding_and_current_acl(installed):
+    from datetime import timedelta
+
+    from msg.core.codec import b64, canonical
+    from msg.core.requests import request_for
+
+    app, _ = installed
+    key, subject, cert = await register(app, 'stable-event-owner')
+    other_key, other, other_cert = await register(app, 'stable-event-reader')
+    post = await new_post(app, key, subject, cert)
+    stream = await call(
+        app,
+        'communication.events',
+        {'resource': post.resources[0].id},
+        key=key,
+        subject=subject,
+        certs=(cert,),
+    )
+    assert stream.status == 'ok', wire(stream)
+    event = next(
+        item for item in stream.data['items'] if item['operation'] == 'content.post_create'
+    )
+    event_id = event['id']
+    path = '/_e/' + event_id
+    assert event['path'] == path and event['url'] == app.settings.service_url + path
+    direct = await call(
+        app, 'communication.event', {'id': event_id}, key=key, subject=subject, certs=(cert,)
+    )
+    assert direct.status == 'ok' and direct.data == event, wire(direct)
+
+    def header(id):
+        packet = request_for(
+            'communication.event',
+            {'id': id},
+            app.settings.service_url,
+            source='manual',
+            signer=key,
+            subject=subject,
+            certificates=(cert,),
+            expires_at=NOW + timedelta(minutes=5),
+        )
+        return {'X-MSG-Request': b64(canonical(packet))}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)),
+        base_url=app.settings.service_url,
+    ) as http:
+        response = await http.get(path, headers=header(event_id))
+        assert response.status_code == 200, response.text
+        assert response.json()['id'] == event_id
+        assert response.headers['cache-control'] == 'no-store'
+        head = await http.head(path, headers=header(event_id))
+        assert head.status_code == 200 and not head.content
+        assert int(head.headers['content-length']) == len(response.content)
+        anon = await http.get(path)
+        assert anon.status_code >= 400
+        assert (await http.get(path, headers=header('e_wrong'))).status_code >= 400
+        assert (await http.post(path, headers=header(event_id))).status_code == 405
+        assert (await http.get(path + '?id=e_wrong', headers=header(event_id))).status_code >= 400
+        encoded = '/_e/%' + format(ord(event_id[0]), '02X') + event_id[1:]
+        assert (await http.get(encoded, headers=header(event_id))).status_code == 404
+    changed = await call(
+        app,
+        'content.chmod',
+        {'id': post.resources[0].id, 'mode': '0600'},
+        key=key,
+        subject=subject,
+        certs=(cert,),
+        expected=((post.resources[0].id, post.data['generation']),),
+    )
+    assert changed.status == 'ok', wire(changed)
+    denied = await call(
+        app,
+        'communication.event',
+        {'id': event_id},
+        key=other_key,
+        subject=other,
+        certs=(other_cert,),
+    )
+    missing = await call(
+        app,
+        'communication.event',
+        {'id': 'e_missing'},
+        key=other_key,
+        subject=other,
+        certs=(other_cert,),
+    )
+    assert denied.error.code == missing.error.code == 'not_found'
