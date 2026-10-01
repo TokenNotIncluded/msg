@@ -47,9 +47,13 @@ async def test_due_todo_is_only_in_owner_inbox_and_repeated_maintenance_is_noop(
         assert tx.one('SELECT COUNT(*) FROM audit')[0] == before + 1
         assert tx.one('SELECT COUNT(*) FROM messages WHERE resource=?', (rid,))[0] == 1
     own = await call(app, 'communication.inbox', {}, key=owner_key, subject=owner)
+    assert own.status == 'ok', wire(own)
     notices = [item for item in own.data['items'] if item['resource']['id'] == rid]
     assert len(notices) == 1 and notices[0]['source'] == 'todo_due'
     assert notices[0]['recipient'] == owner
+    assert notices[0]['sender'] is None
+    assert notices[0]['sender_contact'] == {'name': 'System notification'}
+    assert notices[0]['recipient_contact'] == {'name': '@due-owner', 'path': '/@due-owner'}
     assert notices[0]['todo_revision_at_delivery'] == todo.resources[0].revision
     assert not [
         item
