@@ -37,6 +37,9 @@
         pitch: 0.48,
       };
       this.graph = { nodes: [], links: [] };
+      this.view = this.graph;
+      this.index = new M.SpatialIndex([]);
+      this.satellites = [];
       this.focusId = null;
       this.keys = new Set();
       this.pointers = new Map();
@@ -49,7 +52,9 @@
       this.frame = 0;
       this.available = false;
       this.lost = false;
-      this.dust = M.nebula(2300);
+      this.sceneSeed = Array.from(crypto.getRandomValues(new Uint32Array(2))).join(':');
+      this.dust = M.nebula(2300, this.sceneSeed);
+      this.visualTraits = new WeakMap();
       this.tokenField = document.getElementById('token-field');
       this.tokenNodes = new Map();
       this.hoverId = null;
@@ -165,15 +170,48 @@
     }
     setGraph(graph) {
       this.graph = graph;
+      this.satellites = graph.nodes.filter(n => n.orbitCenter);
+      this.signals = graph.nodes.filter(n => n.kind !== 'user' && n.kind !== 'private');
+      this.reindex();
       this.wake();
+    }
+    reindex() {
+      this.pinned = this.graph.nodes.filter(n => n.id === 'u_root' || n.id === this.focusId);
+      this.index = new M.SpatialIndex(this.graph.nodes.filter(n =>
+        (n.kind === 'user' || n.kind === 'private') && n.id !== 'u_root' && n.id !== this.focusId));
+    }
+    prepareView() {
+      const basis = this.basis(), lens = this.height * .86, c = this.camera;
+      const classify = (position, radius) => {
+        const delta = position.map((v, i) => v - c.target[i]);
+        const dot = axis => delta.reduce((sum, v, i) => sum + v * axis[i], 0);
+        const depth = c.distance - dot(basis.eye), far = depth + radius;
+        if (far <= 1) return { visible: false, size: 0 };
+        const margin = radius * lens / Math.max(1, depth - radius);
+        const x = this.width / 2 + dot(basis.right) * lens / Math.max(depth, 1);
+        const y = this.height * (.5 - this.verticalShift() / 2) - dot(basis.up) * lens / Math.max(depth, 1);
+        return { visible: depth <= radius || (x + margin >= 0 && x - margin <= this.width &&
+          y + margin >= 0 && y - margin <= this.height), size: margin * 2 };
+      };
+      const nodes = this.index.query(classify, { budget: this.software ? 128 : 256, threshold: 55 });
+      nodes.push(...this.pinned);
+      const present = new Set(nodes.map(n => n.id));
+      for (const n of this.signals || []) if (!present.has(n.id)) {
+        if (classify(n.position, 2).visible) { nodes.push(n); present.add(n.id); }
+      }
+      this.view = { nodes, links: this.graph.links.filter(([a, b]) => present.has(a.id) && present.has(b.id)) };
+      this.canvas.dataset.visibleNodes = String(nodes.length);
+      this.canvas.dataset.loadedNodes = String(this.graph.nodes.length);
     }
     setFocus(id) {
       this.focusId = id;
+      this.reindex();
       this.wake();
     }
     focus(node, distance = 74) {
       if (this.width < 600) distance = Math.max(distance, node.id === 'u_root' ? 195 : 125);
       this.focusId = node.id;
+      this.reindex();
       this.travel(node.position, distance);
     }
     travel(target, distance) {
@@ -187,6 +225,7 @@
     }
     home() {
       this.focusId = null;
+      this.reindex();
       this.travel([0, 0, 0], 370);
       this.callbacks.overview?.();
     }
@@ -232,11 +271,11 @@
     hit(x, y) {
       let best = null,
         score = Infinity;
-      for (const node of this.graph.nodes) {
+      for (const node of this.view.nodes) {
         const p = this.project(node.position);
         if (!p) continue;
         const d = Math.hypot(p.x - x, p.y - y);
-        const radius = M.appearance(node, this.callbacks.now?.() ?? Date.now()).radius;
+        const radius = node.kind === 'cluster' ? 4 : M.appearance(node, this.callbacks.now?.() ?? Date.now()).radius;
         if (d < Math.max(15, Math.min(36, p.scale * radius * 1.6)) && d < score) {
           score = d;
           best = node;
@@ -314,7 +353,11 @@
         ) {
           const r = c.getBoundingClientRect(),
             node = this.hit(e.clientX - r.left, e.clientY - r.top);
-          if (node) this.callbacks.select?.(node);
+          if (node?.kind === 'cluster') {
+            this.callbacks.overview?.();
+            this.travel(node.position, Math.max(45, node.radius * 3));
+          }
+          else if (node) this.callbacks.select?.(node);
         }
         this.wake();
       };
@@ -428,6 +471,8 @@
         );
       }
       this.callbacks.tick?.(this.clock);
+      for (const node of this.satellites) node.position = M.satellite(node.id, node.orbitCenter, this.clock);
+      this.prepareView();
       if (this.software) {
         this.renderSoftware();
         this.finish();
@@ -490,7 +535,7 @@
           line(at(start + j / sides * M.TAU), at(start + Math.min(fraction, (j + 1) / sides) * M.TAU), col, alpha);
         }
       };
-      for (const [a, z, type] of this.graph.links) {
+      for (const [a, z, type] of this.view.links) {
         const related = [a.id, z.id, a.author?.id, z.author?.id].includes(this.focusId);
         const col = type.startsWith('private') ? palette.private : palette.reply;
         const alpha = type === 'orbit' ? .10 : related ? .33 : .08;
@@ -502,17 +547,33 @@
           last = p;
         }
       }
-      for (const node of this.graph.nodes) {
+      let detailed = 0;
+      for (const node of this.view.nodes) {
+        if (node.kind === 'cluster') {
+          // Clusters count ONLY loaded, authorized identities; not fake users
+          // or a global popularity estimate. They have no certificate/money.
+          points.push(...vertex(node.position, [.67, .73, .70], .38, Math.min(18, 4 + Math.log2(node.count))));
+          continue;
+        }
         const p = node.position, style = M.appearance(node, now);
         const selected = node.id === this.focusId, hovered = node.id === this.hoverId;
         const isStar = node.kind === 'user' || node.kind === 'private';
         const col = isStar ? style.color : palette[node.kind] || palette.post;
         const light = isStar ? style.light : .7;
-        const pulse = 1 + (this.paused ? 0 : Math.sin(this.clock * 1.4) * style.pulse);
+        let traits = this.visualTraits.get(node);
+        if (!traits) {
+          const rng = M.random('shape:' + node.id);
+          traits = { phase: rng() * M.TAU, speed: .025 + rng() * .085, tilt: .8 + rng() * .6 };
+          this.visualTraits.set(node, traits);
+        }
+        const pulse = 1 + (this.paused ? 0 : Math.sin(this.clock * (1 + traits.speed * 8) + traits.phase) * style.pulse);
         points.push(...vertex(p, col, light * pulse, style.root ? 23 : isStar ? 5.5 : 2.2));
+        const projected = this.project(p);
+        if (!selected && !hovered && !style.root && (!projected || projected.scale * style.radius < 3 || detailed >= 96)) continue;
+        detailed++;
         if (isStar) {
-          const r = style.radius, rotation = this.clock * .06;
-          const corners = [[0, r * 1.4, 0], [r, 0, 0], [0, 0, r], [-r, 0, 0], [0, 0, -r], [0, -r * 1.4, 0]].map(v => [
+          const r = style.radius, rotation = this.clock * traits.speed + traits.phase;
+          const corners = [[0, r * 1.4 * traits.tilt, 0], [r, 0, 0], [0, 0, r], [-r, 0, 0], [0, 0, -r], [0, -r * 1.4 * traits.tilt, 0]].map(v => [
             p[0] + v[0] * Math.cos(rotation) - v[2] * Math.sin(rotation), p[1] + v[1],
             p[2] + v[0] * Math.sin(rotation) + v[2] * Math.cos(rotation)]);
           for (let j = 1; j <= 4; j++) {
@@ -603,7 +664,7 @@
     }
     updateTokens() {
       if (!this.tokenField) return;
-      const occupied = this.graph.nodes.map(n => this.project(n.position)).filter(Boolean);
+      const occupied = this.view.nodes.map(n => this.project(n.position)).filter(Boolean);
       const visible = new Set();
       const maximum = this.width < 600 ? 20 : 40;
       for (let i = 0; i < this.dust.length && visible.size < maximum; i += 8 * 17) {
@@ -624,7 +685,7 @@
       for (const [id, token] of this.tokenNodes) if (!visible.has(id)) { token.remove(); this.tokenNodes.delete(id); }
     }
     updateLabels() {
-      const candidates = this.graph.nodes
+      const candidates = this.view.nodes
         .map((n) => ({ n, p: this.project(n.position) }))
         .filter(
           ({ p }) =>
@@ -663,7 +724,7 @@
         }
         const look = M.appearance(n, this.callbacks.now?.() ?? Date.now());
         el.textContent =
-          (look.root ? '✦ ' : look.certified ? '◇ ' : '') +
+          (n.kind === 'cluster' ? '⋯ ' : look.root ? '✦ ' : look.certified ? '◇ ' : '') +
           (n.kind === 'user'
             ? M.handle(n.name || n.title || 'Signal')
             : n.name || n.title || 'Signal');

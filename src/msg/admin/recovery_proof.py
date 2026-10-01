@@ -111,7 +111,22 @@ async def verify_current_authority(app, tx, public_key):
         # Expired signed history remains history. Every currently usable chain
         # is revalidated from current credentials, authority sources and scope.
         if certificate.not_before <= app.clock() < certificate.expires_at:
-            await app.certificates.validate(identifier, tx)
+            try:
+                await app.certificates.validate(identifier, tx)
+            except Failure as exc:
+                # A signed delegation with a dead live source is historical data,
+                # not usable authority. The complete snapshot pins its source and
+                # every future request still revalidates that source after restore.
+                require(
+                    certificate.kind == 'delegation'
+                    and exc.code
+                    in {
+                        'authority_source_inactive',
+                        'authority_source_expired',
+                        'authority_source_lost',
+                    },
+                    exc.code,
+                )
     online = tx.setting('online_ca_certificate')
     require(type(online) is str, 'recovery_online_issuer_missing')
     certificate = await app.certificates.validate(online, tx)

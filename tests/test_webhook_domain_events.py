@@ -114,7 +114,13 @@ async def test_domain_webhook_explicit_scope_dedupe_read_is_pure_and_payload_is_
         'subject_id',
         'type',
         'resource_id',
+        'event',
     }
+    assert payload['event']['id'] == payload['event_id']
+    assert payload['event']['type'] == payload['type']
+    assert payload['event']['resources'][0]['ref']['id'] == created.resources[0].id
+    assert payload['event']['actor'] is None and payload['event']['subject'] is None
+    assert 'data' not in payload['event']
     assert payload['resource_id'] == created.resources[0].id
     assert payload['type'] == 'resource.created'
     assert 'private words' not in json.dumps(payload)

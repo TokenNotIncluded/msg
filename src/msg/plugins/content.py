@@ -240,6 +240,9 @@ async def create_post(app, ctx, request, tx, *, parent, relations=()):
     args = request.arguments
     policy = tx.setting('policy:' + parent, {})
     require(policy.get('editable', True), 'content_frozen')
+    from msg.plugins.board_rules import enforce_rules
+
+    await enforce_rules(tx, ctx, request, parent)
     metadata = {}
     if args.get('template') is not None:
         require('body' not in args and 'source' not in args, 'ambiguous_content')
@@ -458,6 +461,9 @@ def install(app):
             version=parsed.version,
         )
     op, finish = registration(app, 'content', ('identity',))
+    from msg.plugins.public_board import install as install_public_board
+
+    install_public_board(app, op)
     post_fields = {
         'parent': IDENTIFIER,
         'name': STRING,
@@ -494,10 +500,13 @@ def install(app):
             (resource.id, 'open'),
             write=True,
         )
+        from msg.core.wiki import in_wiki
+
+        role = 'member' if await in_wiki(tx, resource) else 'admin'
         tx.execute(
             """INSERT INTO topic_memberships
             (topic,subject,role,status,joined_at,invited_by) VALUES (?,?,?,?,?,?)""",
-            (resource.id, ctx.principal.subject, 'admin', 'active', wire(ctx.now), None),
+            (resource.id, ctx.principal.subject, role, 'active', wire(ctx.now), None),
             write=True,
         )
         await topic_governance_event(tx, ctx, request, resource.id, 'create', ctx.principal.subject)
@@ -507,6 +516,9 @@ def install(app):
         topic = await resolve(tx, request.arguments['id'])
         resource = await tx.resource(topic)
         require(resource.type == 'topic' and resource.state == 'active', 'topic_not_active')
+        from msg.core.wiki import protect_wiki
+
+        protect_wiki((*await tx.ancestors(resource.id), resource), operation_id(request))
         await require_unmanaged_personal(tx, resource)
         require(
             ctx.principal.subject is not None and ctx.principal.actor == ctx.principal.subject,
@@ -1285,6 +1297,10 @@ def install(app):
         await removable(app, ctx, request, tx, resource)
         require(resource.state != 'purged', 'resource_purged')
         state = 'archived' if request.operation in {'content.archive', 'file.delete'} else 'active'
+        if state == 'active' and resource.type == 'post':
+            from msg.plugins.board_rules import enforce_rules
+
+            await enforce_rules(tx, ctx, request, resource.parent)
         if state == 'active' and resource.type == 'website':
             from msg.plugins.hosting_capacity import manifest_size, require_capacity
 
@@ -1347,6 +1363,10 @@ def install(app):
         require(target != 't_store', 'store_controlled_resource')
         require((await tx.resource(target)).type != 'order_collection', 'order_controlled_resource')
         await check_access(app, ctx, request, tx, target, 'create')
+        if resource.type == 'post':
+            from msg.plugins.board_rules import enforce_rules
+
+            await enforce_rules(tx, ctx, request, target)
         parent = await tx.resource(target)
         require(app.registry.resource_type(parent.type, 1).container, 'not_a_container')
         await ensure_public_repositories(tx, resource, parent=target)
@@ -1546,6 +1566,8 @@ def install(app):
             {
                 'id': IDENTIFIER,
                 'policy': obj({
+                    'rules': {'type': 'string', 'maxLength': 16384},
+                    'posting_policy': {'enum': ['open', 'members', 'admins']},
                     'reply_open': BOOLEAN,
                     'editable': BOOLEAN,
                     'post_mode': {'type': 'string', 'pattern': '^[0-7]{4}$'},

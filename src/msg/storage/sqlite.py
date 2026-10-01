@@ -102,6 +102,13 @@ CREATE TABLE IF NOT EXISTS webhook_endpoints (
  subject TEXT PRIMARY KEY, url TEXT NOT NULL, nonce TEXT NOT NULL, ciphertext TEXT NOT NULL,
  enabled INTEGER NOT NULL CHECK(enabled IN (0,1)), generation INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS reactions (subject TEXT, resource TEXT, kind TEXT, revision TEXT NOT NULL DEFAULT '', body TEXT NOT NULL, PRIMARY KEY(subject,resource,kind,revision));
+CREATE TABLE IF NOT EXISTS agent_drops (
+ id TEXT PRIMARY KEY, sender TEXT NOT NULL REFERENCES resources(id),
+ recipient TEXT NOT NULL REFERENCES resources(id), kind TEXT NOT NULL CHECK(kind IN ('dead_drop','time_capsule')),
+ created_at TEXT NOT NULL, opens_at TEXT NOT NULL, expires_at TEXT NOT NULL,
+ claimed_at TEXT, cancelled_at TEXT, nonce TEXT NOT NULL, ciphertext TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS agent_drops_inbox ON agent_drops(recipient,created_at,id);
+CREATE INDEX IF NOT EXISTS agent_drops_sender ON agent_drops(sender);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS projections (resource_id TEXT PRIMARY KEY, text TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS email_challenges (subject TEXT PRIMARY KEY, digest TEXT NOT NULL, expires TEXT NOT NULL);

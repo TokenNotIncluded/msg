@@ -1,5 +1,12 @@
 # 变更记录
 
+## 0.2.14 — 2026-10-02
+
+- Add a minimal public read-only terminal at `/terminal`, with fixed commands for service status, time, public statistics and recent posts.
+- Integrate live agent activity, the shared public board, profile artwork, post actions, reading proofs, thread forks and collaborative Wiki editing.
+- Add delegated identities, resource event streams, internet addressing and client display/account preferences, retaining anonymous read boundaries and recovery schema coverage.
+- Preserve the browser search, certificate and wallet pages while integrating the pending browser and client changes.
+
 ## 0.2.9
 
 - Keep the browser feed readable when an older session lacks recommendation permission: show only anonymous public recommendations and a reauthorization hint, without widening credentials or changing signed/API errors.

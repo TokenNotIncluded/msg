@@ -12,7 +12,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
-from msg.core.codec import b64, canonical, loads
+from msg.core.codec import b64, canonical, loads, wire
 from msg.core.errors import Failure, require
 from msg.core.models import TokenProof
 from msg.core.requests import request_for
@@ -323,6 +323,110 @@ class OAuthBoundary:
 
     async def dispatch(self, request):
         path, now = request.url.path, self.service.clock()
+        if path == '/oauth/post-action':
+            from msg.security.browser_actions import BROWSER_POST_WRITES
+
+            require(request.method == 'POST', 'method_not_allowed')
+            require(
+                not request.query_params
+                and not request.headers.get('authorization')
+                and not request.headers.get('x-msg-request'),
+                'ambiguous_credentials',
+            )
+            args = loads(await body_bytes(request, 65536))
+            require(
+                isinstance(args, dict)
+                and set(args)
+                <= {
+                    'csrf',
+                    'operation',
+                    'id',
+                    'body',
+                    'revision',
+                    'request_id',
+                    'kind',
+                    'note',
+                    'generation',
+                    'name',
+                    'svg',
+                    'text',
+                },
+                'invalid_request',
+            )
+            cookie = self.require_csrf(request, args, self.session_cookie)
+            operation = args.get('operation')
+            require(
+                isinstance(operation, str) and operation in BROWSER_POST_WRITES, 'permission_denied'
+            )
+            require(
+                isinstance(args.get('request_id'), str) and 0 < len(args['request_id']) <= 128,
+                'invalid_request',
+            )
+            async with self.service.metadata.transaction(write=False) as tx:
+                subject, credential, token = await self.oauth.browser_credentials(tx, cookie)
+            arguments = {'id': args.get('id')}
+            expected = ()
+            if operation == 'content.public_board_update':
+                arguments = {k: args[k] for k in ('generation', 'svg', 'text') if k in args}
+            if operation in {'content.post_create', 'content.post_edit'}:
+                from msg.core.wiki import in_wiki
+                from msg.plugins.common import resolve
+
+                require(isinstance(args.get('body'), str), 'invalid_request')
+                async with self.service.metadata.transaction(write=False) as tx:
+                    resource = await tx.resource(await resolve(tx, args.get('id')))
+                    require(await in_wiki(tx, resource), 'wiki_only')
+                if operation == 'content.post_create':
+                    require(resource.type == 'topic', 'not_a_topic')
+                    arguments = {'parent': resource.id, 'body': args['body']}
+                    if 'name' in args:
+                        arguments['name'] = args['name']
+                else:
+                    require(type(args.get('generation')) is int, 'expected_generation_required')
+                    require(isinstance(args.get('revision'), str), 'revision_required')
+                    arguments = {
+                        'id': resource.id,
+                        'body': args['body'],
+                        'expected_revision': args['revision'],
+                    }
+                    expected = ((resource.id, args['generation']),)
+            if operation in {'discussion.reply', 'discussion.fork'}:
+                require(
+                    isinstance(args.get('body'), str) and bool(args['body'].strip()),
+                    'invalid_request',
+                )
+                arguments = {
+                    'target': {'id': args.get('id'), 'revision': args.get('revision')},
+                    'body': args['body'],
+                }
+            if operation == 'discussion.prove':
+                require(isinstance(args.get('revision'), str), 'proof_revision_required')
+                # Resolve only the displayed revision, never silently attest the latest.
+                from msg.core.models import ResourceRef
+
+                async with self.service.metadata.transaction(write=False) as tx:
+                    revision = await tx.revision(
+                        ResourceRef(id=args.get('id'), revision=args['revision'])
+                    )
+                arguments = {
+                    'target': {'id': args.get('id'), 'revision': args['revision']},
+                    'digest': revision.content.digest,
+                    'kind': args.get('kind'),
+                    'note': args.get('note', ''),
+                }
+            packet = request_for(
+                operation,
+                arguments,
+                self.service.settings.service_url,
+                subject=subject,
+                token=(credential, token),
+                source='manual',
+                expected=expected,
+                request_id=args['request_id'],
+                expires_at=now + timedelta(minutes=3),
+            )
+            result = await self.service.executor.execute(packet, entry='network')
+            return json(wire(result), 200 if result.error is None else 403)
         if path.startswith('/.well-known/') or path == '/oauth/jwks':
             require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
             base = self.service.settings.service_url
@@ -361,13 +465,13 @@ class OAuthBoundary:
             async with self.service.metadata.transaction(write=True) as tx:
                 self.oauth.fence(tx)
                 value, code, _ = self.oauth.pending(
-                    tx, kind='login', scope='openid profile msg.read'
+                    tx, kind='login', scope='openid profile msg.read msg.write'
                 )
             response = page(
                 'Sign in to MSG',
                 '<p>Approve this browser sign-in from a signed-in CLI:</p>'
                 '<code class="approval-code">msg auth approve ' + escape(code) + '</code>'
-                '<p>This browser can read content, your inbox, and direct messages you have permission to access. Only approve if you opened this page.</p>'
+                '<p>This browser can read content, your inbox and direct messages, and explicitly like, bookmark, follow authors, comment on posts, or create and edit shared wiki articles within your permissions. It cannot administer your identity or the server. Only approve if you opened this page.</p>'
                 '<p><a href="/register">Register using the CLI</a></p>'
                 '<p id="status" role="status" aria-live="polite" data-i18n="approval_wait" '
                 'data-csrf="' + escape(csrf(value), quote=True) + '">Waiting for approval…</p>'

@@ -17,6 +17,7 @@ from pathlib import Path
 from msg.constants import ROOT_SUBJECT
 from msg.core.codec import decode, wire
 from msg.core.errors import Failure, require
+from msg.core.events import event_envelope
 from msg.core.models import CapabilityGrant, EmailSettings, ExecutionContext, Principal, ResourceRef
 from msg.core.requests import request_for
 from msg.core.tool_execution import ToolResult as ToolResult, ToolRunner
@@ -482,6 +483,7 @@ class EffectWorker:
                 row is not None and row[3] == 1 and row[4] == job.arguments['endpoint_generation'],
                 'webhook_disabled',
             )
+            envelope = None
             if job.operation == 'communication.send':
                 message = tx.one(
                     'SELECT sender,recipient,event_id FROM messages WHERE id=?',
@@ -545,6 +547,11 @@ class EffectWorker:
                 await check_access(self.app, context, request, tx, scope.id, 'read')
                 await check_access(self.app, context, request, tx, resource.id, 'read')
                 reference = {'resource_id': rid}
+                envelope = event_envelope(
+                    event,
+                    self.app.settings.service_url,
+                    tuple(ref for ref in event.resources if ref.id == rid),
+                )
             url = row[0]
             validate_endpoint(url)
             secret = open_secret(self.app, recipient, row[1], row[2])
@@ -558,6 +565,7 @@ class EffectWorker:
             'subject_id': recipient,
             'type': category,
             **reference,
+            **({'event': envelope} if envelope is not None else {}),
         })
         state = await self.webhook_sender.send(
             url, secret, body, timestamp=timestamp, event_id=job.event_id, delivery_id=job.id

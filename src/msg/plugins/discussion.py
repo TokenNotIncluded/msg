@@ -1,4 +1,4 @@
-"""Replies are posts; likes and ACK are explicit authenticated facts."""
+"""Replies and forks are posts; attestations bind explicit claims to revisions."""
 
 from __future__ import annotations
 
@@ -118,6 +118,83 @@ def install(app):
             app, ctx, request, tx, parent=parent, relations=relations
         )
         return output_for(resource, **meta)
+
+    @op('discussion.fork', obj({**fields, 'target': REF, 'parent': IDENTIFIER}, ('target',)))
+    @op(
+        'discussion.fork',
+        obj({**summary_fields, 'target': REF, 'parent': IDENTIFIER}, ('target',)),
+        version=2,
+    )
+    async def fork(ctx, request, tx):
+        from msg.plugins.communication import direct_ancestor
+
+        target = decode(ResourceRef, request.arguments['target'])
+        original = await tx.resource(target.id)
+        require(original.type == 'post' and original.state == 'active', 'not_a_post')
+        await check_access(app, ctx, request, tx, target.id, 'read')
+        require(await direct_ancestor(tx, target.id) is None, 'dm_reference_private')
+        source = await tx.revision(target)
+        parent = await resolve(tx, request.arguments.get('parent', original.parent))
+        await check_access(app, ctx, request, tx, parent, 'create')
+        # A fork has its own root; it does not inherit reply_to/thread_root.
+        resource, meta = await create_post(
+            app,
+            ctx,
+            request,
+            tx,
+            parent=parent,
+            relations=(
+                Relation(type='fork_of', target=ResourceRef(id=original.id, revision=source.id)),
+            ),
+        )
+        return output_for(resource, **meta)
+
+    @op(
+        'discussion.forks',
+        obj(
+            {
+                'id': IDENTIFIER,
+                'after': STRING,
+                'limit': {'type': 'integer', 'minimum': 1, 'maximum': 100},
+            },
+            ('id',),
+        ),
+        effect='read',
+    )
+    async def forks(ctx, request, tx):
+        rid = await resolve(tx, request.arguments['id'])
+        await check_access(app, ctx, request, tx, rid, 'read')
+        limit = request.arguments.get('limit', 50)
+        binding = digest({'id': rid})
+        position = (
+            app.cursors.decode(request.arguments['after'], 'forks', binding)
+            if request.arguments.get('after')
+            else ''
+        )
+        items = []
+        more = False
+        scanned = 0
+        for (fid,) in tx.execute(
+            "SELECT r.id FROM resources r WHERE r.state='active' AND r.id>? AND EXISTS "
+            '(SELECT 1 FROM relations rel WHERE rel.source_id=r.id AND rel.revision_id=r.revision '
+            "AND rel.type='fork_of' AND rel.target_id=?) ORDER BY r.id",
+            (position, rid),
+        ):
+            scanned += 1
+            require(scanned <= 4096, 'query_cost_exceeded')
+            if not await visible(app, ctx, request, tx, fid):
+                continue
+            if len(items) == limit:
+                more = True
+                break
+            items.append(await read_projection(app, ctx, request, tx, fid))
+            position = fid
+        return HandlerOutput(
+            data={
+                'items': items,
+                'after': app.cursors.encode('forks', binding, position) if more else None,
+            }
+        )
 
     async def quote(ctx, request, tx):
         from msg.plugins.communication import direct_ancestor
@@ -349,4 +426,10 @@ def install(app):
             data['ancestors'] = ancestors
         return HandlerOutput(data=data)
 
+    from msg.plugins.post_engagement import install as install_engagement
+
+    install_engagement(app, op)
+    from msg.plugins.post_proofs import install as install_proofs
+
+    install_proofs(app, op)
     finish()

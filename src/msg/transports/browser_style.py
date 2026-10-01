@@ -328,4 +328,27 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 32px; }
 @media(max-width:520px){.page-document .site-header{gap:4px 12px}.page-document .site-header nav{gap:4px 14px}.document-toolbar{margin-left:auto}.document-toolbar .preferences .preference-fields{right:-130px}.preferences .accent-options{grid-template-columns:repeat(4,40px)}.preferences .accent-choice{width:40px}}
 
 .document-toolbar .preferences summary{width:40px;box-sizing:border-box;justify-content:center}.document-toolbar .preferences[open]{width:40px}
+
+.feed-filter { max-width: 640px; margin: 0 0 32px; }
+.feed-filter > label { display: block; font-size: .875rem; color: var(--muted); margin-bottom: 8px; }
+.feed-filter-row { display: flex; gap: 10px; }
+.feed-filter input:not([type=hidden]) { flex: 1; min-width: 0; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.feed-filter button { padding: 12px 18px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--accent); cursor: pointer; white-space: nowrap; }
+.feed-filter button:hover { border-color: var(--accent); }
+@media (max-width: 420px) { .feed-filter-row { flex-direction: column; } }
+
+/* Menus stay within the visible viewport, including split windows and zoom. */
+.preferences[open] { flex: 0 0 auto; max-width: 100%; }
+.preferences .preference-fields, .document-toolbar .preferences .preference-fields {
+  position: fixed; z-index: 20; right: auto;
+  left: var(--preferences-left, max(16px, calc((100vw - 340px) / 2)));
+  top: var(--preferences-top, 96px);
+  width: var(--preferences-width, 340px); max-width: calc(100vw - 32px);
+  max-height: var(--preferences-height, calc(100dvh - 112px)); overflow-y: auto;
+  padding: 20px; border: 1px solid var(--line); border-radius: 12px;
+  background: var(--bg); box-shadow: 0 12px 36px #0002;
+}
+.preferences .preference-row { flex-wrap: wrap; gap: 8px 16px; }
+.preferences .accent-options { grid-template-columns: repeat(4, minmax(0, 40px)); max-width: 100%; }
+.preferences .accent-choice { width: 40px; }
 """

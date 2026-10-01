@@ -261,10 +261,34 @@ class CertificateValidator:
         from msg.core.models import CapabilityGrant
 
         require(parse_time(fact['expires_at']) > self.clock(), 'authority_source_expired')
+        if fact.get('grantor_credential_id'):
+            credential = await session.credential(fact['grantor_credential_id'])
+            require(
+                credential.revoked_at is None
+                and credential.not_before <= self.clock()
+                and (credential.expires_at is None or self.clock() < credential.expires_at),
+                'authority_source_inactive',
+            )
+            require(
+                not session.setting('identity_archived:' + credential.subject_id),
+                'authority_source_inactive',
+            )
         for raw in fact['grants']:
             grant = decode(CapabilityGrant, raw)
             target = await session.resource(grant.scope.resource_id)
             require(target.owner == fact['grantor'], 'authority_source_lost')
+            if fact.get('grantor_credential_id'):
+                require(
+                    any([
+                        g.capability == grant.capability
+                        and g.version == grant.version
+                        and grant.operations <= g.operations
+                        and await scope_subset(grant.scope, g.scope, session)
+                        and constraints_subset(grant.constraints, g.constraints)
+                        for g in credential.ceiling
+                    ]),
+                    'authority_source_lost',
+                )
         allowed = tuple(decode(CapabilityGrant, g) for g in fact['grants'])
         for grant in (*cert.grants, *(cert.issuance.issue_grants if cert.issuance else ())):
             require(

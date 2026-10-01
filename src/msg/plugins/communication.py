@@ -21,7 +21,7 @@ from msg.core.codec import (
     wire as wire,
 )
 from msg.core.errors import Failure as Failure, require as require
-from msg.core.events import event_id as event_id
+from msg.core.events import RESOURCE_EVENT_TYPES, event_id as event_id
 from msg.core.models import (
     EffectJob,
     EmailSettings,
@@ -90,9 +90,8 @@ from msg.storage.capacity import require_webhook_capacity
 # A deliberately small event vocabulary. An Event is an audit fact, not blanket
 # permission to disclose its data to an external receiver.
 WEBHOOK_DOMAIN_EVENTS = {
-    'content.post_create': 'resource.created',
-    'discussion.reply': 'resource.created',
-    'content.post_edit': 'resource.updated',
+    operation: RESOURCE_EVENT_TYPES[operation]
+    for operation in ('content.post_create', 'discussion.reply', 'content.post_edit')
 }
 
 
@@ -1589,6 +1588,15 @@ def install(app):
     from msg.plugins.receipts import install as install_receipts
 
     install_receipts(app, op)
+    from msg.plugins.agent_drops import install as install_drops
+
+    install_drops(app, op)
+    from msg.plugins.internet import install as install_internet
+
+    install_internet(app, op)
+    from msg.plugins.event_stream import install as install_events
+
+    install_events(app, op)
     finish((
         ResourceTypeSpec(
             name='watch',

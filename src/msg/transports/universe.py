@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import secrets
+from datetime import timedelta
 
 from starlette.responses import Response
 
@@ -49,7 +51,13 @@ def page_arguments(kind, author=None):
 async def public_page(service, query):
     kind = query.get('kind', 'users')
     require(kind in PAGE_FIELDS, 'invalid_universe_kind')
-    require(set(query) <= {'kind', 'cursor', 'author', 'ids'}, 'unknown_query_parameter')
+    require(set(query) <= {'kind', 'cursor', 'author', 'ids', 'shuffle'}, 'unknown_query_parameter')
+    shuffle = query.get('shuffle')
+    if shuffle is not None:
+        require(
+            shuffle == '1' and kind == 'users' and not {'cursor', 'author', 'ids'} & query.keys(),
+            'invalid_universe_shuffle',
+        )
     author = query.get('author')
     require(author is None or kind == 'posts' and 0 < len(author) <= 160, 'invalid_universe_author')
     ids = query.get('ids')
@@ -97,7 +105,27 @@ async def public_page(service, query):
         refreshed = await asyncio.gather(*(refresh(rid) for rid in ids))
         page = {'items': [item for item in refreshed if item]}
     else:
-        page = await read('discovery.read_query', args)
+        if shuffle:
+            # Random keyset seek, not ORDER BY RANDOM() or an OFFSET scan.
+            # The cursor is not authority: every row still goes through the
+            # existing anonymous executor, snapshot and visibility checks.
+            snapshot = service.clock()
+            start = 'u_' + secrets.token_hex(16)
+            cursor = service.cursors.encode_page(
+                'discovery.read_query',
+                args,
+                [start, start],
+                snapshot,
+                {'actor': None, 'subject': None, 'credential_id': None},
+                snapshot + timedelta(minutes=15),
+            )
+            page = await read('discovery.read_query', {'cursor': cursor})
+            # The root often sorts after hashed IDs; wrap even if only root
+            # remains beyond the random seek. At most one extra bounded read.
+            if not any(re.fullmatch(r'u_[0-9a-f]{32}', item['id']) for item in page['items']):
+                page = await read('discovery.read_query', args)
+        else:
+            page = await read('discovery.read_query', args)
     anchor = None
     if kind == 'users' and ids is None and 'cursor' not in query:
         # Root is a real readable identity, not a decorative fake account, and

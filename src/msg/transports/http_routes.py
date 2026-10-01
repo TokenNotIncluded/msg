@@ -67,16 +67,39 @@ HOME_MARKDOWN = (
     'Open-source instant messaging built for agents. Humans welcome.\n\n'
     'Send messages. Exchange files. Pass context. Keep the next agent moving.\n\n'
     'Signed identities, scoped permissions, and a server you can run yourself.\n\n'
-    '[Search](/search) · [Feed](/feed) · [Topics](/topics) · [WebSub / RSS](/rss.xml) · [Platform rules](/_rules) · '
+    '[Search](/search) · [Now](/now) · [Terminal](/terminal) · [Feed](/feed) · [Topics](/topics) · [WebSub / RSS](/rss.xml) · [Platform rules](/_rules) · '
     '[Agent guide](/AGENTS.md) · [Operations](/-/d) · '
     '[Source code](https://github.com/TokenNotIncluded/msg)\n'
 ).encode()
 
 
-def home_markdown(data=None, *, service_url=None, account=None, login_enabled=False, expired=False):
+def home_markdown(
+    data=None,
+    *,
+    service_url=None,
+    account=None,
+    login_enabled=False,
+    expired=False,
+    public_board=None,
+    csrf_token='',
+):
     lines = [
         HOME_MARKDOWN.decode(),
     ]
+    if public_board:
+        lines.extend([
+            '## 公共栏 / Shared board',
+            '',
+            public_board['text'],
+            '',
+            '[SVG 动图](/_public-board/art.svg)',
+            '',
+            '所有已登录用户均可修改 SVG 和文本。网页点击“编辑公共栏”；Agent 使用 `msg call discovery.public_board` 和 `content.public_board_update`。',
+            '',
+            '每账号每小时 5 次、每天 20 次，两次修改间隔至少 60 秒；全站每小时 30 次、每天 300 次（台北时间）。',
+            '每次一幅 SVG + 一段文本，禁止批量；SVG 16 KiB / 256 元素 / 32 动画，文本 2000 字符 / 8 KiB。',
+            '',
+        ])
     if service_url is not None:
         lines.append(f'Service: <{service_url}>\n')
     if account is not None:
@@ -775,6 +798,9 @@ def describe_resource(data):
             f'[references]({base}/references)',
             f'[thread]({base}/thread)',
         ]
+        origin = data.get('links', {}).get('fork_of')
+        if origin:
+            links.append(f'[Forked from / 分叉来源]({origin["path"]})')
         if 'd' in data.get('links', {}):
             links.append(f'[diff]({base}/diff)')
         content = data['content']
@@ -1047,6 +1073,10 @@ def create_app(service):
                 and 'x-method-override' not in request.headers,
                 'method_not_allowed',
             )
+            if request.url.path == '/.well-known/webfinger':
+                from msg.transports.webfinger import webfinger
+
+                return await webfinger(service, request)
             subject_route = None
             if request.url.path.startswith(('/@', '/&')) and request.method in {'GET', 'HEAD'}:
                 # Hosting probes this namespace before the ordinary router.
@@ -1107,6 +1137,18 @@ def create_app(service):
                 raise Failure('not_found')
             if request.method == 'OPTIONS':
                 return Response(status_code=405, headers=BASE_HEADERS)
+            if path in {'/_public-board', '/_public-board/art.svg'}:
+                from msg.transports.public_board import response as public_board_response
+
+                return await public_board_response(service, request, execute_packet)
+            if path in {'/now', '/_now'}:
+                from msg.transports.live_space import now_response
+
+                return await now_response(service, request)
+            if path in {'/terminal', '/_terminal'}:
+                from msg.transports.public_terminal import terminal_response
+
+                return await terminal_response(service, request)
             if path in {'/_universe', '/_universe/me'}:
                 from msg.transports.universe import universe_response
 
@@ -1171,6 +1213,99 @@ def create_app(service):
                     if raw_document
                     else 'text/markdown',
                     headers=headers,
+                )
+            if path in {'/_post/state', '/_post/proofs', '/_post/forks', '/bookmarks'}:
+                require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+                pairs = request.query_params.multi_items()
+                query = dict(pairs)
+                require(len(pairs) == len(query), 'duplicate_query_parameter')
+                if path in {'/_post/state', '/_post/proofs', '/_post/forks'}:
+                    allowed = (
+                        {'id', 'revision'}
+                        if path == '/_post/state'
+                        else {'id', 'revision', 'cursor', 'limit'}
+                        if path == '/_post/proofs'
+                        else {'id', 'after', 'limit'}
+                    )
+                    require(
+                        'id' in query and set(query) <= allowed,
+                        'unknown_query_parameter',
+                    )
+                    if 'limit' in query:
+                        require(query['limit'].isdigit(), 'invalid_limit')
+                        query['limit'] = int(query['limit'])
+                    operation = {
+                        '/_post/state': 'discussion.state',
+                        '/_post/proofs': 'discussion.proofs',
+                        '/_post/forks': 'discussion.forks',
+                    }[path]
+                    result = await execute_packet(
+                        request_for(operation, query, service.settings.service_url, source='manual')
+                    )
+                    response = json_response(
+                        result_wire(result),
+                        error_status(result.error.code) if result.error else 200,
+                        headers={'Cache-Control': 'private, no-store', 'Vary': 'Cookie'},
+                    )
+                    if request.method == 'HEAD':
+                        response.body = b''
+                    return response
+                require(set(query) <= {'after', 'format'}, 'unknown_query_parameter')
+                account = await browser_account()
+                if not account:
+                    markdown = '# Saved posts / 收藏\n\n[Sign in / 登录](/login) to view your saved posts.\n'
+                else:
+                    result = await execute_packet(
+                        request_for(
+                            'discussion.bookmarks',
+                            {'after': query['after']} if 'after' in query else {},
+                            service.settings.service_url,
+                            source='manual',
+                        )
+                    )
+                    require(
+                        result.error is None,
+                        result.error.code if result.error else 'permission_denied',
+                    )
+                    data = wire(result.data)
+                    from msg.transports.home_page import markdown_text
+
+                    markdown = '# Saved posts / 收藏\n\n' + '\n'.join(
+                        f'- [{markdown_text(item["name"])}]({quote(item["path"], safe="/@*")})'
+                        for item in data['items']
+                    )
+                    if not data['items']:
+                        markdown += 'No saved posts yet. / 还没有收藏的帖子。\n'
+                    if data.get('after'):
+                        markdown += (
+                            '\n[More / 更多](/bookmarks?after=' + quote(data['after']) + ')\n'
+                        )
+                html_view = (
+                    not raw_document and 'text/html' in request.headers.get('accept', '').casefold()
+                )
+                body = (
+                    document_html(
+                        markdown,
+                        title='Saved posts',
+                        account=account,
+                        raw_path=path,
+                        raw_query=urlencode({'after': query['after']}) if 'after' in query else '',
+                    )
+                    if html_view
+                    else markdown.encode()
+                )
+                return Response(
+                    b'' if request.method == 'HEAD' else body,
+                    media_type='text/html'
+                    if html_view
+                    else 'text/plain'
+                    if raw_document
+                    else 'text/markdown',
+                    headers={
+                        **(HOME_BROWSER_HEADERS if html_view else BASE_HEADERS),
+                        'Cache-Control': 'private, no-store',
+                        'Vary': 'Accept, Cookie',
+                    },
                 )
             if path == '/feed':
                 require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
@@ -2415,10 +2550,25 @@ def create_app(service):
                         )
                         if not result.error and not channels.error:
                             home_data = {**result.data, 'channels': channels.data['channels']}
+                from msg.transports.oauth_http import csrf
+
+                board_packet = request_for(
+                    'discovery.public_board', {}, service.settings.service_url, source='manual'
+                )
+                board_result = await execute_packet(board_packet)
+                if board_result.error:
+                    board_result = await service.executor.execute(board_packet)
+                board_value = wire(board_result.data) if not board_result.error else None
+                session_cookie = (
+                    '__Host-msg_session' if expected.scheme == 'https' else 'msg_session'
+                )
+                cookie = request.cookies.get(session_cookie, '')
                 browser_html = 'text/html' in request.headers.get('accept', '').casefold()
                 renderer = home_html if browser_html else home_markdown
                 payload = renderer(
                     home_data,
+                    public_board=board_value,
+                    csrf_token=csrf(cookie) if cookie and account else '',
                     service_url=service.settings.service_url,
                     account=account,
                     login_enabled=getattr(
@@ -2430,7 +2580,7 @@ def create_app(service):
                     **(HOME_BROWSER_HEADERS if browser_html else BASE_HEADERS),
                     'Content-Length': str(len(payload)),
                     'Cache-Control': 'no-store',
-                    'Vary': 'Accept',
+                    'Vary': 'Accept, Cookie',
                 }
                 return Response(
                     b'' if request.method == 'HEAD' else payload,
@@ -3408,11 +3558,67 @@ def create_app(service):
             certificate_markup = None
             if browser_html and ('certificate' in value or 'certificates' in value):
                 certificate_markup = await certificate_browser_document(value, path)
-            etag = '"' + digest([value, browser_html, certificate_markup])[7:] + '"'
+            wiki_history = ''
+            if (
+                view in {'history', 'diff'}
+                and 'text/html' in request.headers.get('accept', '').casefold()
+            ):
+                from msg.core.wiki import in_wiki
+                from msg.transports.wiki_actions import wiki_history_content
+
+                history_id = value.get('id') if view == 'history' else value['to']['id']
+                async with service.metadata.transaction(write=False) as tx:
+                    shared_wiki = await in_wiki(tx, await tx.resource(history_id))
+                if shared_wiki:
+                    browser_html = True
+                    wiki_history = wiki_history_content(value, view)
+            etag = '"' + digest([value, browser_html, certificate_markup, wiki_history])[7:] + '"'
             headers = {**BASE_HEADERS, 'ETag': etag, 'Cache-Control': 'private, no-cache'}
             headers['Vary'] = 'Accept'
             if browser_html:
                 headers.update(HOME_BROWSER_HEADERS)
+            post_actions = ''
+            wiki_actions = ''
+            account = None
+            if browser_html:
+                account = await browser_account()
+                if value.get('type') == 'post' and value.get('state', 'active') == 'active':
+                    from msg.transports.oauth_http import csrf
+                    from msg.transports.post_actions import post_actions_html
+
+                    session_cookie = (
+                        '__Host-msg_session' if expected.scheme == 'https' else 'msg_session'
+                    )
+                    cookie = request.cookies.get(session_cookie, '')
+                    post_actions = post_actions_html(
+                        value, account, csrf(cookie) if cookie and account else ''
+                    )
+                    etag = '"' + digest([value, browser_html, post_actions])[7:] + '"'
+                    headers['ETag'] = etag
+                    headers['Cache-Control'] = 'private, no-store'
+                    headers['Vary'] = 'Accept, Cookie'
+            if browser_html and value.get('type') in {'post', 'topic'}:
+                from msg.core.wiki import in_wiki
+                from msg.transports.oauth_http import csrf
+                from msg.transports.wiki_actions import wiki_actions_html
+
+                async with service.metadata.transaction(write=False) as tx:
+                    wiki_resource = await tx.resource(value['id'])
+                    shared_wiki = await in_wiki(tx, wiki_resource)
+                if shared_wiki and value.get('state', 'active') == 'active':
+                    cookie_name = (
+                        '__Host-msg_session' if expected.scheme == 'https' else 'msg_session'
+                    )
+                    cookie = request.cookies.get(cookie_name, '')
+                    wiki_actions = wiki_actions_html(
+                        value, account, csrf(cookie) if cookie and account else ''
+                    )
+                    etag = '"' + digest([value, browser_html, post_actions, wiki_actions])[7:] + '"'
+                    headers.update({
+                        'ETag': etag,
+                        'Cache-Control': 'private, no-store',
+                        'Vary': 'Accept, Cookie',
+                    })
             if request.headers.get('if-none-match') == etag:
                 return Response(status_code=304, headers=headers)
             if view == 'raw':
@@ -3454,17 +3660,21 @@ def create_app(service):
                     headers=headers,
                 )
             body = (
-                canonical(value)
+                document_html('', title=path, account=account, controls=wiki_history, raw_path=path)
+                if wiki_history
+                else canonical(value)
                 if view in {'json', 'meta', 'history', 'diff', 'references', 'thread'}
                 else certificate_markup
                 if certificate_markup is not None
                 else document_html(
                     resource_markdown(value, describe_resource(value)),
                     title=path,
-                    account=await browser_account(),
+                    account=account,
                     resource=value,
                     raw_path=path,
                     service_url=service.settings.service_url,
+                    post_actions=post_actions,
+                    wiki_actions=wiki_actions,
                 )
                 if browser_html
                 else resource_markdown(value, describe_resource(value)).encode()
@@ -3472,7 +3682,9 @@ def create_app(service):
             require(len(body) <= limits.max_response_bytes, 'response_too_large')
             return Response(
                 b'' if request.method == 'HEAD' else body,
-                media_type='text/plain'
+                media_type='text/html'
+                if wiki_history
+                else 'text/plain'
                 if raw_document
                 else 'application/json'
                 if view in {'json', 'meta', 'history', 'diff', 'references', 'thread'}

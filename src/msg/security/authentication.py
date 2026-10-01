@@ -93,6 +93,10 @@ class AuthenticationService:
         if request.operation == 'identity.register':
             require(isinstance(proof, SignatureProof), 'proof_required')
             public = unb64(request.arguments['public_key'], limit=32)
+            require(
+                not session.setting('delegated_identity:' + subject_id(public)),
+                'delegated_identity_not_upgradable',
+            )
             require(len(public) == 32 and request.subject == subject_id(public), 'subject_mismatch')
             verify(public, signing_bytes(request), proof.signature, purpose='request')
             return Principal(
@@ -105,6 +109,12 @@ class AuthenticationService:
             )
         if request.operation in {'identity.temporary', 'identity.custodial_create'}:
             require(proof is None and request.subject is None, 'invalid_bootstrap')
+            if request.arguments.get('public_key'):
+                public = unb64(request.arguments['public_key'], limit=32)
+                require(
+                    not session.setting('delegated_identity:' + subject_id(public)),
+                    'delegated_identity_not_upgradable',
+                )
             nonce = unb64(request.arguments['nonce'], limit=64)
             require(len(nonce) >= 24, 'invalid_bootstrap_nonce')
             # The high-entropy claim defines the initial temporary subject; ordinary anonymous
@@ -171,7 +181,19 @@ class AuthenticationService:
                 ceiling=ceiling,
             )
         if proof is None:
-            require(request.subject is None and spec.effect == 'read', 'authentication_required')
+            # Cross-service delivery has its own recipient-pinned inner signature.
+            # Only this operation may enter a write transaction without a local proof;
+            # its handler verifies the grant, target binding, signature and replay fence.
+            internet_delivery = (
+                request.operation == 'communication.internet_receive'
+                and spec.version == 1
+                and spec.anonymous_only
+                and spec.effect == 'transaction'
+            )
+            require(
+                request.subject is None and (spec.effect == 'read' or internet_delivery),
+                'authentication_required',
+            )
             return Principal(
                 actor=None,
                 subject=None,
@@ -237,6 +259,18 @@ class AuthenticationService:
                 'credential_revoked',
             )
         subject = await session.subject(request.subject or actor.resource_id)
+        binding = session.setting('delegated_identity:' + actor.resource_id)
+        if binding is not None:
+            require(subject.resource_id == binding['grantor'], 'delegated_subject_required')
+            require(binding['certificate_id'] in ids, 'delegation_required')
+            if binding.get('max_uses') is not None and binding['uses'] >= binding['max_uses']:
+                previous = await session.request_result(
+                    subject.resource_id, request.request_id, request.payload_digest
+                )
+                require(
+                    previous is not None and previous.actor == actor.resource_id,
+                    'delegation_exhausted',
+                )
         require(
             not (
                 actor.local_only

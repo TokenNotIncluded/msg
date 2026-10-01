@@ -171,7 +171,17 @@ class Registry:
                 and type(spec.anonymous_only) is bool
                 and (
                     not spec.anonymous_only
-                    or (spec.effect == 'read' and not spec.require_signature)
+                    or (
+                        not spec.require_signature
+                        and (
+                            spec.effect == 'read'
+                            or (
+                                spec.name == 'communication.internet_receive'
+                                and spec.version == 1
+                                and spec.effect == 'transaction'
+                            )
+                        )
+                    )
                 ),
                 'invalid_operation_access_mode',
             )

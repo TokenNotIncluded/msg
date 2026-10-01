@@ -19,3 +19,5 @@ htmlcov/
 
 # Local visual review evidence
 .impeccable/review/
+.playwright-cli/
+/output/

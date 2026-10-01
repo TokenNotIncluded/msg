@@ -405,8 +405,10 @@ class RelationalSession(ABC):
         return active
 
     async def request_result(self, subject, id, digest):
+        # Empty subject keys reserve a separate namespace for inner-signed internet delivery.
         row = self.one(
-            'SELECT digest,body FROM results WHERE subject=? AND request_id=?', (subject, id)
+            'SELECT digest,body FROM results WHERE subject=? AND request_id=?',
+            (subject if subject is not None else '', id),
         )
         if row is None:
             return None
@@ -419,7 +421,12 @@ class RelationalSession(ABC):
         require_result_capacity(self)
         self.execute(
             'INSERT INTO results VALUES (?,?,?,?)',
-            (subject, result.request_id, digest, canonical(result).decode()),
+            (
+                subject if subject is not None else '',
+                result.request_id,
+                digest,
+                canonical(result).decode(),
+            ),
             write=True,
         )
 

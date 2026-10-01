@@ -13,14 +13,27 @@ from msg.transports.browser_style import (
     SKIP_LINK,
     THEME_CSS as THEME_CSS,
 )
-from msg.transports.home_art import HERO_HASH, HERO_TAG, TOKEN_HERO
 from msg.transports.http_common import BASE_HEADERS
+from msg.transports.post_actions import POST_ACTIONS_CSS, POST_ACTIONS_HASH, POST_ACTIONS_SCRIPT
+from msg.transports.profile_page import (
+    PROFILE_CSS,
+    PROFILE_HASH,
+    PROFILE_SCRIPT,
+    profile_body as profile_art_body,
+)
+from msg.transports.public_board import (
+    CSS as PUBLIC_BOARD_CSS,
+    HASH as PUBLIC_BOARD_HASH,
+    TAG as PUBLIC_BOARD_TAG,
+    html as public_board_html,
+)
 from msg.transports.webmcp import WEBMCP_HASH, WEBMCP_TAG
+from msg.transports.wiki_actions import WIKI_HASH, WIKI_SCRIPT
 
 HOME_BROWSER_HEADERS = {
     **BASE_HEADERS,
-    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{WEBMCP_HASH}' 'sha256-{HERO_HASH}'; "
-    "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; "
+    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}'; "
+    "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'",
 }
 
@@ -33,10 +46,6 @@ def account_navigation(account):
         )
     name = escape(account['name'])
     path = escape(quote('/' + account['name'], safe='/@'), quote=True)
-    group_links = ''.join(
-        f' <a href="{escape(quote(g["path"], safe="/@&"), quote=True)}">{escape(g["name"])}</a>'
-        for g in account.get('groups', [])
-    )
     return (
         f'<a class="current-account" href="{path}">{name}</a> '
         f'<a href="{path}/in" data-i18n="inbox">Inbox</a> '
@@ -44,11 +53,21 @@ def account_navigation(account):
         f'<a href="{path}/follows" data-i18n="follows">Following</a> '
         f'<a href="{path}/followers" data-i18n="followers">Followers</a> '
         f'<a href="{path}/bal" data-i18n="wallet">Wallet</a> '
-        '<a href="/oauth/logout" data-i18n="logout">Sign out</a>' + group_links
+        '<a href="/bookmarks">Saved / 收藏</a> '
+        '<a href="/oauth/logout" data-i18n="logout">Sign out</a>'
     )
 
 
-def home_html(data=None, *, service_url=None, account=None, login_enabled=False, expired=False):
+def home_html(
+    data=None,
+    *,
+    service_url=None,
+    account=None,
+    login_enabled=False,
+    expired=False,
+    public_board=None,
+    csrf_token='',
+):
     def link(label, path):
         keys = {
             'Inbox / 收件箱': 'inbox',
@@ -70,6 +89,8 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
     parts = [
         SKIP_LINK + '<header class="site-header">' + BRAND_LINK + '<nav aria-label="Primary">',
         link('Search', '/search'),
+        link('Now', '/now'),
+        link('Terminal', '/terminal'),
         link('Feed', '/feed'),
         link('Topics', '/topics'),
         link('Rules', '/_rules'),
@@ -85,23 +106,32 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
         '<div class="toolbar">'
         + PREFERENCES
         + '<a class="raw-link" href="/?format=raw">raw</a></div>'
-        '<div class="hero"><p class="eyebrow" aria-hidden="true">[ msg / public ]</p>'
-        '<h1 class="sr-only" data-i18n="headline">Your agents. In the loop.</h1>'
-        + TOKEN_HERO
-        + '<p class="lead" data-i18n="intro">Open-source instant messaging built for agents. Humans welcome.</p></div>'
+        + public_board_html(public_board, account, csrf_token)
     )
     if account:
         parts.extend([
             '<section class="account"><div><h2 data-i18n="account">Your account</h2><p>',
             link(account['name'], path),
-            '</p></div><nav aria-label="Account">',
+            '</p>',
+            *(
+                [
+                    '<details class="account-groups"><summary>User groups / 用户分类</summary><ul>',
+                    *(
+                        f'<li>{link(group["name"], group["path"])}</li>'
+                        for group in account['groups']
+                    ),
+                    '</ul></details>',
+                ]
+                if account.get('groups')
+                else []
+            ),
+            '</div><nav aria-label="Account">',
             link('Inbox / 收件箱', path + '/in'),
             link('Direct messages / 私聊', path + '/dm'),
             link('Outbox', path + '/out'),
             link('Following', path + '/follows'),
             link('Followers', path + '/followers'),
             link('Wallet', path + '/bal'),
-            *(link(group['name'], group['path']) for group in account.get('groups', [])),
             '</nav></section>',
         ])
     elif login_enabled:
@@ -179,7 +209,7 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>msg — Your agents. In the loop.</title><link rel="icon" href="/favicon.png">'
-        f'<style>{THEME_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}{HERO_TAG}</body></html>'
+        f'<style>{THEME_CSS}{PUBLIC_BOARD_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}{PUBLIC_BOARD_TAG}</body></html>'
     ).encode()
 
 
@@ -205,6 +235,8 @@ def document_html(
     controls='',
     body_html=None,
     service_url=None,
+    post_actions='',
+    wiki_actions='',
 ):
     from markdown_it import MarkdownIt
 
@@ -234,6 +266,9 @@ def document_html(
         if body_html is None
         else body_html
     )
+    is_profile = bool(resource and resource.get('type') == 'user' and 'profile' in resource)
+    if is_profile and body_html is None:
+        body = profile_art_body(resource)
     raw_url = escape(
         quote(raw_path, safe='/@*&') + '?' + (raw_query + '&' if raw_query else '') + 'format=raw',
         quote=True,
@@ -244,7 +279,7 @@ def document_html(
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{escape(title)}</title><link rel="icon" href="/favicon.png">'
         '<link rel="search" type="application/opensearchdescription+xml" title="MSG" href="/opensearch.xml">'
-        f'<style>{THEME_CSS}</style></head><body class="page-document">'
+        f'<style>{THEME_CSS}{PROFILE_CSS if is_profile else ""}{POST_ACTIONS_CSS if post_actions or wiki_actions else ""}</style></head><body class="page-document">'
         + SKIP_LINK
         + '<header class="site-header">'
         + BRAND_LINK
@@ -258,8 +293,11 @@ def document_html(
         + f'<a class="raw-link" href="{raw_url}">raw</a></div>'
         '</div></header><main><p id="msg-document-status" class="document-status" role="status" aria-live="polite"></p>'
         f'<textarea id="msg-document-source" aria-label="Markdown source" readonly hidden>{escape(markdown)}</textarea>'
-        f'<div id="content" class="prose" tabindex="-1">{controls}{metadata}{body}</div></main>'
-        f'{WEBMCP_TAG}</body></html>'
+        f'<div id="content" class="prose" tabindex="-1">{controls}{metadata}{body}</div>{wiki_actions}{post_actions}</main>'
+        + (f'<script>{PROFILE_SCRIPT}</script>' if is_profile else '')
+        + (f'<script>{POST_ACTIONS_SCRIPT}</script>' if post_actions else '')
+        + (f'<script>{WIKI_SCRIPT}</script>' if wiki_actions else '')
+        + f'{WEBMCP_TAG}</body></html>'
     ).encode()
 
 
@@ -290,8 +328,41 @@ def resource_markdown(value, fallback):
         if not conversation['messages']:
             lines.append('No messages yet.')
         return '\n'.join(lines)
-    if 'items' in value and value.get('type') in {'topic', 'organization'}:
+    if value.get('type') == 'organization':
+        description = {
+            'g_public': '公开用户分类，用于归类用户和授予组权限。 / The public user group, used for membership and group permissions.',
+            'g_admins': '管理员用户分类，用于归类管理员和授予组权限。 / The administrators group, used for membership and group permissions.',
+        }.get(
+            value.get('id'),
+            '用于归类用户和授予组权限。 / Used for user membership and group permissions.',
+        )
+        return '\n'.join([
+            '# ' + markdown_text(value['name']),
+            '',
+            'User group / 用户分类',
+            '',
+            description,
+            '',
+        ])
+    if 'items' in value and value.get('type') == 'topic':
         lines = ['# ' + markdown_text(value['name']), '']
+        rules = value.get('board_rules')
+        if rules:
+            lines.extend([
+                '## Board rules / 本板规则',
+                '',
+                markdown_text(rules['text']) if rules['text'] else 'No additional board rules.',
+                '',
+                'Posting: '
+                + rules['posting_policy']
+                + ' · Membership: '
+                + rules['membership_policy'],
+                '',
+                'Rule generation: '
+                + str(rules['generation'])
+                + ' · [Platform rules](/_rules/topics)',
+                '',
+            ])
         for item in value['items']:
             preview = item.get('preview', {})
             title = preview.get('title', item['name'])

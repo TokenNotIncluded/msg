@@ -138,6 +138,7 @@ class OperationExecutor:
                 else:
                     capacity_writes = {
                         'identity.register',
+                        'identity.delegated_create',
                         'identity.temporary',
                         'identity.custodial_create',
                         'content.topic_create',
@@ -261,6 +262,12 @@ class OperationExecutor:
                         )
                     require(isinstance(output, HandlerOutput), 'invalid_handler_output')
                     self.registry.validate(spec.output_schema, wire(output))
+                    binding_key = 'delegated_identity:' + str(principal.actor)
+                    binding = session.setting(binding_key)
+                    if binding and binding.get('max_uses') is not None:
+                        require(spec.effect == 'transaction', 'limited_delegation_operation')
+                        require(binding['uses'] < binding['max_uses'], 'delegation_exhausted')
+                        session.set_setting(binding_key, {**binding, 'uses': binding['uses'] + 1})
                     result = OperationResult(
                         request_id=request.request_id,
                         operation=spec.name,

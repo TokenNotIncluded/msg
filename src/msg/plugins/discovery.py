@@ -23,6 +23,7 @@ from msg.constants import (
     ROOT_SUBJECT as ROOT_SUBJECT,
     TOOLS_SPACE as TOOLS_SPACE,
 )
+from msg.core.addressing import resource_address
 from msg.core.codec import (
     b64,
     canonical as canonical,
@@ -200,7 +201,11 @@ async def visible_link(app, ctx, request, tx, ref):
             if exc.code == 'revision_not_found':
                 return None
             raise
-    return {'ref': wire(ref), 'path': short_subject_path(await tx.path(ref.id))}
+    return {
+        'ref': wire(ref),
+        'path': short_subject_path(await tx.path(ref.id)),
+        'address': resource_address(app.settings.service_url, ref),
+    }
 
 
 async def basic_links(app, ctx, request, tx, resource, revision):
@@ -208,7 +213,13 @@ async def basic_links(app, ctx, request, tx, resource, revision):
     current = ResourceRef(
         id=rid, revision=revision.id if revision is not None else resource.revision
     )
-    singles = {'self': {'ref': wire(current), 'path': short_subject_path(await tx.path(rid))}}
+    singles = {
+        'self': {
+            'ref': wire(current),
+            'path': short_subject_path(await tx.path(rid)),
+            'address': resource_address(app.settings.service_url, ResourceRef(id=rid)),
+        }
+    }
     if resource.type in {'post', 'attachment', 'file'} and resource.parent:
         parent = await tx.resource(resource.parent)
         if parent.type == 'topic':
@@ -219,7 +230,11 @@ async def basic_links(app, ctx, request, tx, resource, revision):
         author = await visible_link(app, ctx, request, tx, ResourceRef(id=revision.author))
         if author:
             singles['a'] = author
-        singles['v'] = {'ref': wire(current), 'path': f'/_r/{rid}/rev/{revision.id}'}
+        singles['v'] = {
+            'ref': wire(current),
+            'path': f'/_r/{rid}/rev/{revision.id}',
+            'address': resource_address(app.settings.service_url, current),
+        }
         if len(revision.parents) == 1:
             singles['d'] = {
                 'from': wire(ResourceRef(id=rid, revision=revision.parents[0])),
@@ -229,13 +244,17 @@ async def basic_links(app, ctx, request, tx, resource, revision):
         outgoing = {
             relation.type: relation.target
             for relation in revision.relations
-            if relation.type in {'reply_to', 'thread_root'}
+            if relation.type in {'reply_to', 'thread_root', 'fork_of'}
         }
         if resource.type == 'post':
             root = outgoing.get('thread_root', current)
             link = await visible_link(app, ctx, request, tx, root)
             if link:
                 singles['r'] = link
+        if 'fork_of' in outgoing:
+            link = await visible_link(app, ctx, request, tx, outgoing['fork_of'])
+            if link:
+                singles['fork_of'] = link
         if 'reply_to' in outgoing:
             link = await visible_link(app, ctx, request, tx, outgoing['reply_to'])
             if link:
@@ -340,6 +359,14 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
     await check_access(app, ctx, request, tx, rid, 'read')
     require(resource.state != 'purged', 'resource_purged')
     meta = await metadata(tx, resource)
+    from msg.core.wiki import in_wiki
+
+    if resource.type in {'post', 'topic'} and await in_wiki(tx, resource):
+        meta['wiki'] = {'public': True, 'shared_edit': True, 'history_retained': True}
+    if resource.type == 'topic':
+        from msg.plugins.board_rules import rules_projection
+
+        meta['board_rules'] = await rules_projection(tx, resource)
     if rid == 't_capabilities':
         specs = [wire(s, compact=True) for s in app.registry.capabilities()]
         return {'version': 1, 'digest': digest(specs), 'capabilities': specs}
@@ -457,6 +484,8 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
             size=rev.content.size,
             media_type=rev.content.media_type,
         )
+        if 'wiki' in meta:
+            meta['wiki']['has_previous_revision'] = bool(rev.parents)
         meta.pop('summary', None)
         if rev.summary is not None:
             meta['summary'] = rev.summary
@@ -516,6 +545,7 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'profile',
         'groups',
         'list_operation',
+        'board_rules',
         'summary',
         'change_note',
         'source_kind',
@@ -613,6 +643,9 @@ def next_link(app, operation, args):
 
 def install(app):
     op, finish = registration(app, 'discovery', ('identity', 'content'))
+    from msg.plugins.resource_addressing import install as install_addressing
+
+    install_addressing(app, op)
     fields = {'type': 'array', 'items': STRING, 'maxItems': 30, 'uniqueItems': True}
 
     @op(
@@ -2407,4 +2440,7 @@ def install(app):
     from msg.plugins.bot_feed import install as install_bot_feed
 
     install_bot_feed(app, op)
+    from msg.plugins.live_space import install as install_live
+
+    install_live(app, op)
     finish()

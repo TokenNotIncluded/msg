@@ -339,7 +339,14 @@ async def sync_system_sources(
             """INSERT INTO topic_memberships
             (topic,subject,role,status,joined_at,invited_by) VALUES (?,?,?,?,?,?)
             ON CONFLICT(topic,subject) DO NOTHING""",
-            (rid, ROOT_SUBJECT, 'admin', 'active', wire(now), None),
+            (
+                rid,
+                ROOT_SUBJECT,
+                'member' if rid == 't_wiki' else 'admin',
+                'active',
+                wire(now),
+                None,
+            ),
             write=True,
         )
     desired = set()
@@ -867,6 +874,9 @@ async def bootstrap(store, contents, registry, now, *, selftest_run_id=None):
         await sync_system_sources(
             tx, contents, now, namespace_root=namespace_root, registry=registry
         )
+        from msg.core.wiki import sync_wiki
+
+        await sync_wiki(tx, registry, now)
         tx.set_setting(
             'bootstrap', {'version': definition['version'], 'digest': digest(definition)}
         )

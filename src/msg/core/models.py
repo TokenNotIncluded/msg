@@ -419,8 +419,8 @@ class Event:
     type: str
     time: datetime
     request_id: RequestId
-    actor: ResourceId
-    subject: ResourceId
+    actor: ResourceId | None
+    subject: ResourceId | None
     resources: tuple[ResourceRef, ...]
     data: JsonMap
 

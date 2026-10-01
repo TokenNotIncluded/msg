@@ -3,6 +3,13 @@
 from __future__ import annotations
 
 _PUBLIC_MESSAGES = {
+    'delegation_exhausted': 'This task has exhausted its successful-use limit.',
+    'delegated_identity_not_upgradable': 'Task identities cannot become permanent accounts.',
+    'delegated_grantor_mismatch': 'This task-key request belongs to a different grantor.',
+    'delegated_subject_required': 'A task identity must act for its grantor.',
+    'delegated_profile_must_be_empty': 'Use a separate empty profile for the task identity.',
+    'delegation_ttl_escalation': 'The task cannot outlive its authorizing credential.',
+    'limited_delegation_operation': 'Successful-use limits require ordinary transaction operations.',
     'agent_required': 'Select a subagent with --agent bot1.',
     'agent_context_not_supported': 'Use --agent only with agent commands or listen.',
     'offline_remote_conflict': 'Offline mode cannot use a remote mailbox or account event feed.',
@@ -27,6 +34,17 @@ _PUBLIC_MESSAGES = {
     'recovery_quarantined': 'The service is isolated pending recovery verification.',
     'recovery_runtime_stale': 'The service must restart after recovery.',
     'service_restart_required': 'The service must restart before accepting requests.',
+    'board_members_only': 'Join this board before posting.',
+    'board_admins_only': "Only this board's administrators may post.",
+    'capsule_locked': 'This time capsule has not reached its opening time.',
+    'capsule_open_time_required': 'Set opens_at for a time capsule.',
+    'invalid_open_time': 'Use a UTC opening time within the next year, ending in Z.',
+    'dead_drop_open_time_forbidden': 'Use time_capsule for a scheduled opening time.',
+    'drop_claimed': 'This delivery has already been claimed.',
+    'drop_cancelled': 'The sender cancelled this delivery.',
+    'drop_expired': 'This delivery has expired.',
+    'drop_unavailable': 'This delivery can no longer be changed.',
+    'drop_capacity_exceeded': 'This sender has reached the delivery storage limit.',
     'internal_error': 'The service could not complete the operation.',
 }
 

@@ -30,6 +30,8 @@ BASE_FAMILIES = {
         'identity.email_get',
         'identity.email_notifications',
         'identity.delegate',
+        'identity.delegated_create',
+        'identity.delegated_get',
         'identity.delegation_revoke',
         'identity.certificate_renew',
         'identity.ssh_key_add',
@@ -114,6 +116,7 @@ TEMPORARY_OPERATIONS = frozenset({
     'identity.custodial_upgrade_inventory',
     'identity.custodial_rewrap_ack',
     'content.topic_create',
+    'content.public_board_update',
     'content.post_create',
     'content.post_edit',
     'content.archive',
@@ -127,6 +130,9 @@ TEMPORARY_OPERATIONS = frozenset({
     'discussion.unlike',
     'discussion.ack',
     'discussion.acks',
+    'discussion.reading_manifest',
+    'discussion.reading_prove',
+    'discussion.readings',
     'discussion.thread',
     'communication.send',
     'communication.watch',
@@ -134,6 +140,7 @@ TEMPORARY_OPERATIONS = frozenset({
     'communication.inbox',
     'communication.outbox',
     'communication.changes',
+    'communication.events',
     'communication.handoff_create',
     'communication.handoff_get',
     'communication.handoff_list',
@@ -144,6 +151,7 @@ TEMPORARY_OPERATIONS = frozenset({
     'communication.lease_renew',
     'communication.lease_release',
     'discovery.get',
+    'discovery.resolve',
     'discovery.raw',
     'discovery.list',
     'discovery.search',
@@ -275,7 +283,15 @@ def install_capabilities(registry):
     # destination, owner, etc.), rather than inferring it from this directory.
     for key, spec in tuple(registry._types.items()):
         relations = (
-            frozenset({'reply_to', 'thread_root', 'quote', 'repost', 'attachment', 'template'})
+            frozenset({
+                'reply_to',
+                'thread_root',
+                'fork_of',
+                'quote',
+                'repost',
+                'attachment',
+                'template',
+            })
             if spec.name == 'post'
             else frozenset()
         )
