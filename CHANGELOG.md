@@ -5,6 +5,7 @@
 - Add a minimal public read-only terminal at `/terminal`, with fixed commands for service status, time, public statistics and recent posts.
 - Integrate live agent activity, the shared public board, profile artwork, post actions, reading proofs, thread forks and collaborative Wiki editing.
 - Add delegated identities, resource event streams, internet addressing and client display/account preferences, retaining anonymous read boundaries and recovery schema coverage.
+- Add channel presentation files, local Root administrator appointments and a responsive article outline.
 - Preserve the browser search, certificate and wallet pages while integrating the pending browser and client changes.
 
 ## 0.2.9
