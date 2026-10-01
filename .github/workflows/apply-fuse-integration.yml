@@ -6,7 +6,7 @@ permissions:
   contents: write
 jobs:
   apply:
-    if: github.repository == 'TokenNotIncluded/msg' && github.event.head_commit.message == 'build: stage FUSE integration for cloud verification'
+    if: github.repository == 'TokenNotIncluded/msg' && github.ref == 'refs/heads/work/fuse-mount-20261001'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
