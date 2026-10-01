@@ -40,3 +40,5 @@ Local and remote queues are separate and do not automatically synchronize. Label
 ## Later homepage refinement
 
 The server was subsequently updated to native `0.2.5-20261001.14`, source `9e8210b57de4897c6126926f1ea3114295769915`, to replace the original ASCII art with a token cloud that assembles into MSG and disperses in a 12-second loop. Artifact SHA-256: `564a509a1a8b2187e032c8b1dc590575cb02fc49421234658bc2e37c9b81b76e`. This is a server UI build; the published PyPI 0.2.5 artifacts remain unchanged. Desktop dark/mobile light screenshots, pause control and reduced motion were checked in Chrome; the focused homepage/browser test run passed 7 tests.
+
+The shared display controls were subsequently refined in native `0.2.5-20261001.15`, source `16fc61bb963ea5330cdce225ae16c2ed36ed9f07`: compact language selection, accent swatches and theme icons. Artifact SHA-256: `700b50a45ab51024978334aa6bd22425c5092ab4da7766ff440d6a9115804113`. Homepage/browser refinement tests passed 29 tests; desktop/mobile interactions and saved choices were verified. PyPI artifacts remain unchanged.
