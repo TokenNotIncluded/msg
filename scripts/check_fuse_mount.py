@@ -50,9 +50,7 @@ def inspect_mount(path):
         stream.seek(12345)
         assert stream.read(2345) == BODY[12345:14690]
     for operation in (
-        lambda: target.write_bytes(b'no'),
-        target.unlink,
-        lambda: (path / 'new').mkdir(),
+        lambda: target.write_bytes(b'no'), target.unlink, lambda: (path / 'new').mkdir()
     ):
         try:
             operation()
@@ -73,7 +71,7 @@ async def exercise(path, *, cancel=False):
             if task.done():
                 await task
                 raise AssertionError('FUSE exited before mounting')
-            if os.path.ismount(path):
+            if await asyncio.to_thread(os.path.ismount, path):
                 break
             await asyncio.sleep(0.02)
         else:
@@ -93,7 +91,7 @@ async def exercise(path, *, cancel=False):
                 subprocess.run, [executable, '-u', '--', str(path)], check=True, timeout=10
             )
             await asyncio.wait_for(task, 10)
-        assert not os.path.ismount(path)
+        assert not await asyncio.to_thread(os.path.ismount, path)
         assert not operations.handles
     finally:
         if not task.done():

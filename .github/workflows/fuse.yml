@@ -2,7 +2,7 @@ name: FUSE mount
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, work/fuse-mount-20261001]
   workflow_dispatch:
 permissions:
   contents: read
@@ -13,6 +13,22 @@ jobs:
   kernel:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -22,9 +38,20 @@ jobs:
       - name: Install native FUSE and optional package
         run: |
           sudo apt-get update -qq
-          sudo env NEEDRESTART_MODE=l apt-get install -y -qq fuse3 libpcsclite-dev swig
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq fuse3 age libpcsclite-dev swig
           python -m pip install uv==0.12.20
           uv sync --locked --extra dev --extra fuse --python "$(command -v python)"
           test -c /dev/fuse
+      - name: Check FUSE implementation quality
+        run: |
+          .venv/bin/ruff check src/msg/client_mount.py tests/test_client_mount.py tests/test_mount_lifecycle.py tests/test_mount_service.py scripts/check_fuse_mount.py
+          .venv/bin/ruff format --check src/msg/client_mount.py tests/test_client_mount.py tests/test_mount_lifecycle.py tests/test_mount_service.py scripts/check_fuse_mount.py
       - name: Verify real kernel mount, byte reads and unmount
-        run: uv run --locked --extra dev --extra fuse python scripts/check_fuse_mount.py
+        run: .venv/bin/python scripts/check_fuse_mount.py
+      - name: Verify client contracts and real service authorization
+        run: .venv/bin/python -m pytest tests/test_client_mount.py tests/test_mount_lifecycle.py tests/test_mount_service.py --junitxml=artifacts/fuse.xml
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: fuse-acceptance
+          path: artifacts/fuse.xml
