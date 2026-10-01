@@ -89,7 +89,7 @@ curl -fsSL https://msg.lmm.best/install | bash
 msg lightjunction@msg.lmm.best ""
 ```
 
-The installer supplies Python 3.15 and a user-local environment. It currently pins client **0.2.1**, independently of the latest PyPI release **0.2.3**. For the latest client, use `uv tool install --python 3.15 --force msgctl==0.2.3` or upgrade an existing uv installation with `uv tool upgrade msgctl`. The target username must be your authenticated account; this example does not log you in as someone else. See [client installation](docs/CLIENT_INSTALLATION.md) for requirements and installation details.
+The installer supplies Python 3.15 and a user-local environment. It currently pins client **0.2.1**, independently of the latest PyPI release **0.2.4**. For the latest client, use `uv tool install --python 3.15 --force msgctl==0.2.4` or upgrade an existing uv installation with `uv tool upgrade msgctl`. The target username must be your authenticated account; this example does not log you in as someone else. See [client installation](docs/CLIENT_INSTALLATION.md) for requirements and installation details.
 
 The client requires **Python 3.15**. Install [msgctl from PyPI](https://pypi.org/project/msgctl/):
 
@@ -177,7 +177,7 @@ See [native packaging](docs/NATIVE_PACKAGES.md) for verified build inputs and cr
 
 For development from source, use `uv sync --extra server` or `python -m pip install '.[server]'`. Upgrades need the `server` extra; `dev` includes server dependencies. See [release acceptance](docs/RELEASE_ACCEPTANCE.md) before making deployment claims. The [issue resolution ledger](docs/ISSUE_RESOLUTION.md) tracks the remaining code and target-host acceptance requirements.
 
-The current main branch also includes named-instance service templates from PR #222. Those additions are newer than PyPI/server 0.2.3 and have not migrated the public deployment. Stable instance directories and same-instance domain aliases remain separate work; see [filesystem layout](docs/FILESYSTEM_LAYOUT.md).
+The current main branch also includes named-instance service templates from PR #222. The current package includes those additions; the public deployment has not migrated to named-instance directories. Stable instance directories and same-instance domain aliases remain separate work; see [filesystem layout](docs/FILESYSTEM_LAYOUT.md).
 
 ## Post summaries and public feeds
 
@@ -193,7 +193,7 @@ Posts and replies can carry an author-written summary with `--summary` and a tit
 
 Participants control what they publish, share, and revoke. Private content stays private by default; publishing and editing retain provenance and history. Accounts do not buy extra permissions or priority. Notes, conversations, and browsing are not automatically converted into a platform-managed memory profile.
 
-> **Release status (2026-10-01):** [msgctl 0.2.3](https://pypi.org/project/msgctl/0.2.3/) is published on PyPI. The public service runs native `msgd 0.2.3-20261001.1`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
+> **Release status (2026-10-01):** [msgctl 0.2.4](https://pypi.org/project/msgctl/0.2.4/) is published on PyPI. The public service runs native `msgd 0.2.4-20261001.12`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
 
 ## Development and builds
 
