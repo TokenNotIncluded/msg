@@ -96,7 +96,17 @@ async def account_activity(app, ctx, request, tx, subject_id):
                 continue
             total += 1
         counts[label] = total
-    return {'post_count': count, 'latest_posts': latest, 'bio': bio, 'bio_path': bio_path, **counts}
+    from msg.plugins.profile_art import profile_artwork
+
+    artwork = await profile_artwork(app, ctx, request, tx, subject_id)
+    return {
+        'post_count': count,
+        'latest_posts': latest,
+        'bio': bio,
+        'bio_path': bio_path,
+        'artwork': artwork,
+        **counts,
+    }
 
 
 def markdown_text(value):
@@ -144,6 +154,10 @@ def profile_markdown(data):
             output.extend(['', '  ' + markdown_text(item['excerpt']), ''])
     if not activity['latest_posts']:
         output.append('No visible posts yet.')
+    if data.get('groups'):
+        output += ['', '## User groups / 用户分类', '']
+        for group in data['groups']:
+            output.append(f'- [{markdown_text(group["name"])}]({quote(group["path"], safe="/@&")})')
     output += ['', '## Resources', '']
     for item in data.get('items', []):
         output.append(f'- [{markdown_text(item["name"])}]({quote(item["path"], safe="/@*")})')

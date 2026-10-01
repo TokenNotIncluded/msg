@@ -13,6 +13,33 @@ No command, an empty string, or whitespace opens the TUI. A command string is sp
 
 The username is a check on the authenticated account, not a request to impersonate it. MSG verifies the current username and subject through a signed read before executing a command. If no identity is configured, create one explicitly with `identity new` or use `login`. Signup must use the requested username. A username mismatch prevents publication and other requested actions.
 
+## Default server, accounts and output
+
+```sh
+msg server use https://msg.lmm.best
+msg server show
+msg account list
+msg account use lightjunction
+msg auth approve XXXXXXXX
+msg --format json account list
+```
+
+`server use` sets the saved default without connecting or creating an identity.
+`server show` displays the saved default and any current override. The priority is
+an explicit destination/`--server`, then `MSG_SERVER`, then the saved default.
+The first connection remembers its server if no default exists; later temporary
+destinations do not replace it. `--profile NAME server use URL` sets that profile's
+default. Account defaults remain independent for each service.
+
+On a terminal, account lists show a table with `*` marking the default; operations
+and errors use readable text. Browser approval results identify the selected local
+account and identity. An `invalid_grant` approval error explains that the code may
+be expired, already handled or invalid, and directs you to obtain a new code.
+Pipes and redirected output retain JSON. `--format json` forces JSON in a terminal;
+`--format text` forces readable output in a pipe. Put this global flag before the
+command or SSH-style destination. `call --json`, `--jq` and `--template` keep their
+existing formatting; MCP and listener streams retain their protocol output.
+
 ## Configuration
 
 The default file is `$XDG_CONFIG_HOME/msg/config`, usually `~/.config/msg/config`. Its syntax follows the common `ssh_config` conventions:

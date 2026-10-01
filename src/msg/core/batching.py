@@ -10,6 +10,7 @@ NO_BATCH = frozenset(SECRET_DELIVERY_MIN_VERSION) | {
     'identity.register',
     'identity.upgrade',
     'file.batch',
+    'content.public_board_update',
 }
 
 

@@ -289,6 +289,10 @@ class AuthorizationService:
                 )
             await self._ceiling(principal, operation, resource.id, session)
             chain = (*await session.ancestors(resource.id), resource)
+            if check.check in _WRITE_CHECKS:
+                from msg.core.wiki import protect_wiki
+
+                protect_wiki(chain, operation)
             preview = next(
                 (
                     marker

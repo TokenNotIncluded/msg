@@ -66,6 +66,41 @@ WEBMCP_SCRIPT = r"""(() => {
   const palettes = __ACCENT_PALETTES__;
   const load = (key, fallback) => {try {return localStorage.getItem(key) || fallback;} catch {return fallback;}};
   const save = (key, value) => {try {localStorage.setItem(key, value);} catch {}};
+  const positionPreferences = panel => {
+    if (!panel.open) return;
+    const fields = panel.querySelector('.preference-fields');
+    const summary = panel.querySelector('summary');
+    if (!fields || !summary) return;
+    const margin = 16, gap = 8;
+    const viewport = window.visualViewport;
+    const x = viewport?.offsetLeft || 0, y = viewport?.offsetTop || 0;
+    const vw = viewport?.width || document.documentElement.clientWidth;
+    const vh = viewport?.height || window.innerHeight;
+    const width = Math.max(0, Math.min(340, vw - margin * 2));
+    const anchor = summary.getBoundingClientRect();
+    fields.style.setProperty('--preferences-width', width + 'px');
+    const height = Math.min(fields.scrollHeight, Math.max(0, vh - margin * 2));
+    const left = Math.max(x + margin, Math.min(anchor.right - width, x + vw - width - margin));
+    let top = anchor.bottom + gap;
+    if (top + height > y + vh - margin) top = anchor.top - height - gap;
+    top = Math.max(y + margin, Math.min(top, y + vh - height - margin));
+    fields.style.setProperty('--preferences-left', left + 'px');
+    fields.style.setProperty('--preferences-top', top + 'px');
+    fields.style.setProperty('--preferences-height', Math.max(0, y + vh - top - margin) + 'px');
+  };
+  let preferencesFrame = 0;
+  const repositionPreferences = () => {
+    if (preferencesFrame) return;
+    preferencesFrame = requestAnimationFrame(() => {
+      preferencesFrame = 0;
+      document.querySelectorAll('.preferences[open]').forEach(positionPreferences);
+    });
+  };
+  document.querySelectorAll('.preferences').forEach(panel => panel.addEventListener('toggle', () => positionPreferences(panel)));
+  window.addEventListener('resize', repositionPreferences);
+  document.addEventListener('scroll', repositionPreferences, true);
+  window.visualViewport?.addEventListener('resize', repositionPreferences);
+  window.visualViewport?.addEventListener('scroll', repositionPreferences);
   const applyLanguage = value => {
     const language = value === 'zh' ? 'zh' : 'en';
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';

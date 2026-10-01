@@ -5,6 +5,47 @@ require('../../src/msg/data/root-web-model.js');
 const M = globalThis.MSGUniverse;
 const NOW = Date.parse('2026-10-01T16:00:00Z');
 const stamp = (seconds) => new Date(NOW + seconds * 1000).toISOString();
+test('random scenery varies by visit without moving identities', () => {
+  assert.notDeepEqual(M.nebula(40, 'visit-a'), M.nebula(40, 'visit-b'));
+  const points = Array.from({ length: 4000 }, (_, i) => M.position('u_density_' + i));
+  assert.ok(points.every(p => p.every(Number.isFinite) && Math.hypot(...p) >= 37.99));
+  assert.ok(Math.max(...points.map(p => p[1])) > 120);
+  assert.ok(Math.min(...points.map(p => p[1])) < -120);
+  assert.ok(Math.max(...points.map(p => Math.hypot(...p))) > 250);
+});
+test('LOD has a hard budget and preserves aggregate population', () => {
+  const nodes = Array.from({ length: 20000 }, (_, i) => ({ id: 'u_' + i, position: M.position('u_' + i) }));
+  const index = new M.SpatialIndex(nodes);
+  for (const budget of [1, 8, 64, 256]) {
+    const visible = index.query((p, radius) => ({ visible: true, size: radius * 100 }), { budget, threshold: 0 });
+    assert.ok(visible.length <= budget);
+    assert.equal(visible.reduce((n, cell) => n + (cell.count || 1), 0), nodes.length);
+    assert.equal(new Set(visible.map(n => n.id)).size, visible.length);
+  }
+  const distant = index.query(() => ({ visible: true, size: 1 }));
+  assert.equal(distant.length, 1);
+  assert.equal(distant[0].count, nodes.length);
+  assert.deepEqual(index.query(() => ({ visible: false, size: 0 })), []);
+});
+test('closer sectors resolve into the same real nodes, never synthetic accounts', () => {
+  const nodes = Array.from({ length: 20 }, (_, i) => ({ id: 'u_' + i, position: M.position('u_' + i) }));
+  const visible = new M.SpatialIndex(nodes).query(() => ({ visible: true, size: 100 }), { threshold: 0 });
+  assert.deepEqual(new Set(visible), new Set(nodes));
+});
+test('coincident density stays aggregated without unbounded refinement', () => {
+  const nodes = Array.from({ length: 100000 }, (_, i) => ({ id: 'u_' + i, position: [0, 0, 0] }));
+  const view = new M.SpatialIndex(nodes).query(() => ({ visible: true, size: Infinity }));
+  assert.equal(view.length, 1);
+  assert.equal(view[0].kind, 'cluster');
+  assert.equal(view[0].count, nodes.length);
+});
+test('rolling window evicts old entries while keeping the open star', () => {
+  const nodes = new Map(Array.from({ length: 10000 }, (_, i) => ['u_' + i, i]));
+  M.trimMap(nodes, 1000, new Set(['u_0', 'u_2']));
+  assert.equal(nodes.size, 1000);
+  assert.ok(nodes.has('u_0') && nodes.has('u_2') && nodes.has('u_9999'));
+  assert.equal(nodes.has('u_3'), false);
+});
 const user = (star = {}, id = 'u_test') => ({
   id, name: 'test', kind: 'user',
   star: { checked_at: stamp(0), ...star },

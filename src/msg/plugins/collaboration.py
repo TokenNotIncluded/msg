@@ -13,6 +13,20 @@ from msg.plugins.schemas import IDENTIFIER, STRING, obj
 
 MAX_LEASE_TTL = timedelta(days=7)
 MAX_HANDOFF_REFS = 16
+CAPSULE = obj(
+    {
+        'goal': {'type': 'string', 'minLength': 1, 'maxLength': 4096},
+        'progress': {'type': 'string', 'maxLength': 8192},
+        'verification': {'type': 'string', 'maxLength': 8192},
+        'next_steps': {
+            'type': 'array',
+            'items': {'type': 'string', 'minLength': 1, 'maxLength': 1024},
+            'maxItems': 32,
+        },
+        'constraints': {'type': 'string', 'maxLength': 4096},
+    },
+    ('goal', 'next_steps'),
+)
 
 
 async def _self(app, ctx, request, tx):
@@ -130,6 +144,25 @@ def install(app, op):
             ('to_subject', 'resource_refs'),
         ),
     )
+    @op(
+        'communication.handoff_create',
+        obj(
+            {
+                'to_subject': IDENTIFIER,
+                'resource_refs': {
+                    'type': 'array',
+                    'items': IDENTIFIER,
+                    'maxItems': MAX_HANDOFF_REFS,
+                    'uniqueItems': True,
+                },
+                'message': {'type': 'string', 'maxLength': 4096},
+                'next_action': {'type': 'string', 'maxLength': 1024},
+                'capsule': CAPSULE,
+            },
+            ('to_subject', 'resource_refs', 'capsule'),
+        ),
+        version=2,
+    )
     async def handoff_create(ctx, request, tx):
         sender = await _self(app, ctx, request, tx)
         recipient = await resolve(tx, request.arguments['to_subject'])
@@ -152,6 +185,8 @@ def install(app, op):
             'status': 'pending',
             'generation': 1,
         }
+        if request.arguments.get('capsule') is not None:
+            record['capsule'] = {'format': 'msg.handoff-capsule/1', **request.arguments['capsule']}
         tx.execute(
             'INSERT INTO handoffs VALUES (?,?,?,?,?,?)',
             (record['id'], sender, recipient, 'pending', 1, canonical(record).decode()),

@@ -276,7 +276,12 @@ class ClientState:
             if profile is not None:
                 private_directory(previous.config.parent)
             private_directory(selector.parent)
-            durable_write(selector, canonical({'version': 1, 'server': self.server}), mode=0o600)
+            # Remember first use, but invocation overrides must not replace an
+            # existing default. Explicit changes go through `msg server use`.
+            if selection is None:
+                durable_write(
+                    selector, canonical({'version': 1, 'server': self.server}), mode=0o600
+                )
             if account is None and account_selection is None:
                 private_directory(selection_path.parent)
                 durable_write(
@@ -1316,6 +1321,38 @@ class MsgClient:
             'digest': saved['digest'],
             'transfer_id': transfer_id,
         }
+
+    async def prove_reading(self, ref, ranges=None, note='', *, line_ranges=None):
+        require(ref.revision is not None, 'reading_revision_required')
+        params = {'target': wire(ref)}
+        if ranges is not None:
+            params['ranges'] = ranges
+        if line_ranges is not None:
+            params['line_ranges'] = line_ranges
+        manifest = self.checked(await self.call('discussion.reading_manifest', params))
+        require(manifest.data['parts'], 'reading_empty_content')
+        return await self.call(
+            'discussion.reading_prove',
+            {
+                'target': wire(ref),
+                'digest': manifest.data['digest'],
+                'parts': manifest.data['parts'],
+                'note': note,
+            },
+        )
+
+    async def prove(self, ref, kind, note=''):
+        require(ref.revision is not None, 'proof_revision_required')
+        value = self.checked(
+            await self.call(
+                'discovery.get',
+                {'id': ref.id, 'revision': ref.revision, 'fields': ['id', 'revision', 'digest']},
+            )
+        )
+        return await self.call(
+            'discussion.prove',
+            {'target': wire(ref), 'digest': value.data['digest'], 'kind': kind, 'note': note},
+        )
 
     async def ack(self, ref):
         require(ref.revision is not None, 'ack_revision_required')

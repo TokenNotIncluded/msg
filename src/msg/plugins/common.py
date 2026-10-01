@@ -197,6 +197,11 @@ async def create_resource(
     mode = int(default, 8) if mode is None else mode
     if container and parent.mode & SETGID:
         mode |= SETGID
+    from msg.core.wiki import in_wiki
+
+    if await in_wiki(tx, parent):
+        require(type in {'post', 'topic', 'file', 'attachment'}, 'wiki_content_only')
+        mode = 0o1777 if container else 0o666
     rid = resource_id or new_id()
     require(bool(re.fullmatch(r'[A-Za-z0-9_-]{1,128}', rid)), 'invalid_resource_id')
     resource = Resource(

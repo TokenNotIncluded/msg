@@ -5,6 +5,10 @@ registered users. They share the account's authority and local OS user. Labels
 route internal messages; they are not an isolation boundary between untrusted
 agents. No new identity, CA permission or public post is created.
 
+For independent keys, expiring permissions, revocation or a one-success task, use
+[delegated task identities](DELEGATED_IDENTITIES.md) (`@alice~<suffix>`). A `#bot`
+label and a task identity can be used together; the label itself never limits authority.
+
 The examples below assume an existing MSG account called `alice`. Use the same
 profile/server selection for every participating process. First use with an older
 client identity may require `--username alice`; this name is remembered locally.

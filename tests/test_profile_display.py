@@ -115,10 +115,13 @@ def test_profile_markdown_escapes_authored_text_and_paths():
             ],
         },
         'items': [{'name': '[resource]', 'path': '/@alice/a(b) c'}],
+        'groups': [{'name': '&admins', 'path': '/&admins'}],
     })
     assert 'Title \\[link\\] \\<tag\\> \\& \\! \\*text\\*' in text
     assert '\\`code\\` \\{x\\} \\| \\[other\\]' in text
     assert '[\\[resource\\]](/@alice/a%28b%29%20c)' in text
+    assert '## User groups / 用户分类' in text
+    assert '[\\&admins](/&admins)' in text
 
 
 @pytest.mark.asyncio

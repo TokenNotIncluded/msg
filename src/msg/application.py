@@ -145,6 +145,9 @@ class Application:
                         namespace_root=self.namespace_root,
                         registry=self.registry,
                     )
+                    from msg.core.wiki import sync_wiki
+
+                    await sync_wiki(tx, self.registry, self.clock())
                     if self.selftest_run_id is None:
                         await sync_root_web_sample(tx, self.contents, self.clock())
                 else:

@@ -89,6 +89,7 @@ def expand_connection_args(argv, commands):
         '--server': 'server',
         '--endpoint': 'endpoint',
         '--transport': 'transport',
+        '--format': 'output_format',
         '--config-dir': 'config_dir',
         '--profile': 'profile',
         '--account': 'account',

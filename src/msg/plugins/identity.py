@@ -3210,6 +3210,7 @@ def install(app):
             'invalid_delegate_key',
         )
         grants = tuple(decode(CapabilityGrant, g) for g in a['grants'])
+        await validate_ceiling(app, ctx, tx, grants)
         parent_cert = None
         if ctx.principal.actor != ctx.principal.subject:
             candidates = [
@@ -3221,6 +3222,10 @@ def install(app):
             require(bool(candidates), 'redelegation_forbidden')
             parent_cert = candidates[0]
             require(a.get('depth', 0) < parent_cert.delegation_depth, 'delegation_depth_exceeded')
+            require(
+                ctx.now + timedelta(seconds=a['ttl']) <= parent_cert.expires_at,
+                'delegation_ttl_escalation',
+            )
         for grant in grants:
             require(grant.capability in app.base_capability_names, 'special_delegation_requires_ca')
             await app.certificates.validate_grant(grant, tx)
@@ -3231,8 +3236,10 @@ def install(app):
                 require(
                     any([
                         g.capability == grant.capability
+                        and g.version == grant.version
                         and grant.operations <= g.operations
                         and await scope_subset(grant.scope, g.scope, tx)
+                        and constraints_subset(grant.constraints, g.constraints)
                         for g in parent_cert.grants
                     ]),
                     'redelegation_scope',
@@ -3243,6 +3250,11 @@ def install(app):
             'grants': wire(grants),
             'expires_at': wire(ctx.now + timedelta(seconds=a['ttl'])),
             'parent_certificate': parent_cert.resource_id if parent_cert else None,
+            **(
+                {'grantor_credential_id': ctx.principal.credential_id}
+                if tx.setting('delegated_identity:' + str(ctx.principal.actor))
+                else {}
+            ),
         }
         resource = await create_resource(
             app,
@@ -3459,6 +3471,10 @@ def install(app):
             data={'key_id': credential.id, 'certificate_id': cert.resource_id},
         )
 
+    from msg.plugins.delegated_identity import install as install_delegated_identity
+
+    install_delegated_identity(app, op)
+
     all_types = (
         'topic',
         'post',
@@ -3488,6 +3504,7 @@ def install(app):
             relations=frozenset({
                 'reply_to',
                 'thread_root',
+                'fork_of',
                 'quote',
                 'repost',
                 'attachment',

@@ -4,7 +4,13 @@ from html.parser import HTMLParser
 
 import pytest
 
-from msg.transports.home_page import document_html, home_html, mailbox_html
+from msg.transports.home_page import (
+    account_navigation,
+    document_html,
+    home_html,
+    mailbox_html,
+    resource_markdown,
+)
 
 
 class Elements(HTMLParser):
@@ -122,12 +128,42 @@ def test_mailbox_preview_cannot_create_markdown_blocks(excerpt):
     assert excerpt in ''.join(parsed.text)
 
 
-@pytest.mark.parametrize('render', [home_html, lambda **kw: document_html('# Hello', **kw)])
-def test_current_account_group_links_survive_browser_refinement(render):
-    html = render(
-        account={'name': '@reader', 'groups': [{'name': '&admins', 'path': '/&admins'}]}
-    ).decode()
-    assert 'href="/&amp;admins"' in html and '&amp;admins' in html
+def test_user_groups_are_account_details_instead_of_navigation():
+    account = {'name': '@reader', 'groups': [{'name': '&admins', 'path': '/&admins'}]}
+    assert '&admins' not in account_navigation(account)
+    document = document_html('# Hello', account=account).decode().split('<script>')[0]
+    assert 'href="/&amp;admins"' not in document
+    home = home_html(account=account).decode().split('<script>')[0]
+    assert '<details class="account-groups"><summary>User groups / 用户分类</summary>' in home
+    assert 'href="/&amp;admins"' in home
+    for nav in home.split('<nav')[1:]:
+        assert '&amp;admins' not in nav.split('</nav>')[0]
+
+
+@pytest.mark.parametrize(
+    'gid,name', [('g_public', '&public'), ('g_admins', '&admins'), ('g_custom', '&custom')]
+)
+def test_user_group_page_does_not_treat_children_as_posts(gid, name):
+    value = {
+        'id': gid,
+        'name': name,
+        'type': 'organization',
+        'items': [
+            {
+                'name': 'private-looking child',
+                'path': '/hidden',
+                'preview': {'title': 'Not a group post'},
+            }
+        ],
+    }
+    text = resource_markdown(value, 'generic resource')
+    assert '用户分类' in text and 'group permissions' in text
+    assert 'Not a group post' not in text and '/hidden' not in text
+    value['items'] = []
+    assert 'No posts yet.' not in resource_markdown(value, '')
+    assert 'No posts yet.' in resource_markdown(
+        {'name': 'Channel', 'type': 'topic', 'items': []}, ''
+    )
 
 
 @pytest.mark.parametrize(

@@ -17,7 +17,8 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
 from msg.core.codec import b64, canonical, decode, loads, parse_time, wire
 from msg.core.errors import Failure, require
-from msg.core.models import CapabilityGrant, Credential
+from msg.core.models import CapabilityGrant, Credential, Scope
+from msg.security.browser_actions import BROWSER_POST_WRITES
 from msg.security.policy import constraints_subset, scope_subset
 from msg.security.quarantine import require_live_authority
 
@@ -305,16 +306,33 @@ class OAuthService:
             operations = {
                 f'{op.name}@{op.version}'
                 for op in self.app.registry.operations()
-                if op.effect == 'read'
+                if (
+                    op.effect == 'read'
+                    or (
+                        'msg.write' in body['scopes']
+                        and op.name in BROWSER_POST_WRITES
+                        and op.version == 1
+                    )
+                )
                 and not op.require_signature
                 and not op.anonymous_only
                 and not op.name.startswith(('identity.', 'root.', 'system.'))
             }
-            ceiling = tuple(
-                replace(g, operations=g.operations & operations)
-                for raw in body['ceiling']
-                if (g := decode(CapabilityGrant, raw)).operations & operations
-            )
+            wiki_writes = {'content.post_create@1', 'content.post_edit@1'}
+            wiki_scope = Scope(resource_id='t_wiki', descendants=True)
+            ceiling_items = []
+            for raw in body['ceiling']:
+                grant = decode(CapabilityGrant, raw)
+                general = grant.operations & (operations - wiki_writes)
+                if general:
+                    ceiling_items.append(replace(grant, operations=general))
+                shared = grant.operations & operations & wiki_writes
+                if shared:
+                    if await scope_subset(wiki_scope, grant.scope, tx):
+                        ceiling_items.append(replace(grant, operations=shared, scope=wiki_scope))
+                    elif await scope_subset(grant.scope, wiki_scope, tx):
+                        ceiling_items.append(replace(grant, operations=shared))
+            ceiling = tuple(ceiling_items)
             await tx.save_credential(
                 Credential(
                     id=credential_id,

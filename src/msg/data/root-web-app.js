@@ -8,6 +8,8 @@
     introDismissed: false,
     pointerOrigin: null,
     refreshing: false,
+    refreshOffset: 0,
+    catalogOffset: 0,
     users: new Map(),
     posts: new Map(),
     cursors: {},
@@ -87,7 +89,13 @@
     if (state.mode !== 'public' || document.hidden || state.refreshing || state.loading) return;
     const epoch = state.epoch;
     state.refreshing = true;
-    const ids = [...state.users.keys()];
+    const loaded = [...state.users.keys()];
+    const visible = renderer?.view?.nodes.filter(n => n.kind === 'user').map(n => n.id) || [];
+    const selectedAuthor = state.selected?.author?.id;
+    const priority = ['u_root', state.selected?.id, selectedAuthor, ...visible].filter(id => state.users.has(id));
+    const rotating = Array.from({ length: Math.min(64, loaded.length) }, (_, i) => loaded[(state.refreshOffset + i) % loaded.length]);
+    state.refreshOffset = (state.refreshOffset + 64) % Math.max(1, loaded.length);
+    const ids = [...new Set([...priority.slice(0, 128), ...rotating])];
     try {
       for (let i = 0; i < ids.length; i += 100) {
         if (epoch !== state.epoch || document.hidden) return;
@@ -101,7 +109,7 @@
           for (const [postId, post] of state.posts) if (post.author?.id === id) state.posts.delete(postId);
           if (state.selected?.id === id) closeDetail();
         }
-        for (const item of page.items) if (batch.includes(item.id)) state.users.set(item.id, item);
+        for (const item of page.items) if (batch.includes(item.id) && state.users.has(item.id)) state.users.set(item.id, item);
         if (page.generated_at && Number.isFinite(Date.parse(page.generated_at)))
           state.clockOffset = Date.parse(page.generated_at) - Date.now();
         renderGraph(); refreshFacts(); counters();
@@ -266,6 +274,7 @@
             id: message.id,
             title: message.title || "Private message",
             kind: "private-message",
+            orbitCenter: node.position,
             position: M.satellite(message.id, node.position, time),
             message,
             conversation,
@@ -308,14 +317,19 @@
         : "Discover 3 stars · Read 2 posts · Follow a reply";
     $("more").hidden =
       state.mode === "private" || !Object.values(state.cursors).some(Boolean);
+    $("shuffle").hidden = state.mode === 'private';
   }
   function catalog() {
     const container = $("catalog-items");
     container.replaceChildren();
-    const entries =
+    const identities =
       state.mode === "private"
         ? privateGraph().nodes
         : [...state.users.values()].map((u) => ({ ...u, kind: "user" }));
+    const all = [...identities, ...(state.mode === 'public' ? [...state.posts.values()].map(p => ({ ...p, kind: p.reply_to ? 'reply' : 'post' })) : [])];
+    const pageSize = 80;
+    state.catalogOffset = Math.min(state.catalogOffset, Math.max(0, Math.floor((all.length - 1) / pageSize) * pageSize));
+    const entries = all.slice(state.catalogOffset, state.catalogOffset + pageSize);
     for (const item of entries) {
       const b = button(
         item.kind === "user" ? M.handle(item.name || item.title) : item.name || item.title,
@@ -328,19 +342,10 @@
         b.append(text('small', (look.root ? '✦ Root · ' : look.certified ? '◇ Certified · ' : '') + look.presenceLabel));
       }
     }
-    if (state.mode === "public")
-      for (const post of state.posts.values()) {
-        const b = button(
-          post.title,
-          () =>
-            select({ ...post, kind: post.reply_to ? "reply" : "post" }, true),
-          container,
-        );
-        b.className = "catalog-item";
-        b.append(
-          text("small", post.author ? M.handle(post.author.name) : "Public post"),
-        );
-      }
+    if (state.catalogOffset) button('Previous catalog page', () => { state.catalogOffset -= pageSize; catalog(); }, container);
+    if (state.catalogOffset + pageSize < all.length)
+      button('Next catalog page', () => { state.catalogOffset += pageSize; catalog(); }, container);
+    if (all.length > pageSize) container.append(text('small', `${state.catalogOffset + 1}–${Math.min(all.length, state.catalogOffset + pageSize)} of ${all.length} loaded signals`));
     if (!entries.length)
       container.append(
         text(
@@ -352,13 +357,14 @@
       );
     counters();
   }
-  async function sector(kind, cursor, author) {
+  async function sector(kind, cursor, author, shuffle = false) {
     const page = await json(
       "/_universe?" +
         new URLSearchParams({
           kind,
           ...(cursor ? { cursor } : {}),
           ...(author ? { author } : {}),
+          ...(shuffle ? { shuffle: '1' } : {}),
         }),
     );
     if (page.version !== 1 || page.kind !== kind || !Array.isArray(page.items))
@@ -373,28 +379,45 @@
     if (page.author) state.starCursors.set(page.author, page.cursor);
     else state.cursors[page.kind] = page.cursor;
     for (const item of page.items) {
-      if (page.kind === "users") state.users.set(item.id, item);
+      if (page.kind === "users") {
+        state.users.delete(item.id);
+        state.users.set(item.id, item);
+      }
       else {
+        state.posts.delete(item.id);
         state.posts.set(item.id, item);
         if (item.author && !state.users.has(item.author.id))
           state.users.set(item.author.id, item.author);
       }
     }
+    // Keep a moving, bounded sector rather than accumulating the directory.
+    // Root and the open identity/post survive paging; every count is local.
+    const pinnedPosts = new Set([state.selected?.id, state.selected?.reply_to?.id]);
+    M.trimMap(state.posts, 256, pinnedPosts);
+    const pinnedUsers = new Set(['u_root', state.selected?.id, state.selected?.author?.id]);
+    for (const id of pinnedPosts) if (state.posts.get(id)?.author?.id) pinnedUsers.add(state.posts.get(id).author.id);
+    M.trimMap(state.users, 1000, pinnedUsers);
+    for (const [id, post] of state.posts) if (!state.users.has(post.author?.id)) state.posts.delete(id);
+    M.trimMap(state.starCursors, 64, pinnedUsers);
+    M.trimMap(state.visited, 1024);
+    M.trimMap(state.read, 512);
   }
-  async function loadPublic(reset = false) {
+  async function loadPublic(reset = false, shuffle = false) {
     if (state.loading) return;
     state.loading = true;
     const epoch = state.epoch;
     $("more").disabled = true;
+    $("shuffle").disabled = true;
     try {
       const pages = await Promise.all(
-        (reset
+        (shuffle ? ['users'] : reset
           ? ["users", "posts"]
           : Object.keys(state.cursors).filter((k) => state.cursors[k])
-        ).map((k) => sector(k, reset ? null : state.cursors[k])),
+        ).map((k) => sector(k, reset || shuffle ? null : state.cursors[k], null, shuffle)),
       );
       if (epoch !== state.epoch || state.mode !== "public") return;
       if (reset) {
+        state.catalogOffset = 0;
         state.users.clear();
         state.posts.clear();
         state.cursors = {};
@@ -414,6 +437,7 @@
     } finally {
       state.loading = false;
       $("more").disabled = false;
+      $("shuffle").disabled = false;
     }
   }
   function discardPrivate() {
@@ -1063,9 +1087,6 @@
     now,
     select: (item) => select(item, true),
     overview: () => closeDetail(),
-    tick: (time) => {
-      renderer.graph = graph(time);
-    },
     camera: (target) => {
       $("coordinates").textContent = target
         .map(
@@ -1175,6 +1196,7 @@
     signerLabel();
   };
   $("more").onclick = () => loadPublic();
+  $("shuffle").onclick = () => loadPublic(false, true);
   $("retry").onclick = () => loadPublic(true);
   document.addEventListener("keydown", (e) => {
     if ($('help-dialog').open) return;

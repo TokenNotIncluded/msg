@@ -17,34 +17,104 @@
   }
   function position(id) {
     if (id === 'u_root') return [0, 0, 0];
-    const r = random(id), radius = 38 + Math.cbrt(r()) * 128;
-    const angle = r() * TAU, elevation = (r() - .5) * 1.45;
-    return [Math.cos(angle) * Math.cos(elevation) * radius,
-      Math.sin(elevation) * radius, Math.sin(angle) * Math.cos(elevation) * radius];
+    const r = random('position:v3:' + id);
+    // Uneven volumes, filaments and outliers, with no social meaning assigned
+    // to proximity. The identity seed keeps the map stable across page order.
+    const region = Math.floor(r() * 19), center = random('region:v3:' + region);
+    const angle = center() * TAU, height = (center() * 2 - 1) * 95;
+    const distance = 75 + center() * 125;
+    const azimuth = r() * TAU, vertical = r() * 2 - 1;
+    const spread = 18 + Math.pow(r(), .65) * (region % 3 === 0 ? 130 : 65);
+    const radial = Math.sqrt(1 - vertical * vertical);
+    const p = [Math.cos(angle) * distance + Math.cos(azimuth) * radial * spread,
+      height + vertical * spread, Math.sin(angle) * distance + Math.sin(azimuth) * radial * spread];
+    const length = Math.hypot(...p);
+    return length < 38 ? p.map(v => v * 38 / Math.max(length, .001)) : p;
   }
   function satellite(id, center, time = 0) {
     const r = random(id),
       radius = 8 + r() * 19,
-      angle = r() * TAU + time * 0.022;
+      angle = r() * TAU + time * (.012 + r() * .035) * (r() < .5 ? -1 : 1);
+    const tilt = (r() - .5) * 1.9, eccentricity = .55 + r() * .45;
     return [
       center[0] + Math.cos(angle) * radius,
-      center[1] + Math.sin(angle * 1.5) * (2 + r() * 6),
-      center[2] + Math.sin(angle) * radius,
+      center[1] + Math.sin(angle) * radius * Math.sin(tilt),
+      center[2] + Math.sin(angle) * radius * Math.cos(tilt) * eccentricity,
     ];
   }
   // Versioned visual space, independent of page ordering or account wealth.
-  function nebula(count = 1800) {
-    const rng = random('msg:token-manifold:v2:not-accounts'), cloud = [];
+  function nebula(count = 1800, seed = 'default') {
+    const rng = random('msg:token-manifold:v3:not-accounts:' + seed), cloud = [];
     for (let i = 0; i < count; i++) {
-      const t = rng() * TAU, band = i % 3, spread = 3 + rng() * 14;
-      const x = Math.sin(t) * (102 + band * 15);
-      const y = Math.sin(t * 2) * 24 + (band - 1) * 17;
-      const z = Math.cos(t) * 66 + Math.sin(t * 3) * 18;
+      const t = rng() * TAU, band = i % 7, spread = 4 + rng() ** 2 * 55;
+      const phase = band * .79, radius = 55 + band * 22;
+      const x = Math.sin(t + phase) * radius + Math.cos(t * 3) * 17;
+      const y = Math.sin(t * (2 + band % 3) + phase) * (18 + band * 7);
+      const z = Math.cos(t) * radius * .7 + Math.sin(t * 3 + phase) * 29;
       cloud.push(x + (rng() - .5) * spread, y + (rng() - .5) * spread,
         z + (rng() - .5) * spread, .85, .85, .85,
         .12 + rng() * .3, .3 + rng() * .65);
     }
     return cloud;
+  }
+  // An octree is built only when data changes. Query work is capped by the
+  // display budget, not by the total number of identities in the index.
+  class SpatialIndex {
+    constructor(nodes, leafSize = 24) {
+      const build = (items, depth, key) => {
+        if (!items.length) return null;
+        const low = [Infinity, Infinity, Infinity], high = [-Infinity, -Infinity, -Infinity];
+        for (const n of items) for (let i = 0; i < 3; i++) {
+          low[i] = Math.min(low[i], n.position[i]); high[i] = Math.max(high[i], n.position[i]);
+        }
+        const center = low.map((v, i) => (v + high[i]) / 2);
+        const cell = { key, center, radius: Math.hypot(...high.map((v, i) => (v - low[i]) / 2)), count: items.length };
+        if (items.length <= leafSize || depth >= 14 || cell.radius < .001) cell.items = items;
+        else {
+          const bins = Array.from({ length: 8 }, () => []);
+          for (const n of items) {
+            const slot = n.position.reduce((s, v, i) => s | (Number(v >= center[i]) << i), 0);
+            bins[slot].push(n);
+          }
+          cell.children = bins.map((bin, i) => build(bin, depth + 1, key + i)).filter(Boolean);
+        }
+        return cell;
+      };
+      this.root = build(nodes, 0, 'sector:');
+    }
+    query(classify, { budget = 256, threshold = 48 } = {}) {
+      if (!this.root) return [];
+      budget = Math.max(1, Math.min(1024, Math.floor(budget) || 1));
+      const entry = cell => ({ cell, view: classify(cell.center, cell.radius) });
+      let frontier = [entry(this.root)].filter(e => e.view.visible);
+      // Best-first refinement reserves room for every unexpanded cell. It
+      // never silently drops the tail of a dense sector at the draw limit.
+      while (frontier.length < budget) {
+        let best = -1, score = threshold;
+        for (let i = 0; i < frontier.length; i++) {
+          const e = frontier[i];
+          if (e.cell.count > 1 && e.view.size > score && !e.blocked) { best = i; score = e.view.size; }
+        }
+        if (best < 0) break;
+        const e = frontier[best];
+        if (!e.cell.children && frontier.length - 1 + e.cell.items.length > budget) { e.blocked = true; continue; }
+        const cells = e.cell.children || e.cell.items.map(n => ({ key: n.id, center: n.position, radius: 0, count: 1, items: [n] }));
+        const next = cells.map(entry).filter(n => n.view.visible);
+        if (frontier.length - 1 + next.length > budget) { e.blocked = true; continue; }
+        frontier.splice(best, 1, ...next);
+      }
+      return frontier.map(({ cell }) => cell.count === 1
+        ? cell.items?.[0] || this.single(cell)
+        : { id: cell.key, kind: 'cluster', position: cell.center, count: cell.count,
+          radius: cell.radius, title: cell.count.toLocaleString() + ' loaded stars' });
+    }
+    single(cell) { return cell.items ? cell.items[0] : this.single(cell.children[0]); }
+  }
+  function trimMap(map, maximum, pinned = new Set()) {
+    for (const id of map.keys()) {
+      if (map.size <= maximum) break;
+      if (!pinned.has(id)) map.delete(id);
+    }
   }
   const validTime = (value) => typeof value === 'string' ? Date.parse(value) : NaN;
   function reserve(value) {
@@ -107,6 +177,7 @@
       const node = {
         ...post,
         kind: post.reply_to ? "reply" : "post",
+        orbitCenter: star.position,
         position: satellite(post.id, star.position, time),
       };
       index.set(node.id, node);
@@ -276,6 +347,8 @@
     random,
     position,
     nebula,
+    SpatialIndex,
+    trimMap,
     appearance,
     reserve,
     satellite,

@@ -124,7 +124,9 @@ concurrent executor reads. It cannot be combined with a cursor or author filter.
 Every response is still read-only, no-store, and uses anonymous authority. Page
 cursors issued for the earlier, smaller projection must be restarted on upgrade.
 
-Visible public scenes refresh loaded identities every 30 seconds. An observation
+Visible public scenes refresh at most 192 loaded identities every 30 seconds,
+prioritizing root, the open identity and visible individual stars, then rotating
+through a background slice. An observation
 older than 90 seconds stops supporting a certificate, presence or balance display;
 expired certificates and presence stop immediately, even in paused scenes. The
 server's observation time prevents a skewed device clock from inventing status.
@@ -162,3 +164,36 @@ actual scene/UI code and the inline script pin without navigation. It **does not
 validate the HTTP response sandbox, real sessions, the database, WebCrypto writes,
 or WebGL. No browser policy is disabled. PostgreSQL, Python 3.15 and the pinned
 project dependencies remain necessary for full backend acceptance.
+
+## Bounded exploration and randomized scenery
+
+Layout v3 uses identity-seeded, uneven 3D regions with diffuse outliers rather
+than a uniform fixed shell. Position does not change when pagination or account
+status changes. Crystals have independent orientation, proportions, rotation and
+pulse phase; satellite orbits vary in tilt, eccentricity, direction and speed.
+The decorative token field receives a fresh random seed per visit. These visual
+variations do not invent activity, relationships or users.
+
+The public window retains at most 1,000 identities and 256 posts. Root, the open
+identity/post and its loaded reply target are protected during eviction. Further
+explicit page loads replace older entries; cursor continuation still belongs to
+the original server snapshot. Catalog pages contain at most 80 signals. Search
+and all counts describe this loaded window, not the global directory.
+
+A spatial octree is rebuilt on data/focus changes, never every animation frame.
+Faraway cells become selectable clusters labelled with their **loaded** identity
+count, without certificate, presence or monetary status. Approaching resolves
+them into the original identities. The WebGL identity budget is 256 representatives
+(128 on Canvas), plus root/open node and the bounded set of satellites. Detailed
+crystal geometry is limited to 96 nodes plus root/open/hovered nodes. Offscreen
+cells are culled, and satellites update in place instead of rebuilding the whole
+graph each frame. Aggregate counts preserve the represented population even when
+the refinement budget is exhausted. Clusters do not imply social relationships.
+
+This makes client memory and refresh requests independent of the total service
+directory size. It does **not** provide a global million-user density map: only
+loaded, currently authorized identities enter aggregation. A global spatial
+directory/search and server throughput under a million real users remain separate
+backend work and require ACL-safe indexing and service load tests. Synthetic
+million-node spatial benchmarks validate only the index/refinement algorithm,
+not database performance, real browser frame rate or production capacity.

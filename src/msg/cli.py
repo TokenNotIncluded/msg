@@ -1,4 +1,4 @@
-"""The msg client. Only JSON results go to stdout; help is explicitly requested."""
+"""The msg client. Human-readable terminal output; JSON for scripts."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from msg.client import ClientState, MsgClient, private_identity_key
-from msg.core.codec import canonical, loads, result_wire as result_wire, unb64, wire
+from msg.core.codec import loads, result_wire as result_wire, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import OperationResult, ResourceRef
 from msg.core.search_query import search_query_version
@@ -61,6 +61,13 @@ def parser():
     )
     cli.add_argument('--transport', choices=TRANSPORTS, default='http')
     cli.add_argument(
+        '--format',
+        dest='output_format',
+        choices=('auto', 'json', 'text'),
+        default='auto',
+        help='Output format: readable text in a terminal, JSON when piped (default: auto).',
+    )
+    cli.add_argument(
         '-F', '--connection-config', type=Path, help='SSH-style MSG host configuration.'
     )
     cli.add_argument('-l', '--user', help='Require this authenticated account username.')
@@ -79,6 +86,30 @@ def parser():
         help='Represent a principal authorized by an explicit delegation certificate.',
     )
     commands = cli.add_subparsers(dest='command', required=True)
+    internet = commands.add_parser(
+        'internet', help='Discover agents and exchange cross-server messages.'
+    ).add_subparsers(dest='action', required=True)
+    for action in ('resolve', 'allow', 'send'):
+        sub = internet.add_parser(action)
+        sub.add_argument('address', help='Agent address: name@server.example')
+        sub.add_argument(
+            '--allow-http', action='store_true', help='Use insecure HTTP for local testing.'
+        )
+        if action == 'send':
+            sub.add_argument('--body', required=True)
+    retry = internet.add_parser('retry')
+    retry.add_argument('message_id')
+    retry.add_argument('--allow-http', action='store_true')
+    internet_inbox = internet.add_parser('inbox')
+    internet_inbox.add_argument('--limit', type=int, default=20)
+    internet_inbox.add_argument('--offset', type=int, default=0)
+    internet.add_parser('revoke').add_argument('address')
+    internet.add_parser('delete').add_argument('id')
+    servers = commands.add_parser(
+        'server', help='Show or set the default server without connecting.'
+    ).add_subparsers(dest='action', required=True)
+    servers.add_parser('show')
+    servers.add_parser('use').add_argument('url')
     login = commands.add_parser('login', help='Login once using an OAuth device code.')
     login.add_argument('--no-browser', action='store_true')
     login.add_argument('--scope', default='openid profile msg.read msg.write offline_access')
@@ -107,6 +138,9 @@ def parser():
     identity.add_parser(
         'rename', help='Rename your own username, at most once every seven days.'
     ).add_argument('handle')
+    from msg.client_delegated import add_commands as add_delegated_commands
+
+    add_delegated_commands(identity)
     identity.add_parser('temporary')
     identity.add_parser('rotate-token')
     identity.add_parser(
@@ -162,6 +196,15 @@ def parser():
     schema = commands.add_parser('schema')
     schema.add_argument('operation')
     commands.add_parser('operations')
+    resolve = commands.add_parser('resolve', help='Resolve a resource path, ID, or stable URL.')
+    resolve.add_argument('address')
+    resolve.add_argument('--revision')
+    events = commands.add_parser(
+        'events', help='Read committed events with an opaque resume cursor.'
+    )
+    events.add_argument('--resource')
+    events.add_argument('--cursor')
+    events.add_argument('--limit', type=int)
     read = commands.add_parser('read')
     read.add_argument('resource')
     read.add_argument('--revision')
@@ -279,6 +322,7 @@ def parser():
     handoff_create.add_argument('--ref', action='append', default=[])
     handoff_create.add_argument('--message')
     handoff_create.add_argument('--next-action')
+    handoff_create.add_argument('--capsule', help='Path to a JSON agent handoff capsule.')
     handoff_list = handoff_actions.add_parser('list')
     handoff_list.add_argument('--limit', type=int)
     handoff_list.add_argument('--after')
@@ -304,6 +348,38 @@ def parser():
     lease_release = lease_actions.add_parser('release')
     lease_release.add_argument('id')
     lease_release.add_argument('--generation', type=int, required=True)
+    fork = commands.add_parser('fork', help='Start an independent thread from a post revision.')
+    fork.add_argument('resource')
+    fork.add_argument('revision')
+    fork.add_argument('--body', required=True)
+    fork.add_argument('--parent')
+    proof = commands.add_parser('prove', help='Record a revision-bound claim.')
+    proof.add_argument('kind', choices=['ACK', 'USED', 'VERIFIED', 'VERIFED', 'SOLVED', 'THANKS'])
+    proof.add_argument('resource')
+    proof.add_argument('revision')
+    proof.add_argument('--note', default='')
+    reading = commands.add_parser(
+        'prove-reading', help='Declare reading exact versioned byte ranges.'
+    )
+    reading.add_argument('resource')
+    reading.add_argument('revision')
+    selection = reading.add_mutually_exclusive_group()
+    selection.add_argument(
+        '--part',
+        action='append',
+        help='Byte offsets START:END (end excluded). Repeat for multiple parts; default: whole body.',
+    )
+    selection.add_argument(
+        '--lines',
+        action='append',
+        help='Line numbers START:END (1-based, both included). Repeat for multiple sections.',
+    )
+    reading.add_argument('--note', default='')
+    readings = commands.add_parser('readings', help='Inspect versioned reading statements.')
+    readings.add_argument('resource')
+    readings.add_argument('--revision')
+    readings.add_argument('--cursor')
+    readings.add_argument('--limit', type=int, default=50)
     ack = commands.add_parser('ack')
     ack.add_argument('resource')
     ack.add_argument('revision')
@@ -435,10 +511,17 @@ def parser():
 
 
 async def run(args):
+    from msg.client_display import print_result
+
+    if args.command == 'server':
+        from msg.client_servers import run_command
+
+        print_result(run_command(args), args, context='server')
+        return 0
     if args.command == 'keystore' and args.action == 'keygen':
         from msg.client_secrets import encryption_keygen
 
-        print(canonical(encryption_keygen(args.output)).decode())
+        print_result(encryption_keygen(args.output), args)
         return 0
     if args.command == 'recovery' and args.action == 'restore':
         from msg.client_recovery import restore_recovery_envelope
@@ -450,7 +533,7 @@ async def run(args):
             expected_subject_id=args.subject,
             expected_encryption_key_id=args.key_id,
         )
-        print(canonical(value).decode())
+        print_result(value, args)
         return 0
     require(
         args.migrate_from is None or args.config_dir is None, 'migration_conflicts_with_config_dir'
@@ -465,7 +548,7 @@ async def run(args):
     if args.command == 'account':
         from msg.client_accounts import run_command
 
-        print(canonical(run_command(args)).decode())
+        print_result(run_command(args), args, context='account')
         return 0
     signer_override = private_identity_key(args.key) if args.key else None
     state = ClientState(
@@ -504,6 +587,10 @@ async def run(args):
             result = await run_command(client, args)
             if args.user and command == 'login':
                 await client.require_username(args.user)
+        elif command == 'internet':
+            from msg.client_internet import run_command
+
+            result = await run_command(client, args)
         elif command == 'yubikey':
             from msg.client_yubikey import run_command
 
@@ -513,7 +600,11 @@ async def run(args):
 
             result = await run_command(client, args, arguments)
         elif command == 'identity':
-            if args.action == 'new':
+            if args.action.startswith('delegated-'):
+                from msg.client_delegated import run_command
+
+                result = await run_command(client, args)
+            elif args.action == 'new':
                 result = await client.register(args.handle)
             elif args.action == 'rename':
                 result = await client.rename_identity(args.handle)
@@ -562,6 +653,8 @@ async def run(args):
                     'certificates': state.certificates,
                     'auth': 'token' if state.token else 'signature',
                 }
+                if state.data.get('delegated_identity'):
+                    result['delegated_identity'] = state.data['delegated_identity']
                 pending = pending_upgrade(state)
                 if pending is not None:
                     result['pending_upgrade'] = pending
@@ -606,10 +699,29 @@ async def run(args):
             result = await client.call('discovery.operations')
         elif command == 'schema':
             result = await client.call('discovery.schema', {'operation': args.operation})
-        elif command == 'read':
-            params = {'id': args.resource}
+        elif command == 'resolve':
+            params = {'address': args.address}
             if args.revision:
                 params['revision'] = args.revision
+            result = await client.call('discovery.resolve', params)
+        elif command == 'events':
+            params = {
+                name: getattr(args, name)
+                for name in ('resource', 'cursor', 'limit')
+                if getattr(args, name) is not None
+            }
+            result = await client.call('communication.events', params)
+        elif command == 'read':
+            from msg.core.addressing import parse_address
+
+            target, pinned = parse_address(args.resource, state.server)
+            require(
+                pinned is None or args.revision is None or pinned == args.revision,
+                'revision_mismatch',
+            )
+            params = {'id': target}
+            if args.revision or pinned:
+                params['revision'] = args.revision or pinned
             if args.field:
                 params['fields'] = args.field
             if args.meta:
@@ -853,7 +965,13 @@ async def run(args):
                     params['message'] = args.message
                 if args.next_action is not None:
                     params['next_action'] = args.next_action
-                result = await client.call('communication.handoff_create', params)
+                if args.capsule:
+                    params['capsule'] = loads(Path(args.capsule).read_text())
+                result = await client.call(
+                    'communication.handoff_create',
+                    params,
+                    contract_version=2 if args.capsule else 1,
+                )
             elif args.action == 'list':
                 params = {}
                 if args.limit is not None:
@@ -901,6 +1019,43 @@ async def run(args):
                     'communication.lease_release',
                     {'id': args.id, 'expected_generation': args.generation},
                 )
+        elif command == 'fork':
+            params = {'target': {'id': args.resource, 'revision': args.revision}, 'body': args.body}
+            if args.parent:
+                params['parent'] = args.parent
+            result = await client.call('discussion.fork', params)
+        elif command == 'prove-reading':
+            ranges = None
+            if args.part or args.lines:
+                ranges = []
+                for part in args.part or args.lines:
+                    pieces = part.split(':')
+                    require(
+                        len(pieces) == 2 and all(p.isascii() and p.isdigit() for p in pieces),
+                        'reading_range_invalid',
+                    )
+                    start, end = map(int, pieces)
+                    require(
+                        1 <= start <= end if args.lines else start < end, 'reading_range_invalid'
+                    )
+                    ranges.append({'start': start, 'end': end})
+            result = await client.prove_reading(
+                ResourceRef(id=args.resource, revision=args.revision),
+                None if args.lines else ranges,
+                args.note,
+                line_ranges=ranges if args.lines else None,
+            )
+        elif command == 'readings':
+            params = {'id': args.resource, 'limit': args.limit}
+            if args.revision:
+                params['revision'] = args.revision
+            if args.cursor:
+                params['cursor'] = args.cursor
+            result = await client.call('discussion.readings', params)
+        elif command == 'prove':
+            result = await client.prove(
+                ResourceRef(id=args.resource, revision=args.revision), args.kind, args.note
+            )
         elif command == 'ack':
             result = await client.ack(ResourceRef(id=args.resource, revision=args.revision))
         elif command == 'upload':
@@ -1097,15 +1252,32 @@ async def run(args):
             elif args.template is not None:
                 print(render_template(args.template, rendered))
             else:
-                print(canonical(rendered).decode())
+                # `call` is the raw operation interface; field selection and
+                # custom formatters retain their machine-readable behavior.
+                print_result(rendered, args, raw=args.json_fields is not None)
         else:
-            print(canonical(rendered).decode())
+            print_result(
+                rendered,
+                args,
+                context='auth_approval'
+                if command == 'auth' and args.action in {'approve', 'deny'}
+                else None,
+                identity={
+                    'account': state.account,
+                    'handle': state.data.get('handle'),
+                    'subject_id': state.subject,
+                    'server': state.server,
+                },
+            )
         return 1 if isinstance(result, OperationResult) and result.status == 'error' else 0
     finally:
         await transport.close()
 
 
 def main(argv=None):
+    from msg.client_display import print_result
+
+    args = None
     try:
         from msg.client_connection import expand_connection_args
 
@@ -1120,16 +1292,22 @@ def main(argv=None):
         )
         return asyncio.run(run(args))
     except Failure as exc:
-        print(canonical({'status': 'error', 'error': exc.as_dict()}).decode(), file=sys.stderr)
+        print_result(
+            {'status': 'error', 'error': exc.as_dict()},
+            args,
+            stream=sys.stderr,
+            context='internet' if args is not None and args.command == 'internet' else None,
+        )
         return 1
     except (OSError, ValueError) as exc:
         # File contents and credential-bearing URLs never appear in errors.
-        print(
-            canonical({
+        print_result(
+            {
                 'status': 'error',
                 'error': {'code': 'local_io_error', 'type': type(exc).__name__},
-            }).decode(),
-            file=sys.stderr,
+            },
+            args,
+            stream=sys.stderr,
         )
         return 1
     except KeyboardInterrupt:

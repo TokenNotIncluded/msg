@@ -174,6 +174,45 @@ async def test_browser_signature_interoperates_with_real_executor(installed):
 
 
 @pytest.mark.asyncio
+async def test_random_sector_is_a_bounded_anonymous_seek(installed, monkeypatch):
+    app, _ = installed
+    ids = sorted([(await register(app, 'shuffle-' + str(i)))[1] for i in range(4)])
+    # Seek after one real hashed identity, including a hidden identity in the
+    # same range. The anonymous reader must still exclude it.
+    hidden = ids[2]
+    async with app.metadata.transaction(write=True) as tx:
+        resource = await tx.resource(hidden)
+        await tx.replace(
+            replace(resource, mode=0o600, generation=resource.generation + 1), resource.generation
+        )
+    monkeypatch.setattr('msg.transports.universe.secrets.token_hex', lambda n: ids[1][2:])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        response = await http.get('/_universe?kind=users&shuffle=1')
+        assert response.status_code == 200, response.text
+        page = response.json()
+        visible = {item['id'] for item in page['items']}
+        assert ids[3] in visible and ids[0] not in visible and ids[1] not in visible
+        assert hidden not in visible and len(visible) <= 100
+        assert page['anchor']['id'] == 'u_root'
+        assert response.headers['cache-control'] == 'private, no-store'
+        for query in (
+            'kind=posts&shuffle=1',
+            'kind=users&shuffle=0',
+            'kind=users&shuffle=1&cursor=bad',
+            'kind=users&shuffle=1&ids=' + ids[0],
+            'kind=users&shuffle=1&author=' + ids[0],
+        ):
+            assert (await http.get('/_universe?' + query)).status_code == 400
+        monkeypatch.setattr('msg.transports.universe.secrets.token_hex', lambda n: 'f' * 32)
+        wrapped = await http.get('/_universe?kind=users&shuffle=1')
+        assert wrapped.status_code == 200, wrapped.text
+        assert ids[0] in {item['id'] for item in wrapped.json()['items']}
+        assert hidden not in {item['id'] for item in wrapped.json()['items']}
+
+
+@pytest.mark.asyncio
 async def test_universe_cursor_is_bound_and_reply_targets_are_filtered(installed):
     from msg.core.codec import canonical
 
