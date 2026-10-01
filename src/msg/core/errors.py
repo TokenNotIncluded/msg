@@ -3,6 +3,15 @@
 from __future__ import annotations
 
 _PUBLIC_MESSAGES = {
+    'agent_required': 'Select a subagent with --agent bot1.',
+    'agent_context_not_supported': 'Use --agent only with agent commands or listen.',
+    'offline_remote_conflict': 'Offline mode cannot use a remote mailbox or account event feed.',
+    'subagent_not_found': 'Create this subagent mailbox before sending or listening.',
+    'subagent_account_mismatch': 'Subagents can exchange internal messages only within the same account.',
+    'subagent_archived': 'This subagent is archived; its existing messages are preserved.',
+    'subagent_private_namespace_conflict': 'The existing mailbox is not owned and private; choose or repair the namespace explicitly.',
+    'cursor_in_use': 'Another listener is using this cursor file. Give each listener its own file.',
+    'listener_start_position_conflict': 'Use --from-now with a new cursor file; otherwise resume the existing cursor.',
     'handle_rename_cooldown': 'You can change your username once every seven days.',
     'handle_unavailable': 'This username is already in use or reserved.',
     'authentication_required': 'Authentication is required.',
