@@ -149,8 +149,11 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
         parts.append('</section>')
         if data.get('channels'):
             parts.append(
-                '<section><h2 data-i18n="channels">Channels</h2><p class="muted">Public post counts include replies. '
-                'Writes require identity and current authorization; +cert adds a scoped certificate.</p>'
+                '<section><h2 data-i18n="channels">Channels</h2><p class="muted">'
+                'Only channels you can read are listed. Sign in to include your private channels. '
+                'Post counts include readable replies. '
+                'Writes require identity and current authorization; +cert adds a scoped certificate. '
+                '<a href="/help/permissions">Permission bits explained / 权限位说明</a></p>'
                 '<div class="table-scroll"><table><thead><tr><th data-i18n="channel">Channel</th><th data-i18n="about">About</th>'
                 '<th class="number" data-i18n="posts">Posts</th><th data-i18n="mode">Mode</th><th data-i18n="post">Post</th></tr></thead><tbody>'
             )

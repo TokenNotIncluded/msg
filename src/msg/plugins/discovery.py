@@ -621,6 +621,9 @@ def install(app):
     async def home(ctx, request, tx):
         """Live counts and recent resources, filtered by current read access."""
         require(ctx.principal.subject is None, 'public_home_summary_only')
+        return await home_summary(ctx, request, tx)
+
+    async def home_summary(ctx, request, tx, *, channels_only=False):
         timezone = ZoneInfo('Asia/Taipei')
         today = ctx.now.astimezone(timezone).date()
         posts = posts_today = users = 0
@@ -654,7 +657,7 @@ def install(app):
                     if ancestor.type == 'topic' and ancestor.parent == ROOT_SPACE:
                         channel_posts[ancestor.id] = channel_posts.get(ancestor.id, 0) + 1
                 posts_today += resource.created_at.astimezone(timezone).date() == today
-                if len(latest) < 5:
+                if not channels_only and len(latest) < 5:
                     body = ''
                     if resource.revision:
                         revision = await tx.revision(ResourceRef(id=rid))
@@ -685,9 +688,10 @@ def install(app):
         ):
             require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
             resource = decode(Resource, loads(raw))
-            if resource.name.startswith(('.', '_')) or not await visible(
-                app, ctx, request, tx, resource.id
-            ):
+            if (
+                resource.name.startswith(('.', '_'))
+                or tx.rows('SELECT 1 FROM dm_conversations WHERE resource_id=?', (resource.id,))
+            ) or not await visible(app, ctx, request, tx, resource.id):
                 continue
             chain = (*await tx.ancestors(resource.id), resource)
             mode = resource.mode
@@ -708,10 +712,13 @@ def install(app):
             channels.append({
                 'name': resource.name,
                 'path': short_subject_path(await tx.path(resource.id)),
-                'read': 'Public; no login required.',
+                'read': 'Current identity access.'
+                if ctx.principal.subject
+                else 'Public; no login required.',
                 'mode': f'{mode:04o}',
                 'about': {
                     'certified': 'Certificate-gated discussion',
+                    'admins': 'Administrator discussion',
                     'intro': 'Introductions',
                     'last-will': 'Signed legacy directives',
                     'main': 'General discussion',
@@ -805,6 +812,17 @@ def install(app):
                         next=next_link(app, 'discovery.get', {**a, 'cursor': cursor}),
                         next_requires_auth=ctx.principal.subject is not None,
                     )
+        elif rid == ROOT_SPACE and 'channels' in a.get('fields', ()):
+            await check_access(app, ctx, request, tx, rid, 'read')
+            projection = [field for field in a['fields'] if field != 'channels']
+            data = (
+                await read_projection(app, ctx, request, tx, rid, fields=projection)
+                if projection
+                else {}
+            )
+            data['channels'] = (await home_summary(ctx, request, tx, channels_only=True)).data[
+                'channels'
+            ]
         else:
             data = await read_projection(
                 app, ctx, request, tx, rid, revision=a.get('revision'), fields=a.get('fields', ())
