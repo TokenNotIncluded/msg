@@ -31,10 +31,17 @@ def test_default_paths_separate_credentials_state_and_cache(xdg_home):
     state = ClientState(profile='work')
     state.save_signer(Ed25519Signer.generate())
     state.ensure_encryption_key()
-    assert state.key_path == xdg_home / 'data/msg/services/work.example.org/identity.key'
-    assert state.path == xdg_home / 'state/msg/services/work.example.org/client.json'
+    assert (
+        state.key_path
+        == xdg_home / 'data/msg/services/work.example.org/accounts/default/identity.key'
+    )
+    assert (
+        state.path == xdg_home / 'state/msg/services/work.example.org/accounts/default/client.json'
+    )
     assert state.file('oauth-session.json').parent == state.path.parent
-    assert state.cache_directory == xdg_home / 'cache/msg/services/work.example.org'
+    assert (
+        state.cache_directory == xdg_home / 'cache/msg/services/work.example.org/accounts/default'
+    )
     assert state.temporary_directory == xdg_home / 'runtime/msg'
     assert ClientState(profile='personal', server='https://personal.example.org').signer is None
     assert ClientState(paths=state.paths).signer.private_bytes() == state.signer.private_bytes()
@@ -122,7 +129,9 @@ def test_profile_name_cannot_escape(profile):
 def test_missing_explicit_migration_source_does_not_create_a_profile(xdg_home):
     with pytest.raises(Failure, match='client_migration_source_missing'):
         ClientState(profile='work', migrate_from=xdg_home / 'missing')
-    assert not (xdg_home / 'state/msg/services/work.example.org/client.json').exists()
+    assert not (
+        xdg_home / 'state/msg/services/work.example.org/accounts/default/client.json'
+    ).exists()
 
 
 def test_domains_isolate_keys_tokens_certificates_journals_and_cache(xdg_home):
@@ -224,4 +233,6 @@ def test_scheme_port_and_ipv6_namespaces_are_distinct(xdg_home):
         ]
     ]
     assert len({state.directory for state in states}) == len(states)
-    assert states[3].directory.name == 'http~ipv6~00000000000000000000000000000001~8042'
+    assert (
+        states[3].directory.parent.parent.name == 'http~ipv6~00000000000000000000000000000001~8042'
+    )

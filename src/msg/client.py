@@ -89,25 +89,53 @@ def private_identity_key(path):
 class ClientState:
     """Owned files only; a failed registration never loses its private key."""
 
-    def __init__(self, directory=None, *, server=None, profile=None, migrate_from=None, paths=None):
+    def __init__(
+        self,
+        directory=None,
+        *,
+        server=None,
+        profile=None,
+        migrate_from=None,
+        paths=None,
+        account=None,
+    ):
         require(directory is None or migrate_from is None, 'migration_conflicts_with_config_dir')
         require(
-            migrate_from is None or (Path(migrate_from).expanduser() / 'client.json').is_file(),
+            migrate_from is None
+            or (
+                (
+                    migrate_from.state
+                    if isinstance(migrate_from, ClientPaths)
+                    else Path(migrate_from).expanduser()
+                )
+                / 'client.json'
+            ).is_file(),
             'client_migration_source_missing',
+        )
+        require(directory is None or account is None, 'account_conflicts_with_config_dir')
+        self.account = account or (
+            paths.state.name
+            if paths is not None and paths.state.parent.name == 'accounts'
+            else None
         )
         selector = None
         legacy = None
         requested = server if server is not None else os.environ.get('MSG_SERVER')
         if paths is None and directory is None:
             previous = ClientPaths.discover(profile=profile)
-            # Profile names select a service, never a second identity for that service.
+            # Profiles select services; account labels select identities within them.
             selector = previous.config / 'service.json'
             selection = private_client_json(selector)
             if selection is not None:
                 require(selection.get('version') == 1, 'unknown_client_state_version')
             if migrate_from is not None:
-                legacy = Path(migrate_from).expanduser().absolute()
-                legacy_data = private_client_json(legacy / 'client.json')
+                legacy = (
+                    migrate_from
+                    if isinstance(migrate_from, ClientPaths)
+                    else Path(migrate_from).expanduser().absolute()
+                )
+                legacy_state = legacy.state if isinstance(legacy, ClientPaths) else legacy
+                legacy_data = private_client_json(legacy_state / 'client.json')
             else:
                 legacy_data = private_client_json(previous.state / 'client.json')
                 if legacy_data is not None:
@@ -128,7 +156,34 @@ class ClientState:
             if legacy_data is not None and service_origin(legacy_data.get('server')) != server:
                 require(migrate_from is None, 'client_server_mismatch')
                 legacy = None
-            self.paths = ClientPaths.discover(server=server)
+            service_paths = ClientPaths.discover(server=server)
+            selection_path = service_paths.config / 'current-account.json'
+            account_selection = private_client_json(selection_path)
+            if account_selection is not None:
+                require(account_selection.get('version') == 1, 'unknown_client_state_version')
+                ClientPaths.discover(server=server, account=account_selection.get('account', ''))
+            old_service = private_client_json(service_paths.state / 'client.json')
+            self.account = (
+                account
+                if account is not None
+                else (
+                    (account_selection or {}).get('account')
+                    or (old_service or {}).get('handle')
+                    or 'default'
+                )
+            )
+            self.paths = ClientPaths.discover(server=server, account=self.account)
+            if (
+                old_service is not None
+                and migrate_from is None
+                and (self.account == old_service.get('handle') or self.account == 'default')
+            ):
+                legacy = service_paths
+            if account is not None and legacy is not None and migrate_from is None:
+                source_state = legacy.state if isinstance(legacy, ClientPaths) else legacy
+                source_data = private_client_json(source_state / 'client.json') or {}
+                if account not in {'default', source_data.get('handle')}:
+                    legacy = None
             if legacy is not None and migrate_from is None:
                 current = private_client_json(self.paths.state / 'client.json')
                 if current is not None and (
@@ -206,6 +261,11 @@ class ClientState:
                 private_directory(previous.config.parent)
             private_directory(selector.parent)
             durable_write(selector, canonical({'version': 1, 'server': self.server}), mode=0o600)
+            if account is None and account_selection is None:
+                private_directory(selection_path.parent)
+                durable_write(
+                    selection_path, canonical({'version': 1, 'account': self.account}), mode=0o600
+                )
 
     def file(self, name):
         return self.paths.file(name)

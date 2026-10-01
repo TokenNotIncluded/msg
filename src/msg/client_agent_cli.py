@@ -75,11 +75,14 @@ def local_state(args):
             server=args.server,
             profile=args.profile,
             migrate_from=args.migrate_from,
+            account=getattr(args, 'account', None),
         )
     except Failure as exc:
         if exc.code != 'server_required' or not (args.username or args.user):
             raise
-        paths = ClientPaths.discover(args.config_dir, profile=args.profile)
+        paths = ClientPaths.discover(
+            args.config_dir, profile=args.profile, account=getattr(args, 'account', None)
+        )
         paths.prepare()
         return SimpleNamespace(
             paths=paths, directory=paths.state, server='local', subject=None, data={}

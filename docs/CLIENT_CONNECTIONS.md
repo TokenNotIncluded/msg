@@ -33,7 +33,7 @@ Host *
     Transport http
 ```
 
-Then connect with `msg production ""`, `msg production "identity show"`, or `msg alice@lab "identity show"`. Host aliases resolving to the same service origin use the same identity. Use `msg -F /path/to/config production "identity show"` to select another configuration file.
+Then connect with `msg production ""`, `msg production "identity show"`, or `msg alice@lab "identity show"`. Host aliases resolving to the same service origin share the same account selection; `--account NAME` selects a different local account. Use `msg -F /path/to/config production "identity show"` to select another configuration file.
 
 | Directive | Meaning |
 | --- | --- |
@@ -52,21 +52,21 @@ The file must be owned by the invoking user and must not be group/world writable
 
 ## Identity and path binding
 
-Every canonical service origin has one identity under the standard XDG bases:
+Each canonical service origin has independently stored accounts under the standard XDG bases. For local account `alice`:
 
 ```text
-~/.config/msg/services/own.example.org/
-~/.local/share/msg/services/own.example.org/identity.key
-~/.local/share/msg/services/own.example.org/encryption.agekey
-~/.local/state/msg/services/own.example.org/client.json
-~/.cache/msg/services/own.example.org/
+~/.config/msg/services/own.example.org/accounts/alice/
+~/.local/share/msg/services/own.example.org/accounts/alice/identity.key
+~/.local/share/msg/services/own.example.org/accounts/alice/encryption.agekey
+~/.local/state/msg/services/own.example.org/accounts/alice/client.json
+~/.cache/msg/services/own.example.org/accounts/alice/
 ```
 
 HTTPS hostnames are lowercased and international names use IDNA. Default port 443 and a trailing slash do not create a second identity. Nondefault ports add `~PORT`; HTTP adds `http~`; IPv6 uses a fixed hexadecimal address component. Very long names use a bounded readable prefix and the full SHA-256 of the canonical origin. Paths never contain raw URL credentials, queries or resource paths.
 
-The first connection has no hardcoded public-domain fallback. Choose a destination, `--server`, or `MSG_SERVER`. Subsequent ordinary commands can reuse the saved service selection. Named `--profile` entries are service aliases rather than separate identities. Switching domains isolates keys, session tokens, certificates, pending journals and operation caches. Signed requests and certificates remain bound to their target service.
+The first connection has no hardcoded public-domain fallback. Choose a destination, `--server`, or `MSG_SERVER`. Subsequent ordinary commands can reuse the saved service selection. Named `--profile` entries are service aliases rather than accounts. Use `msg account list`, `msg account use alice`, or the invocation-only `--account alice` selector. Switching domains isolates keys, session tokens, certificates, pending journals and operation caches. Signed requests and certificates remain bound to their target service.
 
-Existing profiles migrate only to their recorded service. Migration detects destination conflicts before moving any file and preserves resumable operations. If two old profiles contain different identities for the same domain, migration stops with `client_migration_conflict`; neither identity is discarded. Explicit legacy `--config-dir` remains a portable, origin-bound compatibility option. See [filesystem layout](FILESYSTEM_LAYOUT.md).
+Existing profiles migrate only to their recorded service. Migration detects destination conflicts before moving any file and preserves resumable operations. Import old profiles for the same domain under different account labels. Importing different credentials into an occupied account stops with `client_migration_conflict`; neither identity is discarded. Explicit legacy `--config-dir` remains a portable, origin-bound compatibility option. See [filesystem layout](FILESYSTEM_LAYOUT.md).
 
 The historical `msg.lmm.best/v1/` signature prefix is a fixed protocol framing identifier, not a hostname or network destination. Changing that prefix would invalidate existing signatures. Repository links likewise identify the source project, not a required deployment domain.
 

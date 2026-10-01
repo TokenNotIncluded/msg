@@ -4,17 +4,33 @@ Host filesystem paths follow the [XDG Base Directory specification](https://spec
 
 ## Client
 
-`src/msg/paths.py` owns layout selection and private directory validation. Empty or relative XDG base variables use the standard defaults. Normal client paths append `msg/services/<canonical-domain>` to each base directory. One service origin has one identity; `--profile NAME` stores only a service-selection alias in configuration. Alias names allow letters, digits, underscores and hyphens, up to 64 characters. Choose an initial destination, `--server`, or `MSG_SERVER`; there is no hardcoded public service. See [connection configuration](CLIENT_CONNECTIONS.md) for SSH-style destinations and `Host` entries.
+`src/msg/paths.py` owns layout selection and private directory validation. Empty or relative XDG base variables use the standard defaults. Normal client paths append `msg/services/<canonical-domain>/accounts/<account>` to each base directory. An account is a local label shared by software and hardware signers; it is not a hardware type or permission. `--account NAME` selects one identity for this invocation; `msg account use NAME` selects the default for that service. `--profile NAME` remains a service-selection alias. Alias names allow letters, digits, underscores and hyphens, up to 64 characters. Choose an initial destination, `--server`, or `MSG_SERVER`; there is no hardcoded public service. See [connection configuration](CLIENT_CONNECTIONS.md) for SSH-style destinations and `Host` entries.
 
 | Purpose | Default directory | Contents |
 | --- | --- | --- |
-| Configuration | `~/.config/msg` | SSH-style `config`, service-selection aliases and per-service configuration; never new private keys or tokens |
-| Durable identity data | `~/.local/share/msg/services/<domain>` | Signing keys, encryption keys including rotated keys, CA keys, exported certificates, Bank approval records, retained custodial recovery history |
-| Persistent state | `~/.local/state/msg/services/<domain>` | `client.json` (server binding, tokens and certificate IDs), registration and operation journals, OAuth sessions, upgrade locks |
-| Disposable cache | `~/.cache/msg/services/<domain>` | Verified operation catalogs |
+| Configuration | `~/.config/msg` | SSH-style `config`, service-selection aliases and per-service configuration; per-account configuration and `services/<domain>/current-account.json`; never new private keys or tokens |
+| Durable identity data | `~/.local/share/msg/services/<domain>/accounts/<account>` | Signing keys, encryption keys including rotated keys, CA keys, exported certificates, Bank approval records, retained custodial recovery history |
+| Persistent state | `~/.local/state/msg/services/<domain>/accounts/<account>` | `client.json` (server binding, tokens and certificate IDs), registration and operation journals, OAuth sessions, upgrade locks |
+| Disposable cache | `~/.cache/msg/services/<domain>/accounts/<account>` | Verified operation catalogs |
 | Temporary work | `$XDG_RUNTIME_DIR/msg`, or Python's temporary directory | Unique private working directories, removed when the operation exits; Python honors `TMPDIR`, `TEMP`, and `TMP` |
 
 Application directories are owned by the invoking user and mode `0700`; credentials and session files are `0600`. Symlinked application directories are rejected before changing permissions. Generic XDG base directories are never chmodded by the client. A configured runtime directory must already be owned by the user and private. Do not put a profile in a shared directory.
+
+## Accounts
+
+```sh
+msg --server https://msg.lmm.best account list
+msg --server https://msg.lmm.best account use light
+msg --server https://msg.lmm.best --account light identity show
+msg --server https://msg.lmm.best --account light auth approve CODE
+msg --server https://msg.lmm.best account import light /path/to/old-portable-directory
+```
+
+Local names allow letters, digits, underscores, dots and hyphens, begin with a letter or digit, and are at most 64 characters. They need not equal the public handle and remain stable after a handle rename. No account is selected by whether its signer is hardware or software. Selection never exports a key, contacts a server or touches a YubiKey. The public handle is still checked when `user@host` is supplied; use `--account` to select the saved identity explicitly.
+
+The service default is stored in `~/.config/msg/services/<domain>/current-account.json`. An invocation override does not change it. If no account has been selected, an old per-service identity migrates under its existing handle, or `default` when no handle is known. A fresh service also starts with local label `default`; specify `--account NAME` when creating additional identities. Existing `hardware-signer.json` is account state, not a private key. Its path is `~/.local/state/msg/services/<domain>/accounts/<account>/hardware-signer.json`.
+
+Stop old clients and background listeners before upgrading or migrating. Migration preserves local subagent databases and listener cursors as well as signing keys, encryption keys, tokens and journals; regenerable caches can be rebuilt. Destination conflicts and unsafe files stop before source files are removed. A portable directory, or the old standard per-service data/state directory, can be imported with `account import`; split data/state are moved together. No `msg-hardware` namespace is used.
 
 Stop clients using the old profile before migrating:
 
@@ -23,7 +39,7 @@ msg --server https://msg.lmm.best --profile lightjunction --migrate-from ~/.conf
 msg --profile lightjunction tui
 ```
 
-Migration checks every source file and every destination conflict before writing. It preserves keys and resumable journals, writes copies durably, verifies them, and only then removes original files. Identical copies from an interrupted migration are accepted; different credentials are never overwritten. Legacy catalog caches and nested profile containers remain in place and can be removed separately after migration. Legacy single-directory and split XDG profiles migrate to their recorded service on first use. A migration explicitly targeting a different service stops before creating destination files. Split-profile keys and state are copied and checked together; distinct identities for the same domain are never merged or overwritten. Explicit `--config-dir DIRECTORY` retains the old portable single-directory layout for existing integrations; it cannot be combined with `--profile` or `--migrate-from`.
+Migration checks every source file and every destination conflict before writing. It preserves keys and resumable journals, writes copies durably, verifies them, and only then removes original files. Identical copies from an interrupted migration are accepted; different credentials are never overwritten. Legacy catalog caches and nested profile containers remain in place and can be removed separately after migration. Legacy single-directory and split XDG profiles migrate to their recorded service on first use. A migration explicitly targeting a different service stops before creating destination files. Split-profile keys and state are copied and checked together; distinct identities use distinct account labels and are never merged or overwritten. Explicit `--config-dir DIRECTORY` retains the old portable single-directory layout for existing integrations; it cannot be combined with `--profile` or `--migrate-from`.
 
 ## Service
 

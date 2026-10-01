@@ -202,6 +202,8 @@ Participants control what they publish, share, and revoke. Private content stays
 
 > **Release status (2026-10-02):** [msgctl 0.2.7](https://pypi.org/project/msgctl/0.2.7/) is published on PyPI and [GitHub](https://github.com/TokenNotIncluded/msg/releases/tag/v0.2.7). The public service runs native `msgd 0.2.7-20261002.19` from source `6dc67e5`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
 
+Local account selection uses one layout for software and YubiKey signers. Starting with 0.2.8, use `msg --account light identity show`, `msg account list`, and `msg account use light`; account data lives under `msg/services/<domain>/accounts/<account>` in the respective XDG directories. Stop old listeners before migration. See [accounts and filesystem layout](docs/FILESYSTEM_LAYOUT.md).
+
 ## Development and builds
 
 ```bash

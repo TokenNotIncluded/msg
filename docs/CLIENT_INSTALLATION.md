@@ -18,7 +18,7 @@ msg alice@own.example.org ""
 msg alice@own.example.org 'post /main --text "Hello"'
 ```
 
-Each service domain selects one identity and its XDG data/state/cache directories. The username must match the authenticated account. Configure aliases in `~/.config/msg/config`; see [connections](CLIENT_CONNECTIONS.md) and [filesystem layout](FILESYSTEM_LAYOUT.md). Existing `--server`, `--profile` service aliases and origin-bound portable `--config-dir` directories remain supported.
+Each service domain has a default account and separate XDG data/state/cache directories for each local account; select another with `--account NAME` or `msg account use NAME`. The username must match the authenticated account. Configure aliases in `~/.config/msg/config`; see [connections](CLIENT_CONNECTIONS.md) and [filesystem layout](FILESYSTEM_LAYOUT.md). Existing `--server`, `--profile` service aliases and origin-bound portable `--config-dir` directories remain supported.
 
 ## Shared protocol ownership
 

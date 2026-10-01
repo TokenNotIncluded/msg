@@ -1,5 +1,12 @@
 # 变更记录
 
+## 0.2.8
+
+- Normalize software and YubiKey accounts under shared XDG service/account paths.
+- Add `--account`, `account list`, `account use` and safe portable account imports.
+- Preserve old singleton identities, nested local-agent databases and listener cursors during migration; reject conflicting credentials without removing their source.
+
+
 ## 0.2.7 — 2026-10-02
 
 内置 YubiKey PIV Ed25519 签名后端，默认随客户端安装。支持空槽检查、设备内生成、不可导出身份私钥、本地公钥存根、已签名钥匙账号目录及空配置目录恢复登录。使用现有签名、证书与短期只读授权契约，不新增服务器权限或无触摸主身份签名。要求 PIV 固件 5.7+ 与 PC/SC；硬件签名帧限制为 2800 字节。age 解密钥匙和一般异步写入签名会话不在本次硬件保护范围内。

@@ -91,6 +91,7 @@ def expand_connection_args(argv, commands):
         '--transport': 'transport',
         '--config-dir': 'config_dir',
         '--profile': 'profile',
+        '--account': 'account',
         '--migrate-from': 'migrate_from',
         '--certificate': 'certificate',
         '--as-subject': 'as_subject',
