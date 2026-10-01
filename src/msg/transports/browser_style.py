@@ -2,6 +2,8 @@
 
 from importlib.resources import files
 
+from msg.transports.browser_palette import ACCENTS
+
 _MARK = files('msg.data').joinpath('logo.svg').read_text()
 _MARK = _MARK.replace(
     'width="96" height="96" role="img" aria-label="msg"',
@@ -25,12 +27,8 @@ PREFERENCES = (
         f'<label class="accent-choice" title="{label}"><input type="radio" name="msg-accent" value="{key}"'
         + (' checked' if key == 'blue' else '')
         + f'><span class="swatch" style="--swatch:{color}"></span><span class="sr-only" data-i18n="{key}">{label}</span></label>'
-        for key, label, color in [
-            ('blue', 'Blue / 蓝色', '#7daff0'),
-            ('green', 'Green / 绿色', '#69b68d'),
-            ('violet', 'Violet / 紫色', '#b08ada'),
-            ('orange', 'Orange / 橙色', '#dca368'),
-        ]
+        for key, english, chinese, light, color in ACCENTS
+        for label in [f'{english} / {chinese}']
     )
     + '</div></div><div class="preference-row"><span id="theme-label" data-i18n="theme">Theme</span>'
     '<div id="msg-theme" class="theme-options" role="radiogroup" aria-labelledby="theme-label">'
@@ -105,7 +103,8 @@ nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(
 .preference-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 52px; }
 .preference-row > label, .preference-row > span { color: var(--muted); font-size: 12px; }
 .preference-row select { width: 160px; min-height: 40px; border: 0; background: var(--panel); padding-inline: 12px; font-size: 13px; }
-.accent-options, .theme-options { display: flex; align-items: center; }
+.accent-options { display: grid; grid-template-columns: repeat(4, 44px); }
+.theme-options { display: flex; align-items: center; }
 .accent-choice, .theme-choice { position: relative; display: grid; place-items: center; width: 44px; height: 44px; cursor: pointer; }
 .accent-choice input, .theme-choice input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
 .swatch { width: 20px; height: 20px; border-radius: 50%; background: var(--swatch); pointer-events: none; }
