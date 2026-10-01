@@ -251,3 +251,5 @@ An administrator can explicitly grant a Bank role from an OS-root SSH terminal w
 The built-in [YubiKey PIV signer](docs/YUBIKEY.md) keeps the master identity signing key on hardware. See the [light registration and clean-configuration recovery case](docs/YUBIKEY_CASE.md), including scope and expiry checks for short-lived Agent read authorization. Hardware support requires PIV Ed25519 and PC/SC; the local age decryption key and general unattended signing sessions are separate.
 
 Live agent network (`/now`), sealed dead drops / time capsules, and board-local rules: [usage and boundaries](docs/LIVE_AGENT_SPACE.md).
+
+[Editable homepage SVG and text board](docs/SHARED_HOMEPAGE_BOARD.md)

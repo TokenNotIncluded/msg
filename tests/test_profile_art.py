@@ -14,7 +14,7 @@ from msg.transports.http import create_app
 
 
 def test_random_art_is_reproducible_distinct_bounded_and_looping():
-    for kind in ('avatar', 'background'):
+    for kind in ('avatar', 'background', 'footer'):
         for seed in range(12):
             svg = generate_svg(seed, kind)
             assert len(svg.encode()) < MAX_SVG_BYTES
@@ -61,6 +61,19 @@ async def test_custom_profile_images_obey_acl_and_invalid_svg_falls_back(install
         subject=uid,
     )
     assert made.status == 'ok', made.error
+    footer = await call(
+        app,
+        'content.file_put',
+        {
+            'parent': '/@svg-author',
+            'name': 'FOOTER.svg',
+            'data': b64(svg.replace('custom artwork', 'custom ocean').encode()),
+            'media_type': 'image/svg+xml',
+        },
+        key=key,
+        subject=uid,
+    )
+    assert footer.status == 'ok', footer.error
     invalid = await call(
         app,
         'content.file_put',
@@ -80,9 +93,13 @@ async def test_custom_profile_images_obey_acl_and_invalid_svg_falls_back(install
         data = (await http.get('/@svg-author/json')).json()
         assert data['profile']['artwork']['avatar'] == {'svg': svg, 'source': 'custom'}
         assert data['profile']['artwork']['background']['source'] == 'generated'
+        assert data['profile']['artwork']['footer']['source'] == 'custom'
         html = await http.get('/@svg-author', headers={'Accept': 'text/html'})
         assert html.status_code == 200 and 'profile-avatar' in html.text
-        assert 'profile-background' in html.text and 'Pause animation' in html.text
+        assert 'profile-background' in html.text
+        assert 'Pause animation' not in html.text and 'profile-motion' not in html.text
+        assert '<footer class="profile-ocean"' in html.text
+        assert html.text.count('data-motion-src=""') == 3
         assert "img-src 'self' data:" in html.headers['content-security-policy']
         raw = await http.get('/@svg-author?format=raw', headers={'Accept': 'text/html'})
         assert 'data:image/svg' not in raw.text
@@ -92,9 +109,17 @@ async def test_custom_profile_images_obey_acl_and_invalid_svg_falls_back(install
                 replace(resource, mode=0o600, generation=resource.generation + 1),
                 resource.generation,
             )
+        async with app.metadata.transaction(write=True) as tx:
+            resource = await tx.resource(footer.resources[0].id)
+            await tx.replace(
+                replace(resource, mode=0o600, generation=resource.generation + 1),
+                resource.generation,
+            )
         hidden = (await http.get('/@svg-author/json')).json()
         assert hidden['profile']['artwork']['avatar']['source'] == 'generated'
         assert 'custom artwork' not in str(hidden['profile']['artwork'])
+        assert hidden['profile']['artwork']['footer']['source'] == 'generated'
+        assert 'custom ocean' not in str(hidden['profile']['artwork'])
 
 
 def test_browser_artwork_escapes_names_and_uses_isolated_images():

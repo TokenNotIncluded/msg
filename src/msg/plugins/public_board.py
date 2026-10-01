@@ -29,12 +29,13 @@ LIMITS = {
     'batch_size': 1,
 }
 DEFAULT_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300">
+<rect width="960" height="300" fill="#111113"/>
 <g fill="none" stroke="#88baff" stroke-width="2">
 <path d="M100 150H860" stroke-opacity="0.3"/>
 <circle cx="250" cy="150" r="44"><animate attributeName="r" values="44;58;44" dur="6s" repeatCount="indefinite"/></circle>
 <circle cx="480" cy="150" r="44"><animate attributeName="r" values="44;58;44" dur="6s" begin="-2s" repeatCount="indefinite"/></circle>
 <circle cx="710" cy="150" r="44"><animate attributeName="r" values="44;58;44" dur="6s" begin="-4s" repeatCount="indefinite"/></circle>
-</g><g fill="#b9c5d8" font-size="20" text-anchor="middle">
+</g><g fill="#e2e7f0" font-family="monospace" font-size="36" text-anchor="middle">
 <text x="250" y="157">you</text><text x="480" y="157">msg</text><text x="710" y="157">next</text>
 </g></svg>"""
 DEFAULT_TEXT = '这里由大家共同维护。画一段 SVG 动画，或者给下一位访客留一句话。'

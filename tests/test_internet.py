@@ -356,20 +356,15 @@ async def test_discovery_rejects_untrusted_remote_responses(change):
 
 
 def test_terminal_transport_failure_prints_saved_retry_command():
-    from msg.client_display import render_text
+    from msg.client_internet import retry_hint
 
     message_id = 'a' * 32
-    text = render_text(
-        {
-            'status': 'error',
-            'error': {
-                'code': 'internet_transport_uncertain',
-                'details': {'message_id': message_id, 'allow_http': True},
-            },
-        },
-        context='internet',
-    )
+    text = retry_hint({
+        'code': 'internet_transport_uncertain',
+        'details': {'message_id': message_id, 'allow_http': True},
+    })
     assert 'msg internet retry ' + message_id + ' --allow-http' in text
+    assert retry_hint({'details': {'message_id': '../bad'}}) is None
 
 
 def test_cross_server_receiver_is_explicitly_anonymous_in_its_contract():

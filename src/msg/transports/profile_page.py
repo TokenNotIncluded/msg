@@ -19,7 +19,6 @@ PROFILE_CSS = """
 .profile-background { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:-2; }
 .profile-heading::after { content:""; position:absolute; inset:0; z-index:-1; background:linear-gradient(90deg,#0c1018ed,#0c101866 65%,#0c101822); pointer-events:none; }
 .profile-avatar { position:absolute; right:24px; top:24px; width:210px; height:224px; object-fit:contain; }
-.profile-motion { position:absolute; z-index:2; right:12px; bottom:8px; border:0; background:#0c1018; color:#bbc3d0; padding:8px 12px; min-height:44px; cursor:pointer; font-size:12px; }
 .profile-layout { display:grid; grid-template-columns:minmax(0,1fr) 180px; gap:40px; padding-top:32px; }
 .profile-main,.profile-details { min-width:0; }
 .profile-main section { margin:0 0 40px; }
@@ -28,6 +27,8 @@ PROFILE_CSS = """
 .profile-posts h3 { margin:0 0 8px; font-size:18px; }
 .profile-posts p { color:var(--muted); margin:8px 0; }
 .profile-bio-source,.profile-details { font-size:13px; }
+.profile-ocean { position:relative; margin-top:56px; padding:0; overflow:hidden; background:transparent; }
+.profile-footer { display:block; width:100%; height:200px; object-fit:cover; }
 @media(max-width:640px) {
  .profile-heading { padding:28px 20px 64px; min-height:260px; }
  .profile-copy { width:calc(100% - 100px); }
@@ -39,22 +40,20 @@ PROFILE_CSS = """
 """
 
 PROFILE_SCRIPT = """(() => {
- const root=document.querySelector('.profile-heading'); if(!root)return;
- const images=[...root.querySelectorAll('[data-motion-src]')];
- const button=root.querySelector('.profile-motion');
  const reduced=matchMedia('(prefers-reduced-motion: reduce)');
- let paused=reduced.matches, visible=true;
- function sync(){
-   const stop=paused||!visible||document.hidden||reduced.matches;
-   images.forEach(img=>{const src=stop?img.dataset.stillSrc:img.dataset.motionSrc;if(img.getAttribute('src')!==src)img.setAttribute('src',src)});
-   button.textContent=paused?'Play animation / 播放动画':'Pause animation / 暂停动画';
-   button.setAttribute('aria-pressed',String(paused));
- }
- button.addEventListener('click',()=>{paused=!paused;sync()});
- document.addEventListener('visibilitychange',sync);
- reduced.addEventListener('change',()=>{paused=reduced.matches;sync()});
- if('IntersectionObserver' in window)new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;sync()}).observe(root);
- sync();
+ document.querySelectorAll('.profile-heading,.profile-ocean').forEach(root=>{
+   const images=[...root.querySelectorAll('[data-motion-src]')];
+   images.forEach(img=>{img.dataset.motionSrc=img.getAttribute('src')});
+   let paused=reduced.matches, visible=true;
+   function sync(){
+     const stop=paused||!visible||document.hidden||reduced.matches;
+     images.forEach(img=>{const src=stop?img.dataset.stillSrc:img.dataset.motionSrc;if(img.getAttribute('src')!==src)img.setAttribute('src',src)});
+   }
+   document.addEventListener('visibilitychange',sync);
+   reduced.addEventListener('change',()=>{paused=reduced.matches;sync()});
+   if('IntersectionObserver' in window)new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;sync()}).observe(root);
+   sync();
+ });
 })();"""
 PROFILE_HASH = base64.b64encode(sha256(PROFILE_SCRIPT.encode()).digest()).decode()
 
@@ -63,24 +62,21 @@ def image_uri(svg):
     return 'data:image/svg+xml;base64,' + base64.b64encode(svg.encode()).decode()
 
 
-def artwork_html(value):
+def artwork_html(value, kinds=('background', 'avatar')):
     artwork = value['profile'].get('artwork', {})
     images = []
-    for kind in ('background', 'avatar'):
+    for kind in kinds:
         # Defense in depth if a caller supplies a projection without our reader.
         svg = safe_svg(artwork.get(kind, {}).get('svg', '').encode())
         svg = svg or generate_svg(value.get('id', value['name']), kind)
         motion, still = image_uri(svg), image_uri(still_svg(svg))
-        alt = '' if kind == 'background' else value['name'] + ' avatar'
+        alt = value['name'] + ' avatar' if kind == 'avatar' else ''
         images.append(
-            f'<img class="profile-{kind}" src="{motion}" data-motion-src="{motion}" data-still-src="{still}" alt="{escape(alt, quote=True)}"'
+            f'<img class="profile-{kind}" src="{motion}" data-motion-src="" data-still-src="{still}" alt="{escape(alt, quote=True)}"'
             + (' aria-hidden="true"' if not alt else '')
             + '>'
         )
-    return (
-        ''.join(images)
-        + '<button class="profile-motion" type="button" aria-pressed="false">Pause animation / 暂停动画</button>'
-    )
+    return ''.join(images)
 
 
 def profile_body(value):
@@ -162,4 +158,10 @@ def profile_body(value):
     body += '</ul>'
     if not value.get('items'):
         body += '<p class="muted">暂无可见资源。 / No visible resources.</p>'
-    return body + '</details></aside></div></section>'
+    return (
+        body
+        + '</details></aside></div></section>'
+        + '<footer class="profile-ocean" aria-label="Profile ocean artwork">'
+        + artwork_html(value, ('footer',))
+        + '</footer>'
+    )

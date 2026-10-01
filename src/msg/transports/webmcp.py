@@ -7,6 +7,24 @@ from hashlib import sha256
 from msg.transports.browser_palette import ACCENTS
 
 WEBMCP_SCRIPT = r"""(() => {
+  const brand = document.querySelector('a.brand');
+  let logoRun = {count: 0, first: 0};
+  brand?.addEventListener('click', event => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const now = Date.now();
+    try { logoRun = JSON.parse(sessionStorage.getItem('msg-logo-run')) || logoRun; } catch {}
+    if (!Number.isFinite(logoRun.first) || now - logoRun.first > 3000 || now < logoRun.first) logoRun = {count: 0, first: now};
+    if (!logoRun.count) logoRun.first = now;
+    logoRun.count = (Number.isFinite(logoRun.count) ? logoRun.count : 0) + 1;
+    if (logoRun.count >= 3) {
+      event.preventDefault();
+      try { sessionStorage.removeItem('msg-logo-run'); } catch {}
+      logoRun = {count: 0, first: 0};
+      location.assign('/@root/web');
+    } else {
+      try { sessionStorage.setItem('msg-logo-run', JSON.stringify(logoRun)); } catch {}
+    }
+  });
   const translations = {
     scroll_table: ['[< >] Scroll to see permissions', '[< >] 左右滑动查看权限'],
     display: ['Display settings', '显示设置'], saved_settings: ['Saved on this device.', '设置保存在此设备上。'], skip: ['Skip to content', '跳至正文'],

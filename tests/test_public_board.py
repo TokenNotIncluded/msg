@@ -106,6 +106,7 @@ async def test_every_user_edits_both_parts_and_limits_are_atomic(installed):
         subject=first,
     )
     assert cooldown.error.code == 'public_board_cooldown'
+    app.authenticator.clock = lambda: app.clock()
     generation = 2
     for minute in range(1, 5):
         app.executor.clock = app.clock = lambda minute=minute: NOW + timedelta(seconds=minute * 60)
@@ -199,7 +200,11 @@ async def test_browser_save_requires_csrf_and_uses_same_quota(oauth):
         'request_id': 'public-browser',
     }
     assert (await http.post('/oauth/post-action', json=args)).status_code == 400
-    changed = await http.post('/oauth/post-action', json={**args, 'csrf': csrf(cookie)})
+    changed = await http.post(
+        '/oauth/post-action',
+        json={**args, 'csrf': csrf(cookie)},
+        headers={'Origin': app.settings.service_url},
+    )
     assert changed.status_code == 200, changed.text
     assert changed.json()['data']['updated_by'] == user
     assert changed.json()['data']['quota']['hour_count'] == 1
@@ -255,7 +260,15 @@ async def test_daily_global_quota_and_history_recovery(installed):
     )
     assert changed.status == 'ok', changed.error
     captured = await capture(app, root, source_backup_sha256='a' * 64, sequence=1)
-    assert 'public_board_v1' in str(captured['state'])
+    from msg.admin.recovery_state import snapshot
+
+    before_digest = captured['state']['metadata']['tables']['settings']['sha256']
+    async with app.metadata.transaction(write=True) as tx:
+        record = tx.setting(KEY)
+        tx.set_setting(KEY, {**record, 'text': 'changed after proof'})
+        after_digest = snapshot(tx)['tables']['settings']['sha256']
+        tx.set_setting(KEY, record)
+    assert before_digest != after_digest
     after = await call(app, 'discovery.public_board', {})
     assert after.data['history'][0]['generation'] == 0
     assert 'svg' not in after.data['history'][0]
