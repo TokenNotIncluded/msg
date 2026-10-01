@@ -7,11 +7,18 @@ from string import punctuation
 from urllib.parse import quote, urljoin
 from zoneinfo import ZoneInfo
 
+from msg.transports.board_page import CSS as BOARD_CSS, header_html as board_header_html
 from msg.transports.browser_style import (
     BRAND_LINK,
     PREFERENCES as PREFERENCES,
     SKIP_LINK,
     THEME_CSS as THEME_CSS,
+)
+from msg.transports.document_outline import (
+    CSS as OUTLINE_CSS,
+    HASH as OUTLINE_HASH,
+    SCRIPT as OUTLINE_SCRIPT,
+    outline_html,
 )
 from msg.transports.http_common import BASE_HEADERS
 from msg.transports.post_actions import POST_ACTIONS_CSS, POST_ACTIONS_HASH, POST_ACTIONS_SCRIPT
@@ -32,7 +39,7 @@ from msg.transports.wiki_actions import WIKI_HASH, WIKI_SCRIPT
 
 HOME_BROWSER_HEADERS = {
     **BASE_HEADERS,
-    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}'; "
+    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}'; "
     "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'",
 }
@@ -269,6 +276,14 @@ def document_html(
     is_profile = bool(resource and resource.get('type') == 'user' and 'profile' in resource)
     if is_profile and body_html is None:
         body = profile_art_body(resource)
+    is_board = bool(resource and resource.get('type') == 'topic' and 'presentation' in resource)
+    if is_board and body_html is None:
+        board_value = {key: value for key, value in resource.items() if key != 'presentation'}
+        board_markdown = resource_markdown(board_value, markdown)
+        body = MarkdownIt('commonmark', {'html': False}).enable('table').render(board_markdown)
+        body = re.sub(r'<h1(?:\s[^>]*)?>.*?</h1>\s*', '', body, count=1, flags=re.DOTALL)
+        body = board_header_html(resource) + body
+    body, outline = outline_html(body) if not is_profile and not is_board else (body, '')
     raw_url = escape(
         quote(raw_path, safe='/@*&') + '?' + (raw_query + '&' if raw_query else '') + 'format=raw',
         quote=True,
@@ -279,7 +294,7 @@ def document_html(
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{escape(title)}</title><link rel="icon" href="/favicon.png">'
         '<link rel="search" type="application/opensearchdescription+xml" title="MSG" href="/opensearch.xml">'
-        f'<style>{THEME_CSS}{PROFILE_CSS if is_profile else ""}{POST_ACTIONS_CSS if post_actions or wiki_actions else ""}</style></head><body class="page-document">'
+        f'<style>{THEME_CSS}{BOARD_CSS if is_board else ""}{OUTLINE_CSS if outline else ""}{PROFILE_CSS if is_profile else ""}{POST_ACTIONS_CSS if post_actions or wiki_actions else ""}</style></head><body class="page-document{" has-outline" if outline else ""}">'
         + SKIP_LINK
         + '<header class="site-header">'
         + BRAND_LINK
@@ -294,7 +309,9 @@ def document_html(
         '</div></header><main><p id="msg-document-status" class="document-status" role="status" aria-live="polite"></p>'
         f'<textarea id="msg-document-source" aria-label="Markdown source" readonly hidden>{escape(markdown)}</textarea>'
         f'<div id="content" class="prose" tabindex="-1">{controls}{metadata}{body}</div>{wiki_actions}{post_actions}</main>'
-        + (f'<script>{PROFILE_SCRIPT}</script>' if is_profile else '')
+        + outline
+        + (f'<script>{OUTLINE_SCRIPT}</script>' if outline else '')
+        + (f'<script>{PROFILE_SCRIPT}</script>' if is_profile or is_board else '')
         + (f'<script>{POST_ACTIONS_SCRIPT}</script>' if post_actions else '')
         + (f'<script>{WIKI_SCRIPT}</script>' if wiki_actions else '')
         + f'{WEBMCP_TAG}</body></html>'
@@ -346,6 +363,20 @@ def resource_markdown(value, fallback):
         ])
     if 'items' in value and value.get('type') == 'topic':
         lines = ['# ' + markdown_text(value['name']), '']
+        presentation = value.get('presentation')
+        if presentation:
+            lines.extend([
+                markdown_text(presentation['description']),
+                '',
+                'Administrators: '
+                + ', '.join(
+                    markdown_text(name)
+                    for name in presentation.get(
+                        'administrator_names', presentation['administrators']
+                    )
+                ),
+                '',
+            ])
         rules = value.get('board_rules')
         if rules:
             lines.extend([

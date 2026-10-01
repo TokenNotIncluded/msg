@@ -106,6 +106,12 @@ def validate_name(name, *, identity=False):
 
 
 async def protect_namespace(app, ctx, request, tx, parent, name):
+    from msg.plugins.board_presentation import FILES, can_edit
+
+    if isinstance(parent, str):
+        parent = await tx.resource(parent)
+    if parent.type == 'topic' and name in FILES:
+        require(can_edit(tx, parent, ctx.principal.subject), 'topic_admin_required')
     if name.startswith('_'):
         require(
             await app.authorizer.has(
@@ -148,14 +154,19 @@ async def create_resource(
         app.registry.resource_type(parent.type, parent.type_version).container, 'not_a_container'
     )
     app.registry.resource_type(type, 1)
-    if parent.id == 't_store' or type == 'listing':
+    from msg.plugins.board_presentation import FILES, can_edit
+
+    presentation = parent.type == 'topic' and type == 'file' and name in FILES
+    if presentation:
+        require(can_edit(tx, parent, ctx.principal.subject), 'topic_admin_required')
+    if (parent.id == 't_store' and not presentation) or type == 'listing':
         require(
             parent.id == 't_store'
             and type == 'listing'
             and request.operation in {'store.listing_create', 'bounty.create'},
             'store_controlled_resource',
         )
-    if parent.id == 't_last_will':
+    if parent.id == 't_last_will' and not presentation:
         require(
             request.operation == 'identity.legacy_put' and type == 'legacy_directive',
             'legacy_directive_only',
@@ -260,6 +271,9 @@ async def revise_resource(
     content_created_at=None,
     summary=SUMMARY_UNSET,
 ):
+    from msg.plugins.board_presentation import protect_edit
+
+    presentation = await protect_edit(tx, ctx, resource)
     require(resource.type not in {'order', 'order_collection'}, 'order_controlled_resource')
     from msg.core.models import BlobRef
 
@@ -296,6 +310,23 @@ async def revise_resource(
         blob = await app.contents.put_bytes(
             body.encode('utf-8') if isinstance(body, str) else body, media_type
         )
+    if presentation:
+        if resource.name == 'HEADER.svg':
+            from msg.core.profile_art import MAX_SVG_BYTES, safe_svg
+
+            require(
+                blob.media_type == 'image/svg+xml' and blob.size <= MAX_SVG_BYTES,
+                'invalid_board_svg',
+            )
+            require(
+                safe_svg(await app.contents.read_bytes(blob, limit=MAX_SVG_BYTES)) is not None,
+                'invalid_board_svg',
+            )
+        else:
+            require(
+                blob.media_type in {'text/plain', 'text/markdown'} and blob.size <= 4096,
+                'invalid_board_description',
+            )
     for relation in relations:
         spec = app.registry.resource_type(resource.type, resource.type_version)
         require(relation.type in spec.relations, 'invalid_relation_type')

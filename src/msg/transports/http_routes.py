@@ -1102,6 +1102,10 @@ def create_app(service):
                     'forbidden_origin',
                 )
             path = request.url.path
+            from msg.transports.board_art_http import ART_PATH as BOARD_ART_PATH, board_art_response
+
+            if BOARD_ART_PATH.fullmatch(path):
+                return await board_art_response(service, request, execute_packet)
             from msg.transports.profile_art_http import ART_PATH, profile_art_response
 
             if ART_PATH.fullmatch(path):

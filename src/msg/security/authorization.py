@@ -289,10 +289,23 @@ class AuthorizationService:
                 )
             await self._ceiling(principal, operation, resource.id, session)
             chain = (*await session.ancestors(resource.id), resource)
+            from msg.plugins.board_presentation import FILES, can_edit, presentation_topic
+
+            presentation = await presentation_topic(session, resource)
+            if (
+                resource.type == 'topic'
+                and check.check == 'create'
+                and request.arguments.get('name') in FILES
+            ):
+                presentation = resource
+            presentation_edit = presentation is not None and check.check in _WRITE_CHECKS
+            if presentation_edit:
+                require(can_edit(session, presentation, principal.subject), 'topic_admin_required')
             if check.check in _WRITE_CHECKS:
                 from msg.core.wiki import protect_wiki
 
-                protect_wiki(chain, operation)
+                if principal.subject != ROOT_SUBJECT:
+                    protect_wiki(chain, operation)
             preview = next(
                 (
                     marker
@@ -319,7 +332,11 @@ class AuthorizationService:
                 item.id in {'r_agents', 'r_rules'} for item in chain
             ):
                 require(False, 'system_managed_resource')
-            if check.check in _WRITE_CHECKS and any(item.id == 't_last_will' for item in chain):
+            if (
+                check.check in _WRITE_CHECKS
+                and not presentation_edit
+                and any(item.id == 't_last_will' for item in chain)
+            ):
                 require(
                     operation
                     in {
@@ -493,6 +510,8 @@ class AuthorizationService:
                     and output['subject'] == principal.subject
                     and await self.has(principal, 'tool.use', operation, output['tool_id'], session)
                 )
+            if presentation_edit and check.check in {'write', 'create'}:
+                allowed = True
             allowed = allowed and ordinary
             capability = _OVERRIDE.get(check.check)
             if not allowed and capability is not None:
