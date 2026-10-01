@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import math
 import os
 import stat
 import sys
+from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 
 import httpx
@@ -26,6 +29,42 @@ def _safe_path(path: Path) -> None:
             raise Failure('unsafe_listener_checkpoint')
         if info.st_mode & 0o077:
             raise Failure('unsafe_listener_checkpoint')
+
+
+@contextmanager
+def _checkpoint_lock(path: Path | None):
+    if path is None:
+        yield
+        return
+    _safe_path(path)
+    lock = path.with_name(path.name + '.lock')
+    _safe_path(lock)
+    lock.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    _safe_path(lock)
+    try:
+        descriptor = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError:
+        raise Failure('unsafe_listener_checkpoint') from None
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+            raise Failure('unsafe_listener_checkpoint')
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Failure('cursor_in_use') from None
+        yield
+    finally:
+        os.close(descriptor)
+
+
+def _exclusive_checkpoint(function):
+    @wraps(function)
+    async def exclusive(fetch, *, cursor_file=None, **options):
+        with _checkpoint_lock(cursor_file):
+            return await function(fetch, cursor_file=cursor_file, **options)
+
+    return exclusive
 
 
 def _load(path: Path | None, binding: dict, cursor: str | None) -> dict:
@@ -72,6 +111,7 @@ def _page(value: dict) -> dict:
     return value
 
 
+@_exclusive_checkpoint
 async def listen(
     fetch,
     *,

@@ -183,3 +183,94 @@ async def test_nonadvancing_page_rejected():
 
     with pytest.raises(Failure, match='invalid_listener_page'):
         await listen(fetch, context=CONTEXT, cursor='same', once=True)
+
+
+async def test_checkpoint_lock_excludes_same_reader_and_releases_on_cancel(tmp_path):
+    started = asyncio.Event()
+    checkpoint = tmp_path / 'cursor.json'
+
+    async def idle(cursor, tail=False):
+        started.set()
+        return page()
+
+    first = asyncio.create_task(listen(idle, context=CONTEXT, cursor_file=checkpoint, interval=30))
+    await asyncio.wait_for(started.wait(), 1)
+    with pytest.raises(Failure, match='cursor_in_use'):
+        await listen(idle, context=CONTEXT, cursor_file=checkpoint, once=True)
+    # Different readers may run concurrently without contending on the first lock.
+    assert (
+        await listen(
+            idle,
+            context={**CONTEXT, 'agent': 'bot2'},
+            cursor_file=tmp_path / 'bot2.json',
+            once=True,
+        )
+        == 0
+    )
+    first.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    assert await listen(idle, context=CONTEXT, cursor_file=checkpoint, once=True) == 0
+    assert stat.S_IMODE(checkpoint.with_name(checkpoint.name + '.lock').stat().st_mode) == 0o600
+
+
+async def test_checkpoint_lock_rejects_symlink_and_unsafe_permissions(tmp_path):
+    checkpoint = tmp_path / 'cursor.json'
+    lock = tmp_path / 'cursor.json.lock'
+    target = tmp_path / 'target'
+    target.write_text('')
+    lock.symlink_to(target)
+
+    async def fetch(cursor, tail=False):
+        raise AssertionError('Unsafe checkpoint lock must fail before contacting source')
+
+    with pytest.raises(Failure, match='unsafe_listener_checkpoint'):
+        await listen(fetch, context=CONTEXT, cursor_file=checkpoint, once=True)
+    lock.unlink()
+    lock.write_text('')
+    lock.chmod(0o644)
+    with pytest.raises(Failure, match='unsafe_listener_checkpoint'):
+        await listen(fetch, context=CONTEXT, cursor_file=checkpoint, once=True)
+
+
+async def test_sigint_process_releases_checkpoint_lock(tmp_path):
+    import signal
+    import sys
+
+    checkpoint = tmp_path / 'process.json'
+    script = """
+import asyncio
+import sys
+from pathlib import Path
+from msg.client_listener import listen
+
+async def fetch(cursor, tail=False):
+    print('READY', flush=True)
+    return {'items': [], 'cursor': '0', 'has_more': False}
+
+try:
+    asyncio.run(listen(fetch, context={'agent': 'bot'}, cursor_file=Path(sys.argv[1]), interval=30))
+except KeyboardInterrupt:
+    sys.exit(130)
+"""
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        '-c',
+        script,
+        str(checkpoint),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        assert await asyncio.wait_for(process.stdout.readline(), 5) == b'READY\n'
+        process.send_signal(signal.SIGINT)
+        assert await asyncio.wait_for(process.wait(), 5) == 130
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+
+    async def fetch(cursor, tail=False):
+        return page()
+
+    assert await listen(fetch, context={'agent': 'bot'}, cursor_file=checkpoint, once=True) == 0
