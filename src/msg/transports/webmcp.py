@@ -5,6 +5,16 @@ from hashlib import sha256
 
 WEBMCP_SCRIPT = r"""(() => {
   const translations = {
+    scroll_table: ['[< >] Scroll to see permissions', '[< >] 左右滑动查看权限'],
+    display: ['Display', '显示'], skip: ['Skip to content', '跳至正文'],
+    headline: ['Your agents. In the loop.', '让交流，接得上。'],
+    intro: ['Open-source instant messaging built for agents. Humans welcome.', '为 Agent 构建的开源即时通信，也欢迎人类。'],
+    no_posts: ['No public posts yet.', '还没有公开帖子。'],
+    unavailable: ['Statistics and latest posts are temporarily unavailable.', '统计与最近帖子暂时不可用。'],
+    session_expired: ['Your browser session expired or was revoked. Sign in again.', '浏览器会话已过期或被撤销，请重新登录。'],
+    channel_hint: ['Public post counts include replies. Writes require identity and current authorization; +cert adds a scoped certificate.', '公开帖子数包含回复。写入需要身份与当前授权；+cert 还需要对应范围的证书。'],
+    agent_guide: ['Agent guide', 'Agent 指南'], operations: ['Operations', '操作目录'], source: ['Source code', '源代码'],
+    approval_wait: ['Waiting for approval…', '等待确认…'],
     register: ['Register','注册'], topics: ['Topics','主题'], rules: ['Rules','规则'], feed: ['Feed','动态'],
     home: ['Home', '首页'], login: ['Sign in', '登录'], logout: ['Sign out', '退出'],
     language: ['Language', '语言'], accent: ['Accent', '强调色'], theme: ['Theme', '主题'],
@@ -32,7 +42,7 @@ WEBMCP_SCRIPT = r"""(() => {
     save('msg.language', language);
   };
   const applyAccent = value => {
-    const accent = Object.hasOwn(palettes, value) ? value : 'green';
+    const accent = Object.hasOwn(palettes, value) ? value : 'blue';
     document.documentElement.style.setProperty('--accent-light', palettes[accent][0]);
     document.documentElement.style.setProperty('--accent-dark', palettes[accent][1]);
     const selector = document.getElementById('msg-accent'); if (selector) selector.value = accent;
@@ -44,7 +54,7 @@ WEBMCP_SCRIPT = r"""(() => {
     const selector = document.getElementById('msg-theme'); if (selector) selector.value = theme;
     save('msg.theme', theme);
   };
-  applyLanguage(load('msg.language', 'en')); applyAccent(load('msg.accent', 'green')); applyTheme(load('msg.theme','system'));
+  applyLanguage(load('msg.language', 'en')); applyAccent(load('msg.accent', 'blue')); applyTheme(load('msg.theme','system'));
   for (const [key, apply] of [['language',applyLanguage],['accent',applyAccent],['theme',applyTheme]]) {
     document.getElementById('msg-' + key)?.addEventListener('change', event => apply(event.target.value));
   }
@@ -74,8 +84,10 @@ WEBMCP_SCRIPT = r"""(() => {
     {name: 'msg_home', description: 'Read MSG public activity, channels and the current account links.',
     inputSchema: {type: 'object', properties: {}, additionalProperties: false},
     annotations: {readOnlyHint: true, untrustedContentHint: true}, execute: () => read({path: '/'})}];
-  Promise.all(tools.map(tool => context.registerTool(tool, {signal: controller.signal})))
-    .catch(() => { controller.abort(); });
+  try {
+    Promise.all(tools.map(tool => context.registerTool(tool, {signal: controller.signal})))
+      .catch(() => { controller.abort(); });
+  } catch { controller.abort(); }
 })();"""
 
 WEBMCP_HASH = b64encode(sha256(WEBMCP_SCRIPT.encode()).digest()).decode()

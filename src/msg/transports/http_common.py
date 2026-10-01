@@ -17,15 +17,33 @@ BASE_HEADERS = {
 
 
 async def body_bytes(request, limit):
-    length = request.headers.get('content-length')
-    if length is not None:
-        require(length.isdecimal() and int(length) <= limit, 'request_too_large')
+    """Validate framing before consumption and bound compressed and decoded bytes."""
+    lengths = request.headers.getlist('content-length')
+    encodings = request.headers.getlist('content-encoding')
+    require(len(lengths) <= 1 and len(encodings) <= 1, 'invalid_request')
+    require(not (lengths and 'transfer-encoding' in request.headers), 'invalid_request')
+    encoding = encodings[0].strip(' \t').lower() if encodings else 'identity'
+    require(encoding in {'identity', 'gzip'}, 'unknown_encoding')
+    expected = None
+    if lengths:
+        length = lengths[0].strip(' \t')
+        require(length.isascii() and length.isdecimal(), 'invalid_request')
+        # Compare bounded strings before int(): huge headers must not raise ValueError.
+        digits = length.lstrip('0') or '0'
+        maximum = str(limit)
+        require(
+            len(digits) < len(maximum)
+            or (len(digits) == len(maximum) and digits <= maximum),
+            'request_too_large',
+        )
+        expected = int(digits)
     body = bytearray()
     async for data in request.stream():
-        require(len(body) + len(data) <= limit, 'request_too_large')
+        size = len(body) + len(data)
+        require(size <= limit, 'request_too_large')
+        require(expected is None or size <= expected, 'invalid_request')
         body.extend(data)
-    encoding = request.headers.get('content-encoding', 'identity')
-    require(encoding in {'identity', 'gzip'}, 'unknown_encoding')
+    require(expected is None or len(body) == expected, 'invalid_request')
     return gunzip(bytes(body), limit) if encoding == 'gzip' else bytes(body)
 
 
