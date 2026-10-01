@@ -507,6 +507,9 @@ def parser():
     from msg.client_yubikey import add_commands as add_yubikey_commands
 
     add_yubikey_commands(commands)
+    from msg.client_mount import add_commands as add_mount_commands
+
+    add_mount_commands(commands)
     return cli
 
 
@@ -581,6 +584,10 @@ async def run(args):
                 require(args.handle == args.user, 'connection_user_mismatch')
             elif command != 'login':
                 await client.require_username(args.user)
+        if command == 'mount':
+            from msg.client_mount import run_mount
+
+            return await run_mount(client, args)
         if command in {'login', 'logout', 'auth'}:
             from msg.client_oauth import run_command
 

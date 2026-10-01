@@ -28,11 +28,26 @@ READ_BYTES = 65536
 MAX_ENTRIES = 10000
 MAX_HANDLES = 64
 _ID = re.compile(r'[A-Za-z0-9_.:-]{1,160}\Z')
-_MISSING = {'not_found', 'resource_not_found', 'revision_not_found', 'resource_purged', 'ancestor_inactive'}
+_MISSING = {
+    'not_found',
+    'resource_not_found',
+    'revision_not_found',
+    'resource_purged',
+    'ancestor_inactive',
+}
 _DENIED = {
-    'authentication_required', 'permission_denied', 'credential_ceiling', 'certificate_gate',
-    'capability_required', 'tool_certificate_required', 'delegation_scope', 'request_expired',
-    'credential_revoked', 'credential_expired', 'invalid_signature', 'invalid_credential',
+    'authentication_required',
+    'permission_denied',
+    'credential_ceiling',
+    'certificate_gate',
+    'capability_required',
+    'tool_certificate_required',
+    'delegation_scope',
+    'request_expired',
+    'credential_revoked',
+    'credential_expired',
+    'invalid_signature',
+    'invalid_credential',
 }
 
 
@@ -64,11 +79,15 @@ def add_commands(commands):
     command.add_argument('mountpoint', type=Path)
     command.add_argument('--path', default='/', help='Remote directory to mount (default: /).')
     command.add_argument(
-        '--max-entries', type=int, default=MAX_ENTRIES,
+        '--max-entries',
+        type=int,
+        default=MAX_ENTRIES,
         help='Maximum entries per directory; larger listings fail explicitly (default: 10000).',
     )
     command.add_argument(
-        '--timeout', type=float, default=45,
+        '--timeout',
+        type=float,
+        default=45,
         help='Deadline for each filesystem request in seconds (default: 45).',
     )
     command.epilog = (
@@ -107,7 +126,9 @@ class Node:
             'st_size': self.size,
             'st_ino': int.from_bytes(
                 hashlib.blake2b(self.metadata['id'].encode(), digest_size=8).digest(), 'big'
-            ) & ((1 << 63) - 1) or 1,
+            )
+            & ((1 << 63) - 1)
+            or 1,
             'st_atime': nanoseconds(modified),
             'st_mtime': nanoseconds(modified),
             'st_ctime': nanoseconds(created),
@@ -132,7 +153,9 @@ class MountBackend:
 
     async def query(self, operation, arguments):
         # A closed allowlist prevents future filesystem helpers acquiring write effects.
-        require(operation in {'file.stat', 'discovery.get', 'discovery.read_query'}, 'mount_read_only')
+        require(
+            operation in {'file.stat', 'discovery.get', 'discovery.read_query'}, 'mount_read_only'
+        )
         description = await self.client.transport.description()
         require(description['operations'].get(operation) == 'read', 'effect_mismatch')
         result = await self.client.call(operation, arguments)
@@ -164,7 +187,9 @@ class MountBackend:
             else:
                 # Certificates and other revisionless leaves have an authorized
                 # JSON representation, not a fabricated empty raw file.
-                projection = canonical(await self.query('discovery.get', {'id': data['id']})) + b'\n'
+                projection = (
+                    canonical(await self.query('discovery.get', {'id': data['id']})) + b'\n'
+                )
                 require(len(projection) <= 1048576, 'response_too_large')
         return Node(data, projection)
 
@@ -183,7 +208,7 @@ class MountBackend:
                 require(isinstance(item, Mapping), 'invalid_mount_response')
                 child = canonical_path(item.get('path'))
                 require(child.startswith(parent_path), 'invalid_mount_response')
-                name = child[len(parent_path):]
+                name = child[len(parent_path) :]
                 require(
                     name not in {'', '.', '..'} and '/' not in name and len(name.encode()) <= 255,
                     'invalid_mount_response',
@@ -215,7 +240,7 @@ class MountBackend:
         if node.projection is not None:
             # Reauthorize even a previously opened revisionless JSON snapshot.
             await self.query('file.stat', {'id': node.metadata['id']})
-            return node.projection[offset:offset + length]
+            return node.projection[offset : offset + length]
         if length == 0:
             return b''
         from msg.client_oauth import read_session, refresh
@@ -233,7 +258,8 @@ class MountBackend:
         path = f'/_id/{rid}/revisions/{revision}/raw'
         end = offset + length - 1
         async with transport.http.stream(
-            'GET', transport.endpoint + path,
+            'GET',
+            transport.endpoint + path,
             headers={
                 'X-Msg-Request': b64(canonical(wire(packet))),
                 'Range': f'bytes={offset}-{end}',
@@ -333,8 +359,16 @@ class ReadOnlyMount:
 
     def statfs(self, path):
         return {
-            'f_bsize': 4096, 'f_frsize': 4096, 'f_blocks': 0, 'f_bfree': 0, 'f_bavail': 0,
-            'f_files': 0, 'f_ffree': 0, 'f_favail': 0, 'f_flag': os.ST_RDONLY, 'f_namemax': 255,
+            'f_bsize': 4096,
+            'f_frsize': 4096,
+            'f_blocks': 0,
+            'f_bfree': 0,
+            'f_bavail': 0,
+            'f_files': 0,
+            'f_ffree': 0,
+            'f_favail': 0,
+            'f_flag': os.ST_RDONLY,
+            'f_namemax': 255,
         }
 
     def listxattr(self, path):
@@ -372,14 +406,21 @@ async def run_mount(client, args):
     import math
     import sys
 
-    require(sys.platform.startswith('linux') or sys.platform == 'darwin', 'mount_platform_unsupported')
+    require(
+        sys.platform.startswith('linux') or sys.platform == 'darwin', 'mount_platform_unsupported'
+    )
     require(math.isfinite(args.timeout) and 0 < args.timeout <= 300, 'invalid_mount_timeout')
     try:
         import mfusepy
     except ImportError:
-        raise Failure('mount_dependency_missing', details={'install': 'uv tool install "msgctl[fuse]"'}) from None
-    except (OSError, AttributeError):
-        raise Failure('mount_system_fuse_missing', details={'install': 'Install fuse3 (Linux) or macFUSE (macOS).'}) from None
+        raise Failure(
+            'mount_dependency_missing', details={'install': 'uv tool install "msgctl[fuse]"'}
+        ) from None
+    except OSError, AttributeError:
+        raise Failure(
+            'mount_system_fuse_missing',
+            details={'install': 'Install fuse3 (Linux) or macFUSE (macOS).'},
+        ) from None
     backend = MountBackend(client, args.path, max_entries=args.max_entries)
     async with asyncio.timeout(args.timeout):
         root = await backend.node('/')
@@ -394,12 +435,26 @@ async def serve_mount(binding, operations, mountpoint):
     """Keep native callbacks off the SDK loop; unmount on task cancellation."""
     import shutil
 
-    task = asyncio.create_task(asyncio.to_thread(
-        binding.FUSE, operations, str(mountpoint),
-        foreground=True, nothreads=True, ro=True, nodev=True, nosuid=True, noexec=True,
-        default_permissions=True, direct_io=True, attr_timeout=0, entry_timeout=0,
-        negative_timeout=0, max_read=READ_BYTES, fsname='msg',
-    ))
+    task = asyncio.create_task(
+        asyncio.to_thread(
+            binding.FUSE,
+            operations,
+            str(mountpoint),
+            foreground=True,
+            nothreads=True,
+            ro=True,
+            nodev=True,
+            nosuid=True,
+            noexec=True,
+            default_permissions=True,
+            direct_io=True,
+            attr_timeout=0,
+            entry_timeout=0,
+            negative_timeout=0,
+            max_read=READ_BYTES,
+            fsname='msg',
+        )
+    )
     try:
         await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -411,8 +466,11 @@ async def serve_mount(binding, operations, mountpoint):
             await asyncio.sleep(0.02)
         if not task.done() and os.path.ismount(mountpoint):
             executable = shutil.which('fusermount3') or shutil.which('fusermount')
-            command = ([executable, '-u', '--', str(mountpoint)] if executable
-                       else ['umount', str(mountpoint)])
+            command = (
+                [executable, '-u', '--', str(mountpoint)]
+                if executable
+                else ['umount', str(mountpoint)]
+            )
             process = await asyncio.create_subprocess_exec(
                 *command, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
             )
