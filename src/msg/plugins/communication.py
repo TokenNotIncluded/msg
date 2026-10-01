@@ -832,6 +832,8 @@ def install(app):
 
     @op('communication.dm_list', obj(), effect='read')
     async def dm_list(ctx, request, tx):
+        from msg.plugins.mail_views import contact as mail_contact
+
         subject = ctx.principal.subject
         require(subject is not None, 'authentication_required')
         await app.authorizer.require_base(ctx.principal, operation_id(request), subject, tx)
@@ -847,6 +849,10 @@ def install(app):
                     {
                         'conversation_id': rid,
                         'other_subject': b if subject == a else a,
+                        'contact': await mail_contact(
+                            app, ctx, request, tx, b if subject == a else a
+                        ),
+                        'path': await tx.path(rid),
                         'state': state,
                         'initiator': initiator,
                     }
@@ -1045,7 +1051,17 @@ def install(app):
                 if len(items) == limit:
                     more = True
                     break
-                items.append(loads(raw))
+                from msg.plugins.mail_views import contact, message_preview
+
+                item = loads(raw)
+                item['sender_contact'] = await contact(app, ctx, request, tx, item['sender'])
+                item['recipient_contact'] = await contact(app, ctx, request, tx, item['recipient'])
+                preview = await message_preview(app, ctx, request, tx, rid)
+                if preview is not None:
+                    item['preview'] = {
+                        key: value for key, value in preview.items() if key != 'body'
+                    }
+                items.append(item)
                 after = id
         data = {'items': items}
         if more:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from enum import Enum, StrEnum
 from html import escape
 from importlib.resources import files
@@ -32,6 +33,13 @@ from msg.transports.dictionary import (
     READ_QUERY_V2_SEGMENTS,
     SEARCH_QUERY_V1_SEGMENTS,
 )
+from msg.transports.home_page import (
+    HOME_BROWSER_HEADERS,
+    document_html,
+    home_html,
+    mailbox_html,
+    resource_markdown,
+)
 from msg.transports.http_common import (
     BASE_HEADERS as BASE_HEADERS,
     body_bytes as body_bytes,
@@ -41,6 +49,7 @@ from msg.transports.http_common import (
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, path_packet, require_url_safe_packet
 from msg.transports.read_tree_path import decode_read_tree_path
+from msg.transports.register_page import registration_markdown
 from msg.transports.subject_views import (
     CERTIFICATE_COLLECTION_VIEWS,
     SUBJECT_COLLABORATION_VIEWS,
@@ -63,12 +72,28 @@ HOME_MARKDOWN = (
 ).encode()
 
 
-def home_markdown(data=None, *, service_url=None):
+def home_markdown(data=None, *, service_url=None, account=None, login_enabled=False, expired=False):
     lines = [
         HOME_MARKDOWN.decode(),
     ]
     if service_url is not None:
         lines.append(f'Service: <{service_url}>\n')
+    if account is not None:
+        name = re.sub(r'([\\`*_{}\[\]<>!|&])', r'\\\1', account['name'])
+        path = quote('/' + account['name'], safe='/@')
+        lines.extend([
+            '\n## Your account\n',
+            f'Signed in as [{name}]({path}).',
+            f'\n[Inbox]({path}/in) · [Direct messages]({path}/dm) · '
+            f'[Outbox]({path}/out) · [Sign out](/oauth/logout)\n',
+            'These links use your browser session and current permissions.\n',
+        ])
+    elif login_enabled:
+        if expired:
+            lines.append('\nYour browser session expired or was revoked. Sign in again.\n')
+        lines.append(
+            '\n[Sign in with your MSG identity](/login) to open your inbox and direct messages.\n'
+        )
     lines.append('\n## Site activity\n')
     if data is None:
         lines.append('Statistics and latest posts are temporarily unavailable.\n')
@@ -78,11 +103,27 @@ def home_markdown(data=None, *, service_url=None):
             f'- Posts today: {data["posts_today"]}',
             f'- Public users: {data["users"]}',
             f'\nToday: {data["date"]} ({data["timezone"]}). \n',
-            '## Latest posts\n',
+            f'## Latest posts\n\nTimes in {data["timezone"]}.\n',
         ])
         for item in data['latest']:
-            name = re.sub(r'([\\`*_{}\[\]<>!|&])', r'\\\1', item['name'])
-            lines.append(f'- [{name}]({quote(item["path"], safe="/@*")}) — {item["created_at"]}')
+            name = re.sub(
+                r'([\\`*_{}\[\]<>!|&])',
+                r'\\\1',
+                ' '.join(item.get('title', item['name']).split()),
+            )
+            try:
+                created = datetime.fromisoformat(item['created_at'])
+                timestamp = created.strftime(
+                    '%m-%d %H:%M' if created.year == int(data['date'][:4]) else '%Y-%m-%d %H:%M'
+                )
+            except ValueError:
+                timestamp = item['created_at']
+            lines.append(f'- [{name}]({quote(item["path"], safe="/@*")}) — {timestamp}')
+            if item.get('excerpt'):
+                excerpt = re.sub(
+                    r'([\\`*_{}\[\]<>!|&])', r'\\\1', ' '.join(item['excerpt'].split())
+                )
+                lines.append(f'\n  {excerpt}\n')
         if not data['latest']:
             lines.append('No public posts yet.')
     if data is None:
@@ -90,15 +131,17 @@ def home_markdown(data=None, *, service_url=None):
     if data and data.get('channels'):
         lines.append('\n## Channels\n')
         lines.append(
-            'Public read. Writes require identity and current authorization; +cert adds a scoped certificate. Mode links show owner, group and permissions.\n'
+            'Public read. Post counts include publicly readable posts and replies. '
+            'Writes require identity and current authorization; +cert adds a scoped certificate. '
+            'Mode links show owner, group and permissions.\n'
         )
-        lines.append('| Channel | About | Mode | Post |')
-        lines.append('| --- | --- | --- | --- |')
+        lines.append('| Channel | About | Posts | Mode | Post |')
+        lines.append('| --- | --- | ---: | --- | --- |')
         for channel in data['channels']:
             path = quote(channel['path'], safe='/@&*')
             name = re.sub(r'([\\`*_{}\[\]<>!|&])', r'\\\1', channel['name'])
             lines.append(
-                f'| [{name}]({path}) | {channel["about"]} | [{channel["mode"]}]({path}/meta) | {channel["posting"]} |'
+                f'| [{name}]({path}) | {channel["about"]} | {channel["posts"]} | [{channel["mode"]}]({path}/meta) | {channel["posting"]} |'
             )
     lines.append(
         '\nUsers: [/@lightjunction](/@lightjunction); organizations: [/&public](/&public). Replace the name to view another profile.\n'
@@ -698,6 +741,10 @@ def post_title(item):
 
 
 def describe_resource(data):
+    if data.get('type') == 'user' and 'profile' in data:
+        from msg.plugins.profile import profile_markdown
+
+        return profile_markdown(data)
     if data.get('type') == 'post' and 'content' in data:
         rid = hex_id(data['id'])
         base = '/*' + rid
@@ -835,7 +882,78 @@ def create_app(service):
 
     async def dispatch(request: Request):
         nonlocal graphql_adapter, short_codes
+        raw_document = request.query_params.get('format') == 'raw'
+
+        async def browser_account():
+            browser = request.scope.get('state', {}).get('msg_browser_credentials')
+            if not browser:
+                return None
+            identity = await execute_packet(
+                request_for(
+                    'discovery.get',
+                    {'id': browser[0], 'fields': ['id', 'name']},
+                    service.settings.service_url,
+                    source='manual',
+                )
+            )
+            return identity.data if not identity.error else None
+
+        async def execute_packet(packet, *, entry='network'):
+            browser = request.scope.get('state', {}).get('msg_browser_credentials')
+            if not browser:
+                return await service.executor.execute(packet, entry=entry)
+            spec = service.registry.operation(packet.operation, packet.contract_version)
+            if (
+                browser
+                and request.method in {'GET', 'HEAD'}
+                and not request.url.path.startswith('/-/')
+                and spec.effect == 'read'
+                and not spec.name.startswith(('identity.', 'root.', 'system.'))
+                and not spec.anonymous_only
+                and packet.proof is None
+                and packet.subject is None
+            ):
+                packet = request_for(
+                    packet.operation,
+                    packet.arguments,
+                    packet.target_service,
+                    subject=browser[0],
+                    token=(browser[1], browser[2]),
+                    contract_version=packet.contract_version,
+                    source=packet.source,
+                    request_id=packet.request_id,
+                    expected=packet.expected_generations,
+                    return_fields=packet.return_fields,
+                    expires_at=service.clock() + timedelta(minutes=3),
+                )
+            return await service.executor.execute(packet, entry=entry)
+
         try:
+            if 'format' in request.query_params:
+                require(
+                    request.method in {'GET', 'HEAD'} and not request.url.path.startswith('/-/'),
+                    'unknown_query_parameter',
+                )
+                require(
+                    raw_document and request.query_params.getlist('format') == ['raw'],
+                    'unknown_query_parameter',
+                )
+                remaining = [
+                    (key, value)
+                    for key, value in request.query_params.multi_items()
+                    if key != 'format'
+                ]
+                scope = {
+                    **request.scope,
+                    'query_string': urlencode(remaining).encode(),
+                    'headers': [
+                        (key, value)
+                        for key, value in request.scope['headers']
+                        if key.lower() != b'accept'
+                    ]
+                    + [(b'accept', b'text/markdown')],
+                }
+                request = Request(scope, request.receive)
             limits = service.settings.server.limits
             raw_path = request.scope.get('raw_path') or request.scope['path'].encode('utf-8')
             require_safe_request_target(
@@ -935,7 +1053,7 @@ def create_app(service):
                     )
                 else:
                     packet = request_for(operation, args, service.settings.service_url)
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 payload = canonical(wire(result.data))
@@ -971,7 +1089,7 @@ def create_app(service):
                     packet.operation == 'discovery.feed' and dict(packet.arguments) == args,
                     'representation_mismatch',
                 )
-                result = await service.executor.execute(packet)
+                result = await execute_packet(packet)
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 # Only the canonical anonymous feed is pushed to public hubs.
@@ -1009,7 +1127,7 @@ def create_app(service):
                     {'type': kind, 'sort': 'time', 'direction': 'desc', 'limit': 1},
                     service.settings.service_url,
                 )
-                result = await service.executor.execute(packet)
+                result = await execute_packet(packet)
                 return json_response(
                     result_wire(result), error_status(result.error.code) if result.error else 200
                 )
@@ -1048,7 +1166,7 @@ def create_app(service):
                     packet = request_for(
                         operation, args, service.settings.service_url, source='manual'
                     )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
@@ -1095,7 +1213,7 @@ def create_app(service):
                     packet = request_for(
                         operation, args, service.settings.service_url, source='manual'
                     )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
@@ -1186,7 +1304,7 @@ def create_app(service):
                     packet = request_for(
                         operation, args, service.settings.service_url, source='manual'
                     )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
@@ -1228,7 +1346,7 @@ def create_app(service):
                     packet = request_for(
                         operation, args, service.settings.service_url, source='manual'
                     )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 payload = canonical(wire(result.data))
@@ -1353,7 +1471,7 @@ def create_app(service):
                         contract_version=contract_version,
                     )
                 require(packet.contract_version == contract_version, 'representation_mismatch')
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
@@ -1433,7 +1551,7 @@ def create_app(service):
                     packet = request_for(
                         operation, args, service.settings.service_url, source='manual'
                     )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
@@ -1582,7 +1700,7 @@ def create_app(service):
                             else 1
                         ),
                     )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
@@ -1638,7 +1756,7 @@ def create_app(service):
                 require(packet.operation in TRANSFER_OPERATIONS, 'operation_mismatch')
                 spec = service.registry.operation(packet.operation, packet.contract_version)
                 require('network' in spec.entries, 'entry_not_allowed')
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 value = result_wire(result)
                 require(len(canonical(value)) <= limits.max_response_bytes, 'response_too_large')
                 return json_response(
@@ -1869,7 +1987,7 @@ def create_app(service):
                     packet = path_packet(encoded, encoding, limits.max_request_bytes)
                     require_url_safe_packet(packet)
                 require(packet.operation == name, 'operation_mismatch')
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 value = result_wire(result)
                 require(len(canonical(value)) <= limits.max_response_bytes, 'response_too_large')
                 return json_response(
@@ -1921,7 +2039,7 @@ def create_app(service):
                             source='manual',
                             contract_version=spec.version,
                         )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 value = result_wire(result)
                 require(len(canonical(value)) <= limits.max_response_bytes, 'response_too_large')
                 return json_response(
@@ -1930,6 +2048,30 @@ def create_app(service):
             if path == '/-' or path.startswith('/-/'):
                 raise Failure('not_found')
             require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+            if path == '/register':
+                require(not request.url.query, 'unknown_query_parameter')
+                markdown = registration_markdown(service.settings.service_url)
+                browser_html = 'text/html' in request.headers.get('accept', '').casefold()
+                payload = (
+                    document_html(
+                        markdown, title='Register', account=await browser_account(), raw_path=path
+                    )
+                    if browser_html
+                    else markdown.encode()
+                )
+                return Response(
+                    b'' if request.method == 'HEAD' else payload,
+                    media_type='text/html'
+                    if browser_html
+                    else 'text/plain'
+                    if raw_document
+                    else 'text/markdown',
+                    headers={
+                        **(HOME_BROWSER_HEADERS if browser_html else BASE_HEADERS),
+                        'Vary': 'Accept',
+                        'Content-Length': str(len(payload)),
+                    },
+                )
             if path == '/install':
                 require(not request.url.query, 'unknown_query_parameter')
                 payload = files('msg.data').joinpath('install.sh').read_bytes()
@@ -1980,24 +2122,48 @@ def create_app(service):
                     source='manual',
                     contract_version=4,
                 )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error and result.error.code != 'query_cost_exceeded':
                     response = json_response(result_wire(result), error_status(result.error.code))
                     if request.method == 'HEAD':
                         response.body = b''
                     return response
-                payload = home_markdown(
-                    None if result.error else result.data, service_url=service.settings.service_url
+                account = None
+                browser = request.scope.get('state', {}).get('msg_browser_credentials')
+                if browser:
+                    identity = await execute_packet(
+                        request_for(
+                            'discovery.get',
+                            {'id': browser[0], 'fields': ['id', 'name']},
+                            service.settings.service_url,
+                            source='manual',
+                        )
+                    )
+                    if not identity.error:
+                        account = identity.data
+                browser_html = 'text/html' in request.headers.get('accept', '').casefold()
+                renderer = home_html if browser_html else home_markdown
+                payload = renderer(
+                    None if result.error else result.data,
+                    service_url=service.settings.service_url,
+                    account=account,
+                    login_enabled=getattr(
+                        getattr(service.settings, 'oauth', None), 'enabled', False
+                    ),
+                    expired=request.scope.get('state', {}).get('msg_browser_expired', False),
                 )
                 headers = {
-                    **BASE_HEADERS,
+                    **(HOME_BROWSER_HEADERS if browser_html else BASE_HEADERS),
                     'Content-Length': str(len(payload)),
                     'Cache-Control': 'no-store',
+                    'Vary': 'Accept',
                 }
                 return Response(
                     b'' if request.method == 'HEAD' else payload,
-                    media_type='text/plain'
-                    if 'text/html' in request.headers.get('accept', '').casefold()
+                    media_type='text/html'
+                    if browser_html
+                    else 'text/plain'
+                    if raw_document
                     else 'text/markdown',
                     headers=headers,
                 )
@@ -2020,7 +2186,7 @@ def create_app(service):
                     packet.operation == operation and not packet.arguments,
                     'representation_mismatch',
                 )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
@@ -2076,7 +2242,7 @@ def create_app(service):
                     packet = request_for(
                         'content.topic_events', args, service.settings.service_url, source='manual'
                     )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
@@ -2117,7 +2283,7 @@ def create_app(service):
                     and canonical(packet.arguments) == canonical(args),
                     'representation_mismatch',
                 )
-                result = await service.executor.execute(packet, entry='network')
+                result = await execute_packet(packet, entry='network')
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
@@ -2187,7 +2353,7 @@ def create_app(service):
                         and canonical(packet.arguments) == canonical(args),
                         'representation_mismatch',
                     )
-                    result = await service.executor.execute(packet, entry='network')
+                    result = await execute_packet(packet, entry='network')
                     if result.error:
                         return json_response(result_wire(result), error_status(result.error.code))
                     require(result.subject == subject_id, 'permission_denied')
@@ -2243,7 +2409,7 @@ def create_app(service):
                         and canonical(packet.arguments) == canonical(args),
                         'representation_mismatch',
                     )
-                    result = await service.executor.execute(packet, entry='network')
+                    result = await execute_packet(packet, entry='network')
                     if result.error:
                         return json_response(result_wire(result), error_status(result.error.code))
                     if not public:
@@ -2305,7 +2471,7 @@ def create_app(service):
                         packet = request_for(
                             operation, args, service.settings.service_url, source='manual'
                         )
-                    result = await service.executor.execute(packet, entry='network')
+                    result = await execute_packet(packet, entry='network')
                     if result.error:
                         return json_response(result_wire(result), error_status(result.error.code))
                     require(result.subject == subject_id, 'permission_denied')
@@ -2369,7 +2535,7 @@ def create_app(service):
                         packet = request_for(
                             operation, args, service.settings.service_url, source='manual'
                         )
-                    result = await service.executor.execute(packet, entry='network')
+                    result = await execute_packet(packet, entry='network')
                     # Another subject's lookup must not reveal whether its own
                     # request_id exists; the path subject is the only reader.
                     require(
@@ -2488,7 +2654,7 @@ def create_app(service):
                         packet = request_for(
                             operation, args, service.settings.service_url, source='manual'
                         )
-                    result = await service.executor.execute(packet, entry='network')
+                    result = await execute_packet(packet, entry='network')
                     if result.error:
                         return json_response(result_wire(result), error_status(result.error.code))
                     if operation in {
@@ -2529,15 +2695,35 @@ def create_app(service):
                         + canonical_name
                         + ('/' + key_suffix if key_suffix else '')
                     )
-                    etag = '"' + digest(value)[7:] + '"'
+                    browser_html = 'text/html' in request.headers.get('accept', '').casefold()
+                    etag = '"' + digest([value, browser_html])[7:] + '"'
                     headers = {**BASE_HEADERS, 'ETag': etag, 'Cache-Control': 'private, no-cache'}
+                    headers['Vary'] = 'Accept'
+                    if browser_html:
+                        headers.update(HOME_BROWSER_HEADERS)
                     if request.headers.get('if-none-match') == etag:
                         return Response(status_code=304, headers=headers)
-                    payload = canonical(value)
+                    payload = (
+                        mailbox_html(value, name, account=await browser_account())
+                        if browser_html and name in {'in', 'inbox', 'out', 'outbox', 'dm'}
+                        else document_html(
+                            '# '
+                            + value['path']
+                            + '\n\n```json\n'
+                            + canonical(value).decode()
+                            + '\n```'
+                        )
+                        if browser_html
+                        else canonical(value)
+                    )
                     require(len(payload) <= limits.max_response_bytes, 'response_too_large')
                     return Response(
                         b'' if request.method == 'HEAD' else payload,
-                        media_type='application/json',
+                        media_type='text/html'
+                        if browser_html
+                        else 'text/plain'
+                        if raw_document
+                        else 'application/json',
                         headers=headers,
                     )
                 if name in SUBJECT_RESOURCE_ALIASES:
@@ -2691,7 +2877,7 @@ def create_app(service):
                     )
             else:
                 packet = request_for(op, args, service.settings.service_url, source='manual')
-            result = await service.executor.execute(packet, entry='network')
+            result = await execute_packet(packet, entry='network')
             if result.error:
                 return json_response(result_wire(result), error_status(result.error.code))
             if redirect_target is not None:
@@ -2777,8 +2963,14 @@ def create_app(service):
                 }
                 if ssh_key_id is not None:
                     require(bool(value['keys']), 'not_found')
-            etag = '"' + digest(value)[7:] + '"'
+            browser_html = (
+                view == 'markdown' and 'text/html' in request.headers.get('accept', '').casefold()
+            )
+            etag = '"' + digest([value, browser_html])[7:] + '"'
             headers = {**BASE_HEADERS, 'ETag': etag, 'Cache-Control': 'private, no-cache'}
+            headers['Vary'] = 'Accept'
+            if browser_html:
+                headers.update(HOME_BROWSER_HEADERS)
             if request.headers.get('if-none-match') == etag:
                 return Response(status_code=304, headers=headers)
             if view == 'raw':
@@ -2822,15 +3014,27 @@ def create_app(service):
             body = (
                 canonical(value)
                 if view in {'json', 'meta', 'history', 'diff', 'references', 'thread'}
-                else describe_resource(value).encode()
+                else document_html(
+                    resource_markdown(value, describe_resource(value)),
+                    title=path,
+                    account=await browser_account(),
+                    resource=value,
+                    raw_path=path,
+                )
+                if browser_html
+                else resource_markdown(value, describe_resource(value)).encode()
             )
             require(len(body) <= limits.max_response_bytes, 'response_too_large')
             return Response(
                 b'' if request.method == 'HEAD' else body,
-                media_type='application/json'
+                media_type='text/plain'
+                if raw_document
+                else 'application/json'
                 if view in {'json', 'meta', 'history', 'diff', 'references', 'thread'}
+                else 'text/html'
+                if browser_html
                 else 'text/plain'
-                if 'text/html' in request.headers.get('accept', '').casefold()
+                if raw_document
                 else 'text/markdown',
                 headers=headers,
             )

@@ -129,6 +129,18 @@ class ClientState:
                 require(migrate_from is None, 'client_server_mismatch')
                 legacy = None
             self.paths = ClientPaths.discover(server=server)
+            if legacy is not None and migrate_from is None:
+                current = private_client_json(self.paths.state / 'client.json')
+                if current is not None and (
+                    current.get('subject_id')
+                    or current.get('token')
+                    or self.paths.file('identity.key').exists()
+                    or self.paths.file('oauth-session.json').exists()
+                ):
+                    # The per-service identity is already established. A leftover
+                    # legacy profile must not be merged into it on every command.
+                    # Explicit migration still checks conflicts and keeps both.
+                    legacy = None
         else:
             self.paths = paths or ClientPaths.discover(directory, profile=profile)
         self.paths.prepare()

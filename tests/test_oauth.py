@@ -206,7 +206,7 @@ async def test_pkce_cookie_csrf_oidc_and_code_binding(oauth):
         'code_challenge': b64(hashlib.sha256(verifier.encode()).digest()),
     }
     page = await http.get('/oauth/authorize?' + urlencode(args))
-    assert page.status_code == 200 and '同意' in page.text
+    assert page.status_code == 200 and 'Approve' in page.text
     bad = await http.post(
         '/oauth/authorize',
         data=dict(args, csrf='wrong', decision='approve'),
@@ -382,7 +382,7 @@ async def test_custodial_signup_login_and_device_consent_reuses_vault(oauth, mon
         )
     ).json()
     form_page = await http.get('/oauth/device?' + urlencode({'user_code': pending['user_code']}))
-    assert form_page.status_code == 200 and '同意' in form_page.text
+    assert form_page.status_code == 200 and 'Approve' in form_page.text
     response = await http.post(
         '/oauth/device',
         data={'user_code': pending['user_code'], 'decision': 'approve', 'csrf': csrf(cookie)},

@@ -30,6 +30,7 @@ server = [
     "graphql-core>=3.2.7,<3.3",
     "psycopg[binary]>=3.3,<4",
     "valkey>=6.1,<7",
+    "markdown-it-py>=4,<5",
 ]
 dev = [
     "msgctl[server]",

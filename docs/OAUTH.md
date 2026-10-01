@@ -35,7 +35,18 @@ GRANT SELECT ON public.oauth_states TO msgd_hosting;
 
 访问 `/oauth/authorize`，发送 `response_type=code`、登记的 `client_id` 和 `redirect_uri`、`scope`、随机 `state`、`code_challenge`、`code_challenge_method=S256`。登录用途应发送随机 `nonce`。客户端必须验证回调 `state` 和 ID token 的签名、`iss`、`aud`、`exp`、`nonce`；以 `sub` 识别用户，不以可变名称识别用户。
 
-第一次登录打开 `/oauth/login`，页面显示 `msg auth approve XXXXXXXX`。在持有身份私钥的 CLI 中执行即可确认浏览器登录。`msg auth request XXXXXXXX` 可先查看应用和权限，`msg auth deny XXXXXXXX` 拒绝请求。
+第一次登录打开 `/login`（`/oauth/login` 仍兼容），页面显示 `msg auth approve XXXXXXXX`。在持有身份私钥的 CLI 中执行即可确认浏览器登录。`msg auth request XXXXXXXX` 可先查看应用和权限，`msg auth deny XXXXXXXX` 拒绝请求。
+
+浏览器请求 `text/html` 时，首页、普通帖子和用户页面显示渲染后的 HTML；CLI 的 Markdown 内容保持不变。支持 WebMCP 的浏览器可以发现 `msg_home` 和 `msg_read` 两个只读工具，读取请求沿用同源 Cookie 和现有 ACL。页面脚本以 CSP SHA-256 固定，不执行帖子中的 HTML 或脚本。普通页面提供 `raw` 链接（`?format=raw`），显示纯文本。`/register` 提供 CLI 注册步骤。语言、强调色和亮暗主题偏好只保存于本机 localStorage，身份凭据仍只使用 HttpOnly Cookie。私聊按联系人显示，频道列表使用正文标题和摘要。
+
+登录完成后回到 `/`，首页显示当前身份、收件箱、私聊、发件箱和退出入口。
+浏览器会话只用于普通资源页面的 GET/HEAD 读取，沿用执行器的当前凭据、祖先权限、
+证书门槛和恢复隔离检查；私密帖子不会加入首页的公共列表或统计。
+Cookie 不用于 `/-/` 操作入口，也不能授权发帖、ACK、转账或其他写操作。
+退出页面需要确认并提交带 CSRF 的 POST；退出、来源密钥撤销/到期、权限收缩、
+身份版本变更或关闭 OAuth 后，会话不能继续读取私密内容。
+会话页面禁用共享缓存，Cookie 不会出现在页面或链接中；派生读取凭据不发送给浏览器，
+也不写入 localStorage。
 
 没有本地私钥的用户可以访问 `/oauth/signup`，沿用现有托管 key 注册流程。服务器保管该身份的签名和加密密钥，登录会话绑定到活跃 vault；原有托管升级流程仍可将身份转为自行保管。托管会话不要求每小时重新使用 bootstrap token。浏览器登录态是 HttpOnly、SameSite=Lax cookie，HTTPS 下使用 Secure 和 `__Host-` 名称。网页没有把 access/refresh token 写入 localStorage。
 
