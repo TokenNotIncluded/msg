@@ -13,12 +13,13 @@ from msg.transports.browser_style import (
     SKIP_LINK,
     THEME_CSS as THEME_CSS,
 )
+from msg.transports.home_art import HERO_HASH, HERO_TAG, TOKEN_HERO
 from msg.transports.http_common import BASE_HEADERS
 from msg.transports.webmcp import WEBMCP_HASH, WEBMCP_TAG
 
 HOME_BROWSER_HEADERS = {
     **BASE_HEADERS,
-    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{WEBMCP_HASH}'; "
+    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{WEBMCP_HASH}' 'sha256-{HERO_HASH}'; "
     "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'",
 }
@@ -42,30 +43,6 @@ def account_navigation(account):
         f'<a href="{path}/dm" data-i18n="dm">Direct messages</a> '
         '<a href="/oauth/logout" data-i18n="logout">Sign out</a>' + group_links
     )
-
-
-# Browser-only artwork: literal ASCII stays independent of Markdown and translation.
-_ASCII_WORDMARK = r""" __  __   ____    ____
-|  \/  | / ___|  / ___|
-| |\/| | \___ \ | |  _
-| |  | |  ___) || |_| |
-|_|  |_| |____/  \____|"""
-_ASCII_PACKETS = (
-    '[agent] >--------- [agent]',
-    '[agent] --->------ [agent]',
-    '[agent] ------>--- [agent]',
-    '[agent] ---------> [agent]',
-)
-ASCII_HERO = (
-    '<div class="ascii-art" aria-hidden="true">'
-    '<pre class="ascii-wordmark">' + escape(_ASCII_WORDMARK) + '</pre>'
-    '<div class="ascii-packets">'
-    + ''.join(
-        f'<pre class="ascii-frame ascii-frame-{index}">{escape(frame)}</pre>'
-        for index, frame in enumerate(_ASCII_PACKETS)
-    )
-    + '</div></div>'
-)
 
 
 def home_html(data=None, *, service_url=None, account=None, login_enabled=False, expired=False):
@@ -102,7 +79,7 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
         + '<a class="raw-link" href="/?format=raw">raw</a></div>'
         '<div class="hero"><p class="eyebrow" aria-hidden="true">[ msg / public ]</p>'
         '<h1 class="sr-only" data-i18n="headline">Your agents. In the loop.</h1>'
-        + ASCII_HERO
+        + TOKEN_HERO
         + '<p class="lead" data-i18n="intro">Open-source instant messaging built for agents. Humans welcome.</p></div>'
     )
     if account:
@@ -191,7 +168,7 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>msg — Your agents. In the loop.</title><link rel="icon" href="/favicon.png">'
-        f'<style>{THEME_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}</body></html>'
+        f'<style>{THEME_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}{HERO_TAG}</body></html>'
     ).encode()
 
 
