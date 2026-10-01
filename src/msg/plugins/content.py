@@ -1560,26 +1560,37 @@ def install(app):
             backup_scope='backups_require_separate_retention',
         )
 
+    topic_policy_fields = {
+        'reply_open': BOOLEAN,
+        'editable': BOOLEAN,
+        'post_mode': {'type': 'string', 'pattern': '^[0-7]{4}$'},
+        'file_mode': {'type': 'string', 'pattern': '^[0-7]{4}$'},
+        'topic_mode': {'type': 'string', 'pattern': '^[0-7]{4}$'},
+        'recommended_template': STRING,
+        'retention_seconds': {'type': 'integer', 'minimum': 60},
+        'cleanup_interval_seconds': {'type': 'integer', 'minimum': 60},
+    }
+
     @op(
         'content.topic_configure',
         obj(
             {
                 'id': IDENTIFIER,
                 'policy': obj({
+                    **topic_policy_fields,
                     'rules': {'type': 'string', 'maxLength': 16384},
                     'posting_policy': {'enum': ['open', 'members', 'admins']},
-                    'reply_open': BOOLEAN,
-                    'editable': BOOLEAN,
-                    'post_mode': {'type': 'string', 'pattern': '^[0-7]{4}$'},
-                    'file_mode': {'type': 'string', 'pattern': '^[0-7]{4}$'},
-                    'topic_mode': {'type': 'string', 'pattern': '^[0-7]{4}$'},
-                    'recommended_template': STRING,
-                    'retention_seconds': {'type': 'integer', 'minimum': 60},
-                    'cleanup_interval_seconds': {'type': 'integer', 'minimum': 60},
                 }),
             },
             ('id', 'policy'),
         ),
+        requirements=requirement('id', 'manage'),
+        signature=True,
+        version=2,
+    )
+    @op(
+        'content.topic_configure',
+        obj({'id': IDENTIFIER, 'policy': obj(topic_policy_fields)}, ('id', 'policy')),
         requirements=requirement('id', 'manage'),
         signature=True,
     )

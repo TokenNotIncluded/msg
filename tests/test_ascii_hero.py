@@ -2,8 +2,9 @@
 
 from html.parser import HTMLParser
 
-from msg.transports.home_art import HERO_HASH, HERO_SCRIPT
+from msg.transports.home_art import HERO_SCRIPT, TOKEN_HERO
 from msg.transports.home_page import HOME_BROWSER_HEADERS, home_html
+from msg.transports.public_board import HASH as PUBLIC_BOARD_HASH
 
 
 class HeroElements(HTMLParser):
@@ -16,20 +17,23 @@ class HeroElements(HTMLParser):
         self.tags.append((tag, dict(attrs)))
 
 
-def test_ascii_hero_keeps_translatable_heading_and_ignores_decorative_frames():
+def test_shared_home_heading_and_isolated_art_remain_accessible():
     html = home_html().decode()
     parsed = HeroElements(html)
     headings = [attrs for tag, attrs in parsed.tags if tag == 'h1']
-    assert headings == [{'class': 'sr-only', 'data-i18n': 'headline'}]
+    assert headings == [{}]
+    assert '公共栏 / Shared board' in html
+    assert 'class="token-cloud"' not in html
+    images = [attrs for tag, attrs in parsed.tags if tag == 'img']
     assert any(
-        attrs.get('class') == 'token-cloud' and attrs.get('aria-hidden') == 'true'
-        for _, attrs in parsed.tags
+        attrs.get('src', '').startswith('/_public-board/art.svg')
+        and attrs.get('alt')
+        and attrs.get('width') == '960'
+        and attrs.get('height') == '300'
+        for attrs in images
     )
-    assert 'data-i18n="intro"' in html
-    assert any(
-        tag == 'button' and attrs.get('aria-pressed') == 'false' for tag, attrs in parsed.tags
-    )
-    assert f"'sha256-{HERO_HASH}'" in HOME_BROWSER_HEADERS['Content-Security-Policy']
+    assert any(tag == 'button' and 'data-pause' in attrs for tag, attrs in parsed.tags)
+    assert f"'sha256-{PUBLIC_BOARD_HASH}'" in HOME_BROWSER_HEADERS['Content-Security-Policy']
 
 
 def test_motion_is_opt_in_and_pauses_outside_the_visible_page():
@@ -44,7 +48,7 @@ def test_motion_is_opt_in_and_pauses_outside_the_visible_page():
 
 
 def test_particles_are_bounded_and_art_uses_a_mobile_viewbox():
-    parsed = HeroElements(home_html().decode())
+    parsed = HeroElements(TOKEN_HERO)
     particles = [attrs for tag, attrs in parsed.tags if tag == 'text']
     assert 40 <= len(particles) < 120
     assert all(0 < int(p['x']) < 720 and 0 < int(p['y']) < 280 for p in particles)
