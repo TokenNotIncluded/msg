@@ -1,7 +1,10 @@
 """Browser tools share the ordinary GET transport and its ACL checks."""
 
+import json
 from base64 import b64encode
 from hashlib import sha256
+
+from msg.transports.browser_palette import ACCENTS
 
 WEBMCP_SCRIPT = r"""(() => {
   const translations = {
@@ -30,7 +33,8 @@ WEBMCP_SCRIPT = r"""(() => {
     system: ['System', '跟随系统'], light: ['Light', '亮色'], dark: ['Dark', '暗色'],
     green: ['Green', '绿色'], blue: ['Blue', '蓝色'], violet: ['Violet', '紫色'], orange: ['Orange', '橙色']
   };
-  const palettes = {green: ['#275841','#94d7b3'], blue: ['#205ba7','#94bfff'], violet: ['#7245a0','#d0afff'], orange: ['#965016','#f4bd86']};
+  Object.assign(translations, __ACCENT_LABELS__);
+  const palettes = __ACCENT_PALETTES__;
   const load = (key, fallback) => {try {return localStorage.getItem(key) || fallback;} catch {return fallback;}};
   const save = (key, value) => {try {localStorage.setItem(key, value);} catch {}};
   const applyLanguage = value => {
@@ -101,7 +105,11 @@ WEBMCP_SCRIPT = r"""(() => {
     Promise.all(tools.map(tool => context.registerTool(tool, {signal: controller.signal})))
       .catch(() => { controller.abort(); });
   } catch { controller.abort(); }
-})();"""
+})();""".replace(
+    '__ACCENT_LABELS__', json.dumps({key: [en, zh] for key, en, zh, _, _ in ACCENTS})
+).replace(
+    '__ACCENT_PALETTES__', json.dumps({key: [light, dark] for key, _, _, light, dark in ACCENTS})
+)
 
 WEBMCP_HASH = b64encode(sha256(WEBMCP_SCRIPT.encode()).digest()).decode()
 WEBMCP_TAG = '<script>' + WEBMCP_SCRIPT + '</script>'
