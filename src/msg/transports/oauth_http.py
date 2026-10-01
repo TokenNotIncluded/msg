@@ -3,6 +3,7 @@
 import hashlib
 import hmac
 import os
+from base64 import b64encode
 from dataclasses import replace
 from datetime import timedelta
 from html import escape
@@ -16,7 +17,8 @@ from msg.core.errors import Failure, require
 from msg.core.models import TokenProof
 from msg.core.requests import request_for
 from msg.security.oauth import DEVICE_GRANT, OAuthService, get, save, secret, state_id
-from msg.transports.home_page import PREFERENCES, THEME_CSS
+from msg.transports.browser_login import LOGIN_POLL_SCRIPT
+from msg.transports.browser_style import PREFERENCES, SKIP_LINK, THEME_CSS
 from msg.transports.http_common import body_bytes
 from msg.transports.packet import decode_packet
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
@@ -29,7 +31,7 @@ HEADERS = {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; "
-    f"script-src 'nonce-msg' 'sha256-{WEBMCP_HASH}'; connect-src 'self'; form-action 'self'; "
+    f"script-src 'sha256-{WEBMCP_HASH}'; connect-src 'self'; img-src 'self'; form-action 'self'; "
     "frame-ancestors 'none'; base-uri 'none'",
 }
 
@@ -38,28 +40,33 @@ def json(value, status=200):
     return JSONResponse(value, status_code=status, headers=HEADERS)
 
 
-def page(title, body):
+def page(title, body, *, script=None):
+    """Render trusted form markup; authorize only the explicitly supplied script."""
+    headers = {**HEADERS, 'Referrer-Policy': 'strict-origin'}
+    script_tag = ''
+    if script is not None:
+        pinned = b64encode(hashlib.sha256(script.encode()).digest()).decode()
+        headers['Content-Security-Policy'] = headers['Content-Security-Policy'].replace(
+            'script-src ', f"script-src 'sha256-{pinned}' "
+        )
+        script_tag = '<script>' + script + '</script>'
     return HTMLResponse(
-        '<!doctype html><html lang="en"><meta charset="utf-8">'
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
-        '<title>' + escape(title) + '</title><style>'
-        'body{font:17px system-ui;background:#faf9f6;color:#252525;margin:0;}'
-        'main{max-width:540px;margin:12vh auto;padding:32px;line-height:1.7;}'
-        'h1{font-size:30px;}code{font-size:21px;word-break:break-all;}'
-        'button,input,textarea{font:inherit;padding:10px 16px;margin:8px 0;}'
-        'button{cursor:pointer;}a{color:inherit;}' + THEME_CSS + '</style><main>'
-        '<nav><a href="/">msg / Home</a> · <a href="/register">Register</a> · <a href="?format=raw">raw</a></nav>'
-        + PREFERENCES
-        + '<h1>'
-        + escape(title)
-        + '</h1>'
-        + body
-        + '</main>'
-        + WEBMCP_TAG
-        + '</html>',
+        '<title>' + escape(title) + '</title>'
+        '<link rel="icon" href="/favicon.png">'
+        '<style>' + THEME_CSS + '</style></head><body class="page-auth">'
+        + SKIP_LINK
+        + '<header class="site-header"><a class="brand" href="/">msg</a>'
+        '<nav aria-label="Account"><a href="/" data-i18n="home">Home</a>'
+        '<a href="/register" data-i18n="register">Register</a></nav></header>'
+        '<main><div class="toolbar">' + PREFERENCES
+        + '<a class="raw-link" href="?format=raw">raw</a></div>'
+        '<div id="content" tabindex="-1"><h1>' + escape(title) + '</h1>'
+        + body + '</div></main>' + WEBMCP_TAG + script_tag + '</body></html>',
         # Form POSTs need a non-opaque Origin for the same-origin CSRF fence.
         # no-referrer makes navigation POST origins null in Chromium.
-        headers={**HEADERS, 'Referrer-Policy': 'strict-origin'},
+        headers=headers,
     )
 
 
@@ -117,10 +124,13 @@ class OAuthBoundary:
 
     def require_csrf(self, request, args, name):
         value = request.cookies.get(name, '')
+        supplied = args.get('csrf', '')
         require(
-            value
+            isinstance(supplied, str)
+            and supplied.isascii()
+            and value
             and request.headers.get('origin') == self.service.settings.service_url
-            and hmac.compare_digest(args.get('csrf', ''), csrf(value)),
+            and hmac.compare_digest(supplied, csrf(value)),
             'invalid_request',
         )
         return value
@@ -249,7 +259,17 @@ class OAuthBoundary:
                     sent = True
                     return {'type': 'http.request', 'body': data, 'more_body': False}
 
-                await self.app(scope, bound_receive, send)
+                # The canonical packet now contains a proof and is no longer gzip.
+                # Forward matching framing, without mutating the incoming scope.
+                rebound_scope = dict(
+                    scope,
+                    headers=[
+                        (k, v)
+                        for k, v in scope['headers']
+                        if k.lower() not in {b'content-length', b'content-encoding', b'transfer-encoding'}
+                    ] + [(b'content-length', str(len(data)).encode())],
+                )
+                await self.app(rebound_scope, bound_receive, send)
                 return
             if (path.startswith('/oauth/') or path == '/login') and (
                 request.method in {'GET', 'HEAD'} and request.query_params.get('format') == 'raw'
@@ -333,19 +353,16 @@ class OAuthBoundary:
                 )
             response = page(
                 'Sign in to MSG',
-                '<p>Approve this browser sign-in from a signed-in CLI:</p><code>msg auth approve '
-                + escape(code)
-                + '</code><p>This browser can read content, your inbox, and direct messages you have permission to access. Only approve if you opened this page.</p>'
-                '<p><a href="/register">Register using the CLI</a> · <a href="/login?format=raw">raw</a></p><p id="status">Waiting for approval…</p><p><a href="/oauth/signup">'
-                'No identity? Create a hosted identity</a></p><script nonce="msg">'
-                'const c=' + canonical(csrf(value)).decode() + ';'
-                'const poll=async()=>{const r=await fetch("/oauth/login/poll",{method:"POST",'
-                'headers:{"Content-Type":"application/json"},body:JSON.stringify({csrf:c})});'
-                'const d=await r.json();if(d.logged_in){document.getElementById("status").textContent='
-                '"Signed in.";const a=document.createElement("a");a.href="/";a.textContent="Back to home";'
-                'document.getElementById("status").append(" ",a);return;}if(["authorization_pending","slow_down"].includes(d.error))'
-                '{setTimeout(poll,d.error==="slow_down"?15000:5000);}else{document.getElementById("status").textContent='
-                '"Sign-in was not completed. Please reopen this page.";}};setTimeout(poll,5000);</script>',
+                '<p>Approve this browser sign-in from a signed-in CLI:</p>'
+                '<code class="approval-code">msg auth approve ' + escape(code) + '</code>'
+                '<p>This browser can read content, your inbox, and direct messages you have permission to access. Only approve if you opened this page.</p>'
+                '<p><a href="/register">Register using the CLI</a></p>'
+                '<p id="status" role="status" aria-live="polite" data-i18n="approval_wait" '
+                'data-csrf="' + escape(csrf(value), quote=True) + '">Waiting for approval…</p>'
+                '<p><a href="/oauth/signup">No identity? Create a hosted identity</a></p>'
+                '<noscript><p>JavaScript is needed to complete this browser sign-in. '
+                'The <a href="/register">CLI</a> works without it.</p></noscript>',
+                script=LOGIN_POLL_SCRIPT,
             )
             self.cookie(response, self.login_cookie, value, 600)
             return response
@@ -357,7 +374,8 @@ class OAuthBoundary:
                     '<p>The server will store your signing and encryption keys. You can switch to managing your own keys later.</p>'
                     '<form method="post">'
                     + fields({'csrf': csrf(binder)})
-                    + '<input name="handle" placeholder="Identity handle" required pattern="[a-z][a-z0-9-]{1,40}">'
+                    + '<label for="handle">Identity handle</label>'
+                    '<input id="handle" name="handle" autocomplete="username" autocapitalize="none" spellcheck="false" minlength="2" maxlength="41" required pattern="[a-z][a-z0-9-]{1,40}">'
                     '<br><button>Create identity and sign in</button></form>',
                 )
                 self.cookie(response, self.login_cookie, binder, 600)
