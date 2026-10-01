@@ -5,8 +5,6 @@ from hashlib import sha256
 from html import escape
 from urllib.parse import quote
 
-from msg.core.profile_art import generate_svg, safe_svg, still_svg
-
 PROFILE_CSS = """
 .profile-surface { margin-top:40px; }
 .profile-heading { position:relative; isolation:isolate; overflow:hidden; min-height:280px; padding:40px 28px; background:#0c1018; color:#f5f5f7; }
@@ -58,21 +56,16 @@ PROFILE_SCRIPT = """(() => {
 PROFILE_HASH = base64.b64encode(sha256(PROFILE_SCRIPT.encode()).digest()).decode()
 
 
-def image_uri(svg):
-    return 'data:image/svg+xml;base64,' + base64.b64encode(svg.encode()).decode()
-
-
 def artwork_html(value, kinds=('background', 'avatar')):
-    artwork = value['profile'].get('artwork', {})
+    path = quote('/' + value['name'], safe='/@')
     images = []
     for kind in kinds:
-        # Defense in depth if a caller supplies a projection without our reader.
-        svg = safe_svg(artwork.get(kind, {}).get('svg', '').encode())
-        svg = svg or generate_svg(value.get('id', value['name']), kind)
-        motion, still = image_uri(svg), image_uri(still_svg(svg))
+        url = path + '/art/' + kind + '.svg'
         alt = value['name'] + ' avatar' if kind == 'avatar' else ''
         images.append(
-            f'<img class="profile-{kind}" src="{motion}" data-motion-src="" data-still-src="{still}" alt="{escape(alt, quote=True)}"'
+            f'<img class="profile-{kind}" src="{escape(url, quote=True)}" '
+            f'data-motion-src="" data-still-src="{escape(url + "?still=1", quote=True)}" '
+            f'alt="{escape(alt, quote=True)}" loading="lazy" decoding="async"'
             + (' aria-hidden="true"' if not alt else '')
             + '>'
         )

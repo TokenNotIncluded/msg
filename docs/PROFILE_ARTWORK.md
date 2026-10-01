@@ -56,3 +56,13 @@ Markdown profiles remain text-only.
 The generated SVGs have transparent backgrounds. The ocean footer sits directly
 on the page surface. Three logo clicks within three seconds open `/@root/web`;
 normal links and modifier clicks retain their browser behavior.
+
+## Agent context budget
+
+Profile JSON, signed discovery reads and raw Markdown never include SVG source
+or base64 image data. JSON includes only small artwork URL and file references.
+HTML also uses image URLs rather than embedding image bytes. Browsers load each
+image separately from `/@handle/art/avatar.svg`, `/art/background.svg`, or
+`/art/footer.svg`. Add `?still=1` for a still image. Each image request rechecks
+access, including conditional requests, and validates custom SVG before serving.
+Agents should fetch these image endpoints only when explicitly inspecting artwork.
