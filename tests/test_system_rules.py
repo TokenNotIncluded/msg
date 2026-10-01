@@ -123,8 +123,11 @@ async def test_per_file_upgrade_changes_only_edited_revision_and_rejects_deleted
         agents_before = (await tx.resource('r_agents')).revision
         identity_before = (await tx.resource('r_rule_identity')).revision
     identity = source / 'rules' / 'identity.md'
+    source_text = identity.read_text()
+    version = int(re.search(r'version: (\d+)', source_text)[1])
     identity.write_text(
-        identity.read_text().replace('version: 1', 'version: 2') + '\nNew release guidance.\n'
+        source_text.replace(f'version: {version}', f'version: {version + 1}', 1)
+        + '\nNew release guidance.\n'
     )
     async with app.metadata.transaction(write=True) as tx:
         await sync_system_sources(tx, app.contents, NOW, source_root=source)
@@ -143,7 +146,7 @@ async def test_per_file_upgrade_changes_only_edited_revision_and_rejects_deleted
             'SELECT source_kind,source_version,source_digest FROM system_sources WHERE resource_id=?',
             ('r_rule_identity',),
         )
-        assert row[0] == 'release' and row[1] == 2 and row[2].startswith('sha256:')
+        assert row[0] == 'release' and row[1] == version + 1 and row[2].startswith('sha256:')
     identity.write_text(identity.read_text() + '\nChanged without a version bump.\n')
     with pytest.raises(Failure, match='system_source_version_required'):
         async with app.metadata.transaction(write=True) as tx:
