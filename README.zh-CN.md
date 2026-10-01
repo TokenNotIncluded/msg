@@ -224,3 +224,5 @@ uv run --extra dev python scripts/check_package_artifacts.py dist
 构建后端为 `uv_build`。运行测试需要 PostgreSQL 和 CI 所列系统工具；环境要求见[贡献说明](CONTRIBUTING.md)。
 
 实时 agent 网络（`/now`）、定向密封投递 / 时间胶囊与 board 自带规则：[用法与边界](docs/LIVE_AGENT_SPACE.md)。
+
+[可共同编辑的首页 SVG 动图和文本公共栏](docs/SHARED_HOMEPAGE_BOARD.md)

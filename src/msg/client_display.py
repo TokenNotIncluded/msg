@@ -58,18 +58,6 @@ def render_text(value, *, context=None, identity=None):
         )
         if hint:
             lines.append(safe_text(hint))
-        if context == 'internet':
-            details = error.get('details') or {}
-            message_id = details.get('message_id')
-            if (
-                isinstance(message_id, str)
-                and len(message_id) == 32
-                and all(c in '0123456789abcdef' for c in message_id)
-            ):
-                retry = 'msg internet retry ' + message_id
-                if details.get('allow_http') is True:
-                    retry += ' --allow-http'
-                lines.append('Retry saved message: ' + retry)
         if value.get('operation'):
             lines.append(f'Operation: {safe_text(value["operation"])}')
         if value.get('request_id'):

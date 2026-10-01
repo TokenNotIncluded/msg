@@ -83,7 +83,11 @@ def html(value=None, account=None, csrf=''):
     quota_text = (
         f'本小时已用 {own["hour_count"]}/5；今天已用 {own["day_count"]}/20。'
         if own
-        else '登录后可编辑；修改次数按账号计算。 / Sign in to edit.'
+        else (
+            '本账号的次数暂不可用，保存时仍会检查限额。 / Usage unavailable.'
+            if account
+            else '登录后可编辑；修改次数按账号计算。 / Sign in to edit.'
+        )
     )
     return (
         '<section class="public-board" id="public-board" '

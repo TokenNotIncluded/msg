@@ -92,7 +92,8 @@ def still_svg(svg):
 @lru_cache(maxsize=128)
 def generate_svg(seed, kind):
     rng = random.Random(int.from_bytes(sha256(str(seed).encode()).digest()[:8], 'big'))
-    return _flame(rng) if kind == 'avatar' else _stars(rng)
+    generators = {'avatar': _flame, 'background': _stars, 'footer': _ocean}
+    return generators[kind](rng)
 
 
 def _flame(rng):
@@ -162,3 +163,45 @@ def _stars(rng):
         )
     parts.append('</svg>')
     return ''.join(parts)
+
+
+def _ocean(rng):
+    phases = [rng.uniform(0, math.tau) for _ in range(3)]
+    colors = ('#7bd5e5', '#47a5c6', '#287b9e')
+    parts = [
+        f'<svg xmlns="{SVG_NS}" viewBox="0 0 1200 200" preserveAspectRatio="xMidYMid slice">',
+        '<title>Looping ASCII ocean waves</title>',
+        '<style>text{font:16px monospace;white-space:pre}.wave-frame{opacity:0}',
+        '.wave-frame:first-of-type{opacity:1}',
+        '@keyframes tide{0%,6.24%{opacity:1}6.25%,100%{opacity:0}}',
+        '@media(prefers-reduced-motion:no-preference){.wave-frame{animation:tide 3.2s steps(1) infinite;animation-delay:var(--phase)}}',
+        '</style>',
+    ]
+    for frame in range(16):
+        t = frame / 16 * math.tau
+        parts.append(f'<g class="wave-frame" style="--phase:-{3.2 - frame * 0.2:.2f}s">')
+        for row in range(12):
+            chars = []
+            for col in range(120):
+                surface = (
+                    3
+                    + 1.4 * math.sin(col * math.tau / 60 - t + phases[0])
+                    + 0.8 * math.sin(col * math.tau / 120 + 2 * t + phases[1])
+                )
+                depth = row - surface
+                ripple = math.sin(col * math.tau / 24 - 2 * t + row * 0.8 + phases[2])
+                if depth < -0.6:
+                    char = ' '
+                elif depth < 0.6:
+                    char = '~' if ripple > 0 else '_'
+                elif depth < 2:
+                    char = '=' if ripple > 0.4 else '~' if ripple > -0.4 else '-'
+                else:
+                    char = '.:-~'[int((ripple + 1) * 1.49)]
+                chars.append(char)
+            color = colors[min(2, row // 4)]
+            parts.append(
+                f'<text x="0" y="{24 + row * 14}" fill="{color}" xml:space="preserve">{escape("".join(chars))}</text>'
+            )
+        parts.append('</g>')
+    return ''.join(parts) + '</svg>'

@@ -254,3 +254,19 @@ async def run_command(client, args):
                     'allow_http': args.allow_http,
                 },
             ) from exc
+
+
+def retry_hint(error):
+    """Expose only a validated local message ID in a terminal retry hint."""
+    details = error.get('details') or {}
+    message_id = details.get('message_id')
+    if not (
+        isinstance(message_id, str)
+        and len(message_id) == 32
+        and all(c in '0123456789abcdef' for c in message_id)
+    ):
+        return None
+    command = 'msg internet retry ' + message_id
+    if details.get('allow_http') is True:
+        command += ' --allow-http'
+    return 'Retry saved message: ' + command

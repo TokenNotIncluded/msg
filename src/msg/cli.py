@@ -1292,12 +1292,13 @@ def main(argv=None):
         )
         return asyncio.run(run(args))
     except Failure as exc:
-        print_result(
-            {'status': 'error', 'error': exc.as_dict()},
-            args,
-            stream=sys.stderr,
-            context='internet' if args is not None and args.command == 'internet' else None,
-        )
+        print_result({'status': 'error', 'error': exc.as_dict()}, args, stream=sys.stderr)
+        if args is not None and args.command == 'internet' and sys.stderr.isatty():
+            from msg.client_internet import retry_hint
+
+            hint = retry_hint(exc.as_dict())
+            if hint:
+                print(hint, file=sys.stderr)
         return 1
     except (OSError, ValueError) as exc:
         # File contents and credential-bearing URLs never appear in errors.

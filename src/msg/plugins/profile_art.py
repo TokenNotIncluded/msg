@@ -8,7 +8,11 @@ async def profile_artwork(app, ctx, request, tx, subject_id):
     from msg.plugins.discovery import visible
 
     artwork = {}
-    for kind, name in (('avatar', 'AVATAR.svg'), ('background', 'BACKGROUND.svg')):
+    for kind, name in (
+        ('avatar', 'AVATAR.svg'),
+        ('background', 'BACKGROUND.svg'),
+        ('footer', 'FOOTER.svg'),
+    ):
         svg = None
         row = tx.one(
             "SELECT id FROM resources WHERE parent=? AND name=? AND state='active'",
