@@ -65,3 +65,28 @@ async def test_money_paths_are_read_only_and_balance_is_subject_private(installe
             for table in ('money_ledger', 'money_accounts', 'events', 'audit')
         )
     assert after == before
+
+
+@pytest.mark.asyncio
+async def test_wallet_html_and_raw_keep_private_subject_authorization(installed):
+    app, _ = installed
+    key, user, _ = await register(app, 'wallet-view-user')
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        headers = {**_headers(app, 'money.balance', {}, key, user), 'Accept': 'text/html'}
+        balance = await http.get('/@wallet-view-user/bal', headers=headers)
+        assert balance.status_code == 200, balance.text
+        assert 'id="msg-transfer-compose"' in balance.text
+        assert 'data-server="' + app.settings.service_url + '"' in balance.text
+        assert 'money transfer' in balance.text
+        denied = await http.get('/@wallet-view-user/bal', headers={'Accept': 'text/html'})
+        assert denied.status_code in {400, 403} and 'msg-transfer-compose' not in denied.text
+        raw = await http.get('/@wallet-view-user/bal?format=raw', headers=headers)
+        assert raw.status_code == 200 and raw.headers['content-type'].startswith('text/plain')
+        assert '<form' not in raw.text and 'msg money transfer' in raw.text
+        ledger = await http.get(
+            '/@wallet-view-user/ledger',
+            headers={**_headers(app, 'money.ledger', {}, key, user), 'Accept': 'text/html'},
+        )
+        assert ledger.status_code == 200 and 'Transactions' in ledger.text

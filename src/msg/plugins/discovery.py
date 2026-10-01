@@ -1795,8 +1795,14 @@ def install(app):
                 and revision
                 and revision.content.media_type.startswith('text/')
             ):
-                require(revision.content.size <= 65536, 'query_cost_exceeded')
-                body = (await app.contents.read_bytes(revision.content)).decode('utf-8')
+                # An all-fields search must still find small posts when a
+                # readable schema/document elsewhere exceeds the body budget.
+                # Explicit body-only searches retain their strict size limit;
+                # large documents remain searchable by name and metadata.
+                if revision.content.size <= 65536:
+                    body = (await app.contents.read_bytes(revision.content)).decode('utf-8')
+                else:
+                    require(a.get('field', 'all') != 'body', 'query_cost_exceeded')
             meta = f'{resource.type} {resource.owner} {resource.group}'
             selected_text = {'name': name, 'body': body, 'metadata': meta}
             field = a.get('field', 'all')

@@ -67,7 +67,7 @@ HOME_MARKDOWN = (
     'Open-source instant messaging built for agents. Humans welcome.\n\n'
     'Send messages. Exchange files. Pass context. Keep the next agent moving.\n\n'
     'Signed identities, scoped permissions, and a server you can run yourself.\n\n'
-    '[Feed](/feed) · [Topics](/topics) · [WebSub / RSS](/rss.xml) · [Platform rules](/_rules) · '
+    '[Search](/search) · [Feed](/feed) · [Topics](/topics) · [WebSub / RSS](/rss.xml) · [Platform rules](/_rules) · '
     '[Agent guide](/AGENTS.md) · [Operations](/-/d) · '
     '[Source code](https://github.com/TokenNotIncluded/msg)\n'
 ).encode()
@@ -757,6 +757,10 @@ def post_title(item):
 
 
 def describe_resource(data):
+    if 'certificate' in data or 'certificates' in data:
+        from msg.transports.certificate_pages import certificate_markdown
+
+        return certificate_markdown(data)
     if data.get('type') == 'user' and 'profile' in data:
         from msg.plugins.profile import profile_markdown
 
@@ -944,6 +948,64 @@ def create_app(service):
                 )
             return await service.executor.execute(packet, entry=entry)
 
+        async def certificate_browser_document(data, display_path):
+            from msg.transports.certificate_pages import certificate_document
+
+            people = {}
+
+            async def decorate(value):
+                cert = value['certificate']
+                for rid in (cert['subject_id'], cert['issuer_id']):
+                    if rid not in people and not request.headers.get('x-msg-request'):
+                        person = await execute_packet(
+                            request_for(
+                                'discovery.get',
+                                {'id': rid, 'fields': ['name', 'path']},
+                                service.settings.service_url,
+                                source='manual',
+                            ),
+                            entry='network',
+                        )
+                        people[rid] = (
+                            person.data
+                            if not person.error
+                            and person.data.get('name')
+                            and person.data.get('path')
+                            else None
+                        )
+                return {
+                    **value,
+                    'people': {rid: person for rid, person in people.items() if person},
+                }
+
+            previews = []
+            if 'certificate' in data:
+                data = await decorate(data)
+            else:
+                for index, item in enumerate(data['certificates']):
+                    preview = None
+                    if index < 12 and not request.headers.get('x-msg-request'):
+                        read = await execute_packet(
+                            request_for(
+                                'cert.get',
+                                {'id': item['id']},
+                                service.settings.service_url,
+                                source='manual',
+                            ),
+                            entry='network',
+                        )
+                        if not read.error and 'certificate' in read.data:
+                            preview = await decorate(wire(read.data))
+                    previews.append(preview)
+            return certificate_document(
+                data,
+                now=service.clock(),
+                account=await browser_account(),
+                raw_path=display_path,
+                previews=previews,
+                service_url=service.settings.service_url,
+            )
+
         try:
             if 'format' in request.query_params:
                 require(
@@ -1049,6 +1111,64 @@ def create_app(service):
                 from msg.transports.universe import universe_response
 
                 return await universe_response(service, request, browser_account, execute_packet)
+            if path == '/opensearch.xml':
+                require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+                from msg.transports.search_page import opensearch_document
+
+                payload = opensearch_document(service.settings.service_url)
+                return Response(
+                    b'' if request.method == 'HEAD' else payload,
+                    media_type='application/opensearchdescription+xml',
+                    headers=BASE_HEADERS,
+                )
+            if path == '/search':
+                require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+                require('x-msg-request' not in request.headers, 'representation_mismatch')
+                from msg.transports.search_page import (
+                    SearchSyntaxError,
+                    search_document,
+                    search_markdown,
+                    search_results,
+                )
+
+                pairs = request.query_params.multi_items()
+                query = dict(pairs)
+                require(len(pairs) == len(query), 'duplicate_query_parameter')
+                require(set(query) <= {'q'}, 'unknown_query_parameter')
+                text = query.get('q', '').strip()
+                items, search_error = [], None
+                if text:
+                    try:
+                        items = await search_results(
+                            text, service_url=service.settings.service_url, execute=execute_packet
+                        )
+                    except SearchSyntaxError as exc:
+                        search_error = str(exc)
+                browser_html = 'text/html' in request.headers.get('accept', '').casefold()
+                payload = (
+                    search_document(
+                        text,
+                        items,
+                        service_url=service.settings.service_url,
+                        account=await browser_account(),
+                        error=search_error,
+                    )
+                    if browser_html
+                    else search_markdown(text, items, search_error).encode()
+                )
+                require(len(payload) <= limits.max_response_bytes, 'response_too_large')
+                headers = {**BASE_HEADERS, 'Vary': 'Accept', 'Cache-Control': 'private, no-cache'}
+                if browser_html:
+                    headers.update(HOME_BROWSER_HEADERS)
+                return Response(
+                    b'' if request.method == 'HEAD' else payload,
+                    media_type='text/html'
+                    if browser_html
+                    else 'text/plain'
+                    if raw_document
+                    else 'text/markdown',
+                    headers=headers,
+                )
             if path == '/feed':
                 require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
                 operation = 'discovery.recommendations'
@@ -1105,14 +1225,6 @@ def create_app(service):
                         markdown += '\n\nYour browser authorization cannot personalize this feed. Showing public recommendations. '
                         markdown += '[Sign in again](/login). / 当前浏览器授权无法使用个性化推荐，现显示公开推荐；[重新登录](/login)。'
 
-                    controls = (
-                        '<form class="feed-filter" method="get" action="/feed"><label for="feed-interests" data-i18n="feed_interests">Interests</label><div class="feed-filter-row">'
-                        '<input id="feed-interests" name="interests" maxlength="640" placeholder="python, ai" value="'
-                        + escape(query.get('interests', ''), quote=True)
-                        + '"><input type="hidden" name="limit" value="'
-                        + escape(query.get('limit', '20'), quote=True)
-                        + '"><button type="submit" data-i18n="feed_recommend">Recommend</button></div></form>'
-                    )
                     payload = (
                         document_html(
                             markdown,
@@ -1120,7 +1232,7 @@ def create_app(service):
                             account=account,
                             raw_path='/feed',
                             raw_query=urlencode(query),
-                            controls=controls,
+                            service_url=service.settings.service_url,
                         )
                         if browser_html
                         else markdown.encode()
@@ -1184,6 +1296,7 @@ def create_app(service):
                         title='Topics / 浏览话题',
                         account=await browser_account(),
                         raw_path='/topics',
+                        service_url=service.settings.service_url,
                     )
                     if browser_html
                     else markdown.encode()
@@ -2201,6 +2314,7 @@ def create_app(service):
                         controls=registration_controls(service.settings.service_url)
                         if path == '/register'
                         else '',
+                        service_url=service.settings.service_url,
                     )
                     if browser_html
                     else markdown.encode()
@@ -2572,15 +2686,99 @@ def create_app(service):
                     if not public:
                         require(result.subject == subject_id, 'permission_denied')
                     value = wire(result.data)
-                    payload = canonical(value)
+                    browser_html = (
+                        'text/html' in request.headers.get('accept', '').casefold()
+                        and remainder != '/json'
+                    )
+                    markdown_view = (
+                        raw_document
+                        or 'text/markdown' in request.headers.get('accept', '').casefold()
+                    )
+                    ledger_view = name in {'ledger', 'public-ledger'}
+                    canonical_path = (
+                        '/@'
+                        + handle
+                        + '/'
+                        + (
+                            'public-ledger'
+                            if public and ledger_view
+                            else 'public-balance'
+                            if public
+                            else 'ledger'
+                            if ledger_view
+                            else 'bal'
+                        )
+                    )
+                    if browser_html and ledger_view and not header:
+                        people = {}
+                        items = []
+                        for item in value['items']:
+                            rid = item.get('counterparty')
+                            if rid and rid not in people and len(people) < 12:
+                                person = await execute_packet(
+                                    request_for(
+                                        'discovery.get',
+                                        {'id': rid, 'fields': ['name']},
+                                        service.settings.service_url,
+                                        source='manual',
+                                    ),
+                                    entry='network',
+                                )
+                                people[rid] = person.data.get('name') if not person.error else None
+                            items.append({
+                                **item,
+                                **({'counterparty_name': people[rid]} if people.get(rid) else {}),
+                            })
+                        value = {**value, 'items': items}
+                    from msg.market.ledger import SCALE
+                    from msg.transports.wallet_pages import wallet_document, wallet_markdown
+
+                    payload = (
+                        wallet_document(
+                            value,
+                            path=canonical_path,
+                            code=service.settings.money.code,
+                            scale=SCALE,
+                            service_url=service.settings.service_url,
+                            account=await browser_account(),
+                            ledger=ledger_view,
+                            limit=args.get('limit', 50),
+                            query=urlencode(query),
+                            public=public,
+                        )
+                        if browser_html
+                        else wallet_markdown(
+                            value,
+                            path=canonical_path,
+                            code=service.settings.money.code,
+                            scale=SCALE,
+                            ledger=ledger_view,
+                            limit=args.get('limit', 50),
+                        ).encode()
+                        if markdown_view
+                        else canonical(value)
+                    )
                     require(len(payload) <= limits.max_response_bytes, 'response_too_large')
-                    etag = '"' + digest(value)[7:] + '"'
-                    headers = {**BASE_HEADERS, 'ETag': etag, 'Cache-Control': 'private, no-cache'}
+                    etag = '"' + digest([value, browser_html, markdown_view])[7:] + '"'
+                    headers = {
+                        **BASE_HEADERS,
+                        'ETag': etag,
+                        'Cache-Control': 'private, no-cache',
+                        'Vary': 'Accept',
+                    }
+                    if browser_html:
+                        headers.update(HOME_BROWSER_HEADERS)
                     if request.headers.get('if-none-match') == etag:
                         return Response(status_code=304, headers=headers)
                     return Response(
                         b'' if request.method == 'HEAD' else payload,
-                        media_type='application/json',
+                        media_type='text/html'
+                        if browser_html
+                        else 'text/plain'
+                        if raw_document
+                        else 'text/markdown'
+                        if markdown_view
+                        else 'application/json',
                         headers=headers,
                     )
                 if name in SUBJECT_COLLABORATION_VIEWS:
@@ -2891,7 +3089,28 @@ def create_app(service):
                         raw_document
                         or 'text/markdown' in request.headers.get('accept', '').casefold()
                     )
-                    etag = '"' + digest([value, browser_html, markdown_view])[7:] + '"'
+                    certificate_markup = None
+                    certificate_source = None
+                    if certificate_detail:
+                        from msg.transports.certificate_pages import certificate_markdown
+
+                        certificate_source = certificate_markdown(value, now=service.clock())
+                        browser_html = browser_html and not (remainder or '').endswith('/json')
+                        if browser_html:
+                            certificate_markup = await certificate_browser_document(
+                                value, value['path']
+                            )
+                    etag = (
+                        '"'
+                        + digest([
+                            value,
+                            browser_html,
+                            markdown_view,
+                            certificate_markup,
+                            certificate_source,
+                        ])[7:]
+                        + '"'
+                    )
                     headers = {**BASE_HEADERS, 'ETag': etag, 'Cache-Control': 'private, no-cache'}
                     headers['Vary'] = 'Accept'
                     if browser_html:
@@ -2899,13 +3118,21 @@ def create_app(service):
                     if request.headers.get('if-none-match') == etag:
                         return Response(status_code=304, headers=headers)
                     payload = (
-                        mailbox_html(value, name, account=await browser_account())
+                        certificate_markup
+                        if certificate_markup is not None
+                        else mailbox_html(
+                            value,
+                            name,
+                            account=await browser_account(),
+                            service_url=service.settings.service_url,
+                        )
                         if browser_html and name in {'in', 'inbox', 'out', 'outbox', 'dm'}
                         else document_html(
                             follow_markdown,
                             account=await browser_account(),
                             raw_path=value['path'],
                             raw_query=urlencode(dict(request.query_params)),
+                            service_url=service.settings.service_url,
                         )
                         if browser_html and follow_view
                         else document_html(
@@ -2913,9 +3140,12 @@ def create_app(service):
                             + value['path']
                             + '\n\n```json\n'
                             + canonical(value).decode()
-                            + '\n```'
+                            + '\n```',
+                            service_url=service.settings.service_url,
                         )
                         if browser_html
+                        else certificate_source.encode()
+                        if certificate_detail and markdown_view
                         else follow_markdown.encode()
                         if follow_view and markdown_view
                         else canonical(value)
@@ -2928,7 +3158,7 @@ def create_app(service):
                         else 'text/plain'
                         if raw_document
                         else 'text/markdown'
-                        if follow_view and markdown_view
+                        if (follow_view or certificate_detail) and markdown_view
                         else 'application/json',
                         headers=headers,
                     )
@@ -3172,7 +3402,10 @@ def create_app(service):
             browser_html = (
                 view == 'markdown' and 'text/html' in request.headers.get('accept', '').casefold()
             )
-            etag = '"' + digest([value, browser_html])[7:] + '"'
+            certificate_markup = None
+            if browser_html and ('certificate' in value or 'certificates' in value):
+                certificate_markup = await certificate_browser_document(value, path)
+            etag = '"' + digest([value, browser_html, certificate_markup])[7:] + '"'
             headers = {**BASE_HEADERS, 'ETag': etag, 'Cache-Control': 'private, no-cache'}
             headers['Vary'] = 'Accept'
             if browser_html:
@@ -3220,12 +3453,15 @@ def create_app(service):
             body = (
                 canonical(value)
                 if view in {'json', 'meta', 'history', 'diff', 'references', 'thread'}
+                else certificate_markup
+                if certificate_markup is not None
                 else document_html(
                     resource_markdown(value, describe_resource(value)),
                     title=path,
                     account=await browser_account(),
                     resource=value,
                     raw_path=path,
+                    service_url=service.settings.service_url,
                 )
                 if browser_html
                 else resource_markdown(value, describe_resource(value)).encode()

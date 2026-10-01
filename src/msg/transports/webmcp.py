@@ -34,6 +34,34 @@ WEBMCP_SCRIPT = r"""(() => {
     green: ['Green', '绿色'], blue: ['Blue', '蓝色'], violet: ['Violet', '紫色'], orange: ['Orange', '橙色']
   };
   Object.assign(translations, {follows: ['Following','关注'], followers: ['Followers','粉丝'], feed_interests: ['Interests','兴趣标签'], feed_recommend: ['Recommend','查看推荐']});
+  Object.assign(translations, {
+    copy_document: ['Copy text','复制正文'], share_document: ['Share','分享'],
+    wallet: ['Wallet','钱包'], wallet_transfer: ['Transfer to an agent','给 Agent 转账'],
+    wallet_recipient: ['Recipient','收款方'], wallet_amount: ['Amount','金额'], wallet_reference: ['Reference','备注'],
+    wallet_copy_transfer: ['Copy signed transfer command','复制签名转账命令'],
+    wallet_signing_hint: ['Run the command in your terminal using your identity key. Generating a command does not transfer funds.','在终端用你的身份钥匙执行命令。生成命令不会转账。'],
+    cert_copy_image: ['Copy certificate image','复制证书图片'],
+    cert_title: ['Authorization certificate','授权证书'], cert_collection: ['Certificates','证书'],
+    cert_holder: ['Issued to','持有人'], cert_issuer: ['Issued by','签发者'],
+    cert_serial: ['Serial number','证书编号'], cert_start: ['Valid from','生效时间'],
+    cert_end: ['Valid until','截止时间'], cert_service: ['Issued for','适用服务'],
+    cert_grants: ['Authorization scope','授权范围'], cert_details: ['Signature and technical details','签名与技术详情'],
+    cert_active: ['Within validity period','有效期内'], cert_expired: ['Expired','已过期'],
+    cert_pending: ['Not yet valid','尚未生效'], cert_revoked: ['Revoked','已撤销'],
+    cert_identity: ['Identity certificate','身份证书'], cert_ca: ['CA certificate','CA 证书'],
+    cert_delegation: ['Delegation certificate','委托证书'], cert_capability: ['Capability certificate','能力证书'],
+    cert_open: ['View certificate','查看证书'], cert_empty: ['No certificates yet.','暂无证书。'],
+    cert_limited: ['Details are unavailable with your current permissions.','当前权限无法读取详情。'],
+    cert_note: ['Dates and revocation describe this certificate only. The server checks current authorization for every operation.','此处展示证书的时间与撤销状态；每次操作仍由服务器检查当前授权。'],
+    cert_descendants: ['Includes descendants','包含下级资源'], cert_no_descendants: ['This resource only','仅当前资源']
+  });
+  Object.assign(translations, {
+    search_query: ['Search MSG','搜索 MSG'], search_submit: ['Search','搜索'],
+    search_help: ['Syntax & browser search engine','搜索语法与浏览器搜索引擎'],
+    search_empty: ['No results. Try different keywords.','没有匹配结果，试试其他关键词。'],
+    search_local: ['Searches this MSG service and only content you can read.','仅搜索当前 MSG 服务中你有权限读取的内容。'],
+    search_copy_engine: ['Copy search engine URL','复制搜索引擎地址']
+  });
   Object.assign(translations, __ACCENT_LABELS__);
   const palettes = __ACCENT_PALETTES__;
   const load = (key, fallback) => {try {return localStorage.getItem(key) || fallback;} catch {return fallback;}};
@@ -44,9 +72,23 @@ WEBMCP_SCRIPT = r"""(() => {
     document.querySelectorAll('[data-i18n]').forEach(node => {
       const text = translations[node.dataset.i18n]; if (text) node.textContent = text[language === 'zh' ? 1 : 0];
     });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach(node => {
+      const text = translations[node.dataset.i18nPlaceholder]; if (text) node.placeholder = text[language === 'zh' ? 1 : 0];
+    });
     const selector = document.getElementById('msg-language'); if (selector) selector.value = language;
     save('msg.language', language);
   };
+  document.addEventListener('click', event => {
+    document.querySelectorAll('.preferences[open]').forEach(panel => {
+      if (!panel.contains(event.target)) panel.open = false;
+    });
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    document.querySelectorAll('.preferences[open]').forEach(panel => {
+      panel.open = false; panel.querySelector('summary').focus();
+    });
+  });
   const applyAccent = value => {
     const accent = Object.hasOwn(palettes, value) ? value : 'blue';
     document.documentElement.style.setProperty('--accent-light', palettes[accent][0]);
@@ -76,6 +118,127 @@ WEBMCP_SCRIPT = r"""(() => {
       status.textContent = zh ? '请复制下方已选中的说明。' : 'Copy the selected instructions below.';
     }
   });
+  const documentStatus = document.getElementById('msg-document-status');
+  const copyDocumentValue = async (value, success) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      documentStatus.textContent = success;
+    } catch {
+      const source = document.getElementById('msg-document-source');
+      source.value = value; source.hidden = false; source.focus(); source.select();
+      documentStatus.textContent = document.documentElement.lang.startsWith('zh') ? '请复制下方已选中的内容。' : 'Copy the selected text below.';
+    }
+  };
+  document.getElementById('msg-copy-document')?.addEventListener('click', async () => {
+    const source = document.getElementById('msg-document-source');
+    await copyDocumentValue(source.textContent, document.documentElement.lang.startsWith('zh') ? '正文已复制。' : 'Text copied.');
+  });
+  document.getElementById('msg-copy-search-engine')?.addEventListener('click', async event => {
+    await copyDocumentValue(event.currentTarget.dataset.searchTemplate, document.documentElement.lang.startsWith('zh') ? '搜索引擎地址已复制。' : 'Search engine URL copied.');
+  });
+  document.getElementById('msg-share-document')?.addEventListener('click', async event => {
+    const url = new URL(event.currentTarget.dataset.sharePath, location.origin);
+    url.search = ''; url.hash = '';
+    if (navigator.share) {
+      try {
+        await navigator.share({title: document.title, url: url.href});
+        documentStatus.textContent = document.documentElement.lang.startsWith('zh') ? '已分享。' : 'Shared.';
+        return;
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+      }
+    }
+    await copyDocumentValue(url.href, document.documentElement.lang.startsWith('zh') ? '页面链接已复制。' : 'Page link copied.');
+  });
+  document.getElementById('msg-transfer-compose')?.addEventListener('input', event => {
+    delete event.currentTarget.dataset.requestId;
+  });
+  document.getElementById('msg-transfer-compose')?.addEventListener('submit', async event => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const values = new FormData(form);
+    const recipient = String(values.get('recipient')).trim();
+    const amount = String(values.get('amount')).trim();
+    const reference = String(values.get('reference')).trim();
+    const status = document.getElementById('msg-transfer-status');
+    const source = document.getElementById('msg-transfer-command');
+    const zh = document.documentElement.lang.startsWith('zh');
+    try {
+      if (!/^@?[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$/.test(recipient) || !/^[0-9]+(?:\.[0-9]+)?$/.test(amount)) throw new Error();
+      const scale = Number(form.dataset.scale);
+      const [whole, fraction = ''] = amount.split('.');
+      if (fraction.length > scale) throw new Error();
+      const minor = BigInt(whole) * (10n ** BigInt(scale)) + BigInt(fraction.padEnd(scale, '0') || '0');
+      if (minor <= 0n || minor > 9223372036854775807n) throw new Error();
+      const shellQuote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+      const requestId = form.dataset.requestId || crypto.randomUUID();
+      form.dataset.requestId = requestId;
+      const command = ['msg', '--server', shellQuote(form.dataset.server), '--user', shellQuote(form.dataset.user), 'money', 'transfer', shellQuote('@' + recipient.replace(/^@/, '')), shellQuote(amount), '--request-id', shellQuote(requestId)];
+      if (reference) command.push('--reference', shellQuote(reference));
+      source.value = command.join(' '); source.hidden = false;
+      try { await navigator.clipboard.writeText(source.value); status.textContent = zh ? '命令已复制，尚未转账。' : 'Command copied. No funds transferred.'; }
+      catch { source.focus(); source.select(); status.textContent = zh ? '请复制下方命令，尚未转账。' : 'Copy the command below. No funds transferred.'; }
+    } catch {
+      status.textContent = zh ? '请输入有效用户名和正数金额（最多 ' + form.dataset.scale + ' 位小数）。' : 'Enter a username and positive amount (up to ' + form.dataset.scale + ' decimals).';
+    }
+  });
+  document.querySelectorAll('.certificate-copy-image').forEach(button => button.addEventListener('click', async () => {
+    const zh = document.documentElement.lang.startsWith('zh');
+    button.disabled = true;
+    try {
+      const data = JSON.parse(button.dataset.certImage);
+      const paper = getComputedStyle(button.closest('.certificate-paper'));
+      const canvas = document.createElement('canvas'); canvas.width = 1400;
+      const ctx = canvas.getContext('2d');
+      const lines = (value, width, font) => {
+        ctx.font = font; let line = ''; const result = [];
+        for (const char of Array.from(String(value))) {
+          if (line && ctx.measureText(line + char).width > width) { result.push(line); line = ''; }
+          line += char;
+        }
+        result.push(line); return result;
+      };
+      const grants = data.grants.map(grant => ({name: lines(grant.name + ' · v' + grant.version, 540, '24px sans-serif'), scope: lines(grant.scope + (grant.descendants ? (zh ? ' · 包含下级' : ' · descendants') : ''), 540, '20px monospace')}));
+      const rows = [];
+      for (let i = 0; i < grants.length; i += 2) rows.push(Math.max(...grants.slice(i, i + 2).map(g => 22 + g.name.length * 30 + g.scope.length * 26)));
+      canvas.height = 1000 + rows.reduce((a, b) => a + b, 0);
+      const ink = paper.getPropertyValue('--ink').trim(); const muted = paper.getPropertyValue('--paper-muted').trim();
+      ctx.fillStyle = paper.getPropertyValue('--paper').trim(); ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.strokeStyle = paper.getPropertyValue('--paper-line').trim(); ctx.lineWidth = 2;
+      ctx.strokeRect(30, 30, 1340, canvas.height - 60); ctx.strokeRect(44, 44, 1312, canvas.height - 88);
+      const draw = (value, x, y, width, font, color = ink, lineHeight = 32) => { ctx.fillStyle = color; const wrapped = lines(value, width, font); ctx.font = font; wrapped.forEach((line, index) => ctx.fillText(line, x, y + index * lineHeight)); return wrapped.length * lineHeight; };
+      const title = translations['cert_' + data.kind] || translations.cert_title;
+      draw(title[zh ? 1 : 0], 100, 132, 1100, '46px serif');
+      const state = translations['cert_' + data.status]; draw(state[zh ? 1 : 0], 100, 182, 1100, '22px sans-serif', muted);
+      ctx.beginPath(); ctx.moveTo(100, 217); ctx.lineTo(1300, 217); ctx.stroke();
+      draw(zh ? '持有人' : 'Issued to', 100, 285, 1100, '22px sans-serif', muted);
+      draw(data.holder, 100, 350, 1100, '54px serif', ink, 60);
+      const fields = [[zh ? '签发者' : 'Issued by', data.issuer], [zh ? '证书编号' : 'Serial number', data.serial], [zh ? '生效时间' : 'Valid from', data.not_before.slice(0, 19).replace('T', ' ') + ' UTC'], [zh ? '截止时间' : 'Valid until', data.expires_at.slice(0, 19).replace('T', ' ') + ' UTC']];
+      fields.forEach(([label, value], index) => { const x = 100 + (index % 2) * 620; const y = 445 + Math.floor(index / 2) * 95; draw(label, x, y, 540, '20px sans-serif', muted); draw(value, x, y + 34, 540, '24px sans-serif', ink, 28); });
+      draw((zh ? '适用服务：' : 'Issued for: ') + data.target_service, 100, 660, 1200, '24px sans-serif');
+      draw(zh ? '授权范围' : 'Authorization scope', 100, 735, 1200, '28px sans-serif');
+      let y = 790;
+      for (let i = 0; i < grants.length; i += 2) {
+        grants.slice(i, i + 2).forEach((grant, column) => { const x = 100 + column * 620; ctx.fillStyle = ink; ctx.font = '24px sans-serif'; grant.name.forEach((line, n) => ctx.fillText(line, x, y + n * 30)); ctx.fillStyle = muted; ctx.font = '20px monospace'; grant.scope.forEach((line, n) => ctx.fillText(line, x, y + grant.name.length * 30 + n * 26)); });
+        y += rows[i / 2];
+      }
+      const footerY = canvas.height - 125;
+      ctx.save(); ctx.translate(980, footerY); ctx.rotate(-.14); ctx.beginPath(); ctx.arc(0, 0, 57, 0, Math.PI * 2); ctx.stroke(); ctx.beginPath(); ctx.arc(0, 0, 49, 0, Math.PI * 2); ctx.stroke(); ctx.font = '28px serif'; ctx.fillStyle = muted; ctx.textAlign = 'center'; ctx.fillText('MSG', 0, 10); ctx.restore();
+      draw(data.issuer, 1060, footerY - 8, 240, '20px sans-serif'); draw(data.algorithm, 1060, footerY + 28, 240, '18px monospace', muted);
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) throw new Error('PNG export failed');
+      try {
+        await navigator.clipboard.write([new ClipboardItem({'image/png': blob})]);
+        documentStatus.textContent = zh ? '证书图片已复制。' : 'Certificate image copied.';
+      } catch {
+        const url = URL.createObjectURL(blob); const link = document.createElement('a');
+        link.href = url; link.download = 'msg-certificate-' + data.serial.replace(/[^A-Za-z0-9_.-]/g, '_').slice(0, 80) + '.png';
+        link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        documentStatus.textContent = zh ? '浏览器不支持复制图片，已下载 PNG。' : 'Image copy unavailable. PNG downloaded.';
+      }
+    } catch { documentStatus.textContent = zh ? '证书图片生成失败，请重试。' : 'Could not create the certificate image. Try again.'; }
+    finally { button.disabled = false; }
+  }));
   const context = document.modelContext || navigator.modelContext;
   if (!context?.registerTool) return;
   const controller = new AbortController();
