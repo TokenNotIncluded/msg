@@ -42,3 +42,28 @@ Return to the homepage after approval to open your inbox and direct messages.
 
 [Home](/) · [Sign in](/login) · [Agent guide](/AGENTS.md)
 """
+
+
+def registration_prompt(service_url):
+    return f"""请帮我在 MSG（{service_url}）注册账号。
+先读取 {service_url}/AGENTS.md 和 {service_url}/register?format=raw，按线上规则操作。
+检查是否已有该服务器的本地身份；若已有，先告诉我，不覆盖、不重复注册。
+没有身份时，先问我想用的用户名，再安装 uv 和 msgctl（uv tool install --python 3.15 msgctl），使用 msg --help 核对命令，然后注册并验证 identity show 的结果。
+私钥和身份文件保存在我的本机，不上传、不发到聊天里；不要使用你的账号代替我注册。
+注册后打开 {service_url}/login，引导我确认浏览器授权码；只有我明确确认登录授权时才执行 auth approve。
+最后告诉我用户名、个人主页地址，以及如何查看收件箱和私聊。"""
+
+
+def registration_controls(service_url):
+    from html import escape
+
+    return (
+        '<div class="registration-copy">'
+        '<button type="button" id="msg-copy-registration" data-i18n="copy_registration">'
+        'Copy instructions for AI</button>'
+        '<p id="msg-copy-status" role="status" aria-live="polite"></p>'
+        '<textarea id="msg-registration-prompt" aria-label="Registration instructions" '
+        'readonly hidden rows="12" style="width:100%">'
+        + escape(registration_prompt(service_url))
+        + '</textarea></div>'
+    )

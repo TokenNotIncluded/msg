@@ -1,7 +1,16 @@
 """One restrained, dependency-free visual language for browser-only views."""
 
+from importlib.resources import files
+
+_MARK = files('msg.data').joinpath('logo.svg').read_text()
+_MARK = _MARK.replace(
+    'width="96" height="96" role="img" aria-label="msg"',
+    'width="28" height="28" aria-hidden="true"',
+).replace('stroke="#111111"', 'stroke="currentColor"')
+BRAND_LINK = '<a class="brand" href="/" aria-label="msg · Home">' + _MARK + '<span>msg</span></a>'
+
 PREFERENCES = (
-    '<details class="preferences"><summary data-i18n="display">Display</summary>'
+    '<details class="preferences"><summary><svg class="settings-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg><span data-i18n="display">Display settings</span><svg class="settings-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>'
     '<div class="preference-fields"><label for="msg-language">'
     '<span data-i18n="language">Language</span><select id="msg-language">'
     '<option value="en">English</option><option value="zh">简体中文</option></select></label>'
@@ -18,7 +27,7 @@ PREFERENCES = (
     + '</select></label><label for="msg-theme"><span data-i18n="theme">Theme</span>'
     '<select id="msg-theme"><option value="system" data-i18n="system">System</option>'
     '<option value="light" data-i18n="light">Light</option>'
-    '<option value="dark" data-i18n="dark">Dark</option></select></label></div></details>'
+    '<option value="dark" data-i18n="dark">Dark</option></select></label></div><p class="settings-note" data-i18n="saved_settings">Saved on this device.</p></details>'
 )
 
 SKIP_LINK = '<a class="skip-link" href="#content" data-i18n="skip">Skip to content</a>'
@@ -60,20 +69,26 @@ a, button, select, summary { -webkit-tap-highlight-color: transparent; }
 .site-header, main { width: min(100%, 1088px); margin-inline: auto; padding-inline: 40px; }
 .site-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 24px; }
 .brand { color: var(--fg); font: 600 24px/1 var(--mono); letter-spacing: -.06em; text-decoration: none; white-space: nowrap; }
-.brand::after { content: "_"; color: var(--muted); }
+.brand { display: inline-flex; align-items: center; gap: 10px; }
+.brand svg { flex: none; width: 28px; height: 28px; }
 nav { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; min-width: 0; }
 nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--fg); text-decoration: none; font-size: 14px; }
 .current-account { overflow-wrap: anywhere; }
 .toolbar { display: flex; align-items: start; justify-content: flex-end; gap: 24px; padding-block: 4px; }
 .raw-link { font: 12px/44px var(--mono); color: var(--muted); white-space: nowrap; }
-.preferences { color: var(--muted); font-size: 13px; max-width: 100%; }
+.preferences { color: var(--fg); font-size: 13px; max-width: 100%; }
+.preferences[open] { flex: 1; max-width: 540px; }
 .preferences summary { min-height: 44px; display: flex; align-items: center; justify-content: flex-end; gap: 8px; list-style: none; }
 .preferences summary::-webkit-details-marker { display: none; }
-.preferences summary::before { content: "[+]"; font: 11px var(--mono); }
-.preferences[open] summary::before { content: "[-]"; }
-.preference-fields { display: flex; flex-wrap: wrap; gap: 16px; padding-block: 8px 20px; }
-.preference-fields label { display: grid; gap: 6px; }
-select { min-height: 44px; padding: 8px 28px 8px 12px; background: var(--panel); border: 0; border-radius: 8px; }
+.settings-icon, .settings-chevron { flex: none; }
+.preferences[open] .settings-chevron { transform: rotate(180deg); }
+.preference-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding-top: 8px; }
+.preference-fields label { display: grid; gap: 6px; min-width: 0; }
+.preference-fields label > span { color: var(--muted); font-size: 12px; }
+.preference-fields select { width: 100%; }
+select { min-height: 44px; padding: 8px 28px 8px 12px; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; font: inherit; cursor: pointer; }
+select:hover { border-color: var(--muted); }
+.settings-note { color: var(--muted); font-size: 11px; margin: 8px 0 12px; }
 summary { cursor: pointer; }
 .hero { margin: 36px 0 40px; }
 .eyebrow { color: var(--muted); font: 12px/1.5 var(--mono); letter-spacing: .02em; }
@@ -156,7 +171,8 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 32px; }
   .stats { gap: 12px; }
   .stats strong { font-size: 30px; }
   .post-title { align-items: start; flex-direction: column; gap: 4px; }
-  .preference-fields { flex-direction: column; }
+  .preference-fields { grid-template-columns: 1fr; }
+  .preferences[open] { max-width: 100%; }
   .post-meta dl { grid-template-columns: 1fr; gap: 4px; }
   .post-meta dd { margin-bottom: 8px; }
   footer { margin-top: 48px; }

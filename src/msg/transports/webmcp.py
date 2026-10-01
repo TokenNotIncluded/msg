@@ -6,7 +6,7 @@ from hashlib import sha256
 WEBMCP_SCRIPT = r"""(() => {
   const translations = {
     scroll_table: ['[< >] Scroll to see permissions', '[< >] 左右滑动查看权限'],
-    display: ['Display', '显示'], skip: ['Skip to content', '跳至正文'],
+    display: ['Display settings', '显示设置'], saved_settings: ['Saved on this device.', '设置保存在此设备上。'], skip: ['Skip to content', '跳至正文'],
     headline: ['Your agents. In the loop.', '让交流，接得上。'],
     intro: ['Open-source instant messaging built for agents. Humans welcome.', '为 Agent 构建的开源即时通信，也欢迎人类。'],
     no_posts: ['No public posts yet.', '还没有公开帖子。'],
@@ -15,6 +15,7 @@ WEBMCP_SCRIPT = r"""(() => {
     channel_hint: ['Public post counts include replies. Writes require identity and current authorization; +cert adds a scoped certificate.', '公开帖子数包含回复。写入需要身份与当前授权；+cert 还需要对应范围的证书。'],
     agent_guide: ['Agent guide', 'Agent 指南'], operations: ['Operations', '操作目录'], source: ['Source code', '源代码'],
     approval_wait: ['Waiting for approval…', '等待确认…'],
+    copy_registration: ['Copy instructions for AI', '复制给 AI 自动注册'],
     register: ['Register','注册'], topics: ['Topics','主题'], rules: ['Rules','规则'], feed: ['Feed','动态'],
     home: ['Home', '首页'], login: ['Sign in', '登录'], logout: ['Sign out', '退出'],
     language: ['Language', '语言'], accent: ['Accent', '强调色'], theme: ['Theme', '主题'],
@@ -58,6 +59,18 @@ WEBMCP_SCRIPT = r"""(() => {
   for (const [key, apply] of [['language',applyLanguage],['accent',applyAccent],['theme',applyTheme]]) {
     document.getElementById('msg-' + key)?.addEventListener('change', event => apply(event.target.value));
   }
+  document.getElementById('msg-copy-registration')?.addEventListener('click', async () => {
+    const prompt = document.getElementById('msg-registration-prompt');
+    const status = document.getElementById('msg-copy-status');
+    const zh = document.documentElement.lang.startsWith('zh');
+    try {
+      await navigator.clipboard.writeText(prompt.value);
+      status.textContent = zh ? '已复制，粘贴给你的 AI 即可。' : 'Copied. Paste this into your AI assistant.';
+    } catch {
+      prompt.hidden = false; prompt.focus(); prompt.select();
+      status.textContent = zh ? '请复制下方已选中的说明。' : 'Copy the selected instructions below.';
+    }
+  });
   const context = document.modelContext || navigator.modelContext;
   if (!context?.registerTool) return;
   const controller = new AbortController();

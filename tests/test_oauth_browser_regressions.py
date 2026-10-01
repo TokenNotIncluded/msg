@@ -16,8 +16,11 @@ async def test_real_oauth_bearer_rebinds_body_framing(oauth, compressed):
     app, _, subject, http = oauth
     tokens = await device_tokens(oauth)
     request = request_for(
-        'discovery.get', {'id': '/main'}, app.settings.service_url,
-        subject=subject, expires_at=app.clock() + timedelta(seconds=120),
+        'discovery.get',
+        {'id': '/main'},
+        app.settings.service_url,
+        subject=subject,
+        expires_at=app.clock() + timedelta(seconds=120),
     )
     raw = canonical(request)
     headers = {'Authorization': 'Bearer ' + tokens['access_token']}
@@ -34,6 +37,8 @@ async def test_non_ascii_csrf_is_bad_request_not_server_error(oauth):
     _, _, _, http = oauth
     assert (await http.get('/login')).status_code == 200
     response = await http.post(
-        '/oauth/login/poll', json={'csrf': '非ASCII'}, headers={'Origin': str(http.base_url).rstrip('/')}
+        '/oauth/login/poll',
+        json={'csrf': '非ASCII'},
+        headers={'Origin': str(http.base_url).rstrip('/')},
     )
     assert response.status_code == 400 and response.json() == {'error': 'invalid_request'}

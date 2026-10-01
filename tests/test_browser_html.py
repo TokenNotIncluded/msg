@@ -94,6 +94,10 @@ async def test_readable_dm_channel_metadata_and_raw(oauth):
     register_html = await http.get('/register', headers={'Accept': 'text/html'})
     register_raw = await http.get('/register?format=raw', headers={'Accept': 'text/html'})
     assert 'identity new myname' in register_html.text
+    assert 'id="msg-copy-registration"' in register_html.text
+    assert 'id="msg-registration-prompt"' in register_html.text
+    assert '不覆盖、不重复注册' in register_html.text
+    assert 'navigator.clipboard.writeText(prompt.value)' in register_html.text
     assert register_raw.headers['content-type'].startswith('text/plain')
     assert register_raw.text.startswith('# Register') and '<html' not in register_raw.text
     await call(

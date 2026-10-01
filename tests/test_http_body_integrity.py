@@ -31,16 +31,19 @@ async def test_declared_and_received_content_length_must_match(declared):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('headers', [
-    [(b'content-length', b'3'), (b'content-length', b'3')],
-    [(b'content-length', b'3'), (b'content-length', b'4')],
-    [(b'content-length', b'3, 3')],
-    [(b'content-length', b'+3')],
-    [(b'content-length', b'-3')],
-    [(b'content-length', b'')],
-    [(b'content-length', b'3'), (b'transfer-encoding', b'chunked')],
-    [(b'content-encoding', b'gzip'), (b'content-encoding', b'identity')],
-])
+@pytest.mark.parametrize(
+    'headers',
+    [
+        [(b'content-length', b'3'), (b'content-length', b'3')],
+        [(b'content-length', b'3'), (b'content-length', b'4')],
+        [(b'content-length', b'3, 3')],
+        [(b'content-length', b'+3')],
+        [(b'content-length', b'-3')],
+        [(b'content-length', b'')],
+        [(b'content-length', b'3'), (b'transfer-encoding', b'chunked')],
+        [(b'content-encoding', b'gzip'), (b'content-encoding', b'identity')],
+    ],
+)
 async def test_ambiguous_framing_is_rejected_without_consuming_body(headers):
     request, consumed = streaming_request(headers)
     with pytest.raises(Failure, match='invalid_request'):
@@ -66,13 +69,16 @@ async def test_unknown_encoding_is_rejected_before_streaming():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('headers,chunks,expected', [
-    ([], (b'a', b'bc'), b'abc'),
-    ([(b'content-length', b'0003')], (b'abc',), b'abc'),
-    ([(b'content-length', b'0')], (), b''),
-    ([(b'content-encoding', b'IDENTITY')], (b'abc',), b'abc'),
-    ([(b'transfer-encoding', b'chunked')], (b'a', b'bc'), b'abc'),
-])
+@pytest.mark.parametrize(
+    'headers,chunks,expected',
+    [
+        ([], (b'a', b'bc'), b'abc'),
+        ([(b'content-length', b'0003')], (b'abc',), b'abc'),
+        ([(b'content-length', b'0')], (), b''),
+        ([(b'content-encoding', b'IDENTITY')], (b'abc',), b'abc'),
+        ([(b'transfer-encoding', b'chunked')], (b'a', b'bc'), b'abc'),
+    ],
+)
 async def test_valid_streams_keep_their_bytes(headers, chunks, expected):
     request, _ = streaming_request(headers, chunks)
     assert await body_bytes(request, 64) == expected
@@ -89,12 +95,15 @@ async def test_gzip_content_length_measures_wire_bytes_not_decoded_bytes():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('raw,code', [
-    (gzip.compress(b'x' * 256), 'request_too_large'),
-    (gzip.compress(b'abc')[:-1], 'invalid_gzip'),
-    (gzip.compress(b'abc') + b'trailing', 'invalid_gzip'),
-    (gzip.compress(b'abc') + gzip.compress(b'def'), 'invalid_gzip'),
-])
+@pytest.mark.parametrize(
+    'raw,code',
+    [
+        (gzip.compress(b'x' * 256), 'request_too_large'),
+        (gzip.compress(b'abc')[:-1], 'invalid_gzip'),
+        (gzip.compress(b'abc') + b'trailing', 'invalid_gzip'),
+        (gzip.compress(b'abc') + gzip.compress(b'def'), 'invalid_gzip'),
+    ],
+)
 async def test_gzip_rejects_expansion_truncation_and_extra_members(raw, code):
     request, _ = streaming_request([(b'content-encoding', b'gzip')], (raw,))
     with pytest.raises(Failure, match=code):

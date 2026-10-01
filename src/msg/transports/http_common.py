@@ -32,8 +32,7 @@ async def body_bytes(request, limit):
         digits = length.lstrip('0') or '0'
         maximum = str(limit)
         require(
-            len(digits) < len(maximum)
-            or (len(digits) == len(maximum) and digits <= maximum),
+            len(digits) < len(maximum) or (len(digits) == len(maximum) and digits <= maximum),
             'request_too_large',
         )
         expected = int(digits)

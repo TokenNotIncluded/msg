@@ -34,9 +34,13 @@ def test_optional_page_script_is_pinned_to_exact_bytes():
 def test_invalid_csrf_values_fail_with_a_controlled_error(token):
     boundary = OAuthBoundary.__new__(OAuthBoundary)
     boundary.service = SimpleNamespace(settings=SimpleNamespace(service_url='https://msg.test'))
-    request = Request({'type': 'http', 'headers': [
-        (b'cookie', b'msg_login=opaque-cookie'), (b'origin', b'https://msg.test'),
-    ]})
+    request = Request({
+        'type': 'http',
+        'headers': [
+            (b'cookie', b'msg_login=opaque-cookie'),
+            (b'origin', b'https://msg.test'),
+        ],
+    })
     with pytest.raises(Failure, match='invalid_request'):
         boundary.require_csrf(request, {'csrf': token}, 'msg_login')
 
@@ -45,11 +49,18 @@ def test_valid_csrf_still_requires_the_origin_and_cookie():
     boundary = OAuthBoundary.__new__(OAuthBoundary)
     boundary.service = SimpleNamespace(settings=SimpleNamespace(service_url='https://msg.test'))
     for origin, good in [(b'https://msg.test', True), (b'https://other.test', False)]:
-        request = Request({'type': 'http', 'headers': [
-            (b'cookie', b'msg_login=opaque-cookie'), (b'origin', origin),
-        ]})
+        request = Request({
+            'type': 'http',
+            'headers': [
+                (b'cookie', b'msg_login=opaque-cookie'),
+                (b'origin', origin),
+            ],
+        })
         if good:
-            assert boundary.require_csrf(request, {'csrf': csrf('opaque-cookie')}, 'msg_login') == 'opaque-cookie'
+            assert (
+                boundary.require_csrf(request, {'csrf': csrf('opaque-cookie')}, 'msg_login')
+                == 'opaque-cookie'
+            )
         else:
             with pytest.raises(Failure, match='invalid_request'):
                 boundary.require_csrf(request, {'csrf': csrf('opaque-cookie')}, 'msg_login')

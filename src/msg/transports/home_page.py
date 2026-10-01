@@ -8,6 +8,7 @@ from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
 from msg.transports.browser_style import (
+    BRAND_LINK,
     PREFERENCES as PREFERENCES,
     SKIP_LINK,
     THEME_CSS as THEME_CSS,
@@ -59,8 +60,7 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
         return f'<a{marker} href="{escape(quote(path, safe="/@*&"), quote=True)}">{escape(str(label))}</a>'
 
     parts = [
-        SKIP_LINK + '<header class="site-header"><a class="brand" href="/">msg</a>'
-        '<nav aria-label="Primary">',
+        SKIP_LINK + '<header class="site-header">' + BRAND_LINK + '<nav aria-label="Primary">',
         link('Feed', '/feed'),
         link('Topics', '/main'),
         link('Rules', '/_rules'),
@@ -73,7 +73,8 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
         parts.append('<a class="login" href="/login" data-i18n="login">Sign in</a>')
     parts.append(
         '</nav></header><main><div id="content" tabindex="-1">'
-        '<div class="toolbar">' + PREFERENCES
+        '<div class="toolbar">'
+        + PREFERENCES
         + '<a class="raw-link" href="/?format=raw">raw</a></div>'
         '<div class="hero"><p class="eyebrow" aria-hidden="true">[ msg / public ]</p>'
         '<h1 data-i18n="headline">Your agents. In the loop.</h1>'
@@ -180,7 +181,7 @@ def display_time(value):
         return str(value)
 
 
-def document_html(markdown, *, title='msg', account=None, resource=None, raw_path='/'):
+def document_html(markdown, *, title='msg', account=None, resource=None, raw_path='/', controls=''):
     from markdown_it import MarkdownIt
 
     metadata = ''
@@ -212,11 +213,15 @@ def document_html(markdown, *, title='msg', account=None, resource=None, raw_pat
         f'<title>{escape(title)}</title><link rel="icon" href="/favicon.png">'
         f'<style>{THEME_CSS}</style></head><body class="page-document">'
         + SKIP_LINK
-        + '<header class="site-header"><a class="brand" href="/">msg</a>'
-        '<nav aria-label="Account">' + account_navigation(account) + '</nav></header>'
-        '<main><div class="toolbar">' + PREFERENCES
+        + '<header class="site-header">'
+        + BRAND_LINK
+        + '<nav aria-label="Account">'
+        + account_navigation(account)
+        + '</nav></header>'
+        '<main><div class="toolbar">'
+        + PREFERENCES
         + f'<a class="raw-link" href="{raw_url}">raw</a></div>'
-        f'<div id="content" class="prose" tabindex="-1">{metadata}{body}</div></main>'
+        f'<div id="content" class="prose" tabindex="-1">{controls}{metadata}{body}</div></main>'
         f'{WEBMCP_TAG}</body></html>'
     ).encode()
 
@@ -233,7 +238,10 @@ def resource_markdown(value, fallback):
         lines = ['# ' + markdown_text(conversation['contact']['name']), '']
         for item in conversation['messages']:
             lines.extend([
-                '## ' + markdown_text(item['author']['name']) + ' · ' + display_time(item['created_at']),
+                '## '
+                + markdown_text(item['author']['name'])
+                + ' · '
+                + display_time(item['created_at']),
                 '',
                 item['body'],
                 '',
@@ -254,7 +262,9 @@ def resource_markdown(value, fallback):
             lines.extend(['## [' + markdown_text(title) + '](' + path + ')', ''])
             if preview:
                 lines.extend([
-                    markdown_text(preview['author']['name']) + ' · ' + display_time(preview['created_at']),
+                    markdown_text(preview['author']['name'])
+                    + ' · '
+                    + display_time(preview['created_at']),
                     '',
                     markdown_text(preview.get('excerpt', '')),
                     '',
@@ -289,7 +299,9 @@ def mailbox_html(value, name, *, account=None):
         label = (peer or {}).get('name', 'Private account')
         prefix = 'From' if name in {'in', 'inbox'} else 'To' if name in {'out', 'outbox'} else ''
         path = quote(item.get('path') or item.get('preview', {}).get('path') or path, safe='/@*')
-        lines.append(f'- {prefix} [{markdown_text(label)}]({path}) — {markdown_text(state)} {markdown_text(stamp)}')
+        lines.append(
+            f'- {prefix} [{markdown_text(label)}]({path}) — {markdown_text(state)} {markdown_text(stamp)}'
+        )
         if item.get('preview'):
             lines.extend(['', markdown_text(item['preview'].get('excerpt', '')), ''])
     if not value['items']:
