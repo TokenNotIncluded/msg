@@ -245,11 +245,19 @@ from pathlib import Path
 from msg.client_listener import listen
 
 async def fetch(cursor, tail=False):
-    print('READY', flush=True)
     return {'items': [], 'cursor': '0', 'has_more': False}
 
+async def main():
+    checkpoint = Path(sys.argv[1])
+    task = asyncio.create_task(listen(fetch, context={'agent': 'bot'}, cursor_file=checkpoint, interval=30))
+    while not checkpoint.exists():
+        await asyncio.sleep(0.01)
+    # Signal readiness only after the first durable checkpoint and idle wait.
+    print('READY', flush=True)
+    await task
+
 try:
-    asyncio.run(listen(fetch, context={'agent': 'bot'}, cursor_file=Path(sys.argv[1]), interval=30))
+    asyncio.run(main())
 except KeyboardInterrupt:
     sys.exit(130)
 """
