@@ -8,7 +8,7 @@ from test_service import NOW
 
 from msg.client import ClientState, MsgClient
 from msg.client_subagents_remote import RemoteAgents
-from msg.core.codec import wire
+from msg.core.codec import b64, wire
 from msg.core.errors import Failure
 from msg.transports.client import HTTPTransport
 from msg.transports.http import create_app
@@ -66,6 +66,12 @@ async def test_remote_private_delivery_tail_restart_and_archive(installed, tmp_p
             await agents.send('bot1', 'bot2', 'after archive')
         history = await agents.inbox('bot2')
         assert [x['message'] for x in history['items']] == ['private handoff']
+        public = client.checked(
+            await client.call(
+                'file.create',
+                {'parent': '/main', 'name': 'public-control.txt', 'data': b64(b'Public control')},
+            )
+        )
         for anonymous in (True, False):
             visitor = client if anonymous else stranger
             for operation, args in [
@@ -78,11 +84,23 @@ async def test_remote_private_delivery_tail_restart_and_archive(installed, tmp_p
                 result = await visitor.call(operation, args, anonymous=anonymous)
                 assert result.status == 'error'
                 assert 'private handoff' not in repr(result)
-            visible = await visitor.call(
-                'discovery.list', {'type': 'file', 'limit': 200}, anonymous=anonymous
-            )
-            assert visible.status == 'ok', wire(visible.error)
-            assert not any('msg-stable-message' in item['name'] for item in visible.data['items'])
+            # Exercise every page without exhausting one request's read budget.
+            query = {'type': 'file', 'limit': 20}
+            cursors, seen = set(), set()
+            while True:
+                visible = await visitor.call('discovery.list', query, anonymous=anonymous)
+                assert visible.status == 'ok', wire(visible.error)
+                for item in visible.data['items']:
+                    assert 'msg-stable-message' not in item['name']
+                    assert item['id'] not in seen
+                    seen.add(item['id'])
+                cursor = visible.data.get('cursor')
+                if cursor is None:
+                    break
+                assert cursor not in cursors
+                cursors.add(cursor)
+                query['cursor'] = cursor
+            assert public.resources[0].id in seen
             feed = await visitor.call('discovery.recommendations', {}, anonymous=anonymous)
             assert 'private handoff' not in repr(feed)
         users = client.checked(
