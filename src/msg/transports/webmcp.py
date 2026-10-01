@@ -46,13 +46,13 @@ WEBMCP_SCRIPT = r"""(() => {
     const accent = Object.hasOwn(palettes, value) ? value : 'blue';
     document.documentElement.style.setProperty('--accent-light', palettes[accent][0]);
     document.documentElement.style.setProperty('--accent-dark', palettes[accent][1]);
-    const selector = document.getElementById('msg-accent'); if (selector) selector.value = accent;
+    document.querySelectorAll('input[name=msg-accent]').forEach(input => { input.checked = input.value === accent; });
     save('msg.accent', accent);
   };
   const applyTheme = value => {
     const theme = ['system','light','dark'].includes(value) ? value : 'system';
     document.documentElement.dataset.theme = theme;
-    const selector = document.getElementById('msg-theme'); if (selector) selector.value = theme;
+    document.querySelectorAll('input[name=msg-theme]').forEach(input => { input.checked = input.value === theme; });
     save('msg.theme', theme);
   };
   applyLanguage(load('msg.language', 'en')); applyAccent(load('msg.accent', 'blue')); applyTheme(load('msg.theme','system'));
