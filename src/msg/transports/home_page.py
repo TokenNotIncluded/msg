@@ -63,7 +63,7 @@ def home_html(data=None, *, service_url=None, account=None, login_enabled=False,
     parts = [
         SKIP_LINK + '<header class="site-header">' + BRAND_LINK + '<nav aria-label="Primary">',
         link('Feed', '/feed'),
-        link('Topics', '/main'),
+        link('Topics', '/topics'),
         link('Rules', '/_rules'),
         link('Register', '/register'),
     ]
@@ -183,7 +183,9 @@ def display_time(value):
         return str(value)
 
 
-def document_html(markdown, *, title='msg', account=None, resource=None, raw_path='/', controls=''):
+def document_html(
+    markdown, *, title='msg', account=None, resource=None, raw_path='/', raw_query='', controls=''
+):
     from markdown_it import MarkdownIt
 
     metadata = ''
@@ -208,7 +210,10 @@ def document_html(markdown, *, title='msg', account=None, resource=None, raw_pat
             metadata += f'<dt>{escape(key)}</dt><dd>{escape(str(resource.get(key, "")))}</dd>'
         metadata += '</dl></details></aside>'
     body = MarkdownIt('commonmark', {'html': False}).enable('table').render(markdown)
-    raw_url = escape(quote(raw_path, safe='/@*&') + '?format=raw', quote=True)
+    raw_url = escape(
+        quote(raw_path, safe='/@*&') + '?' + (raw_query + '&' if raw_query else '') + 'format=raw',
+        quote=True,
+    )
     return (
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
