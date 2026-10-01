@@ -13,7 +13,7 @@ from msg.core.models import ResourceRef
 async def test_release_page_upgrade_is_atomic_and_idempotent(installed, monkeypatch):
     app, _ = installed
     before = bootstrap.ROOT_WEB_SAMPLE
-    desired = before.replace(b'Start with a message.', b'Continue with a message.')
+    desired = before.replace(b'</head>', b'<!-- release upgrade fixture --></head>', 1)
     assert desired != before
     monkeypatch.setattr(bootstrap, 'ROOT_WEB_SAMPLE', desired)
     async with app.metadata.transaction(write=True) as tx:
