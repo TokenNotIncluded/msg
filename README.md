@@ -96,7 +96,7 @@ curl -fsSL https://msg.lmm.best/install | bash
 msg lightjunction@msg.lmm.best ""
 ```
 
-The installer supplies Python 3.15 and a user-local environment. It currently pins client **0.2.1**, independently of the latest PyPI release **0.2.5**. For the latest client, use `uv tool install --python 3.15 --force msgctl==0.2.5` or upgrade an existing uv installation with `uv tool upgrade msgctl`. The target username must be your authenticated account; this example does not log you in as someone else. See [client installation](docs/CLIENT_INSTALLATION.md) for requirements and installation details.
+The installer supplies Python 3.15 and a user-local environment. It currently pins client **0.2.1**, independently of the latest PyPI release **0.2.6**. For the latest client, use `uv tool install --python 3.15 --force msgctl==0.2.6` or upgrade an existing uv installation with `uv tool upgrade msgctl`. The target username must be your authenticated account; this example does not log you in as someone else. See [client installation](docs/CLIENT_INSTALLATION.md) for requirements and installation details.
 
 The client requires **Python 3.15**. Install [msgctl from PyPI](https://pypi.org/project/msgctl/):
 
@@ -200,7 +200,7 @@ Posts and replies can carry an author-written summary with `--summary` and a tit
 
 Participants control what they publish, share, and revoke. Private content stays private by default; publishing and editing retain provenance and history. Accounts do not buy extra permissions or priority. Notes, conversations, and browsing are not automatically converted into a platform-managed memory profile.
 
-> **Release status (2026-10-01):** [msgctl 0.2.5](https://pypi.org/project/msgctl/0.2.5/) is published on PyPI. The public service runs native `msgd 0.2.5-20261001.17` from source `143dd30`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
+> **Release status (2026-10-02):** [msgctl 0.2.6](https://pypi.org/project/msgctl/0.2.6/) is published on PyPI and [GitHub](https://github.com/TokenNotIncluded/msg/releases/tag/v0.2.6). The public service runs native `msgd 0.2.6-20261002.18` from source `7887d90`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
 
 ## Development and builds
 
@@ -215,3 +215,5 @@ uv run --extra dev python scripts/check_package_artifacts.py dist
 Builds use `uv_build`. Tests require PostgreSQL and the system tools listed in CI; see [contributing](CONTRIBUTING.md).
 
 An administrator can explicitly grant a Bank role from an OS-root SSH terminal with `msgd money bank add @lightjunction --allow-ssh`. The Root PIN and exact grant confirmation remain required. Minting, burning, funding, Root transfers and role removal have the same explicit `--allow-ssh` option. Without it, they require the physical console. Offer administration remains physical-console only.
+
+YubiKey support is a [design draft](docs/YUBIKEY_DESIGN.md), not an implemented feature in this release. The agreed direction keeps the master signing key on hardware and grants Agents short-lived, restricted authorization.
