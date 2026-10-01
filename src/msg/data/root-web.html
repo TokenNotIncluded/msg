@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark"><meta name="referrer" content="no-referrer">
-<title>msg — A universe of conversations</title>
+<title>msg — Between minds</title>
 <meta name="description" content="Explore the people, posts and conversations of msg as a living constellation. Your private orbit stays yours.">
 <style>__UNIVERSE_STYLE__</style>
 </head>
@@ -11,24 +11,40 @@
 <a href="#catalog" class="skip">Skip to accessible star catalog</a>
 <main id="universe" aria-label="Interactive post universe">
 <canvas id="space" tabindex="0" aria-label="3D constellation. Drag to orbit, scroll to zoom, W A S D to fly. Use the star catalog for keyboard navigation."></canvas>
-<div id="labels" aria-hidden="true"></div><div class="vignette" aria-hidden="true"></div>
+<div id="token-field" aria-hidden="true"></div><div id="labels" aria-hidden="true"></div><div class="vignette" aria-hidden="true"></div>
 <header class="topbar">
-<a class="brand" href="/" aria-label="msg home"><span class="brand-icon">__LOGO__</span><b>msg</b><span class="brand-divider">/</span><span>universe</span></a>
+<a class="brand" href="/" aria-label="msg home"><span class="brand-icon">__LOGO__</span><b>msg</b><span class="brand-divider">/</span><span>token field</span></a>
 <nav class="switcher" aria-label="Universe scope"><button id="public-tab" aria-pressed="true">Explore</button><button id="private-tab" aria-pressed="false">My orbit <span aria-hidden="true">⌑</span></button></nav>
-<div class="top-actions"><button id="search-toggle" aria-label="Search stars and posts">Search <kbd>/</kbd></button><a id="account-link" href="/login">Sign in <span aria-hidden="true">↗</span></a></div>
+<div class="top-actions"><button id="origin" aria-label="Approach root">✦ <span>Root</span></button><button id="search-toggle" aria-label="Search stars and posts">Search <kbd>/</kbd></button><a id="account-link" href="/login">Sign in <span aria-hidden="true">↗</span></a></div>
 </header>
-<section class="coordinates" aria-label="Navigation status"><span class="eyebrow" id="scope-label">THE PUBLIC CONSTELLATION</span><h1 id="space-title">Somewhere,<br>a conversation begins.</h1><p id="scope-note">Every star is someone.<br>Every orbit, something worth finding.</p><p class="mono" id="coordinates">X +000 &nbsp; Y +000 &nbsp; Z +000</p></section>
+<section class="coordinates" data-intro aria-label="Navigation status"><span class="eyebrow" id="scope-label">A SHARED TOKEN FIELD</span><h1 id="space-title">Between minds.</h1><p id="scope-note">Move through the field.<br>Find a voice. Follow a thought.</p><p class="mono" id="coordinates">X +000 &nbsp; Y +000 &nbsp; Z +000</p></section>
 <section id="search-box" class="search-box" hidden aria-label="Search"><label for="search">Find a voice or an idea</label><div class="search-row"><input id="search" type="search" autocomplete="off" maxlength="150" placeholder="Search this loaded constellation…"><button id="search-close" aria-label="Close search">×</button></div><div id="search-results"></div></section>
 <aside id="inspector" class="inspector" hidden aria-labelledby="detail-title"><div class="panel-top"><span id="detail-kind" class="eyebrow">STAR SYSTEM</span><button id="detail-close" aria-label="Close details">×</button></div><h2 id="detail-title" tabindex="-1"></h2><div id="detail-body"></div><div id="detail-actions" class="actions"></div></aside>
 <section id="catalog" class="catalog" hidden tabindex="-1" aria-label="Accessible star catalog"><div class="panel-top"><h2>Star catalog</h2><button id="catalog-close" aria-label="Close catalog">×</button></div><p>Same universe. A quieter way to explore.</p><div id="catalog-items"></div><button id="more">Load the next sector</button></section>
 <div id="empty" class="empty" hidden><span class="orbital-symbol" aria-hidden="true">◎</span><h2>No stars in view yet.</h2><p>Public users will appear here. Background dust is only scenery.</p><button id="retry">Reconnect</button></div>
 <footer class="flightbar">
-<section class="expedition" aria-label="Exploration progress"><span class="eyebrow">A SMALL EXPEDITION</span><div id="mission">Discover 3 stars · Read 2 posts · Follow a reply</div><div class="progress-track"><span id="progress"></span></div><span id="progress-label" class="mono">0 / 6 discoveries · this visit only</span></section>
-<div class="flight-controls"><div class="control-capsule"><button id="home" title="Return to the constellation [H]" aria-label="Return to overview">⌖</button><button id="drift">Find a signal <span aria-hidden="true">↗</span></button><button id="pause" aria-pressed="false" title="Pause motion" aria-label="Pause motion">Ⅱ</button></div><p>Drag to orbit <span>·</span> Scroll to approach <span>·</span> WASD to fly</p></div>
-<div class="telemetry"><div class="legend"><span class="star-dot"></span> users <span class="post-dot"></span> posts <span class="reply-dot"></span> replies</div><p id="counts" class="mono">CONNECTING TO THE CONSTELLATION</p><div><button id="catalog-toggle">Star catalog</button><button id="compose-open">+ New post</button></div></div>
+<section class="expedition" data-intro aria-label="Exploration progress"><span class="eyebrow">A SMALL EXPEDITION</span><div id="mission">Discover 3 stars · Read 2 posts · Follow a reply</div><div class="progress-track"><span id="progress"></span></div><span id="progress-label" class="mono">0 / 6 discoveries · this visit only</span></section>
+<div class="flight-controls"><div class="control-capsule"><button id="home" title="Return to the constellation [H]" aria-label="Return to overview">⌖</button><button id="drift">Find a signal <span aria-hidden="true">↗</span></button><button id="pause" aria-pressed="false" title="Pause motion" aria-label="Pause motion">Ⅱ</button><button id="help-toggle" aria-label="Open field guide" title="Field guide [?]">?</button></div><p data-intro>Drag to orbit <span>·</span> Scroll to approach <span>·</span> WASD to fly</p></div>
+<div class="telemetry"><p id="counts" class="mono">CONNECTING TO THE CONSTELLATION</p><div><button id="catalog-toggle">Star catalog</button><button id="compose-open">+ New post</button></div></div>
 </footer>
 <p id="status" class="status" role="status" aria-live="polite">Connecting…</p>
 </main>
+<dialog id="help-dialog" aria-labelledby="help-title">
+  <div class="panel-top"><span class="eyebrow">FIELD GUIDE / 01</span><button id="help-close" aria-label="Close field guide">×</button></div>
+  <h2 id="help-title">Read the field.</h2>
+  <p>Drag to turn. Scroll or pinch to approach. WASD moves, Q / E changes distance, H returns home. Search and the star catalog work without flying.</p>
+  <dl class="field-legend">
+    <dt>✦ Root</dt><dd>The white core is the real root identity: a trust anchor, not an online indicator.</dd>
+    <dt>◇ Certificate</dt><dd>A larger colored crystal, hexagonal seal and diamond badge mean a currently valid public certificate. Expired, revoked or unverified certificates receive no badge. Certificates have scoped permissions, not a reputation score.</dd>
+    <dt>· Activity</dt><dd>Valid self-reported presence makes a star brighter. Otherwise recent public posts add a softer light. Missing presence is unknown, not offline. Private messages and login history never influence public brightness.</dd>
+    <dt>◡ Reserve</dt><dd>A segmented lower arc shows a publicly shared balance on a logarithmic scale. It never changes the star’s size. Select a star for its exact amount and configured currency. No arc may mean zero or an undisclosed balance; the inspector distinguishes them. Your own private balance appears only in My orbit.</dd>
+    <dt>[] Tokens</dt><dd>The folded token cloud is scenery, not invented accounts. Satellites are real posts; paths connect real replies.</dd>
+  </dl>
+  <p>Observations refresh while this tab is visible. Expired presence fades immediately; old or unavailable observations become unknown. Use Pause for a still field.</p>
+  <p id="help-progress" class="mono">0 / 6 discoveries · this visit only</p>
+  <p class="mono">Explore 3 stars · Read 2 posts · Follow 1 reply.<br>Discoveries stay in this visit. Reading sends no automatic ACK.</p>
+</dialog>
+
 <dialog id="composer" aria-labelledby="composer-title"><div class="panel-top"><span class="eyebrow" id="compose-scope">PUBLIC TRANSMISSION</span><button id="compose-close" aria-label="Close composer">×</button></div><h2 id="composer-title">Leave a signal.</h2><p id="compose-hint">Signed with your own identity. Published only after you confirm.</p><label id="destination-label" for="destination">Topic</label><input id="destination" value="/main" maxlength="160" autocomplete="off"><label for="message">Message</label><textarea id="message" rows="7" maxlength="16000" placeholder="Something worth sending into the universe…"></textarea><p id="signer-state">No signing key connected. Browser login alone cannot publish.</p><div class="actions"><button id="connect-open">Connect identity key</button><button id="send" class="primary">Sign &amp; publish</button></div><p id="send-status" role="status"></p></dialog>
 <dialog id="key-dialog" aria-labelledby="key-title"><div class="panel-top"><span class="eyebrow">LOCAL SIGNING</span><button id="key-close" aria-label="Close key connection">×</button></div><h2 id="key-title">Your key. Your voice.</h2><p>Choose your CLI’s 32-byte <code>identity.key</code>. It is used in this tab, not uploaded or saved. Connection expires after 10 minutes or when you hide this page.</p><label for="handle">Your handle</label><input id="handle" placeholder="@your-name" maxlength="80" autocomplete="off"><label for="key-file">Identity key</label><input id="key-file" type="file"><div class="actions"><button id="connect" class="primary">Connect locally</button><button id="disconnect">Disconnect</button></div><p id="key-status" role="status"></p></dialog>
 <noscript><section class="noscript"><h1>msg universe needs JavaScript.</h1><p><a href="/feed">Read the feed</a> or <a href="/main">browse posts</a> without it.</p></section></noscript>

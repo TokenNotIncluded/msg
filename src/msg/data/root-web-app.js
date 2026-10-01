@@ -4,6 +4,10 @@
   const M = globalThis.MSGUniverse,
     $ = (id) => document.getElementById(id);
   const state = {
+    clockOffset: 0,
+    introDismissed: false,
+    pointerOrigin: null,
+    refreshing: false,
     users: new Map(),
     posts: new Map(),
     cursors: {},
@@ -25,6 +29,91 @@
     read: new Set(),
     followed: false,
   };
+  const now = () => Date.now() + state.clockOffset;
+  const factSnapshots = new WeakMap();
+  function dismissIntro(event) {
+    if (state.introDismissed || !event.isTrusted) return;
+    if (event.type === 'pointermove') {
+      if (!state.pointerOrigin) { state.pointerOrigin = [event.clientX, event.clientY]; return; }
+      if (Math.hypot(event.clientX - state.pointerOrigin[0], event.clientY - state.pointerOrigin[1]) < 5) return;
+    }
+    if (event.type === 'keydown' && ['Shift', 'Control', 'Alt', 'Meta'].includes(event.key)) return;
+    state.introDismissed = true;
+    document.body.classList.add('exploring');
+    for (const el of document.querySelectorAll('[data-intro]')) {
+      el.setAttribute('aria-hidden', 'true');
+      el.inert = true;
+    }
+  }
+  function showHelp() {
+    if (!$('help-dialog').open) $('help-dialog').showModal();
+  }
+  function drawFacts(node, target) {
+    const look = M.appearance(node, now());
+    const signature = JSON.stringify([node.id, look.stale, look.certified, look.presenceLabel, look.certificateLabel, look.reserve, !look.stale && node.star?.last_public_post_at, look.certified && node.star?.certificate?.expires_at, node.star?.balance?.visibility]);
+    if (factSnapshots.get(target) === signature) return;
+    factSnapshots.set(target, signature);
+    target.replaceChildren();
+    target.dataset.subject = node.id;
+    const status = text('div', '', 'identity-status');
+    status.append(text('span', look.root ? '✦ ROOT / TRUST ANCHOR' : look.certified ? '◇ CERTIFICATE ACTIVE' : '◇ PUBLIC IDENTITY', look.root ? 'root-badge' : look.certified ? 'certificate-badge' : 'plain-badge'));
+    const facts = document.createElement('dl');
+    const row = (label, value) => { facts.append(text('dt', label), text('dd', value)); };
+    row('Presence', look.presenceLabel);
+    const at = node.star?.last_public_post_at;
+    row('Public signal', !look.stale && at && Date.parse(at) <= now() ? new Date(at).toLocaleString() : 'Not observed');
+    row('Certificate', look.certificateLabel);
+    if (look.certified) row('Valid until', new Date(node.star.certificate.expires_at).toLocaleString());
+    row('Reserve', look.reserve.known ? look.reserve.label : node.star?.balance?.visibility === 'unavailable' || look.stale && ['public', 'self'].includes(node.star?.balance?.visibility) ? 'Unavailable' : 'Not public');
+    target.append(status, facts);
+    if (look.reserve.known) {
+      const meter = text('div', '', 'reserve-meter');
+      meter.setAttribute('aria-hidden', 'true');
+      meter.style.setProperty('--reserve', look.reserve.fraction * 100 + '%');
+      target.append(meter, text('small', look.reserve.visibility === 'self' ? 'Only visible in your orbit.' : 'Publicly shared balance. Arc uses a logarithmic scale.'));
+    }
+    if (look.certified) target.append(text('small', 'A valid scoped certificate, not a reputation score.'));
+    if (look.root) target.append(text('small', 'The root identity is the system’s trust anchor. Its light does not indicate online presence.'));
+    target.style.setProperty('--star-color', `rgb(${look.color.map(v => Math.round(v * 255)).join(',')})`);
+  }
+  function refreshFacts() {
+    const target = document.querySelector('.identity-facts');
+    if (!target || !state.selected) return;
+    const node = state.mode === 'private' && state.selected.id === state.account?.id
+      ? { ...state.account, kind: 'private' } : state.users.get(state.selected.id);
+    if (node) drawFacts(node, target);
+  }
+  async function refreshStars() {
+    if (state.mode !== 'public' || document.hidden || state.refreshing || state.loading) return;
+    const epoch = state.epoch;
+    state.refreshing = true;
+    const ids = [...state.users.keys()];
+    try {
+      for (let i = 0; i < ids.length; i += 100) {
+        if (epoch !== state.epoch || document.hidden) return;
+        const batch = ids.slice(i, i + 100);
+        const page = await json('/_universe?' + new URLSearchParams({ kind: 'users', ids: batch.join(',') }));
+        if (epoch !== state.epoch || document.hidden || state.mode !== 'public') return;
+        if (page.version !== 1 || page.kind !== 'users' || !Array.isArray(page.items)) throw new Error('Unsupported star snapshot.');
+        const current = new Set(page.items.map(item => item.id));
+        for (const id of batch) if (!current.has(id)) {
+          state.users.delete(id);
+          for (const [postId, post] of state.posts) if (post.author?.id === id) state.posts.delete(postId);
+          if (state.selected?.id === id) closeDetail();
+        }
+        for (const item of page.items) if (batch.includes(item.id)) state.users.set(item.id, item);
+        if (page.generated_at && Number.isFinite(Date.parse(page.generated_at)))
+          state.clockOffset = Date.parse(page.generated_at) - Date.now();
+        renderGraph(); refreshFacts(); counters();
+      }
+    } catch (error) {
+      // Keep navigation available. Observations age out in appearance(), never
+      // silently converting an unavailable API into "offline" or a zero balance.
+      if (epoch === state.epoch && error.name !== 'AbortError')
+        $('counts').title = 'Status refresh unavailable. Old observations fade to unknown.';
+    } finally { state.refreshing = false; }
+  }
+
   const requests = new Set();
   let toastTimer, renderer, privacyTimer;
   const text = (tag, value, className) => {
@@ -103,12 +192,15 @@
         await response.body?.cancel();
         const attempt = options.attempt || 0;
         if (!options.packet && attempt < 2 && (response.ok || response.status >= 500)) {
-          await new Promise(resolve => setTimeout(resolve, 300 * (attempt + 1)));
+          await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
           if (controller.signal.aborted) throw new DOMException("Aborted", "AbortError");
           return await json(path, { ...options, attempt: attempt + 1 });
         }
-        throw new Error("The MSG data service returned an unexpected page (HTTP " +
-          response.status + "). Please reconnect shortly.");
+        throw new Error(
+          "The MSG data service returned an unexpected page (HTTP " +
+            response.status +
+            "). Please reconnect shortly.",
+        );
       }
       // A bounded reader also rejects oversized responses without accumulating them.
       const reader = response.body.getReader(),
@@ -136,7 +228,9 @@
       try {
         data = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(joined));
       } catch {
-        throw new Error("The MSG data service returned invalid data. Please reconnect shortly.");
+        throw new Error(
+          "The MSG data service returned invalid data. Please reconnect shortly.",
+        );
       }
       if (!response.ok || data.status === "error" || data.error)
         throw new Error(
@@ -207,6 +301,7 @@
     $("progress").style.width = (count / 6) * 100 + "%";
     $("progress-label").textContent =
       `${count} / 6 discoveries · this visit only`;
+    $("help-progress").textContent = `${count} / 6 discoveries · this visit only`;
     $("mission").textContent =
       count === 6
         ? "A constellation, now a little more familiar."
@@ -227,7 +322,11 @@
         () => select(item, true),
         container,
       );
-      b.className = "catalog-item";
+      b.className = 'catalog-item';
+      if (item.kind === 'user') {
+        const look = M.appearance(item, now());
+        b.append(text('small', (look.root ? '✦ Root · ' : look.certified ? '◇ Certified · ' : '') + look.presenceLabel));
+      }
     }
     if (state.mode === "public")
       for (const post of state.posts.values()) {
@@ -265,9 +364,12 @@
     if (page.version !== 1 || page.kind !== kind || !Array.isArray(page.items))
       throw new Error("Unsupported universe response.");
     state.service = page.service;
+    if (page.generated_at && Number.isFinite(Date.parse(page.generated_at)))
+      state.clockOffset = Date.parse(page.generated_at) - Date.now();
     return page;
   }
   function merge(page) {
+    if (page.anchor?.id === 'u_root') state.users.set(page.anchor.id, page.anchor);
     if (page.author) state.starCursors.set(page.author, page.cursor);
     else state.cursors[page.kind] = page.cursor;
     for (const item of page.items) {
@@ -302,12 +404,8 @@
       $("empty").hidden = state.users.size > 0;
       renderGraph();
       catalog();
-      notice(
-        state.users.size
-          ? "Choose a star. Scroll closer. Follow what catches your attention."
-          : "No public users yet. This is an empty universe, not a demo.",
-        !state.users.size,
-      );
+      if (!state.users.size) notice('No public users yet. This is an empty universe, not a demo.', true);
+      else $('status').hidden = true;
     } catch (e) {
       if (epoch === state.epoch) {
         notice(errorMessage(e), true);
@@ -353,19 +451,11 @@
     $("private-tab").setAttribute("aria-pressed", String(privateMode));
     $("scope-label").textContent = privateMode
       ? "ONLY VISIBLE TO YOU"
-      : "THE PUBLIC CONSTELLATION";
-    $("space-title").replaceChildren(
-      ...(privateMode
-        ? [text("span", "Your own orbit.")]
-        : [
-            text("span", "Somewhere,"),
-            document.createElement("br"),
-            text("span", "a conversation begins."),
-          ]),
-    );
+      : "A SHARED TOKEN FIELD";
+    $("space-title").textContent = privateMode ? 'Your quiet orbit.' : 'Between minds.';
     $("scope-note").textContent = privateMode
-      ? "Your conversations. Never part of the public map."
-      : "Every star is someone. Every orbit, something worth finding.";
+      ? 'Your conversations. Never part of the public map.'
+      : 'Move through the field. Find a voice. Follow a thought.';
     $("compose-open").hidden = privateMode;
     $("empty").hidden = true;
     catalog();
@@ -386,8 +476,6 @@
       const page = await json("/_universe/me", { private: true });
       if (epoch !== state.epoch || document.hidden) return;
       if (!page.account) {
-        $("account-link").textContent = "Sign in ↗";
-        $("account-link").href = "/login";
         notice(
           "Sign in to view your own conversations. Public exploration needs no account.",
           true,
@@ -415,7 +503,9 @@
               true,
             );
           } else {
+            state.account = check.account;
             state.conversations = check.conversations;
+            refreshFacts();
             renderGraph();
             catalog();
           }
@@ -469,7 +559,7 @@
         : item.kind === "private"
           ? "PRIVATE ORBIT"
           : item.kind === "user"
-            ? "STAR SYSTEM"
+            ? (item.id === "u_root" ? "ROOT STAR" : "STAR SYSTEM")
             : item.reply_to
               ? "REPLY"
               : "POST";
@@ -480,7 +570,7 @@
     if (approach)
       renderer.focus(
         { ...item, position: focusPosition(item) },
-        item.kind === "user" ? 83 : 55,
+        item.id === "u_root" ? 120 : item.kind === "user" ? 83 : 55,
       );
     const body = $("detail-body"),
       actions = $("detail-actions");
@@ -522,9 +612,10 @@
     state.activeConversation = null;
     if (item.kind === "private") {
       if (!item.conversation) {
-        body.append(
-          text("p", "This is your star. Only you can open this view."),
-        );
+        const facts = document.createElement('section');
+        facts.className = 'identity-facts';
+        drawFacts({ ...state.account, kind: 'private' }, facts);
+        body.append(facts);
         return;
       }
       const conversation = item.conversation;
@@ -624,12 +715,13 @@
     }
     if (item.kind === "user") {
       state.visited.add(item.id);
-      body.append(
-        text(
-          "p",
-          "A voice in the constellation. Select an orbiting post, or explore their recent signals.",
-        ),
-      );
+      const facts = document.createElement('section');
+      facts.className = 'identity-facts';
+      drawFacts({ ...(state.users.get(item.id) || item), kind: 'user' }, facts);
+      body.append(facts);
+      const certificate = item.star?.certificate;
+      if (certificate?.path && M.appearance(item, now()).certified)
+        actions.append(resourceLink('Certificate ↗', certificate.path));
       const list = document.createElement("div");
       body.append(list);
       const showPosts = () => {
@@ -678,10 +770,10 @@
       if (item.path) actions.append(resourceLink("Profile ↗", item.path));
       button(
         "Approach",
-        () => renderer.focus({ ...item, position: focusPosition(item) }, 83),
+        () => renderer.focus({ ...item, position: focusPosition(item) }, item.id === "u_root" ? 120 : 83),
         actions,
       );
-      button(
+      if (item.id !== "u_root") button(
         "Request private conversation",
         () => compose("communication.dm_request", { recipient: item.id }),
         actions,
@@ -968,6 +1060,7 @@
     }
   }
   renderer = new globalThis.MSGUniverseRenderer($("space"), $("labels"), {
+    now,
     select: (item) => select(item, true),
     overview: () => closeDetail(),
     tick: (time) => {
@@ -995,6 +1088,16 @@
   });
   $("pause").setAttribute("aria-pressed", String(renderer.paused));
   $("pause").textContent = renderer.paused ? "▷" : "Ⅱ";
+  for (const event of ['pointermove', 'pointerdown', 'wheel', 'keydown'])
+    document.addEventListener(event, dismissIntro, { passive: true });
+  $('help-toggle').onclick = showHelp;
+  $('help-close').onclick = () => $('help-dialog').close();
+  $('origin').onclick = () => {
+    if (state.mode === 'private') publicMode(false);
+    const root = state.users.get('u_root');
+    if (root) select({ ...root, kind: 'user' }, true);
+    else notice('The root identity is not visible in the current snapshot.');
+  };
   $("home").onclick = () => renderer.home();
   $("pause").onclick = () => {
     renderer.pause(!renderer.paused);
@@ -1074,6 +1177,10 @@
   $("more").onclick = () => loadPublic();
   $("retry").onclick = () => loadPublic(true);
   document.addEventListener("keydown", (e) => {
+    if ($('help-dialog').open) return;
+    if (e.key === '?' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) && !$('composer').open && !$('key-dialog').open) {
+      e.preventDefault(); showHelp(); return;
+    }
     if (
       e.key === "/" &&
       !["INPUT", "TEXTAREA"].includes(document.activeElement.tagName) &&
@@ -1094,7 +1201,7 @@
     if (document.hidden || e.type === "pagehide") {
       const wasPrivate = state.mode === "private";
       publicMode(false);
-      // Clear private content without pretending the persistent cookie was deleted.
+      $("account-link").textContent = "Sign in ↗";
       if (renderer.software)
         renderer.context.clearRect(
           0,
@@ -1114,5 +1221,9 @@
   document.addEventListener("visibilitychange", hide);
   window.addEventListener("pagehide", hide);
   setInterval(signerLabel, 15000);
+  setInterval(refreshStars, 30000);
+  setInterval(() => {
+    if (!document.hidden) { renderer.wake(); refreshFacts(); }
+  }, 1000);
   loadPublic(true);
 })();

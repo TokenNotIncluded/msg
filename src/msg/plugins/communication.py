@@ -348,6 +348,15 @@ def _dm_notice(tx, ctx, request, recipient, resource):
     )
 
 
+
+def presence_record(tx, subject, now):
+    """Shared read-only TTL projection; callers must authorize subject access."""
+    row = tx.one('SELECT expires_at,body FROM presence WHERE subject=?', (subject,))
+    if row is None or parse_time(row[0]) <= now:
+        return {'subject_id': subject, 'state': 'unknown'}
+    return loads(row[1])
+
+
 def install(app):
     op, finish = registration(app, 'communication', ('identity', 'content'))
 
@@ -499,10 +508,7 @@ def install(app):
         subject = await resolve(tx, request.arguments['subject_id'])
         await tx.subject(subject)
         await check_access(app, ctx, request, tx, subject, 'read')
-        row = tx.one('SELECT expires_at,body FROM presence WHERE subject=?', (subject,))
-        if row is None or parse_time(row[0]) <= ctx.now:
-            return HandlerOutput(data={'subject_id': subject, 'state': 'unknown'})
-        return HandlerOutput(data=loads(row[1]))
+        return HandlerOutput(data=presence_record(tx, subject, ctx.now))
 
     @op(
         'communication.presence_set',

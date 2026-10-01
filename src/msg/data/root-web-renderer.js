@@ -6,20 +6,24 @@
   const mix = (a, b, t) => a + (b - a) * t;
   const vs = `attribute vec3 aPosition; attribute vec4 aColor; attribute float aSize;
     uniform vec3 uTarget; uniform vec3 uRight; uniform vec3 uUp; uniform vec3 uEye;
-    uniform vec3 uLens; uniform float uHeight; varying vec4 vColor;
+    uniform vec3 uLens; uniform float uHeight; uniform float uShift; varying mediump vec4 vColor; varying mediump float vSeed;
     void main(){ vec3 r=aPosition-uTarget; float d=uLens.z-dot(r,uEye);
       gl_Position=vec4(dot(r,uRight)*uLens.x/uLens.y,dot(r,uUp)*uLens.x,1.0002*d-0.2,d);
-      gl_PointSize=clamp(aSize*uLens.x*uHeight/max(d,0.1),1.0,100.0); vColor=aColor; }`;
-  const fs = `precision mediump float; varying vec4 vColor; uniform float uPoints;
-    void main(){float alpha=vColor.a;if(uPoints>0.5){float d=length(gl_PointCoord-0.5)*2.0;
-      if(d>1.0)discard; alpha*=exp(-d*d*9.0)+0.045*(1.0-d);}
+      gl_Position.y+=uShift*gl_Position.w;
+      gl_PointSize=clamp(aSize*uLens.x*uHeight/max(d,0.1),1.0,100.0); vColor=aColor; vSeed=fract(dot(aPosition,vec3(.17,.31,.53))); }`;
+  const fs = `precision mediump float; varying mediump vec4 vColor; varying mediump float vSeed; uniform float uPoints;
+    void main(){float alpha=vColor.a;
+      if(uPoints>1.5){ vec2 p=abs(gl_PointCoord-.5); float mask;
+        if(vSeed<.33) mask=step(.22,p.x)*step(p.x,.40)*step(p.y,.38)+step(.27,p.y)*step(p.y,.4)*step(.13,p.x)*step(p.x,.40);
+        else if(vSeed<.66) mask=max(step(p.x,.12)*step(p.y,.4),step(p.y,.12)*step(p.x,.4));
+        else mask=step(p.x,.32)*step(p.y,.32);
+        alpha*=clamp(mask,0.0,1.0);
+      } else if(uPoints>0.5){float d=length(gl_PointCoord-0.5)*2.0;
+        if(d>1.0)discard; alpha*=exp(-d*d*9.0)+0.035*(1.0-d);}
       gl_FragColor=vec4(vColor.rgb,alpha);}`;
   const palette = {
-    user: [1, 0.9, 0.72],
-    post: [0.52, 0.77, 0.91],
-    reply: [0.72, 0.79, 1],
-    private: [0.58, 0.81, 0.77],
-    "private-message": [0.58, 0.81, 0.77],
+    user: [.85, .85, .83], post: [.80, .80, .78], reply: [.94, .94, .92],
+    private: [.75, .84, .76], 'private-message': [.75, .84, .76],
   };
   class UniverseRenderer {
     constructor(canvas, labels, callbacks = {}) {
@@ -45,34 +49,10 @@
       this.frame = 0;
       this.available = false;
       this.lost = false;
-      const rng = M.random("msg:decorative-dust:not-accounts");
-      this.dust = [];
-      for (let i = 0; i < 2100; i++) {
-        const a = rng() * M.TAU,
-          r = Math.sqrt(rng()) * 225,
-          y = (rng() - 0.5) * (6 + (18 * r) / 225);
-        this.dust.push(
-          Math.cos(a) * r,
-          y,
-          Math.sin(a) * r,
-          0.61,
-          0.64,
-          0.67,
-          0.24 + rng() * 0.29,
-          0.22 + rng() * 0.52,
-        );
-      }
-      for (let i = 0; i < 250; i++)
-        this.dust.push(
-          (rng() - 0.5) * 950,
-          (rng() - 0.5) * 600,
-          (rng() - 0.5) * 950,
-          0.58,
-          0.63,
-          0.69,
-          0.35,
-          0.45,
-        );
+      this.dust = M.nebula(2300);
+      this.tokenField = document.getElementById('token-field');
+      this.tokenNodes = new Map();
+      this.hoverId = null;
       canvas.addEventListener("webglcontextlost", (e) => {
         e.preventDefault();
         this.lost = true;
@@ -80,6 +60,8 @@
         cancelAnimationFrame(this.frame);
         this.frame = 0;
         this.labels.replaceChildren();
+        this.tokenField?.replaceChildren();
+        this.tokenNodes.clear();
         this.callbacks.fallback?.(
           "The graphics context paused. The star catalog still works.",
         );
@@ -147,6 +129,7 @@
           "uEye",
           "uLens",
           "uHeight",
+          "uShift",
           "uPoints",
         ])
           this.uniforms[name] = gl.getUniformLocation(this.program, name);
@@ -189,6 +172,7 @@
       this.wake();
     }
     focus(node, distance = 74) {
+      if (this.width < 600) distance = Math.max(distance, node.id === 'u_root' ? 195 : 125);
       this.focusId = node.id;
       this.travel(node.position, distance);
     }
@@ -227,6 +211,10 @@
         eye: [cp * sy, sp, cp * cy],
       };
     }
+    verticalShift() {
+      // Leave the selected star above the mobile inspector, not underneath it.
+      return this.width < 600 && this.focusId ? .5 : 0;
+    }
     project(p) {
       const b = this.basis(),
         r = p.map((n, i) => n - this.camera.target[i]),
@@ -236,7 +224,7 @@
       const scale = (1.72 * this.height * 0.5) / depth;
       return {
         x: this.width / 2 + dot(b.right) * scale,
-        y: this.height / 2 - dot(b.up) * scale,
+        y: this.height * (.5 - this.verticalShift() / 2) - dot(b.up) * scale,
         depth,
         scale,
       };
@@ -248,7 +236,8 @@
         const p = this.project(node.position);
         if (!p) continue;
         const d = Math.hypot(p.x - x, p.y - y);
-        if (d < Math.max(15, Math.min(28, p.scale * 3)) && d < score) {
+        const radius = M.appearance(node, this.callbacks.now?.() ?? Date.now()).radius;
+        if (d < Math.max(15, Math.min(36, p.scale * radius * 1.6)) && d < score) {
           score = d;
           best = node;
         }
@@ -276,9 +265,12 @@
         const old = this.pointers.get(e.pointerId);
         if (!old) {
           const r = c.getBoundingClientRect();
-          c.style.cursor = this.hit(e.clientX - r.left, e.clientY - r.top)
-            ? "pointer"
-            : "grab";
+          const hovered = this.hit(e.clientX - r.left, e.clientY - r.top);
+          c.style.cursor = hovered ? 'pointer' : 'grab';
+          if (this.hoverId !== (hovered?.id || null)) {
+            this.hoverId = hovered?.id || null;
+            this.wake();
+          }
           return;
         }
         const next = { x: e.clientX, y: e.clientY },
@@ -328,6 +320,7 @@
       };
       c.addEventListener("pointerup", release);
       c.addEventListener("pointercancel", release);
+      c.addEventListener('pointerleave', () => { this.hoverId = null; this.wake(); });
       c.addEventListener(
         "wheel",
         (e) => {
@@ -457,233 +450,178 @@
         c.distance,
       );
       gl.uniform1f(u.uHeight, this.canvas.height);
-      const draw = (vertices, mode) => {
+      gl.uniform1f(u.uShift, this.verticalShift());
+      const draw = (vertices, mode, tokenDust = false) => {
         if (!vertices.length) return;
         gl.bufferData(
           gl.ARRAY_BUFFER,
           new Float32Array(vertices),
           gl.DYNAMIC_DRAW,
         );
-        gl.uniform1f(u.uPoints, mode === gl.POINTS ? 1 : 0);
+        gl.uniform1f(u.uPoints, tokenDust ? 2 : mode === gl.POINTS ? 1 : 0);
         gl.drawArrays(mode, 0, vertices.length / 8);
       };
-      draw(this.dust, gl.POINTS);
-      const lines = [],
-        points = [],
-        triangles = [];
-      const vertex = (p, color, alpha, size = 1) => [
-        ...p,
-        ...color,
-        alpha,
-        size,
-      ];
-      const line = (a, z, col, opacity) =>
-        lines.push(...vertex(a, col, opacity), ...vertex(z, col, opacity));
-      for (const [a, z, type] of this.graph.links) {
-        const col =
-            type === "private"
-              ? palette.private
-              : type === "orbit"
-                ? palette.post
-                : palette.reply,
-          segments = type === "orbit" ? 1 : 24;
-        let last = a.position;
-        for (let j = 1; j <= segments; j++) {
-          const t = j / segments,
-            p = a.position.map(
-              (n, i) =>
-                mix(n, z.position[i], t) +
-                (i === 1
-                  ? Math.sin(t * Math.PI) * (type === "private" ? 8 : 14)
-                  : 0),
-            );
-          line(last, p, col, type === "orbit" ? 0.12 : 0.16);
-          last = p;
-        }
-      }
-      for (const node of this.graph.nodes) {
-        const p = node.position,
-          col = palette[node.kind] || palette.user,
-          selected = node.id === this.focusId;
-        points.push(
-          ...vertex(
-            p,
-            col,
-            selected ? 0.95 : 0.8,
-            node.kind === "user" || node.kind === "private" ? 5 : 2.8,
-          ),
-        );
-        if (node.kind === "user" || node.kind === "private") {
-          const r = selected ? 2.5 : 1.25,
-            rotation = this.clock * 0.08;
-          const corners = [
-            [0, r * 1.6, 0],
-            [r, 0, 0],
-            [0, 0, r],
-            [-r, 0, 0],
-            [0, 0, -r],
-            [0, -r * 1.6, 0],
-          ].map((v) => [
-            p[0] + v[0] * Math.cos(rotation) - v[2] * Math.sin(rotation),
-            p[1] + v[1],
-            p[2] + v[0] * Math.sin(rotation) + v[2] * Math.cos(rotation),
-          ]);
-          for (let j = 1; j <= 4; j++) {
-            const k = j === 4 ? 1 : j + 1;
-            line(corners[0], corners[j], col, 0.72);
-            line(corners[5], corners[j], col, 0.38);
-            line(corners[j], corners[k], col, 0.38);
-            triangles.push(
-              ...vertex(corners[0], col, 0.09),
-              ...vertex(corners[j], col, 0.09),
-              ...vertex(corners[k], col, 0.09),
-            );
-          }
-        }
-        if (selected) {
-          for (const radius of [6, 9.5]) {
-            for (let j = 0; j < 90; j++) {
-              const a = (j / 90) * M.TAU,
-                z = ((j + 1) / 90) * M.TAU;
-              if (radius === 9.5 && j % 9 > 5) continue;
-              line(
-                [
-                  p[0] + Math.cos(a) * radius,
-                  p[1],
-                  p[2] + Math.sin(a) * radius,
-                ],
-                [
-                  p[0] + Math.cos(z) * radius,
-                  p[1],
-                  p[2] + Math.sin(z) * radius,
-                ],
-                col,
-                radius === 6 ? 0.45 : 0.22,
-              );
-            }
-          }
-        }
-      }
-      draw(triangles, gl.TRIANGLES);
-      draw(lines, gl.LINES);
-      draw(points, gl.POINTS);
+      draw(this.dust, gl.POINTS, true);
+      const geometry = this.geometry();
+      draw(geometry.triangles, gl.TRIANGLES);
+      draw(geometry.lines, gl.LINES);
+      draw(geometry.points, gl.POINTS);
       this.finish();
     }
     finish() {
       this.updateLabels();
+      this.updateTokens();
       this.callbacks.camera?.(this.camera.target);
       this.dirty = false;
       if (!this.paused || this.destination || this.keys.size)
         this.frame = requestAnimationFrame((t) => this.render(t));
     }
+    geometry() {
+      const lines = [], points = [], triangles = [], b = this.basis();
+      const now = this.callbacks.now?.() ?? Date.now();
+      const vertex = (p, col, alpha, size = 1) => [...p, ...col, alpha, size];
+      const line = (a, z, col, alpha) => lines.push(...vertex(a, col, alpha), ...vertex(z, col, alpha));
+      const ring = (p, radius, col, alpha, { fraction = 1, tilt = .35, sides = 80, start = 0, dashed = false } = {}) => {
+        const at = (angle) => [p[0] + Math.cos(angle) * radius,
+          p[1] + Math.sin(angle) * radius * Math.sin(tilt), p[2] + Math.sin(angle) * radius * Math.cos(tilt)];
+        const count = Math.max(1, Math.ceil(sides * fraction));
+        for (let j = 0; j < count; j++) {
+          if (dashed && j % 5 === 4) continue;
+          line(at(start + j / sides * M.TAU), at(start + Math.min(fraction, (j + 1) / sides) * M.TAU), col, alpha);
+        }
+      };
+      for (const [a, z, type] of this.graph.links) {
+        const related = [a.id, z.id, a.author?.id, z.author?.id].includes(this.focusId);
+        const col = type.startsWith('private') ? palette.private : palette.reply;
+        const alpha = type === 'orbit' ? .10 : related ? .33 : .08;
+        let last = a.position;
+        for (let j = 1; j <= 24; j++) {
+          const t = j / 24;
+          const p = a.position.map((n, i) => mix(n, z.position[i], t) + (i === 1 ? Math.sin(t * Math.PI) * 10 : 0));
+          line(last, p, col, alpha);
+          last = p;
+        }
+      }
+      for (const node of this.graph.nodes) {
+        const p = node.position, style = M.appearance(node, now);
+        const selected = node.id === this.focusId, hovered = node.id === this.hoverId;
+        const isStar = node.kind === 'user' || node.kind === 'private';
+        const col = isStar ? style.color : palette[node.kind] || palette.post;
+        const light = isStar ? style.light : .7;
+        const pulse = 1 + (this.paused ? 0 : Math.sin(this.clock * 1.4) * style.pulse);
+        points.push(...vertex(p, col, light * pulse, style.root ? 23 : isStar ? 5.5 : 2.2));
+        if (isStar) {
+          const r = style.radius, rotation = this.clock * .06;
+          const corners = [[0, r * 1.4, 0], [r, 0, 0], [0, 0, r], [-r, 0, 0], [0, 0, -r], [0, -r * 1.4, 0]].map(v => [
+            p[0] + v[0] * Math.cos(rotation) - v[2] * Math.sin(rotation), p[1] + v[1],
+            p[2] + v[0] * Math.sin(rotation) + v[2] * Math.cos(rotation)]);
+          for (let j = 1; j <= 4; j++) {
+            const k = j === 4 ? 1 : j + 1;
+            line(corners[0], corners[j], col, light * .9);
+            line(corners[5], corners[j], col, light * .55);
+            line(corners[j], corners[k], col, light * .6);
+            for (const apex of [0, 5]) triangles.push(...vertex(corners[apex], col, light * (style.root ? .20 : .10)),
+              ...vertex(corners[j], col, light * .14), ...vertex(corners[k], col, light * .08));
+          }
+          if (style.root) {
+            // The trust anchor has a white core, three thin coronas and a cross.
+            ring(p, r * 1.8, col, .26, { tilt: .7 });
+            ring(p, r * 2.2, col, .13, { tilt: -.8, dashed: true });
+            ring(p, r * 2.7, col, .07, { tilt: .1 });
+            for (const axis of [b.right, b.up]) for (const sign of [-1, 1]) {
+              const from = p.map((v, i) => v + axis[i] * r * 1.7 * sign);
+              const to = p.map((v, i) => v + axis[i] * r * 3.9 * sign);
+              line(from, to, col, .26);
+            }
+          } else if (style.certified) {
+            // An angular seal is distinct from the round balance arc.
+            ring(p, r * 2.3, col, .38, { sides: 6, tilt: -.55 });
+            const mark = p.map((v, i) => v + b.up[i] * r * 3.0);
+            const diamond = [b.up, b.right, b.up.map(v => -v), b.right.map(v => -v)]
+              .map(axis => mark.map((v, i) => v + axis[i] * .8));
+            for (let i = 0; i < 4; i++) line(diamond[i], diamond[(i + 1) % 4], col, .8);
+          }
+          if (style.reserve.known && style.reserve.fraction > 0) {
+            const center = [p[0], p[1] - r * 1.9, p[2]];
+            const radius = r * (style.root ? 3.2 : 3.5);
+            ring(center, radius, [.9, .9, .86], .055, { tilt: .6 });
+            ring(center, radius, [.9, .9, .86], .44, { fraction: style.reserve.fraction, tilt: .6, start: -Math.PI / 2, dashed: true });
+          }
+        } else {
+          const r = 1.1;
+          const diamond = [b.up, b.right, b.up.map(v => -v), b.right.map(v => -v)]
+            .map(axis => p.map((v, i) => v + axis[i] * r));
+          for (let i = 0; i < 4; i++) line(diamond[i], diamond[(i + 1) % 4], col, .5);
+        }
+        if (selected || hovered) {
+          const size = style.root ? 17 : 6.7;
+          for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+            const corner = p.map((v, i) => v + b.right[i] * size * sx + b.up[i] * size * sy);
+            for (const [axis, sign] of [[b.right, sx], [b.up, sy]])
+              line(corner, corner.map((v, i) => v - axis[i] * sign * size * .25), [1, 1, 1], selected ? .65 : .25);
+          }
+        }
+      }
+      return { lines, points, triangles };
+    }
     renderSoftware() {
-      const ctx = this.context,
-        dpr = this.canvas.width / Math.max(this.width, 1);
+      const ctx = this.context, dpr = this.canvas.width / Math.max(this.width, 1);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, this.width, this.height);
-      const stroke = (points, color, width = 1) => {
-        ctx.beginPath();
-        let started = false;
-        for (const pos of points) {
-          const p = this.project(pos);
-          if (!p) {
-            started = false;
-            continue;
-          }
-          if (!started) {
-            ctx.moveTo(p.x, p.y);
-            started = true;
-          } else ctx.lineTo(p.x, p.y);
-        }
-        ctx.strokeStyle = color;
-        ctx.lineWidth = width;
-        ctx.stroke();
-      };
       for (let i = 0; i < this.dust.length; i += 8) {
         const p = this.project(this.dust.slice(i, i + 3));
-        if (!p || p.x < 0 || p.x > this.width || p.y < 0 || p.y > this.height)
-          continue;
-        ctx.fillStyle = "rgba(173,184,197," + this.dust[i + 6] * 0.6 + ")";
-        const size = Math.min(1.5, Math.max(0.55, p.scale * 0.35));
+        if (!p || p.x < 0 || p.x > this.width || p.y < 0 || p.y > this.height) continue;
+        ctx.fillStyle = `rgba(220,220,220,${this.dust[i + 6] * .65})`;
+        const size = clamp(p.scale * this.dust[i + 7], .5, 3);
         ctx.fillRect(p.x, p.y, size, size);
       }
-      for (const [a, z, type] of this.graph.links) {
-        const points = [];
-        for (let j = 0; j <= 24; j++) {
-          const t = j / 24;
-          points.push(
-            a.position.map(
-              (n, i) =>
-                mix(n, z.position[i], t) +
-                (i === 1
-                  ? Math.sin(t * Math.PI) * (type === "orbit" ? 0 : 14)
-                  : 0),
-            ),
-          );
+      const geometry = this.geometry();
+      const color = (array, offset) => `rgba(${array.slice(offset + 3, offset + 6).map(v => Math.round(v * 255)).join(',')},${clamp(array[offset + 6], 0, 1)})`;
+      for (const [type, width] of [['triangles', 24], ['lines', 16]]) {
+        const array = geometry[type];
+        for (let i = 0; i < array.length; i += width) {
+          const vertices = [];
+          for (let j = 0; j < width; j += 8) vertices.push(this.project(array.slice(i + j, i + j + 3)));
+          if (vertices.some(p => !p)) continue;
+          ctx.beginPath(); ctx.moveTo(vertices[0].x, vertices[0].y);
+          for (const p of vertices.slice(1)) ctx.lineTo(p.x, p.y);
+          if (type === 'triangles') { ctx.closePath(); ctx.fillStyle = color(array, i); ctx.fill(); }
+          else { ctx.strokeStyle = color(array, i); ctx.lineWidth = 1; ctx.stroke(); }
         }
-        stroke(
-          points,
-          type === "private"
-            ? "rgba(141,200,190,.22)"
-            : type === "orbit"
-              ? "rgba(145,187,206,.16)"
-              : "rgba(164,179,220,.20)",
-        );
       }
-      const sorted = this.graph.nodes
-        .map((n) => ({ n, p: this.project(n.position) }))
-        .filter(({ p }) => p)
-        .sort((a, b) => b.p.depth - a.p.depth);
-      for (const { n, p } of sorted) {
-        const color =
-            n.kind === "user"
-              ? "239,215,168"
-              : n.kind.startsWith("private")
-                ? "148,207,196"
-                : "145,191,216",
-          selected = n.id === this.focusId,
-          r = Math.min(
-            20,
-            Math.max(3, p.scale * (n.kind === "user" ? 3 : 1.8)),
-          );
-        const glow = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r * 3);
-        glow.addColorStop(0, "rgba(" + color + ",.55)");
-        glow.addColorStop(0.25, "rgba(" + color + ",.12)");
-        glow.addColorStop(1, "rgba(" + color + ",0)");
-        ctx.fillStyle = glow;
-        ctx.fillRect(p.x - r * 3, p.y - r * 3, r * 6, r * 6);
-        const pos = n.position,
-          s = Math.min(2, selected ? 2 : 1.2),
-          top = [pos[0], pos[1] + s * 1.6, pos[2]],
-          bottom = [pos[0], pos[1] - s * 1.6, pos[2]],
-          corners = [
-            [s, 0, 0],
-            [0, 0, s],
-            [-s, 0, 0],
-            [0, 0, -s],
-          ].map((v) => v.map((x, i) => x + pos[i]));
-        if (n.kind === "user" || n.kind === "private") {
-          for (const corner of corners)
-            stroke([top, corner, bottom], "rgba(" + color + ",.7)");
-          stroke([...corners, corners[0]], "rgba(" + color + ",.4)");
-        } else {
-          ctx.fillStyle = "rgba(" + color + ",.95)";
-          ctx.fillRect(p.x - 1.4, p.y - 1.4, 2.8, 2.8);
+      const array = geometry.points;
+      for (let i = 0; i < array.length; i += 8) {
+        const p = this.project(array.slice(i, i + 3));
+        if (!p) continue;
+        const r = clamp(p.scale * array[i + 7], 2, 50), rgb = array.slice(i + 3, i + 6).map(v => Math.round(v * 255)).join(',');
+        const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
+        gradient.addColorStop(0, `rgba(${rgb},${array[i + 6]})`);
+        gradient.addColorStop(.3, `rgba(${rgb},${array[i + 6] * .16})`);
+        gradient.addColorStop(1, `rgba(${rgb},0)`);
+        ctx.fillStyle = gradient; ctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+      }
+    }
+    updateTokens() {
+      if (!this.tokenField) return;
+      const occupied = this.graph.nodes.map(n => this.project(n.position)).filter(Boolean);
+      const visible = new Set();
+      const maximum = this.width < 600 ? 20 : 40;
+      for (let i = 0; i < this.dust.length && visible.size < maximum; i += 8 * 17) {
+        const p = this.project(this.dust.slice(i, i + 3));
+        if (!p || p.x < 50 || p.x > this.width - 50 || p.y < 115 || p.y > this.height - 130 ||
+            occupied.some(q => Math.hypot(q.x - p.x, q.y - p.y) < 28)) continue;
+        visible.add(i);
+        let token = this.tokenNodes.get(i);
+        if (!token) {
+          token = document.createElement('span');
+          token.textContent = ['{', '}', '[]', '::', '<>', '/', '+', '_', '01'][(i / 8) % 9];
+          this.tokenField.append(token); this.tokenNodes.set(i, token);
         }
-        if (selected)
-          for (const radius of [6, 9.5]) {
-            const ring = [];
-            for (let j = 0; j <= 90; j++) {
-              const a = (j / 90) * M.TAU;
-              ring.push([
-                pos[0] + Math.cos(a) * radius,
-                pos[1],
-                pos[2] + Math.sin(a) * radius,
-              ]);
-            }
-            stroke(ring, "rgba(" + color + ",.35)");
-          }
+        token.style.transform = `translate(${Math.round(p.x)}px,${Math.round(p.y)}px)`;
+        token.style.fontSize = clamp(p.scale * 4.5, 7, 12) + 'px';
+        token.style.opacity = clamp(.12 + p.scale * .025, .12, .25);
       }
+      for (const [id, token] of this.tokenNodes) if (!visible.has(id)) { token.remove(); this.tokenNodes.delete(id); }
     }
     updateLabels() {
       const candidates = this.graph.nodes
@@ -699,12 +637,14 @@
         .sort(
           (a, b) =>
             (b.n.id === this.focusId) - (a.n.id === this.focusId) ||
+            (b.n.id === 'u_root') - (a.n.id === 'u_root') ||
+            (b.n.id === this.hoverId) - (a.n.id === this.hoverId) ||
             a.p.depth - b.p.depth,
         );
       const used = [],
         visible = new Set();
       for (const { n, p } of candidates) {
-        if (used.length >= 14) break;
+        if (used.length >= (this.width < 600 ? 5 : 8)) break;
         if (
           used.some(
             (q) => Math.abs(q.x - p.x) < 100 && Math.abs(q.y - p.y) < 32,
@@ -717,13 +657,20 @@
         if (!el) {
           el = document.createElement("span");
           el.className = "star-label";
-          el.textContent =
-            n.kind === "user"
-              ? globalThis.MSGUniverse.handle(n.name || n.title || "Signal")
-              : n.name || n.title || "Signal";
+
           this.labels.append(el);
           this.labelNodes.set(n.id, el);
         }
+        const look = M.appearance(n, this.callbacks.now?.() ?? Date.now());
+        el.textContent =
+          (look.root ? '✦ ' : look.certified ? '◇ ' : '') +
+          (n.kind === 'user'
+            ? M.handle(n.name || n.title || 'Signal')
+            : n.name || n.title || 'Signal');
+        el.classList.toggle('root-label', look.root);
+        el.classList.toggle('certified-label', look.certified);
+        el.style.setProperty('--star-color', `rgb(${look.color.map(v => Math.round(v * 255)).join(',')})`);
+        el.style.opacity = n.id === this.focusId || look.root ? 1 : .35 + look.light * .45;
         el.classList.toggle("selected", n.id === this.focusId);
         el.style.transform = `translate(${Math.round(p.x + 12)}px,${Math.round(p.y - 7)}px)`;
       }
