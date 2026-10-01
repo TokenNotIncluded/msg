@@ -50,7 +50,7 @@ from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
 from msg.transports.packet import decode_packet, path_packet, require_url_safe_packet
 from msg.transports.permissions_page import PERMISSIONS_MARKDOWN
 from msg.transports.read_tree_path import decode_read_tree_path
-from msg.transports.register_page import registration_markdown
+from msg.transports.register_page import registration_controls, registration_markdown
 from msg.transports.subject_views import (
     CERTIFICATE_COLLECTION_VIEWS,
     SUBJECT_COLLABORATION_VIEWS,
@@ -2078,6 +2078,9 @@ def create_app(service):
                         title='Register' if path == '/register' else 'Permissions',
                         account=await browser_account(),
                         raw_path=path,
+                        controls=registration_controls(service.settings.service_url)
+                        if path == '/register'
+                        else '',
                     )
                     if browser_html
                     else markdown.encode()

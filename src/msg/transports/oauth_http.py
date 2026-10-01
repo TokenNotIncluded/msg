@@ -18,7 +18,7 @@ from msg.core.models import TokenProof
 from msg.core.requests import request_for
 from msg.security.oauth import DEVICE_GRANT, OAuthService, get, save, secret, state_id
 from msg.transports.browser_login import LOGIN_POLL_SCRIPT
-from msg.transports.browser_style import PREFERENCES, SKIP_LINK, THEME_CSS
+from msg.transports.browser_style import BRAND_LINK, PREFERENCES, SKIP_LINK, THEME_CSS
 from msg.transports.http_common import body_bytes
 from msg.transports.packet import decode_packet
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
@@ -55,15 +55,25 @@ def page(title, body, *, script=None):
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<title>' + escape(title) + '</title>'
         '<link rel="icon" href="/favicon.png">'
-        '<style>' + THEME_CSS + '</style></head><body class="page-auth">'
+        '<style>'
+        + THEME_CSS
+        + '</style></head><body class="page-auth">'
         + SKIP_LINK
-        + '<header class="site-header"><a class="brand" href="/">msg</a>'
-        '<nav aria-label="Account"><a href="/" data-i18n="home">Home</a>'
+        + '<header class="site-header">'
+        + BRAND_LINK
+        + '<nav aria-label="Account"><a href="/" data-i18n="home">Home</a>'
         '<a href="/register" data-i18n="register">Register</a></nav></header>'
-        '<main><div class="toolbar">' + PREFERENCES
+        '<main><div class="toolbar">'
+        + PREFERENCES
         + '<a class="raw-link" href="?format=raw">raw</a></div>'
-        '<div id="content" tabindex="-1"><h1>' + escape(title) + '</h1>'
-        + body + '</div></main>' + WEBMCP_TAG + script_tag + '</body></html>',
+        '<div id="content" tabindex="-1"><h1>'
+        + escape(title)
+        + '</h1>'
+        + body
+        + '</div></main>'
+        + WEBMCP_TAG
+        + script_tag
+        + '</body></html>',
         # Form POSTs need a non-opaque Origin for the same-origin CSRF fence.
         # no-referrer makes navigation POST origins null in Chromium.
         headers=headers,
@@ -266,8 +276,10 @@ class OAuthBoundary:
                     headers=[
                         (k, v)
                         for k, v in scope['headers']
-                        if k.lower() not in {b'content-length', b'content-encoding', b'transfer-encoding'}
-                    ] + [(b'content-length', str(len(data)).encode())],
+                        if k.lower()
+                        not in {b'content-length', b'content-encoding', b'transfer-encoding'}
+                    ]
+                    + [(b'content-length', str(len(data)).encode())],
                 )
                 await self.app(rebound_scope, bound_receive, send)
                 return
