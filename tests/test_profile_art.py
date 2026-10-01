@@ -91,9 +91,26 @@ async def test_custom_profile_images_obey_acl_and_invalid_svg_falls_back(install
         transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
     ) as http:
         data = (await http.get('/@svg-author/json')).json()
-        assert data['profile']['artwork']['avatar'] == {'svg': svg, 'source': 'custom'}
-        assert data['profile']['artwork']['background']['source'] == 'generated'
-        assert data['profile']['artwork']['footer']['source'] == 'custom'
+        assert data['profile']['artwork']['avatar'] == {
+            'url': '/@svg-author/art/avatar.svg',
+            'file': '/@svg-author/AVATAR.svg',
+        }
+        assert '<svg' not in str(data) and 'data:image' not in str(data)
+        assert len(str(data['profile']['artwork'])) < 512
+        asset = await http.get('/@svg-author/art/background.svg')
+        assert asset.headers['x-msg-artwork-source'] == 'generated'
+        asset = await http.get('/@svg-author/art/footer.svg')
+        assert asset.headers['x-msg-artwork-source'] == 'custom'
+        assert 'custom ocean' in asset.text
+        assert 'style-src' in asset.headers['content-security-policy']
+        still = await http.get('/@svg-author/art/footer.svg?still=1')
+        assert still.status_code == 200 and 'animation:none' in still.text
+        head = await http.head('/@svg-author/art/footer.svg')
+        assert head.status_code == 200 and head.content == b''
+        cached = await http.get(
+            '/@svg-author/art/footer.svg', headers={'If-None-Match': asset.headers['etag']}
+        )
+        assert cached.status_code == 304
         html = await http.get('/@svg-author', headers={'Accept': 'text/html'})
         assert html.status_code == 200 and 'profile-avatar' in html.text
         assert 'profile-background' in html.text
@@ -116,9 +133,15 @@ async def test_custom_profile_images_obey_acl_and_invalid_svg_falls_back(install
                 resource.generation,
             )
         hidden = (await http.get('/@svg-author/json')).json()
-        assert hidden['profile']['artwork']['avatar']['source'] == 'generated'
+        assert hidden['profile']['artwork']['avatar']['file'] is None
         assert 'custom artwork' not in str(hidden['profile']['artwork'])
-        assert hidden['profile']['artwork']['footer']['source'] == 'generated'
+        assert hidden['profile']['artwork']['footer']['file'] is None
+        denied = await http.get(
+            '/@svg-author/art/footer.svg', headers={'If-None-Match': asset.headers['etag']}
+        )
+        assert denied.status_code == 200
+        assert denied.headers['x-msg-artwork-source'] == 'generated'
+        assert 'custom ocean' not in denied.text
         assert 'custom ocean' not in str(hidden['profile']['artwork'])
 
 
@@ -133,4 +156,7 @@ def test_browser_artwork_escapes_names_and_uses_isolated_images():
     html = document_html('', resource=value).decode()
     assert '@&lt;script&gt;' in html and '<script>bad</script>' not in html
     assert '<img class="profile-avatar"' in html
+    assert 'data:image' not in html
+    assert 'Looping ASCII' not in html and '@keyframes tide' not in html
+    assert '/art/footer.svg' in html
     assert 'IntersectionObserver' in html and 'visibilitychange' in html

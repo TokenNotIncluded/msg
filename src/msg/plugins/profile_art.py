@@ -1,19 +1,22 @@
-"""Artwork is stored as ordinary profile files and follows their normal ACLs."""
+"""Tiny artwork references only; API reads never load or generate SVG bytes."""
+
+from urllib.parse import quote
 
 from msg.core.models import ResourceRef
-from msg.core.profile_art import MAX_SVG_BYTES, generate_svg, safe_svg
+from msg.core.profile_art import MAX_SVG_BYTES
 
 
 async def profile_artwork(app, ctx, request, tx, subject_id):
     from msg.plugins.discovery import visible
 
+    path = quote('/' + (await tx.resource(subject_id)).name, safe='/@')
     artwork = {}
     for kind, name in (
         ('avatar', 'AVATAR.svg'),
         ('background', 'BACKGROUND.svg'),
         ('footer', 'FOOTER.svg'),
     ):
-        svg = None
+        custom = None
         row = tx.one(
             "SELECT id FROM resources WHERE parent=? AND name=? AND state='active'",
             (subject_id, name),
@@ -24,10 +27,6 @@ async def profile_artwork(app, ctx, request, tx, subject_id):
                 revision = await tx.revision(ResourceRef(id=resource.id))
                 blob = revision.content
                 if blob.media_type == 'image/svg+xml' and blob.size <= MAX_SVG_BYTES:
-                    raw = b''.join([chunk async for chunk in app.contents.read(blob)])
-                    svg = safe_svg(raw)
-        artwork[kind] = {
-            'svg': svg or generate_svg(subject_id, kind),
-            'source': 'custom' if svg else 'generated',
-        }
+                    custom = path + '/' + name
+        artwork[kind] = {'url': path + '/art/' + kind + '.svg', 'file': custom}
     return artwork

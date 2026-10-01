@@ -1097,6 +1097,10 @@ def create_app(service):
                     'forbidden_origin',
                 )
             path = request.url.path
+            from msg.transports.profile_art_http import ART_PATH, profile_art_response
+
+            if ART_PATH.fullmatch(path):
+                return await profile_art_response(service, request, execute_packet)
             native = re.fullmatch(r'(/[@&][^/]+/[^/]+\.git)/(.*)', path)
             if native:
                 require(service.registry.operation('git.refs').effect == 'read', 'effect_mismatch')
