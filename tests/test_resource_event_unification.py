@@ -390,7 +390,7 @@ async def test_events_empty_page_advances_past_bounded_hidden_history(installed)
                 type='content.post_edit',
                 time=NOW,
                 request_id='after-hidden',
-                signer=key,
+                actor=subject,
                 subject=subject,
                 resources=post.resources,
                 data={},

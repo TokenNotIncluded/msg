@@ -42,7 +42,8 @@ async def test_get_reuses_exact_full_and_compact_projection_digest(
     project = AsyncMock(return_value=data)
     monkeypatch.setattr(discovery, 'read_projection', project)
     tx = SimpleNamespace(resource=AsyncMock(return_value=SimpleNamespace(id='r_cached')))
-    known = digest(wire(data, compact=compact))
+    projected = {'stable_path': '/_r/r_cached/json', **data}
+    known = digest(wire(projected, compact=compact))
     request = SimpleNamespace(arguments={'id': 'r_cached', 'known_digest': known})
     result = await get_handler(None, request, tx)
     assert dict(result.data) == {'not_modified': True, 'digest': known}
@@ -68,7 +69,7 @@ async def test_cache_hint_cannot_change_projection_values_or_array_nulls(
     result = await get_handler(
         None, SimpleNamespace(arguments={'id': 'r_cached', 'known_digest': digest(changed)}), tx
     )
-    assert wire(result.data) == data
+    assert wire(result.data) == {'stable_path': '/_r/r_cached/json', **data}
     assert 'not_modified' not in result.data
 
 

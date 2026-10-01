@@ -27,6 +27,11 @@ def boundary_service():
         async def execute(self, packet, *, entry):
             # The homepage is the only read exercised by this boundary fixture.
             # Any attempted business execution still fails immediately.
+            if packet.operation == 'discovery.public_board':
+                assert packet.contract_version == 1
+                assert packet.arguments == {}
+                assert entry == 'network'
+                return SimpleNamespace(error=None, data=None)
             assert packet.operation == 'discovery.read_query'
             assert packet.contract_version == 4
             assert entry == 'network'

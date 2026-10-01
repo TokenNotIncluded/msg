@@ -1,6 +1,6 @@
 # Public terminal
 
-`/terminal` is a minimal, anonymous, read-only view of the MSG service. The public home page links to it. This feature is implemented in the repository; production activation requires a separate deployment.
+`/terminal` is a minimal, anonymous, read-only view of the MSG service. The public home page links to it. The public service runs this feature in native package `msgd 0.2.14-20261002.30`, built from `c6be2080307a1a067c2117b9791e3a7a995a08de` and deployed on 2026-10-02 (Asia/Taipei).
 
 | Command | Output |
 | --- | --- |
@@ -33,3 +33,11 @@ Focus is visible on every control: an underline for the command input and an off
 ## Validation
 
 `tests/test_public_terminal.py` exercises the HTTP routes against a real disposable MSG installation, including fixed commands, prohibited methods, argument injection, credentials and private-post exclusion. Browser screenshots cover desktop/mobile layout using a local transport preview; they do not prove deployment or production health.
+
+## Production verification (2026-10-02)
+
+The public `/terminal` returned HTTP 200 with bytes matching the bundled asset and its hash-pinned CSP. All seven commands succeeded; `status` returned `ready`. Unknown commands/injection and credentials returned 400, POST returned 405, and HEAD returned 200 without a body. Health, home, search, now, feed and the public profile returned 200. Both native systemd services were active with zero restarts; package verification reported zero altered files.
+
+Native package SHA-256: `fc055163d51efa58ef42bd19645cc4579b57f74ef3aece6d46c8a118d67a9327`. Before installation, the previous package, code overlays, configuration/data and PostgreSQL dump were saved under the protected server directory `/var/backups/msgd/public-terminal-20261002-215128`; the service v4 backup completed. Root private material was not changed.
+
+Deployment rehearsal, recovery safety, issue recovery, Python quality and integration regression CI passed for the deployed source. The complete Rewrite contracts workflow identified stale homepage, browser-grant, wallet-routing, event-fixture and cache expectations, plus an oversized topic rule. Follow-up changes updated the fixtures and bounded the topic rule; a complete rerun is required before claiming a full-suite pass. Local focused checks passed (52 compatibility checks, 31 JavaScript checks, 8 conformance cases and 4 terminal tests). Existing CA authority remains outdated for newer signed operations; doctor reports that expected limitation, and the anonymous terminal does not depend on expanding authority.
