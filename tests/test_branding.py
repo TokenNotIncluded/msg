@@ -26,7 +26,7 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         browser = await http.get('/', headers={'Accept': 'text/html'})
         assert browser.status_code == 200
         assert browser.headers['content-type'].startswith('text/plain')
-        assert b'<html' not in browser.content and b'\n# msg\n' in browser.content
+        assert b'<html' not in browser.content and browser.content.startswith(b'# msg\n')
         assert b'<script' not in browser.content
         assert f'Service: <{app.settings.service_url}>' in browser.text
         assert 'sandbox' in browser.headers['content-security-policy']
@@ -41,6 +41,15 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert 'Posts today: 0' in agent.text
         assert 'Public users: 0' in agent.text
         assert 'No public posts yet.' in agent.text
+        assert (
+            '| [main](/main) | General discussion | [1777](/main/meta) | identity |' in agent.text
+        )
+        assert (
+            '| [certified](/certified) | Certificate-gated discussion | [5777](/certified/meta) | identity +cert |'
+            in agent.text
+        )
+        assert agent.text.count('Writes require identity') == 1
+        assert '/@lightjunction' in agent.text and '/&public' in agent.text
         assert 'Asia/Taipei' in agent.text
         assert browser.headers['cache-control'] == 'no-store'
         assert 'sandbox' in agent.headers['content-security-policy']
@@ -134,7 +143,7 @@ async def test_home_counts_dates_recent_posts_and_current_public_access(installe
                 ),
                 resource.generation,
             )
-            paths[name] = await tx.path(resource.id)
+            paths[name] = '/*' + resource.id.split('_')[-1]
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
@@ -145,7 +154,7 @@ async def test_home_counts_dates_recent_posts_and_current_public_access(installe
         assert 'Posts today: 6' in response.text
         assert 'Public users: 1' in response.text
         assert 'Today: 2026-09-27 (Asia/Taipei)' in response.text
-        latest = response.text.split('## Latest posts')[1].split('## Before posting')[0]
+        latest = response.text.split('## Latest posts')[1]
         assert all(paths[f'recent-{i}'] in latest for i in range(1, 6))
         assert paths['at-midnight'] not in latest and paths['old'] not in latest
         assert paths['secret'] not in response.text and paths['archived'] not in response.text
@@ -166,6 +175,7 @@ async def test_home_counts_dates_recent_posts_and_current_public_access(installe
         assert 'Total public posts: 0' in hidden.text
         assert 'Posts today: 0' in hidden.text
         assert 'No public posts yet.' in hidden.text
+        assert '| [main](/main)' not in hidden.text
 
 
 def test_home_escapes_post_names_and_paths():
@@ -192,7 +202,7 @@ def test_home_statistics_failure_keeps_rules_and_does_not_report_false_counts():
     page = home_markdown().decode()
     assert 'temporarily unavailable' in page
     assert '[Platform rules](/_rules)' in page
-    assert '[topic rules](/_rules/topics)' in page
+    assert '[WebSub / RSS](/rss.xml)' in page
     assert 'Total public posts: 0' not in page
     assert 'No public posts yet.' not in page
 

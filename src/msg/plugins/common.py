@@ -115,6 +115,10 @@ async def protect_namespace(app, ctx, request, tx, parent, name):
         )
 
 
+SUMMARY_UNSET = object()
+MAX_SUMMARY_CHARS = 280
+
+
 async def create_resource(
     app,
     ctx,
@@ -132,6 +136,7 @@ async def create_resource(
     author=None,
     content_signature=None,
     revision_id=None,
+    summary=None,
 ):
     parent = await tx.resource(parent)
     require(
@@ -225,6 +230,7 @@ async def create_resource(
             author=author,
             signature=content_signature,
             revision_id=revision_id,
+            summary=summary,
         )
     return resource
 
@@ -247,6 +253,7 @@ async def revise_resource(
     source_version=None,
     source_digest=None,
     content_created_at=None,
+    summary=SUMMARY_UNSET,
 ):
     require(resource.type not in {'order', 'order_collection'}, 'order_controlled_resource')
     from msg.core.models import BlobRef
@@ -299,6 +306,17 @@ async def revise_resource(
         require(
             abs((content_time - ctx.now).total_seconds()) <= 300, 'content_timestamp_out_of_range'
         )
+    if summary is SUMMARY_UNSET:
+        summary = (
+            (await tx.revision(ResourceRef(id=resource.id))).summary
+            if resource.type == 'post' and resource.revision
+            else None
+        )
+    require(
+        summary is None or (isinstance(summary, str) and len(summary) <= MAX_SUMMARY_CHARS),
+        'invalid_summary',
+    )
+    summary = summary or None
     revision = Revision(
         format_version=1,
         id=rid,
@@ -311,6 +329,7 @@ async def revise_resource(
         author=author or ctx.principal.subject,
         created_at=content_time,
         manifest_digest='',
+        summary=summary,
         change_note=change_note,
         source_kind=source_kind,
         source_version=source_version,
