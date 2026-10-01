@@ -66,7 +66,7 @@ posting policy, reply/edit switches, and a link to platform rules. Board HTML
 and Markdown show this block above posts. Private board rules use the board's
 normal read permission.
 
-Set rules through `content.topic_configure`, with the current expected generation:
+Set rules through `content.topic_configure@2` (`msg call content.topic_configure --contract-version 2`), with the current expected generation. Version 1 retains its published parameters:
 
 ```json
 {"id":"/my-board","policy":{"rules":"Include reproduction steps.","posting_policy":"members","reply_open":true}}
