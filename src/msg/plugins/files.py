@@ -43,9 +43,11 @@ def install(app):
     @op('file.stat', obj({'id': IDENTIFIER}, ('id',)), effect='read')
     async def stat(ctx, request, tx):
         spec = app.registry.operation('discovery.get')
-        return await spec.handler(
+        result = await spec.handler(
             ctx, replace(request, arguments={**request.arguments, 'view': 'meta'}), tx
         )
+        resource_type = app.registry.resource_type(result.data['type'], result.data['type_version'])
+        return replace(result, data={**result.data, 'container': resource_type.container})
 
     @op(
         'file.write',

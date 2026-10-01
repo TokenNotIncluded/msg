@@ -30,22 +30,32 @@ from msg.transports.client import HTTPTransport, PathGETTransport
 
 def metadata(**changes):
     return {
-        'id': 'r_file', 'path': '/main/a.md', 'container': False,
-        'revision': 'v_first', 'size': 100, 'state': 'active',
-        'created_at': '2026-10-01T00:00:00Z', 'modified_at': '2026-10-01T01:00:00Z',
+        'id': 'r_file',
+        'path': '/main/a.md',
+        'container': False,
+        'revision': 'v_first',
+        'size': 100,
+        'state': 'active',
+        'created_at': '2026-10-01T00:00:00Z',
+        'modified_at': '2026-10-01T01:00:00Z',
         **changes,
     }
 
 
 @pytest.fixture
 async def client():
-    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as http:
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(500))
+    ) as http:
         transport = HTTPTransport('https://example.test', http=http)
-        transport._description = {'operations': dict.fromkeys(
-            ('file.stat', 'discovery.get', 'discovery.read_query', 'discovery.raw'), 'read'
-        )}
+        transport._description = {
+            'operations': dict.fromkeys(
+                ('file.stat', 'discovery.get', 'discovery.read_query', 'discovery.raw'), 'read'
+            )
+        }
         value = SimpleNamespace(
-            transport=transport, signer_override=object(),
+            transport=transport,
+            signer_override=object(),
             call=AsyncMock(return_value=SimpleNamespace(status='ok', data=metadata(), error=None)),
             prepare=lambda operation, arguments: {'operation': operation, 'arguments': arguments},
         )
@@ -56,7 +66,9 @@ def ok(data):
     return SimpleNamespace(status='ok', data=data, error=None)
 
 
-@pytest.mark.parametrize('path', ['', 'main', '//', '/main/', '/./a', '/../a', '/a//b', '/a/../b', '/a\\b', '/\x00'])
+@pytest.mark.parametrize(
+    'path', ['', 'main', '//', '/main/', '/./a', '/../a', '/a//b', '/a/../b', '/a\\b', '/\x00']
+)
 def test_invalid_paths(path):
     with pytest.raises(Failure, match='invalid_mount_path'):
         canonical_path(path)
@@ -108,21 +120,29 @@ async def test_closed_read_allowlist_and_effect_guard(client):
 async def test_paginated_directory_uses_only_opaque_cursor(client):
     client.call.side_effect = [
         ok(metadata(id='r_topic', path='/main', container=True, revision=None)),
-        ok({'items': [{'id': 'a', 'path': '/main/a.md'}], 'cursor': 'next', 'next': 'https://evil.test/'}),
+        ok({
+            'items': [{'id': 'a', 'path': '/main/a.md'}],
+            'cursor': 'next',
+            'next': 'https://evil.test/',
+        }),
         ok({'items': [{'id': 'b', 'path': '/main/你好.md'}]}),
     ]
     assert await MountBackend(client, '/main').directory('/') == ['.', '..', 'a.md', '你好.md']
     assert client.call.await_args_list[1].args == (
-        'discovery.read_query', {'parent': 'r_topic', 'limit': 100, 'fields': ['id', 'path']}
+        'discovery.read_query',
+        {'parent': 'r_topic', 'limit': 100, 'fields': ['id', 'path']},
     )
     assert client.call.await_args_list[2].args == ('discovery.read_query', {'cursor': 'next'})
 
 
-@pytest.mark.parametrize('bad', ['/elsewhere/a', '/main/../secret', '/main/sub/a', '/main/', '/main/' + 'x' * 256])
+@pytest.mark.parametrize(
+    'bad', ['/elsewhere/a', '/main/../secret', '/main/sub/a', '/main/', '/main/' + 'x' * 256]
+)
 @pytest.mark.asyncio
 async def test_directory_rejects_unsafe_children(client, bad):
     client.call.side_effect = [
-        ok(metadata(path='/main', container=True)), ok({'items': [{'path': bad}]}),
+        ok(metadata(path='/main', container=True)),
+        ok({'items': [{'path': bad}]}),
     ]
     with pytest.raises(Failure):
         await MountBackend(client).directory('/main')
@@ -135,7 +155,11 @@ async def test_directory_refuses_truncation_and_repeated_cursors(client):
     with pytest.raises(OSError) as exc:
         await MountBackend(client, max_entries=1).directory('/main')
     assert exc.value.errno == errno.EOVERFLOW
-    client.call.side_effect = [root, ok({'items': [], 'cursor': 'c'}), ok({'items': [], 'cursor': 'c'})]
+    client.call.side_effect = [
+        root,
+        ok({'items': [], 'cursor': 'c'}),
+        ok({'items': [], 'cursor': 'c'}),
+    ]
     with pytest.raises(Failure, match='invalid_mount_response'):
         await MountBackend(client).directory('/main')
 
@@ -143,7 +167,8 @@ async def test_directory_refuses_truncation_and_repeated_cursors(client):
 @pytest.mark.asyncio
 async def test_revisionless_projection_reauthorizes_every_read(client):
     client.call.side_effect = [
-        ok(metadata(revision=None)), ok({'id': 'r_file', 'type': 'certificate'}),
+        ok(metadata(revision=None)),
+        ok({'id': 'r_file', 'type': 'certificate'}),
         ok(metadata(revision=None)),
         SimpleNamespace(status='error', error=SimpleNamespace(code='permission_denied')),
     ]
@@ -179,16 +204,20 @@ async def test_raw_random_read_is_signed_pinned_and_bounded(client):
         assert request.headers['range'] == f'bytes={offset}-{offset + length - 1}'
         assert request.headers['accept-encoding'] == 'identity'
         assert request.url.path == '/_id/r_file/revisions/v_first/raw'
-        return httpx.Response(206, headers={
-            'content-range': f'bytes {offset}-{offset + length - 1}/{len(body)}',
-            'content-length': str(length),
-        }, stream=BytesStream(body[offset:offset + length]))
+        return httpx.Response(
+            206,
+            headers={
+                'content-range': f'bytes {offset}-{offset + length - 1}/{len(body)}',
+                'content-length': str(length),
+            },
+            stream=BytesStream(body[offset : offset + length]),
+        )
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         client.transport.http = http
         backend = MountBackend(client)
         node = Node(metadata(size=len(body)))
-        assert await backend.read(node, 2**20, 29) == body[29:29 + READ_BYTES]
+        assert await backend.read(node, 2**20, 29) == body[29 : 29 + READ_BYTES]
         assert await backend.read(node, 4096, len(body) - 10) == body[-10:]
         assert await backend.read(node, 4096, len(body)) == b''
         assert len(captured) == 2
@@ -197,15 +226,18 @@ async def test_raw_random_read_is_signed_pinned_and_bounded(client):
         assert exc.value.errno == errno.EINVAL
 
 
-@pytest.mark.parametrize('status,headers,body,expected', [
-    (302, {'location': 'https://evil.test'}, b'', Failure),
-    (403, {}, b'secret', OSError),
-    (404, {}, b'', OSError),
-    (200, {}, b'whole object', Failure),
-    (206, {'content-range': 'bytes 1-9/100', 'content-length': '10'}, b'0123456789', Failure),
-    (206, {'content-range': 'bytes 0-9/100', 'content-length': '10'}, b'01234567890', Failure),
-    (206, {'content-range': 'bytes 0-9/100', 'content-length': '10'}, b'short', Failure),
-])
+@pytest.mark.parametrize(
+    'status,headers,body,expected',
+    [
+        (302, {'location': 'https://evil.test'}, b'', Failure),
+        (403, {}, b'secret', OSError),
+        (404, {}, b'', OSError),
+        (200, {}, b'whole object', Failure),
+        (206, {'content-range': 'bytes 1-9/100', 'content-length': '10'}, b'0123456789', Failure),
+        (206, {'content-range': 'bytes 0-9/100', 'content-length': '10'}, b'01234567890', Failure),
+        (206, {'content-range': 'bytes 0-9/100', 'content-length': '10'}, b'short', Failure),
+    ],
+)
 @pytest.mark.asyncio
 async def test_raw_response_validation(client, status, headers, body, expected):
     requests = []
@@ -238,7 +270,24 @@ async def test_adapter_open_read_release_and_write_denial(client):
     with pytest.raises(OSError) as exc:
         mount.read('/main/a.md', 5, 8, fh)
     assert exc.value.errno == errno.EBADF
-    for method in ('create', 'write', 'truncate', 'unlink', 'mkdir', 'rmdir', 'rename', 'chmod', 'chown', 'utimens', 'symlink', 'link', 'mknod', 'setxattr', 'removexattr', 'fallocate'):
+    for method in (
+        'create',
+        'write',
+        'truncate',
+        'unlink',
+        'mkdir',
+        'rmdir',
+        'rename',
+        'chmod',
+        'chown',
+        'utimens',
+        'symlink',
+        'link',
+        'mknod',
+        'setxattr',
+        'removexattr',
+        'fallocate',
+    ):
         with pytest.raises(OSError) as exc:
             getattr(mount, method)('/main/a.md')
         assert exc.value.errno == errno.EROFS

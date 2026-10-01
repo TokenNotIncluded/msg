@@ -21,14 +21,18 @@ async def test_mount_reads_raw_bytes_and_rechecks_revoked_access(installed, tmp_
     ) as http:
         owner = MsgClient(
             ClientState(tmp_path / 'owner', server=app.settings.service_url),
-            HTTPTransport(app.settings.service_url, http=http), clock=lambda: NOW,
+            HTTPTransport(app.settings.service_url, http=http),
+            clock=lambda: NOW,
         )
         assert (await owner.register('mount-owner')).status == 'ok'
         guest = MsgClient(
             ClientState(tmp_path / 'guest', server=app.settings.service_url),
-            HTTPTransport(app.settings.service_url, http=http), clock=lambda: NOW,
+            HTTPTransport(app.settings.service_url, http=http),
+            clock=lambda: NOW,
         )
-        created = await owner.call('content.post_create', {'parent': '/main', 'body': '原始 Markdown\n'})
+        created = await owner.call(
+            'content.post_create', {'parent': '/main', 'body': '原始 Markdown\n'}
+        )
         assert created.status == 'ok', wire(created)
         rid = created.resources[0].id
         meta = await owner.call('file.stat', {'id': rid})
@@ -51,7 +55,8 @@ async def test_mount_reads_raw_bytes_and_rechecks_revoked_access(installed, tmp_
         current = await mount.node(path)
         assert await mount.read(current, 65536, 0) == b'new revision'
         private = await owner.call(
-            'content.chmod', {'id': rid, 'mode': '0600'},
+            'content.chmod',
+            {'id': rid, 'mode': '0600'},
             expected=((rid, changed.data['generation']),),
         )
         assert private.status == 'ok', wire(private)
@@ -77,19 +82,24 @@ async def test_mount_binary_empty_files_and_private_subtree(installed, tmp_path)
     ) as http:
         client = MsgClient(
             ClientState(tmp_path / 'owner', server=app.settings.service_url),
-            HTTPTransport(app.settings.service_url, http=http), clock=lambda: NOW,
+            HTTPTransport(app.settings.service_url, http=http),
+            clock=lambda: NOW,
         )
         assert (await client.register('mount-binary')).status == 'ok'
         parent = '/@mount-binary/files'
         bodies = {'bytes.bin': bytes(range(256)) * 500, 'empty.txt': b''}
         for name, body in bodies.items():
-            created = await client.call('file.create', {'parent': parent, 'name': name, 'data': b64(body)})
+            created = await client.call(
+                'file.create', {'parent': parent, 'name': name, 'data': b64(body)}
+            )
             assert created.status == 'ok', wire(created)
         backend = MountBackend(client, parent)
         assert set(await backend.directory('/')) == {'.', '..', *bodies}
         for name, body in bodies.items():
             node = await backend.node('/' + name)
             assert node.size == len(body)
-            result = b''.join([await backend.read(node, 65536, offset) for offset in range(0, len(body), 65536)])
+            result = b''.join([
+                await backend.read(node, 65536, offset) for offset in range(0, len(body), 65536)
+            ])
             assert result == body
             assert await backend.read(node, 10, len(body)) == b''

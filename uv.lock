@@ -472,6 +472,15 @@ wheels = [
 ]
 
 [[package]]
+name = "mfusepy"
+version = "3.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/91/47/746287c8962274f73ee25edb3840d80899464bfffbe2c435424c2d60a071/mfusepy-3.1.1.tar.gz", hash = "sha256:338ece54513d7d1a5e9492837679a0c7432ecf96a03490a2683a1ce1d19570e1", size = 34549, upload-time = "2026-03-13T00:36:52.636Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c5/d5/56bc9326bf75f7ea0f4fe1178f5c9f20d1a1e15e288ecf66088513538ccd/mfusepy-3.1.1-py3-none-any.whl", hash = "sha256:69fb70cfc7f7cce595e6ff586f8451d8298f01f18286a157f24f564b24ec5a37", size = 28264, upload-time = "2026-03-13T00:36:51.843Z" },
+]
+
+[[package]]
 name = "more-itertools"
 version = "11.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -509,6 +518,9 @@ dev = [
     { name = "uvicorn" },
     { name = "valkey" },
 ]
+fuse = [
+    { name = "mfusepy" },
+]
 server = [
     { name = "aiohttp" },
     { name = "dnspython" },
@@ -530,6 +542,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.28,<1" },
     { name = "jsonschema", specifier = ">=4.25,<5" },
     { name = "markdown-it-py", marker = "extra == 'server'", specifier = ">=4,<5" },
+    { name = "mfusepy", marker = "extra == 'fuse'", specifier = ">=3.1.1,<4" },
     { name = "msgctl", extras = ["server"], marker = "extra == 'dev'" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.3,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4" },
@@ -543,7 +556,7 @@ requires-dist = [
     { name = "valkey", marker = "extra == 'server'", specifier = ">=6.1,<7" },
     { name = "yubikey-manager", specifier = ">=5.8,<6" },
 ]
-provides-extras = ["server", "dev"]
+provides-extras = ["fuse", "server", "dev"]
 
 [[package]]
 name = "multidict"

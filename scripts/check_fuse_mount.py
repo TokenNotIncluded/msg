@@ -22,8 +22,11 @@ class FixtureBackend:
         if path not in {'/', '/data.bin'}:
             raise io_error(errno.ENOENT)
         return Node({
-            'id': 'root' if path == '/' else 'file', 'path': path,
-            'container': path == '/', 'revision': 'v_one', 'size': len(BODY),
+            'id': 'root' if path == '/' else 'file',
+            'path': path,
+            'container': path == '/',
+            'revision': 'v_one',
+            'size': len(BODY),
         })
 
     async def directory(self, path):
@@ -35,7 +38,7 @@ class FixtureBackend:
         return {}
 
     async def read(self, node, size, offset):
-        return BODY[offset:offset + size]
+        return BODY[offset : offset + size]
 
 
 def inspect_mount(path):
@@ -46,7 +49,11 @@ def inspect_mount(path):
         assert stream.read() == BODY
         stream.seek(12345)
         assert stream.read(2345) == BODY[12345:14690]
-    for operation in (lambda: target.write_bytes(b'no'), target.unlink, lambda: (path / 'new').mkdir()):
+    for operation in (
+        lambda: target.write_bytes(b'no'),
+        target.unlink,
+        lambda: (path / 'new').mkdir(),
+    ):
         try:
             operation()
         except OSError as exc:
