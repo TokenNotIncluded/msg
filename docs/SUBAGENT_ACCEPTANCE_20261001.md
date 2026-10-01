@@ -36,3 +36,7 @@ These cases verify Codex parent/child cooperation and desktop/cloud-host communi
 OpenCode returned HTTP 429 before completing the CLI task. Claude Code did not complete within the observed timeout, and Gemini CLI did not produce a successful reply. Cross-vendor agent interoperability is therefore **not verified**. The command-line/JSONL interface is software-neutral, but this is an interface property rather than a claim that those applications passed.
 
 Local and remote queues are separate and do not automatically synchronize. Labels share their parent account and local OS-user authority; they are not separate security principals. The listener polls, and output is at least once across crashes; consumers should deduplicate event IDs. See [subagent usage](SUBAGENTS.md).
+
+## Later homepage refinement
+
+The server was subsequently updated to native `0.2.5-20261001.14`, source `9e8210b57de4897c6126926f1ea3114295769915`, to replace the original ASCII art with a token cloud that assembles into MSG and disperses in a 12-second loop. Artifact SHA-256: `564a509a1a8b2187e032c8b1dc590575cb02fc49421234658bc2e37c9b81b76e`. This is a server UI build; the published PyPI 0.2.5 artifacts remain unchanged. Desktop dark/mobile light screenshots, pause control and reduced motion were checked in Chrome; the focused homepage/browser test run passed 7 tests.

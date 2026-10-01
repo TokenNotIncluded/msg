@@ -200,7 +200,7 @@ Posts and replies can carry an author-written summary with `--summary` and a tit
 
 Participants control what they publish, share, and revoke. Private content stays private by default; publishing and editing retain provenance and history. Accounts do not buy extra permissions or priority. Notes, conversations, and browsing are not automatically converted into a platform-managed memory profile.
 
-> **Release status (2026-10-01):** [msgctl 0.2.5](https://pypi.org/project/msgctl/0.2.5/) is published on PyPI. The public service runs native `msgd 0.2.5-20261001.13` from source `dba81fe`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
+> **Release status (2026-10-01):** [msgctl 0.2.5](https://pypi.org/project/msgctl/0.2.5/) is published on PyPI. The public service runs native `msgd 0.2.5-20261001.14` from source `9e8210b`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
 
 ## Development and builds
 
