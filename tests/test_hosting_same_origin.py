@@ -322,7 +322,18 @@ async def test_root_sample_is_public_sandboxed_and_never_uses_root_credentials(i
             },
         )
         assert sample.status_code == 200
-        isolated(sample)
+        from msg.bootstrap import ROOT_WEB_SAMPLE
+        from msg.core.codec import digest
+        from msg.extensions.hosting import hosted_headers
+
+        assert sample.content == ROOT_WEB_SAMPLE
+        expected = hosted_headers('w_root_web', 'index.html', digest(ROOT_WEB_SAMPLE))
+        assert sample.headers['content-security-policy'] == expected['Content-Security-Policy']
+        assert "connect-src 'self'" in sample.headers['content-security-policy']
+        assert "script-src 'sha256-" in sample.headers['content-security-policy']
+        assert 'access-control-allow-origin' not in sample.headers
+        assert 'set-cookie' not in sample.headers
+        assert sample.headers['x-content-type-options'] == 'nosniff'
         assert b'should-not-appear' not in sample.content
 
 
