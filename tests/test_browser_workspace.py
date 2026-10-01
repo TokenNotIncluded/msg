@@ -10,6 +10,7 @@ from test_service import call, register
 
 from msg.core.codec import canonical
 from msg.core.requests import request_for
+from msg.security.browser_actions import BROWSER_POST_WRITES
 from msg.security.oauth import OAuthService, get, state_id
 from msg.transports.http import create_app
 from msg.transports.oauth_http import csrf
@@ -58,7 +59,14 @@ async def test_browser_home_private_reads_logout_and_no_cookie_writes(oauth):
         credentials = await OAuthService(app).browser_credentials(tx, cookie)
         credential = await tx.credential(credentials[1])
         assert all(
-            app.registry.operation(op.split('@')[0], int(op.split('@')[1])).effect == 'read'
+            (
+                app.registry.operation(op.split('@')[0], int(op.split('@')[1])).effect == 'read'
+                or (
+                    op.split('@')[0] in BROWSER_POST_WRITES
+                    and op.endswith('@1')
+                    and not app.registry.operation(op.split('@')[0], 1).require_signature
+                )
+            )
             for grant in credential.ceiling
             for op in grant.operations
         )

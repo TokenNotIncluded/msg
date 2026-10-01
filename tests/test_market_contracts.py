@@ -23,7 +23,6 @@ from msg.security.crypto import Ed25519Signer
 @pytest.mark.parametrize(
     'argv,op,params',
     [
-        (['money', 'balance'], 'money.balance', {}),
         (['money', 'purchase', 'pur_one'], 'money.purchase_get', {'purchase_id': 'pur_one'}),
         (['orders', 'list', '{"status":"open"}'], 'orders.list', {'status': 'open'}),
         (['orders', 'contract', 'ord_one'], 'orders.contract', {'order_id': 'ord_one'}),
@@ -52,6 +51,28 @@ async def test_cli_routes_exact_contract_without_silent_price_or_recipient_chang
     assert (operation, parameters) == (op, params) and kwargs['request_id'] == 'retry-one'
     if argv[:2] == ['store', 'update']:
         assert kwargs['expected'] == (('listing', 2),)
+
+
+@pytest.mark.asyncio
+async def test_cli_balance_reads_currency_and_formats_minor_units():
+    calls = []
+
+    class Client:
+        checked = staticmethod(lambda value: value)
+
+        async def call(self, operation, parameters=None, **kwargs):
+            calls.append((operation, parameters, kwargs))
+            data = (
+                {'scale': 6, 'code': 'MSG'}
+                if operation == 'money.state'
+                else {'balance_minor': 1250000}
+            )
+            return SimpleNamespace(data=data)
+
+    result = await run_command(Client(), parser().parse_args(['money', 'balance']), arguments)
+    assert calls == [('money.state', None, {'anonymous': True}), ('money.balance', None, {})]
+    assert result['data']['balance_minor'] == 1250000
+    assert result['data']['balance'] == '1.25'
 
 
 @pytest.mark.asyncio
