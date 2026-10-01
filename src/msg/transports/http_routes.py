@@ -1045,6 +1045,10 @@ def create_app(service):
                 raise Failure('not_found')
             if request.method == 'OPTIONS':
                 return Response(status_code=405, headers=BASE_HEADERS)
+            if path in {'/_universe', '/_universe/me'}:
+                from msg.transports.universe import universe_response
+
+                return await universe_response(service, request, browser_account, execute_packet)
             if path == '/feed':
                 require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
                 operation = 'discovery.recommendations'
