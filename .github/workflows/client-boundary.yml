@@ -40,6 +40,8 @@ jobs:
               'run_id': os.environ['GITHUB_RUN_ID'], 'event': os.environ['GITHUB_EVENT_NAME'],
           }, indent=2) + '\n')
           PY
+      - name: Install smart-card build prerequisites
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libpcsclite-dev swig
       - name: Install full development dependencies
         run: python -m pip install -e '.[dev]'
       - name: Verify helper ownership, exact proof context and fail-closed assembly

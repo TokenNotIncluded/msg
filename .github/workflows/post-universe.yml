@@ -48,7 +48,7 @@ jobs:
       - name: Install project and browser verification tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age
+          sudo apt-get install -y -qq age libpcsclite-dev swig
           python -m pip install uv==0.12.20
           uv sync --locked --extra dev --python "$(command -v python)"
           uv run --with playwright==1.58.0 python -m playwright install --with-deps chromium

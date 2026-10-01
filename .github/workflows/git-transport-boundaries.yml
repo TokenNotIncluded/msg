@@ -44,7 +44,7 @@ jobs:
       - name: Install actual Git, LFS and cryptographic test tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq age git-lfs
+          sudo apt-get install -y -qq age git-lfs libpcsclite-dev swig
           git --version
           git lfs version
           python -m pip install -e '.[dev]'

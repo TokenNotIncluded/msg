@@ -37,7 +37,7 @@ jobs:
       - name: Install isolated test dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq postgresql-client-16 age
+          sudo apt-get install -y -qq postgresql-client-16 age libpcsclite-dev swig
           echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
           python -m pip install -e '.[dev]'
       - name: Record exact source

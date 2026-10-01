@@ -419,6 +419,9 @@ def parser():
     from msg.client_market import add_commands
 
     add_commands(commands)
+    from msg.client_yubikey import add_commands as add_yubikey_commands
+
+    add_yubikey_commands(commands)
     return cli
 
 
@@ -483,6 +486,10 @@ async def run(args):
             result = await run_command(client, args)
             if args.user and command == 'login':
                 await client.require_username(args.user)
+        elif command == 'yubikey':
+            from msg.client_yubikey import run_command
+
+            result = await run_command(client, args)
         elif command == 'api-key':
             from msg.client_api_keys import run_command
 

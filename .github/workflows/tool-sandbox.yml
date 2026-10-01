@@ -28,7 +28,7 @@ jobs:
       - name: Install sandbox and dependencies
         run: |
           sudo apt-get update -qq
-          sudo env NEEDRESTART_MODE=l apt-get install -y -qq bubblewrap apparmor-profiles
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq bubblewrap apparmor-profiles libpcsclite-dev swig
           sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
           python -m pip install -e '.[dev]'
       - name: Check real child startup before acceptance

@@ -178,7 +178,7 @@ license=('MIT')
 provides=('msgctl-server={version}-{release}')
 conflicts=('msgctl-server')
 replaces=('msgctl-server')
-depends=('glibc' 'gcc-libs' 'git' 'openssh' 'postgresql' 'bubblewrap' 'age' 'git-lfs')
+depends=('glibc' 'gcc-libs' 'git' 'openssh' 'postgresql' 'bubblewrap' 'age' 'git-lfs' 'pcsclite')
 options=('!strip' '!debug')
 source=('payload.tar.gz')
 sha256sums=('{checksum}')
@@ -210,7 +210,7 @@ Conflicts: msgctl-server
 Replaces: msgctl-server
 Maintainer: TokenNotIncluded
 Installed-Size: {size}
-Depends: libc6 (>= 2.28), libgcc-s1, git, openssh-server, postgresql, bubblewrap, age, git-lfs, systemd
+Depends: libc6 (>= 2.28), libgcc-s1, git, openssh-server, postgresql, bubblewrap, age, git-lfs, systemd, libpcsclite1
 Description: msg service with independent locked Python runtime
  Configuration and CA initialization are explicit administrator operations.
 """)
@@ -248,7 +248,7 @@ AutoReqProv: no
 Provides: msgctl-server = {version}-{release}
 Conflicts: msgctl-server
 Obsoletes: msgctl-server
-Requires: glibc >= 2.28, libgcc, git, openssh-server, postgresql-server, bubblewrap, age, git-lfs, systemd
+Requires: glibc >= 2.28, libgcc, git, openssh-server, postgresql-server, bubblewrap, age, git-lfs, systemd, libpcsclite.so.1()(64bit)
 %description
 Configuration and CA initialization are explicit administrator operations.
 %prep

@@ -44,7 +44,7 @@ jobs:
       - name: Install real cryptographic and database tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y age postgresql-client-16 bubblewrap apparmor-profiles
+          sudo apt-get install -y age postgresql-client-16 bubblewrap apparmor-profiles libpcsclite-dev swig
           sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
           echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
           python -m pip install -e '.[dev]'
