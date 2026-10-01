@@ -92,12 +92,15 @@ select:hover { border-color: var(--muted); }
 summary { cursor: pointer; }
 .hero { margin: 36px 0 40px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
-.ascii-art { margin: 24px 0 28px; color: var(--fg); }
-.ascii-art pre { background: none; border-radius: 0; padding: 0; margin: 0; overflow: visible; white-space: pre; overflow-wrap: normal; font-family: var(--mono); }
-.ascii-wordmark { font-size: clamp(16px, 4vw, 30px); line-height: 1.15; letter-spacing: 0; }
-.ascii-packets { display: grid; margin-top: 22px; color: var(--accent); }
-.ascii-frame { grid-area: 1 / 1; font-size: 13px; line-height: 1.5; opacity: 0; }
-.ascii-frame-0 { opacity: 1; }
+/* The static default is a readable MSG; only the visible hero runs. */
+.token-art { position: relative; width: min(100%, 720px); margin: 12px 0 24px; }
+.token-cloud { display: block; width: 100%; height: auto; overflow: hidden; }
+.token { fill: var(--fg); font: 16px var(--mono); text-anchor: middle; transform-box: fill-box; transform-origin: center; }
+.token-accent { fill: var(--accent); }
+.token-pause { position: absolute; right: 0; bottom: 0; width: 44px; height: 44px; padding: 15px; border: 0; border-radius: 0; background: none; color: var(--muted); }
+.token-pause:hover { color: var(--fg); background: none; }
+.token-pause .play-mark, .token-pause[aria-pressed=true] .pause-mark { display: none; }
+.token-pause[aria-pressed=true] .play-mark { display: initial; }
 .eyebrow { color: var(--muted); font: 12px/1.5 var(--mono); letter-spacing: .02em; }
 h1 { font-size: clamp(36px, 5.8vw, 64px); line-height: 1.09; letter-spacing: -.045em; font-weight: 650; margin: 20px 0; text-wrap: balance; }
 h2 { font-size: 23px; line-height: 1.3; letter-spacing: -.025em; font-weight: 600; margin: 0 0 20px; }
@@ -186,17 +189,17 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 32px; }
 }
 @media (prefers-reduced-motion: no-preference) {
   a, button { transition: color .15s ease, background-color .15s ease; }
-  /* One packet exchange, three times; settle before five seconds. No endless loop. */
-  .ascii-frame { animation-duration: 1.6s; animation-timing-function: steps(1, end); animation-iteration-count: 3; }
-  .ascii-frame-0 { animation-name: packet-0; }
-  .ascii-frame-1 { animation-name: packet-1; }
-  .ascii-frame-2 { animation-name: packet-2; }
-  .ascii-frame-3 { animation-name: packet-3; }
+  .token-art[data-running] .token {
+    animation: token-assemble 12s cubic-bezier(.22, 1, .36, 1) infinite;
+    animation-delay: var(--phase); animation-play-state: paused;
+  }
+  .token-art[data-running=true] .token { animation-play-state: running; }
 }
-@keyframes packet-0 { 0%, 100% { opacity: 1; } 25%, 75% { opacity: 0; } }
-@keyframes packet-1 { 0%, 50%, 100% { opacity: 0; } 25% { opacity: 1; } }
-@keyframes packet-2 { 0%, 25%, 75%, 100% { opacity: 0; } 50% { opacity: 1; } }
-@keyframes packet-3 { 0%, 50%, 100% { opacity: 0; } 75% { opacity: 1; } }
+@keyframes token-assemble {
+  0%, 12%, 100% { transform: translate(var(--dx), var(--dy)) rotate(var(--turn)); opacity: .38; }
+  38%, 65% { transform: translate(0, 0) rotate(0deg); opacity: 1; }
+  85% { transform: translate(var(--dx), var(--dy)) rotate(var(--turn)); opacity: .38; }
+}
 @media (forced-colors: active) {
   select, button, .account .primary { border: 1px solid ButtonText; }
   :focus-visible { outline-color: Highlight; }
