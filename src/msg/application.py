@@ -197,6 +197,9 @@ class Application:
         )
 
     async def _event_notifications(self, session, event):
+        from msg.extensions.websub import enqueue_publication
+
+        await enqueue_publication(self, session, event)
         if 'communication' not in self.settings.server.plugins:
             return
         from msg.plugins.communication import enqueue_domain_webhooks

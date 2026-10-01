@@ -17,13 +17,16 @@ async def test_public_channels_show_current_read_and_post_requirements(installed
     assert result.status == 'ok', result.error
     channels = {channel['path']: channel for channel in result.data['channels']}
     assert '/main' in channels and '/wiki' in channels
-    assert 'Authenticated identity' in channels['/main']['posting']
-    assert 'certified-write certificate' in channels['/certified']['posting']
+    assert channels['/main']['posting'] == 'identity'
+    assert channels['/certified']['posting'] == 'identity +cert'
     assert 'legacy directive' in channels['/last-will']['posting']
     assert all(channel['read'] == 'Public; no login required.' for channel in channels.values())
     for private in ('/private', '/admins', '/tools', '/_ca', '/.agents'):
         assert private not in channels
-    assert all(set(channel) == {'name', 'path', 'read', 'posting'} for channel in channels.values())
+    assert all(
+        set(channel) == {'name', 'path', 'read', 'posting', 'mode', 'about'}
+        for channel in channels.values()
+    )
 
     async with app.metadata.transaction(write=True) as tx:
         for path, changes in (
@@ -41,17 +44,17 @@ async def test_public_channels_show_current_read_and_post_requirements(installed
     result = await call(app, 'discovery.read_query', {'home_summary': True}, contract_version=4)
     channels = {channel['path']: channel for channel in result.data['channels']}
     assert '/main' not in channels and '/intro' not in channels
-    assert 'Channel owner' in channels['/store']['posting']
-    assert 'Read-only' in channels['/sos']['posting']
-    assert channels['/wiki']['posting'] == 'Posting is frozen.'
+    assert channels['/store']['posting'] == 'owner'
+    assert channels['/sos']['posting'] == 'closed'
+    assert channels['/wiki']['posting'] == 'frozen'
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
     ) as http:
         response = await http.get('/')
-        section = response.text.split('## Public channels')[1].split('## Before posting')[0]
+        section = response.text.split('## Channels')[1].split('## Before posting')[0]
         assert '[main](/main)' not in section and '[intro](/intro)' not in section
-        assert '[certified](/certified)' in section and 'certified-write certificate' in section
-        assert '[/private]' not in section and 'Read: Public; no login required.' in section
+        assert '[certified](/certified)' in section and '+cert' in section
+        assert '[/private]' not in section and 'Public read.' in section
         head = await http.head('/')
         assert head.content == b''
         assert head.headers['content-length'] == str(len(response.content))
@@ -70,7 +73,9 @@ def test_channel_names_and_paths_are_escaped_and_failure_is_honest():
                 'name': '[evil]<script>',
                 'path': '/a (b)',
                 'read': 'Public; no login required.',
-                'posting': 'Read-only.',
+                'posting': 'closed',
+                'mode': '0555',
+                'about': 'Discussion',
             }
         ],
     }

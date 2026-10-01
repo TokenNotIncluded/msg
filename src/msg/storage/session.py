@@ -9,11 +9,13 @@ Only this session's owning task can access its transaction or results.
 from __future__ import annotations
 
 import asyncio
+import re
 from abc import ABC, abstractmethod
 from dataclasses import replace
 
 from msg.core.codec import canonical, decode, digest, loads, wire
 from msg.core.errors import require
+from msg.core.identifiers import HEX_ID_PATTERN, PREFIXED_HEX_ID_PATTERN
 from msg.core.models import (
     Certificate,
     CertificateRequest,
@@ -36,6 +38,15 @@ from msg.core.query import QueryResult, SettingValue, SqlParameters, SqlRow
 
 
 class RelationalSession(ABC):
+    # Adapters may supply an equivalent database expression. Keep the prefix
+    # grammar aligned with the public reference converter, including legacy IDs.
+    hex_reference_sql = (
+        f"CASE WHEN id ~ '^{HEX_ID_PATTERN}$' THEN id "
+        f"WHEN id ~ '^{PREFIXED_HEX_ID_PATTERN}$' THEN right(id,32) "
+        "ELSE left(encode(sha256(convert_to('msg.hex-reference/v1','UTF8') "
+        "|| decode('00','hex') || convert_to(id,'UTF8')),'hex'),32) END"
+    )
+
     def __init__(self, *, write: bool):
         self.write = write
         self.owner_task = asyncio.current_task()
@@ -92,6 +103,13 @@ class RelationalSession(ABC):
 
     async def resource(self, id):
         row = self.one('SELECT body FROM resources WHERE id=?', (id,))
+        if isinstance(id, str) and re.fullmatch(HEX_ID_PATTERN, id):
+            rows = self.rows(
+                'SELECT body FROM resources WHERE ' + self.hex_reference_sql + ' = ? LIMIT 2',
+                (id,),
+            )
+            require(len(rows) <= 1, 'ambiguous_resource_id')
+            row = rows[0] if rows else None
         require(row is not None, 'not_found')
         return decode(Resource, loads(row[0]))
 
@@ -104,6 +122,13 @@ class RelationalSession(ABC):
         )
         if len(parts) == 2 and parts[0] == '_id':
             return (await self.resource(parts[1])).id
+        if parts and parts[-1].startswith('*'):
+            resource = await self.resource(parts[-1][1:])
+            if len(parts) > 1:
+                require(
+                    resource.parent == await self.resolve('/' + '/'.join(parts[:-1])), 'not_found'
+                )
+            return resource.id
         row = self.one('SELECT id FROM resources WHERE parent IS NULL')
         require(row is not None, 'not_initialized')
         rid = row[0]
@@ -175,7 +200,19 @@ class RelationalSession(ABC):
 
     async def revision(self, ref):
         rid = ref.revision or (await self.resource(ref.id)).revision
-        row = self.one('SELECT body FROM revisions WHERE id=? AND resource_id=?', (rid, ref.id))
+        resource_id = (await self.resource(ref.id)).id
+        row = self.one(
+            'SELECT body FROM revisions WHERE id=? AND resource_id=?', (rid, resource_id)
+        )
+        if isinstance(rid, str) and re.fullmatch(HEX_ID_PATTERN, rid):
+            rows = self.rows(
+                'SELECT body FROM revisions WHERE resource_id=? AND '
+                + self.hex_reference_sql
+                + ' = ? LIMIT 2',
+                (resource_id, rid),
+            )
+            require(len(rows) <= 1, 'ambiguous_revision_id')
+            row = rows[0] if rows else None
         require(row is not None, 'revision_not_found')
         return decode(Revision, loads(row[0]))
 

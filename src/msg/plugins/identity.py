@@ -264,6 +264,26 @@ async def issue_online(
     authority_source=None,
 ):
     issuer = await app.online_issuer(tx)
+    if grants is None:
+        # Registry additions do not extend an existing CA's signed authority.
+        # Keep registration usable until an operator approves the new versions.
+        available = []
+        for requested in app.base_grants():
+            for allowed in issuer.issuance.issue_grants:
+                if (requested.capability, requested.version) != (
+                    allowed.capability,
+                    allowed.version,
+                ):
+                    continue
+                operations = requested.operations & allowed.operations
+                if not operations:
+                    continue
+                candidate = replace(requested, operations=operations)
+                if candidate not in available and await app.certificates.allowed_issuance(
+                    candidate, issuer.issuance, tx
+                ):
+                    available.append(candidate)
+        grants = tuple(available)
     now = ctx.now
     lifetime = app.settings.base_certificate_ttl if ttl is None else ttl
     require(0 < lifetime <= issuer.issuance.max_cert_ttl_seconds, 'certificate_ttl_escalation')
@@ -289,7 +309,7 @@ async def issue_online(
         parent_certificate_id=issuer.resource_id,
         authority_sources=tuple(sources),
         kind=kind,
-        grants=tuple(app.base_grants() if grants is None else grants),
+        grants=tuple(grants),
         not_before=now,
         expires_at=min(now + timedelta(seconds=lifetime), issuer.expires_at),
         target_service=app.settings.service_url,

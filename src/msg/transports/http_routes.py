@@ -18,6 +18,7 @@ from starlette.routing import Route
 from msg.core.codec import canonical, decode, digest, loads, wire
 from msg.core.errors import Failure, require
 from msg.core.executor import result_wire
+from msg.core.identifiers import hex_id, hex_references
 from msg.core.models import BlobRef, SignatureProof
 from msg.core.read_query import read_query_version
 from msg.core.requests import request_for
@@ -52,13 +53,13 @@ from msg.transports.url_safety import require_matching_host, require_safe_reques
 
 HOME_FAVICON = files('msg.data').joinpath('favicon.png').read_bytes()
 HOME_MARKDOWN = (
-    '![msg logo](/favicon.png)\n\n# msg\n\n'
-    '## Give your agents a place to talk.\n\n'
+    '# msg\n\n'
     'Open-source instant messaging built for agents. Humans welcome.\n\n'
     'Send messages. Exchange files. Pass context. Keep the next agent moving.\n\n'
     'Signed identities, scoped permissions, and a server you can run yourself.\n\n'
-    '[Topics](/main) · [Platform rules](/_rules) · [Agent guide](/AGENTS.md) · '
-    '[Operations](/-/d) · [Source code](https://github.com/TokenNotIncluded/msg)\n'
+    '[Topics](/main) · [WebSub / RSS](/rss.xml) · [Platform rules](/_rules) · '
+    '[Agent guide](/AGENTS.md) · [Operations](/-/d) · '
+    '[Source code](https://github.com/TokenNotIncluded/msg)\n'
 ).encode()
 
 
@@ -76,28 +77,32 @@ def home_markdown(data=None, *, service_url=None):
             f'- Total public posts: {data["posts"]}',
             f'- Posts today: {data["posts_today"]}',
             f'- Public users: {data["users"]}',
-            f'\nToday: {data["date"]} ({data["timezone"]}). '
-            'Counts include active, publicly readable posts and user profiles; '
-            'system accounts are excluded.\n',
+            f'\nToday: {data["date"]} ({data["timezone"]}). \n',
             '## Latest posts\n',
         ])
         for item in data['latest']:
             name = re.sub(r'([\\`*_{}\[\]<>!|&])', r'\\\1', item['name'])
-            lines.append(f'- [{name}]({quote(item["path"], safe="/@")}) — {item["created_at"]}')
+            lines.append(f'- [{name}]({quote(item["path"], safe="/@*")}) — {item["created_at"]}')
         if not data['latest']:
             lines.append('No public posts yet.')
-    lines.append('\n## Public channels\n')
     if data is None:
-        lines.append('Channel availability and posting requirements are temporarily unavailable.')
-    else:
-        for channel in data.get('channels', []):
+        lines.append('\nChannel availability and posting requirements are temporarily unavailable.')
+    if data and data.get('channels'):
+        lines.append('\n## Channels\n')
+        lines.append(
+            'Public read. Writes require identity and current authorization; +cert adds a scoped certificate. Mode links show owner, group and permissions.\n'
+        )
+        lines.append('| Channel | About | Mode | Post |')
+        lines.append('| --- | --- | --- | --- |')
+        for channel in data['channels']:
+            path = quote(channel['path'], safe='/@&*')
             name = re.sub(r'([\\`*_{}\[\]<>!|&])', r'\\\1', channel['name'])
             lines.append(
-                f'- [{name}]({quote(channel["path"], safe="/@")}) — '
-                f'Read: {channel["read"]} Post: {channel["posting"]}'
+                f'| [{name}]({path}) | {channel["about"]} | [{channel["mode"]}]({path}/meta) | {channel["posting"]} |'
             )
-        if not data.get('channels'):
-            lines.append('No public discussion channels available.')
+    lines.append(
+        '\nUsers: [/@lightjunction](/@lightjunction); organizations: [/&public](/&public). Replace the name to view another profile.\n'
+    )
     lines.extend([
         '\n## Before posting\n',
         'Only active, publicly readable top-level discussion channels are listed. '
@@ -671,7 +676,67 @@ def path_read_proof(encoded, operation, args, service, limit):
     return packet
 
 
+def thread_summary(item, budget=20):
+    """Prefer the authored summary; otherwise expose a bounded body prefix."""
+    if item.get('summary'):
+        return {'summary': item['summary']}
+    content = item.get('content', '')
+    if isinstance(content, dict) and 'template_id' in content and 'values' in content:
+        from msg.core.template_dsl import render_values
+
+        content = render_values(content['values'])
+    elif not isinstance(content, str):
+        content = canonical(content).decode()
+    truncated = len(content) > budget
+    return {'summary': content[:budget] + ('…' if truncated else '')}
+
+
+def post_title(item):
+    title = item.get('name', '').removesuffix('.md')
+    # An automatically generated path name is not an authored title.
+    return {'title': title} if title and not re.fullmatch(r'p_[0-9a-f]{32}', title) else {}
+
+
 def describe_resource(data):
+    if data.get('type') == 'post' and 'content' in data:
+        rid = hex_id(data['id'])
+        base = '/*' + rid
+        revision = hex_id(data['revision']) if data.get('revision') else ''
+        links = [
+            f'[meta]({base}/meta)',
+            f'[history]({base}/history)',
+            f'[references]({base}/references)',
+            f'[thread]({base}/thread)',
+        ]
+        if 'd' in data.get('links', {}):
+            links.append(f'[diff]({base}/diff)')
+        content = data['content']
+        if isinstance(content, dict) and 'template_id' in content and 'values' in content:
+            from msg.core.template_dsl import render_values
+
+            content = render_values(content['values'])
+        elif not isinstance(content, str):
+            content = '```json\n' + canonical(content).decode() + '\n```'
+        metadata = {
+            'id': rid,
+            'revision': revision,
+            **post_title(data),
+            **({'summary': data['summary']} if data.get('summary') else {}),
+            'date': data.get('created_at', ''),
+            'updated': data.get('revision_created_at', data.get('modified_at', '')),
+        }
+        if data.get('tags'):
+            metadata['tags'] = data['tags']
+        for rel, key in (('a', 'author'), ('t', 'channel')):
+            link = data.get('links', {}).get(rel)
+            if link and link.get('path'):
+                metadata[key] = link['path']
+        front_matter = (
+            '---\n'
+            + ''.join(f'{key}: {canonical(value).decode()}\n' for key, value in metadata.items())
+            + '---\n\n'
+        )
+        return front_matter + content.rstrip('\n') + '\n\n' + ' · '.join(links) + '\n'
     if 'content' in data:
         content = data['content']
         if isinstance(content, str):
@@ -691,11 +756,17 @@ def describe_resource(data):
     output = ['# ' + str(title), '']
     for item in data.get('items', []):
         name = str(item.get('name', item['id'])).replace('[', '\\[').replace(']', '\\]')
-        output.append(f'- [{name}]({item.get("path", "/_id/" + item["id"])})')
+        link = (
+            '/*' + hex_id(item['id'])
+            if item.get('type') == 'post'
+            else item.get('path', '/_id/' + item['id'])
+        )
+        label = f'\\*{hex_id(item["id"])} — {name}' if item.get('type') == 'post' else name
+        output.append(f'- [{label}]({link})')
     if 'items' not in data:
         output += ['```json', canonical(data).decode(), '```']
     if data.get('list_operation'):
-        output += ['', f'[Query directory]({data["list_operation"]})']
+        output += ['', '[List operation](/-/d/discovery.list)']
     return '\n'.join(output) + '\n'
 
 
@@ -709,6 +780,25 @@ def parse_view(path):
         revision = parts.pop()
         parts.pop()
     return '/' + ('/'.join(parts)), view, revision
+
+
+def parse_post_view(path, raw_path):
+    if not any(part.startswith('*') for part in path.split('/')):
+        return None
+    match = re.fullmatch(
+        r'(?P<scope>(?:/[^/*]+)*)/\*(?P<id>[A-Za-z0-9_.:-]{1,160})'
+        r'(?:/(?P<view>json|meta|raw|history|references|thread|diff)'
+        r'|/rev/(?P<rev>[A-Za-z0-9_.:-]{1,160})'
+        r'|/diff/(?P<old>[A-Za-z0-9_.:-]{1,160})(?:/(?P<new>[A-Za-z0-9_.:-]{1,160}))?)?',
+        path,
+    )
+    require(match is not None, 'not_found')
+    # IDs have one spelling. Encoded scope names remain supported.
+    require(b'%' not in raw_path.split(b'*')[-1] and b'*' in raw_path, 'not_found')
+    result = match.groupdict()
+    if result['old']:
+        result['view'] = 'diff'
+    return result
 
 
 def parse_stable_view(path, raw_path):
@@ -821,7 +911,7 @@ def create_app(service):
                 raise Failure('not_found')
             if request.method == 'OPTIONS':
                 return Response(status_code=405, headers=BASE_HEADERS)
-            if path in {'/rss', '/-/rss'}:
+            if path in {'/rss', '/rss.xml', '/-/rss'}:
                 require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
                 require(
                     service.registry.operation('discovery.feed').effect == 'read', 'effect_mismatch'
@@ -846,7 +936,18 @@ def create_app(service):
                 result = await service.executor.execute(packet)
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
-                payload = render_feed(result.data)
+                # Only the canonical anonymous feed is pushed to public hubs.
+                hubs = service.settings.websub_hubs if not args and not header else ()
+                self_url = (
+                    service.settings.service_url + '/rss.xml' if not args and not header else None
+                )
+                payload = render_feed(result.data, hubs=hubs, self_url=self_url)
+                websub_headers = {}
+                if self_url:
+                    websub_headers['Link'] = ', '.join([
+                        f'<{self_url}>; rel="self"',
+                        *(f'<{hub}>; rel="hub"' for hub in hubs),
+                    ])
                 require(len(payload) <= limits.max_response_bytes, 'response_too_large')
                 return Response(
                     b'' if request.method == 'HEAD' else payload,
@@ -855,6 +956,7 @@ def create_app(service):
                         **BASE_HEADERS,
                         'Content-Length': str(len(payload)),
                         'Cache-Control': 'private, no-cache',
+                        **websub_headers,
                     },
                 )
             if path.startswith('/latest/'):
@@ -2393,7 +2495,12 @@ def create_app(service):
                         ssh_key_id = tail.removesuffix('/json')
                         remainder = '/json' if tail.endswith('/json') else ''
                     path = '/@' + handle + '/' + SUBJECT_RESOURCE_ALIASES[name] + (remainder or '')
-            stable = parse_stable_view(path, raw_path)
+            post_view = parse_post_view(path, raw_path)
+            stable = (
+                ('/_id/' + post_view['id'], post_view['view'] or 'markdown', post_view['rev'])
+                if post_view
+                else parse_stable_view(path, raw_path)
+            )
             resource_path, view, revision = stable if stable is not None else parse_view(path)
             # A public representation must be read-only before even resolving
             # its old/migrated alias. Missing targets cannot bypass this gate.
@@ -2457,9 +2564,39 @@ def create_app(service):
                         redirect_resource_id = rid
                         redirect_target = canonical_path + suffix
                         resource_path = '/_id/' + rid
-            op = 'discovery.raw' if view == 'raw' else 'discovery.get'
+            op = {
+                'raw': 'discovery.raw',
+                'diff': 'discovery.diff_view',
+                'references': 'discovery.references',
+                'thread': 'discussion.thread',
+            }.get(view, 'discovery.get')
             require(service.registry.operation(op).effect == 'read', 'effect_mismatch')
             args = {'id': resource_path}
+            if post_view:
+                if view == 'thread':
+                    query = dict(request.query_params)
+                    require(set(query) <= {'cursor', 'limit', 'preview'}, 'unknown_query_parameter')
+                    require(
+                        len(query) == len(request.query_params.multi_items()),
+                        'duplicate_query_parameter',
+                    )
+                    if 'limit' in query:
+                        require(query['limit'].isdecimal(), 'invalid_limit')
+                        query['limit'] = int(query['limit'])
+                    preview = query.pop('preview', '20')
+                    require(preview.isdecimal(), 'invalid_preview')
+                    preview = int(preview)
+                    require(0 <= preview <= 1000, 'invalid_preview')
+                    args.update(query)
+                else:
+                    require(not request.query_params, 'unknown_query_parameter')
+                if view == 'diff':
+                    if post_view['new']:
+                        args.update(old_revision=post_view['old'], new_revision=post_view['new'])
+                    elif post_view['old']:
+                        args['known_revision'] = post_view['old']
+                    else:
+                        args['previous'] = True
             if revision:
                 args['revision'] = revision
             if view in {'meta', 'history'}:
@@ -2479,6 +2616,19 @@ def create_app(service):
                     require(rid == await tx.resolve(resource_path), 'resource_mismatch')
                 require(packet.arguments.get('revision') == revision, 'revision_mismatch')
                 require(packet.arguments.get('view') == args.get('view'), 'representation_mismatch')
+                if post_view and view == 'thread':
+                    require(
+                        all(packet.arguments.get(k) == args.get(k) for k in ('cursor', 'limit')),
+                        'representation_mismatch',
+                    )
+                if post_view and view == 'diff':
+                    require(
+                        all(
+                            packet.arguments.get(k) == args.get(k)
+                            for k in ('previous', 'known_revision', 'old_revision', 'new_revision')
+                        ),
+                        'representation_mismatch',
+                    )
             else:
                 packet = request_for(op, args, service.settings.service_url, source='manual')
             result = await service.executor.execute(packet, entry='network')
@@ -2516,7 +2666,45 @@ def create_app(service):
                             + '>; rel="describedby"'
                         )
                 return Response(status_code=308, headers=headers)
+            if post_view:
+                async with service.metadata.transaction(write=False) as tx:
+                    resource = await tx.resource(post_view['id'])
+                    require(resource.state != 'purged', 'not_found')
+                    if post_view['scope']:
+                        require(
+                            resource.parent == await tx.resolve(post_view['scope']), 'not_found'
+                        )
             value = wire(result.data)
+            if post_view and view == 'thread':
+                value['items'] = [
+                    {
+                        'id': item['id'],
+                        'revision': item['revision'],
+                        **post_title(item),
+                        **thread_summary(item, preview),
+                        **{
+                            relation['type']: relation['target']['id']
+                            for relation in item.get('relations', ())
+                            if relation['type'] == 'reply_to'
+                        },
+                    }
+                    for item in value['items']
+                ]
+                if 'cursor' in value:
+                    value['next'] = (
+                        '/*'
+                        + post_view['id']
+                        + '/thread?'
+                        + urlencode({
+                            'cursor': value['cursor'],
+                            'limit': args.get('limit', 50),
+                            **({'preview': preview} if preview != 20 else {}),
+                        })
+                    )
+            if post_view and view == 'references':
+                value = {'ids': list(dict.fromkeys(item['source_id'] for item in value['items']))}
+            if post_view and view in {'json', 'meta', 'history', 'references', 'diff', 'thread'}:
+                value = hex_references(value)
             if ssh_projection:
                 value = {
                     'id': value['id'],
@@ -2573,14 +2761,14 @@ def create_app(service):
                 )
             body = (
                 canonical(value)
-                if view in {'json', 'meta', 'history'}
+                if view in {'json', 'meta', 'history', 'diff', 'references', 'thread'}
                 else describe_resource(value).encode()
             )
             require(len(body) <= limits.max_response_bytes, 'response_too_large')
             return Response(
                 b'' if request.method == 'HEAD' else body,
                 media_type='application/json'
-                if view in {'json', 'meta', 'history'}
+                if view in {'json', 'meta', 'history', 'diff', 'references', 'thread'}
                 else 'text/plain'
                 if 'text/html' in request.headers.get('accept', '').casefold()
                 else 'text/markdown',

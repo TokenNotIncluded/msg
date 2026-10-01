@@ -274,6 +274,7 @@ async def create_post(app, ctx, request, tx, *, parent, relations=()):
         resource_id=args.get('resource_id'),
         revision_id=args.get('revision_id'),
         content_signature=args.get('content_signature'),
+        summary=args.get('summary'),
     )
     return resource, metadata
 
@@ -461,6 +462,7 @@ def install(app):
         'parent': IDENTIFIER,
         'name': STRING,
         'body': STRING,
+        'summary': {'type': 'string', 'maxLength': 280},
         'template': {'anyOf': [STRING, obj({'id': IDENTIFIER, 'version': INTEGER}, ('id',))]},
         'values': {'type': 'object'},
         'source': REF,
@@ -469,7 +471,8 @@ def install(app):
         'revision_id': IDENTIFIER,
         'content_signature': SIGNATURE,
     }
-    app.post_fields = post_fields
+    app.post_fields = {key: value for key, value in post_fields.items() if key != 'summary'}
+    app.summary_post_fields = post_fields
 
     @op(
         'content.topic_create',
@@ -889,8 +892,14 @@ def install(app):
 
     @op(
         'content.post_create',
+        obj(app.post_fields, ('parent',)),
+        requirements=requirement('parent', 'create'),
+    )
+    @op(
+        'content.post_create',
         obj(post_fields, ('parent',)),
         requirements=requirement('parent', 'create'),
+        version=2,
     )
     async def post_create(ctx, request, tx):
         resource, meta = await create_post(
@@ -934,6 +943,7 @@ def install(app):
             'id': IDENTIFIER,
             'expected_revision': IDENTIFIER,
             'body': STRING,
+            'summary': post_fields['summary'],
             'template': post_fields['template'],
             'values': {'type': 'object'},
             'source': REF,
@@ -944,8 +954,15 @@ def install(app):
         ('id', 'expected_revision'),
     )
 
-    @op('content.post_write', post_write_schema, requirements=requirement('id', 'write'))
-    @op('content.post_edit', post_write_schema, requirements=requirement('id', 'write'))
+    legacy_write_schema = obj(
+        {key: value for key, value in post_write_schema['properties'].items() if key != 'summary'},
+        ('id', 'expected_revision'),
+    )
+
+    @op('content.post_write', legacy_write_schema, requirements=requirement('id', 'write'))
+    @op('content.post_edit', legacy_write_schema, requirements=requirement('id', 'write'))
+    @op('content.post_write', post_write_schema, requirements=requirement('id', 'write'), version=2)
+    @op('content.post_edit', post_write_schema, requirements=requirement('id', 'write'), version=2)
     async def post_edit(ctx, request, tx):
         resource = await tx.resource(await resolve(tx, request.arguments['id']))
         require(resource.type == 'post' and resource.state == 'active', 'not_editable')
@@ -976,6 +993,9 @@ def install(app):
         elif request.arguments.get('source') is not None:
             require('body' not in request.arguments, 'ambiguous_content')
             body, media = await source_content(app, ctx, request, tx, request.arguments['source'])
+        elif 'summary' in request.arguments and 'body' not in request.arguments:
+            body, media = old.content, old.content.media_type
+            relations = old.relations
         else:
             require('body' in request.arguments, 'body_required')
             body, media = request.arguments['body'], 'text/markdown'
@@ -991,6 +1011,7 @@ def install(app):
             author=old.author,
             signature=request.arguments.get('content_signature'),
             revision_id=request.arguments.get('revision_id'),
+            summary=request.arguments.get('summary', old.summary),
         )
         return output_for(updated)
 
@@ -1104,6 +1125,7 @@ def install(app):
             author=current.author,
             signature=a.get('content_signature'),
             revision_id=a.get('revision_id'),
+            summary=historical.summary,
         )
         return output_for(updated, rolled_back_from=historical.id)
 

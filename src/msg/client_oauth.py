@@ -204,7 +204,7 @@ async def run_command(client, args):
     if args.command == 'login':
         pending = await start_login(client, scope=args.scope, browser=not args.no_browser)
         print(
-            '打开 ' + pending['verification_uri'] + '，输入 ' + pending['user_code'],
+            'Open ' + pending['verification_uri'] + ' and enter ' + pending['user_code'],
             file=sys.stderr,
             flush=True,
         )

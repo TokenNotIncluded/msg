@@ -70,6 +70,12 @@ def _vectors():
         ),
         'server.temporary_ttl': (3600, 1, 0, 'invalid_ttl'),
         'server.transfer_ttl': (86400, 1, 0, 'invalid_ttl'),
+        'websub.hubs': (
+            [],
+            ['https://one.example.org/hub', 'https://two.example.org/hub'],
+            ['http://one.example.org/hub'],
+            'invalid_webhook_url',
+        ),
         'storage.postgres_dsn': (
             _REQUIRED,
             'service=isolated',

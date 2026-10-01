@@ -166,7 +166,12 @@ async def test_new_application_load_syncs_changed_packaged_release(
     source = tmp_path / 'system'
     shutil.copytree(bootstrap.system_source_root(), source)
     rules = source / 'rules' / 'topics.md'
-    rules.write_text(rules.read_text().replace('version: 1', 'version: 2') + '\nRelease update.\n')
+    source_text = rules.read_text()
+    version = int(re.search(r'version: (\d+)', source_text)[1])
+    rules.write_text(
+        source_text.replace(f'version: {version}', f'version: {version + 1}', 1)
+        + '\nRelease update.\n'
+    )
     monkeypatch.setattr(bootstrap, 'system_source_root', lambda: source)
     async with app.metadata.transaction(write=False) as tx:
         before = (await tx.resource('r_rule_topics')).revision

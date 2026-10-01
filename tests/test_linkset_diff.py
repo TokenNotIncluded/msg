@@ -93,7 +93,9 @@ async def test_linkset_uses_real_refs_and_authorized_collection_pages(installed)
         assert projection.json()['links']['self']['ref'] == links['self']['ref']
         markdown = await http.get(links['self']['path'])
         assert markdown.status_code == 200
-        assert '[t](/main)' in markdown.text
+        assert markdown.text.startswith('---\n')
+        assert 'channel: "/main"' in markdown.text
+        assert 'author: "/@link-owner"' in markdown.text
         page = await http.get(f'/_r/{rid}/l/c?limit=1')
         assert page.status_code == 200, page.text
         assert [item['ref']['id'] for item in page.json()['items']][0] in replies

@@ -90,7 +90,12 @@ def install(app):
     op, finish = registration(app, 'discussion', ('identity', 'content'))
     fields = {k: v for k, v in app.post_fields.items() if k != 'parent'}
 
+    summary_fields = {
+        key: value for key, value in app.summary_post_fields.items() if key != 'parent'
+    }
+
     @op('discussion.reply', obj({**fields, 'target': REF}, ('target',)))
+    @op('discussion.reply', obj({**summary_fields, 'target': REF}, ('target',)), version=2)
     async def reply(ctx, request, tx):
         target = decode(ResourceRef, request.arguments['target'])
         original = await tx.resource(target.id)
@@ -136,6 +141,11 @@ def install(app):
 
     for name in ('discussion.quote', 'discussion.repost'):
         op(name, obj({**app.post_fields, 'target': REF}, ('parent', 'target', 'body')))(quote)
+        op(
+            name,
+            obj({**app.summary_post_fields, 'target': REF}, ('parent', 'target', 'body')),
+            version=2,
+        )(quote)
 
     async def reaction(ctx, request, tx):
         rid = await resolve(tx, request.arguments['id'])
