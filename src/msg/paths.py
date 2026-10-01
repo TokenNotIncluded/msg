@@ -69,9 +69,12 @@ class ClientPaths:
     portable: bool = False
 
     @classmethod
-    def discover(cls, directory=None, *, profile=None, server=None):
+    def discover(cls, directory=None, *, profile=None, server=None, account=None):
         if directory is not None:
-            require(profile is None and server is None, 'profile_conflicts_with_config_dir')
+            require(
+                profile is None and server is None and account is None,
+                'profile_conflicts_with_config_dir',
+            )
             directory = Path(directory).expanduser().absolute()
             return cls(directory, directory, directory, directory / 'cache', True)
         require(
@@ -85,6 +88,13 @@ class ClientPaths:
             if profile
             else Path('msg')
         )
+        if account is not None:
+            require(
+                isinstance(account, str)
+                and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', account) is not None,
+                'invalid_account_name',
+            )
+            suffix = suffix / 'accounts' / account
         return cls(
             xdg_directory('XDG_CONFIG_HOME', '.config') / suffix,
             xdg_directory('XDG_DATA_HOME', '.local/share') / suffix,
@@ -103,6 +113,9 @@ class ClientPaths:
                     private_directory(app / 'profiles')
                 if path.is_relative_to(app / 'services'):
                     private_directory(app / 'services')
+            if path.parent.name == 'accounts':
+                private_directory(path.parent)
+                private_directory(path.parent.parent)
             private_directory(path)
 
     def temporary_parent(self):
@@ -155,12 +168,14 @@ class ClientPaths:
                 fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                 descriptors.append(fd)
                 fcntl.flock(fd, fcntl.LOCK_EX)
-            self._migrate(sources)
+            self._migrate(
+                sources, source_data=source.data if isinstance(source, ClientPaths) else None
+            )
         finally:
             for fd in reversed(descriptors):
                 os.close(fd)
 
-    def _migrate(self, source):
+    def _migrate(self, source, *, source_data=None):
         """Copy a legacy profile durably, check conflicts, then retire its original files.
 
         A crash leaves either identical copies or the old file. Retrying never
@@ -168,13 +183,33 @@ class ClientPaths:
         """
         entries = []
         targets = {}
-        for entry in sorted(entry for directory in source for entry in directory.iterdir()):
-            if (
-                entry.name in {'cache', 'profiles', 'services'}
-                and entry.is_dir()
-                and not entry.is_symlink()
-            ):
-                continue  # Regenerable data is never part of identity migration.
+        candidates = []
+        nested = []
+
+        def collect(directory, relative=Path()):
+            for entry in sorted(directory.iterdir()):
+                if (
+                    not relative.parts
+                    and entry.name in {'cache', 'profiles', 'services', 'accounts'}
+                    and entry.is_dir()
+                    and not entry.is_symlink()
+                ):
+                    continue
+                info = entry.lstat()
+                require(not entry.is_symlink(), 'unsafe_legacy_client_file')
+                if stat.S_ISDIR(info.st_mode):
+                    require(
+                        info.st_uid == os.geteuid() and info.st_mode & 0o077 == 0,
+                        'unsafe_legacy_client_file',
+                    )
+                    nested.append(entry)
+                    collect(entry, relative / entry.name)
+                else:
+                    candidates.append((entry, relative))
+
+        for directory in sorted(source):
+            collect(directory)
+        for entry, relative in candidates:
             info = entry.lstat()
             require(
                 stat.S_ISREG(info.st_mode)
@@ -183,7 +218,27 @@ class ClientPaths:
                 and info.st_nlink == 1,
                 'unsafe_legacy_client_file',
             )
-            target = self.file(entry.name)
+            if relative.parts:
+                base = (
+                    self.data
+                    if (source_data is not None and entry.is_relative_to(source_data))
+                    or relative.parts[0] == 'subagents'
+                    else self.state
+                )
+                target = base / relative / entry.name
+            else:
+                target = self.file(entry.name)
+            if relative.parts:
+                for parent in reversed(target.parent.parents):
+                    if (
+                        parent in {self.data, self.state}
+                        or parent.is_relative_to(self.data)
+                        or parent.is_relative_to(self.state)
+                    ):
+                        if parent.exists() or parent.is_symlink():
+                            private_directory(parent)
+                if target.parent.exists() or target.parent.is_symlink():
+                    private_directory(target.parent)
             if target in targets:
                 require(
                     entry.read_bytes() == targets[target].read_bytes(), 'client_migration_conflict'
@@ -200,13 +255,26 @@ class ClientPaths:
                 )
                 require(target.read_bytes() == entry.read_bytes(), 'client_migration_conflict')
             entries.append((entry, target))
+        require(
+            not (
+                (self.file('identity.key') in targets or self.file('identity.key').exists())
+                and (
+                    self.file('hardware-signer.json') in targets
+                    or self.file('hardware-signer.json').exists()
+                )
+            ),
+            'client_key_backend_conflict',
+        )
         for entry, target in entries:
             if not target.exists():
+                private_directory(target.parent)
                 durable_write(target, entry.read_bytes(), mode=0o600)
         for entry, target in entries:
             require(target.read_bytes() == entry.read_bytes(), 'client_migration_conflict')
         for entry, _ in entries:
             entry.unlink()
+        for directory in sorted(nested, key=lambda p: len(p.parts), reverse=True):
+            directory.rmdir()
         for directory in source:
             fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
             try:

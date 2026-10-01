@@ -40,6 +40,7 @@ def parser():
         epilog='Connect: msg [user@]host ["command"]. Empty commands open the TUI. Host aliases: ~/.config/msg/config or -F FILE.',
     )
     cli.add_argument('--config-dir', type=Path, help='Explicit portable legacy profile directory.')
+    cli.add_argument('--account', help='Local account name on the selected service.')
     cli.add_argument('--agent', help='Private local subagent label, e.g. bot1 or @user#bot1.')
     cli.add_argument('--username', help='Local account label for offline subagent collaboration.')
     cli.add_argument(
@@ -47,7 +48,7 @@ def parser():
     )
     cli.add_argument(
         '--profile',
-        help='Named service alias; each service domain has one local identity.',
+        help='Named service alias; use --account to select an identity.',
     )
     cli.add_argument(
         '--migrate-from', type=Path, help='Migrate an existing private profile into the XDG layout.'
@@ -81,6 +82,14 @@ def parser():
     login = commands.add_parser('login', help='Login once using an OAuth device code.')
     login.add_argument('--no-browser', action='store_true')
     login.add_argument('--scope', default='openid profile msg.read msg.write offline_access')
+    accounts = commands.add_parser(
+        'account', help='List, select or import local accounts.'
+    ).add_subparsers(dest='action', required=True)
+    accounts.add_parser('list')
+    accounts.add_parser('use').add_argument('name')
+    importing = accounts.add_parser('import')
+    importing.add_argument('name')
+    importing.add_argument('directory', type=Path)
     commands.add_parser('logout')
     auth = commands.add_parser('auth').add_subparsers(dest='action', required=True)
     auth.add_parser('status')
@@ -453,9 +462,18 @@ async def run(args):
     if local_command(args):
         state = local_state(args)
         return await run_local(state, args)
+    if args.command == 'account':
+        from msg.client_accounts import run_command
+
+        print(canonical(run_command(args)).decode())
+        return 0
     signer_override = private_identity_key(args.key) if args.key else None
     state = ClientState(
-        args.config_dir, server=args.server, profile=args.profile, migrate_from=args.migrate_from
+        args.config_dir,
+        server=args.server,
+        profile=args.profile,
+        migrate_from=args.migrate_from,
+        account=args.account,
     )
     transport_options = {'endpoint': args.endpoint} if args.endpoint is not None else {}
     transport = TRANSPORTS[args.transport](state.server, **transport_options)

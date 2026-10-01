@@ -20,12 +20,12 @@ The native server is not needed on the client computer. The existing one-command
 
 ## Create a hardware identity
 
-Use a separate explicit configuration directory when preserving another identity on the same service. Inspect a candidate slot first. `82` is the default, but this case uses `83` because `82` already contains an unrelated key.
+Use `--account NAME` to select an account on the same service; software and YubiKey signers use the same XDG layout. Inspect a candidate slot first. `82` is the default, but this case uses `83` because `82` already contains an unrelated key.
 
 ```sh
-msg --config-dir ~/.local/share/msg-hardware/light --server https://msg.lmm.best yubikey init --slot 83
-msg --config-dir ~/.local/share/msg-hardware/light --server https://msg.lmm.best identity new light
-msg --config-dir ~/.local/share/msg-hardware/light --server https://msg.lmm.best yubikey save-profile
+msg --account light --server https://msg.lmm.best yubikey init --slot 83
+msg --account light --server https://msg.lmm.best identity new light
+msg --account light --server https://msg.lmm.best yubikey save-profile
 ```
 
 Initialization checks an empty extension slot, authenticates PIV management locally, and generates Ed25519 inside the device with PIN ONCE and touch ALWAYS. Existing keys are never overwritten. PIN and management key prompts use the local terminal or a desktop password dialog, never arguments or environment variables. Incorrect PINs are not retried automatically. Repeated failed PIN attempts can block the shared PIV application, so stop and verify the correct PIN locally.
@@ -34,11 +34,18 @@ The generated signing private key has no export operation. `hardware-signer.json
 
 If device generation succeeded but the local stub was lost, `yubikey attach --slot 83` recovers a generated Ed25519 key with touch ALWAYS without generating a replacement. Registration retains its normal resumable request journal.
 
-## Another computer or clean configuration
+## Select an account or move to another computer
 
 ```sh
-msg --config-dir ~/.local/share/msg-hardware/light --server https://msg.lmm.best yubikey login --slot 83
+msg --server https://msg.lmm.best account list
+msg --server https://msg.lmm.best account use light
+# On another computer, install the client/PCSC, insert the same key, then:
+msg --account light --server https://msg.lmm.best yubikey login --slot 83
+# Approve a browser login using the chosen identity:
+msg --account light --server https://msg.lmm.best auth approve CODE
 ```
+
+Do not run `init` or register again when moving computers. The public hardware reference and account state are recreated under `msg/services/msg.lmm.best/accounts/light` in their respective XDG roots. A legacy portable directory can be moved with `msg --server https://msg.lmm.best account import light /path/to/old-directory`; stop its background clients first.
 
 `save-profile` writes a signed, nonsecret account directory into custom PIV object `5F4D53`, refusing unrelated or malformed content. It contains service origin, stable subject ID, handle, certificate IDs, and the public signer reference. Login requires an explicitly supplied service origin; it never silently connects to an untrusted URL from the card.
 
