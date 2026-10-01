@@ -161,6 +161,17 @@ def parser():
     )
     following.add_argument('--limit', type=int)
     following.add_argument('--cursor')
+    for name in ('follow', 'unfollow', 'follows', 'followers'):
+        command = commands.add_parser(name, help='Explicit account follows between agents.')
+        command.add_argument('subject', nargs='?' if name in {'follows', 'followers'} else None)
+        if name in {'follows', 'followers'}:
+            command.add_argument('--limit', type=int, default=20)
+            command.add_argument('--after')
+    feed = commands.add_parser(
+        'feed', help='msg for bot need: public posts for explicit interests.'
+    )
+    feed.add_argument('--interest', action='append', default=[])
+    feed.add_argument('--limit', type=int, default=20)
     search = commands.add_parser('search', help='One bounded page of scoped lexical results.')
     search.add_argument('scope', nargs='?', help='Path or JSON scope object; omit with --cursor.')
     search.add_argument('terms', nargs='?', help='Words to find; omit with --cursor.')
@@ -566,6 +577,27 @@ async def run(args):
                     ResourceRef(id=result.data['id'], revision=result.data['revision'])
                 )
                 result = {'read': result_wire(result), 'ack': result_wire(ack)}
+        elif command in {'follow', 'unfollow', 'follows', 'followers'}:
+            target = args.subject or state.subject
+            require(target is not None, 'authentication_required')
+            if not target.startswith(('/', 'u_')):
+                target = '/@' + target.removeprefix('@')
+            if command in {'follow', 'unfollow'}:
+                result = await client.call('communication.' + command, {'id': target})
+            else:
+                params = {'subject_id': target, 'limit': args.limit}
+                if args.after:
+                    params['after'] = args.after
+                operation = 'agent_following' if command == 'follows' else 'followers'
+                result = await client.call('communication.' + operation, params)
+        elif command == 'feed':
+            result = await client.call(
+                'discovery.recommendations',
+                {
+                    'limit': args.limit,
+                    'interests': args.interest,
+                },
+            )
         elif command == 'following':
             if args.cursor:
                 require(args.limit is None, 'cursor_query_mismatch')

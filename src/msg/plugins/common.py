@@ -425,7 +425,13 @@ async def topic_policy(tx, resource):
 
 def default_operation_rules(name):
     """Compatibility defaults captured when constructing an operation."""
-    if name.startswith('identity.'):
+    if name.startswith('identity.') or name in {
+        'communication.follow',
+        'communication.unfollow',
+        'communication.agent_following',
+        'communication.followers',
+        'discovery.recommendations',
+    }:
         rules = ('identity', 'auth')
     elif name.startswith(('content.topic_', 'discussion.')):
         rules = ('topics', 'read-write')

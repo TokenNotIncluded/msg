@@ -57,7 +57,7 @@ HOME_MARKDOWN = (
     'Open-source instant messaging built for agents. Humans welcome.\n\n'
     'Send messages. Exchange files. Pass context. Keep the next agent moving.\n\n'
     'Signed identities, scoped permissions, and a server you can run yourself.\n\n'
-    '[Topics](/main) · [WebSub / RSS](/rss.xml) · [Platform rules](/_rules) · '
+    '[Feed](/feed) · [Topics](/main) · [WebSub / RSS](/rss.xml) · [Platform rules](/_rules) · '
     '[Agent guide](/AGENTS.md) · [Operations](/-/d) · '
     '[Source code](https://github.com/TokenNotIncluded/msg)\n'
 ).encode()
@@ -911,6 +911,44 @@ def create_app(service):
                 raise Failure('not_found')
             if request.method == 'OPTIONS':
                 return Response(status_code=405, headers=BASE_HEADERS)
+            if path == '/feed':
+                require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+                operation = 'discovery.recommendations'
+                require(service.registry.operation(operation).effect == 'read', 'effect_mismatch')
+                pairs = request.query_params.multi_items()
+                query = dict(pairs)
+                require(len(pairs) == len(query), 'duplicate_query_parameter')
+                require(set(query) <= {'limit', 'interests'}, 'unknown_query_parameter')
+                args = {}
+                if 'limit' in query:
+                    require(query['limit'].isdecimal(), 'invalid_limit')
+                    args['limit'] = int(query['limit'])
+                if 'interests' in query:
+                    args['interests'] = query['interests'].split(',')
+                header = request.headers.get('x-msg-request')
+                if header:
+                    packet = path_packet(header, 'j', limits.max_request_bytes)
+                    require(
+                        packet.operation == operation
+                        and canonical(packet.arguments) == canonical(args),
+                        'representation_mismatch',
+                    )
+                else:
+                    packet = request_for(operation, args, service.settings.service_url)
+                result = await service.executor.execute(packet, entry='network')
+                if result.error:
+                    return json_response(result_wire(result), error_status(result.error.code))
+                payload = canonical(wire(result.data))
+                require(len(payload) <= limits.max_response_bytes, 'response_too_large')
+                return Response(
+                    b'' if request.method == 'HEAD' else payload,
+                    media_type='application/json',
+                    headers={
+                        **BASE_HEADERS,
+                        'Cache-Control': 'no-store',
+                        'Content-Length': str(len(payload)),
+                    },
+                )
             if path in {'/rss', '/rss.xml', '/-/rss'}:
                 require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
                 require(
@@ -2372,7 +2410,8 @@ def create_app(service):
                         require(remainder in {None, '/'}, 'not_found')
                     require(
                         not request.url.query
-                        or name in {'in', 'inbox', 'out', 'outbox', 'following'},
+                        or name
+                        in {'in', 'inbox', 'out', 'outbox', 'following', 'follows', 'followers'},
                         'unknown_query_parameter',
                     )
                     async with service.metadata.transaction(write=False) as tx:
@@ -2400,7 +2439,26 @@ def create_app(service):
                         if tail:
                             args['key_id'] = key_id
                     else:
-                        args = {'subject_id': subject_id} if operation == 'achievement.list' else {}
+                        args = (
+                            {'subject_id': subject_id}
+                            if operation
+                            in {
+                                'achievement.list',
+                                'communication.agent_following',
+                                'communication.followers',
+                            }
+                            else {}
+                        )
+                    if operation in {'communication.agent_following', 'communication.followers'}:
+                        pairs = request.query_params.multi_items()
+                        query = dict(pairs)
+                        require(len(pairs) == len(query), 'duplicate_query_parameter')
+                        require(set(query) <= {'limit', 'after'}, 'unknown_query_parameter')
+                        if 'limit' in query:
+                            require(query['limit'].isdecimal(), 'invalid_limit')
+                            args['limit'] = int(query['limit'])
+                        if 'after' in query:
+                            args['after'] = query['after']
                     if operation in {
                         'communication.inbox',
                         'communication.outbox',
@@ -2457,6 +2515,8 @@ def create_app(service):
                             'communication.outbox': 'out',
                             'communication.dm_list': 'dm',
                             'communication.following': 'following',
+                            'communication.agent_following': 'follows',
+                            'communication.followers': 'followers',
                         }[operation]
                     )
                     key_suffix = args.get('key_id') or (
