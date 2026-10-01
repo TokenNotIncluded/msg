@@ -87,7 +87,7 @@ a, button, select, summary { -webkit-tap-highlight-color: transparent; }
 .site-header { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding-block: 24px; }
 .brand { color: var(--fg); font: 600 24px/1 var(--mono); letter-spacing: -.06em; text-decoration: none; white-space: nowrap; }
 .brand { display: inline-flex; align-items: center; gap: 10px; }
-.brand svg { flex: none; width: 28px; height: 28px; }
+.brand svg { flex: none; width: 28px; height: 28px; transform-origin: center; }
 nav { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 24px; min-width: 0; }
 nav a { display: inline-flex; align-items: center; min-height: 44px; color: var(--fg); text-decoration: none; font-size: 14px; }
 .current-account { overflow-wrap: anywhere; }
@@ -217,11 +217,16 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 32px; }
 }
 @media (prefers-reduced-motion: no-preference) {
   a, button { transition: color .15s ease, background-color .15s ease; }
+  .brand:is(:hover, :focus-visible) > svg { animation: msg-logo-turn .7s cubic-bezier(.22, 1, .36, 1); }
   .token-art[data-running] .token {
     animation: token-assemble 12s cubic-bezier(.22, 1, .36, 1) infinite;
     animation-delay: var(--phase); animation-play-state: paused;
   }
   .token-art[data-running=true] .token { animation-play-state: running; }
+}
+@keyframes msg-logo-turn {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 @keyframes token-assemble {
   0%, 12%, 100% { transform: translate(var(--dx), var(--dy)) rotate(var(--turn)); opacity: .38; }
