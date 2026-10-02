@@ -10,7 +10,7 @@
   const blend = (a, b, t) => a.map((v, i) => mix(v, b[i], t));
   const BUDGET = Object.freeze({ meshEntries: 32, meshPending: 4, idleFaces: 64, idleMs: 3, avatars: 8, mobileAvatars: 4,
     avatarEntries: 16, avatarConcurrent: 2, avatarBytes: 98304, avatarTTL: 60000,
-    surfaceMin: .952, surfaceMax: 1, cloudRadius: 1.008 });
+    surfaceMin: .952, surfaceMax: 1, cloudRadius: 1.008, rimSegments: 24, rimFaces: 432 });
   const meshes = new Map(), topologies = new Map(), pending = new Map();
   let buildTimer=null;
   const lod=pixelRadius => pixelRadius>=60 ? 4 : pixelRadius>=14 ? 3 : 2;
@@ -38,7 +38,11 @@
       {sea:[.15,.31,.38],land:[.45,.58,.57],rock:[.66,.75,.73]},
     ];
     const craters=[];
-    for (let i=0; i<9; i++) craters.push({center:unit([rng()-.5,rng()-.5,rng()-.5]), radius:.07+rng()*.24});
+    for (let i=0; i<9; i++) {
+      const jitter=[rng()-.5,rng()-.5,rng()-.5], y=1-2*(i+.5)/9, r=Math.sqrt(1-y*y), angle=i*Math.PI*(3-Math.sqrt(5));
+      craters.push({center:unit([r*Math.cos(angle)+jitter[0]*.12,y+jitter[1]*.12,r*Math.sin(angle)+jitter[2]*.12]),
+        radius:.14+rng()*.16});
+    }
     return {mode, palette:palettes[mode], offset:[rng()*61,rng()*61,rng()*61],
       seed:Math.floor(rng()*2147483647), seaLevel:mode===0 ? .38+rng()*.16 : mode===2 ? .28 : -.1,
       phase:rng()*M.TAU, speed:.018+rng()*.045, ice:mode===2 ? .67 : .86+rng()*.08, craters};
@@ -91,6 +95,27 @@
       if (dot(normal,center)<0) normal=normal.map(v=>-v);
       faces.push({vertices,normal,color:id==='u_root' ? blend([.75,.74,.69],[1,.98,.89],terrain.color[0]) : terrain.color,cloud:false});
       yield;
+    }
+    if (level>=4 && t.mode!==0 && id!=='u_root') for (const crater of t.craters) {
+      // Closed annuli give a small projected crater an actual readable rim;
+      // sampling its narrow edge once per sphere face loses that contour.
+      const axis=Math.abs(crater.center[1])>.9?[1,0,0]:[0,1,0];
+      const tangent=unit(cross(crater.center,axis)),bitangent=cross(crater.center,tangent);
+      const edge=fraction=>Array.from({length:BUDGET.rimSegments},(_,i)=>{
+        const angle=i/BUDGET.rimSegments*M.TAU,span=2*Math.asin(crater.radius*fraction/2);
+        const direction=crater.center.map((v,k)=>v*Math.cos(span)+(tangent[k]*Math.cos(angle)+bitangent[k]*Math.sin(angle))*Math.sin(span));
+        const radius=Math.min(BUDGET.surfaceMax,sample(direction,t).radius+.005);
+        return direction.map(v=>v*radius);
+      });
+      const inner=edge(.82),outer=edge(1.06);
+      for (let i=0;i<BUDGET.rimSegments;i++) {
+        const next=(i+1)%BUDGET.rimSegments;
+        for (const vertices of [[inner[i],outer[i],outer[next]],[inner[i],outer[next],inner[next]]]) {
+          faces.push({vertices,normal:unit(vertices[0].map((v,k)=>v+vertices[1][k]+vertices[2][k])),
+            color:blend(t.palette.rock,[.9,.91,.83],.65),cloud:false,rim:true});
+          yield;
+        }
+      }
     }
     let clouds=0;
     if (level>=3 && t.mode!==1 && id!=='u_root') for (const face of topology(level)) {
