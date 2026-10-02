@@ -5,6 +5,7 @@ from hashlib import sha256
 
 from starlette.responses import Response
 
+from msg.constants import ONLINE_CA, ROOT_SUBJECT
 from msg.core.codec import decode, wire
 from msg.core.errors import require
 from msg.core.models import BlobRef
@@ -27,7 +28,7 @@ async def profile_art_response(service, request, execute):
     account = await execute(
         request_for(
             'discovery.get',
-            {'id': '/' + handle, 'fields': ['id', 'type']},
+            {'id': '/' + handle, 'fields': ['id', 'type', 'kind']},
             service.settings.service_url,
             source='manual',
         )
@@ -49,7 +50,10 @@ async def profile_art_response(service, request, execute):
             raw = b''.join([chunk async for chunk in service.contents.read(blob)])
             svg = safe_svg(raw)
     source = 'custom' if svg else 'generated'
-    svg = svg or generate_svg(account.data['id'], kind)
+    role = ''
+    if account.data.get('kind') == 'system':
+        role = {ROOT_SUBJECT: 'root', ONLINE_CA: 'online_ca'}.get(account.data['id'], '')
+    svg = svg or generate_svg(account.data['id'], kind, role)
     if pairs:
         svg = still_svg(svg)
     body = svg.encode()
