@@ -21,7 +21,7 @@ New feature delivery does not establish every older production/recovery gate.
 | #212 public balance/ledger | Resolved via #208, privacy/permission regression and anonymous production reads. |
 | #213 graceful shutdown | Sandbox cancellation now propagates after child cleanup, preserving the in-flight lease. Disposable PostgreSQL/TestRoot SIGTERM probes cover drain, exhausted stop budget and network timeout; production in-flight drain remains unverified. `scripts/check_graceful_shutdown.py --installed` runs an isolated installed-package probe without production config or recipients. |
 | #214 recovery schema catalogue | Resolved: money_visibility is covered by catalogue and real recovery regression, included in production. No production promotion is claimed. |
-| #215 instance paths | #222/#226 instance and hosting-settings contracts are in source. Runtime Root-directory isolation, named-instance layout validation and preparation collisions are being repaired in this iteration. Production directory migration remains pending; source checks do not move existing keys or data. |
+| #215 instance paths | #222/#226 instance and hosting-settings contracts are in source. Runtime now checks the actual Root directory, named services validate all storage paths before loading the application, and preparation rejects private Root artifacts before ownership changes. Legacy rotation journals/history retain their location; ambiguous sources fail closed. [Migration runbook](ISSUE_215_INSTANCE_MIGRATION.md); production directory migration remains pending. |
 | #216 same-instance domain aliases | PR #225 implements explicit ingress aliases with unchanged canonical signing authority and local identity, endpoint selection in all transports, strict hosting ingress, and retained recovery policy. The 74-test contract and installed rehearsal passed on source 210d2cf/test merge f5c45b3; later workflow-prerequisite changes and the final full gate need their own verification. DNS/TLS/proxy configuration and target rollout are separate operator steps. |
 | #217 archive retention | [Read-only retention planner](DEPLOYMENT_RETENTION.md) protects current and verified rollback releases, signatures, business backups and unknown files. No deletion option; no production cleanup or rollback attestation was fabricated. Real rollback acceptance, file review and cleanup remain pending. |
 | #220 retired apps | [Retirement runbook](PROJECT_RETIREMENT.md) separates `lmm-api`/`cortexfs` ownership from shared services and MSG. Actual target retirement and disk/service acceptance remain pending; no remote cleanup occurred. |
@@ -59,8 +59,12 @@ Homepage Markdown branding escapes user text before insertion into table rows.
 
 Shared-board draft/conflict/retry handling, live polling cancellation and stale
 status, responsive navigation, translated labels and terminal cancellation/IME
-behavior have focused Python and real JavaScript regression checks. Later art
-and compact machine representations require their own final-source checks.
+behavior have focused Python and real JavaScript regression checks. Public-board
+controls now remain in a discreet menu and the default artwork is outline ASCII;
+existing user revisions are preserved. Multi-page agent styling and compact
+Markdown/JSON reads at `/now` and `/terminal` also have explicit negotiation,
+HEAD, rejected media type and anonymous-access tests. Final-source CI and the
+installed native package remain independent evidence.
 
 New UI and operations do not grant new signed capabilities. The installed Root
 and online CA policy still rejects newer board/drop/rules operations outside its
