@@ -168,8 +168,8 @@ new_branch|नई शाखा की सामग्री|Contenido de la nuev
 create_branch|शाखा बनाएँ|Crear rama|إنشاء فرع|Créer une branche|শাখা তৈরি|Criar ramificação
 record_claim|दावा दर्ज करें|Registrar declaración|تسجيل الادعاء|Enregistrer la déclaration|দাবি নথিভুক্ত|Registrar declaração
 send_comment|टिप्पणी भेजें|Enviar comentario|إرسال التعليق|Envoyer le commentaire|মন্তব্য পাঠান|Enviar comentário
- your_comment|आपकी टिप्पणी|Tu comentario|تعليقك|Votre commentaire|আপনার মন্তব্য|Seu comentário
-""".replace('\n your_comment', '\nyour_comment')
+your_comment|आपकी टिप्पणी|Tu comentario|تعليقك|Votre commentaire|আপনার মন্তব্য|Seu comentário
+"""
 
 TRANSLATIONS = {code: {} for code, *_ in LANGUAGES[2:]}
 for _row in _LABELS.strip().splitlines():
