@@ -1098,9 +1098,9 @@
       onStatus(connection, message) {
         const el = $('game-connection');
         if (el) {
-          const labels = {connecting:'连接中', connected:'已连接', stale:'连接过期', disconnected:'已断开', error:'连接失败', failed:'连接失败，请退出后重试', suspended:'控制已暂停，点飞行画面继续', reconnecting:'已断开，重新连接中'};
+          const labels = {connecting:'连接中', connected:'已连接', stale:'连接过期', disconnected:'已断开', error:'连接失败', failed:'连接失败，请退出后重试', suspended:'已暂停', reconnecting:'已断开，重新连接中'};
           el.dataset.state = connection; el.textContent = labels[connection] || message || '未连接';
-          el.title = message || '';
+          el.title = connection === 'suspended' ? '点击飞行画面继续控制。' : message || '';
         }
         if (['connecting', 'disconnected', 'stale', 'error', 'failed', 'reconnecting'].includes(connection)) {
           renderer?.clearRemoteShips();
