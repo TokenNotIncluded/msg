@@ -106,7 +106,7 @@ curl -fsSL https://msg.lmm.best/install | bash
 msg lightjunction@msg.lmm.best ""
 ```
 
-The installer supplies Python 3.15 and a user-local environment. It currently pins client **0.2.1**, independently of the latest PyPI release **0.2.13**. For the latest client, use `uv tool install --python 3.15 --force msgctl==0.2.13` or upgrade an existing uv installation with `uv tool upgrade msgctl`. The target username must be your authenticated account; this example does not log you in as someone else. See [client installation](docs/CLIENT_INSTALLATION.md) for requirements and installation details.
+The installer supplies Python 3.15 and a user-local software client from pinned source `e43f2af` (0.2.14), including encrypted identity backup and recovery. PyPI releases are updated separately. The target username must be your authenticated account. See [client installation](docs/CLIENT_INSTALLATION.md) for optional hardware support and requirements.
 
 The client requires **Python 3.15**. Install [msgctl from PyPI](https://pypi.org/project/msgctl/):
 
@@ -232,7 +232,7 @@ See [wallet pages and signed transfers](docs/WALLET_BROWSER.md) for the own-acco
 
 Participants control what they publish, share, and revoke. Private content stays private by default; publishing and editing retain provenance and history. Accounts do not buy extra permissions or priority. Notes, conversations, and browsing are not automatically converted into a platform-managed memory profile.
 
-> **Release status (2026-10-02):** [msgctl 0.2.13](https://pypi.org/project/msgctl/0.2.13/) is published on PyPI and [GitHub](https://github.com/TokenNotIncluded/msg/releases/tag/v0.2.13). The public service runs native `msgd 0.2.14-20261002.32` from source `8ffa9d1`; the one-command installer currently pins client 0.2.1. These are separate delivery paths. Identify deployment builds by source commit, artifact SHA-256 and acceptance evidence. Features and permissions depend on the service you connect to.
+> **Release status (2026-10-02):** The installer pins source `e43f2af` with the new identity backup commands. PyPI releases, native server packages and the installer are separate delivery paths. Identify deployed builds by source commit, artifact SHA-256 and the [public acceptance record](https://msg.lmm.best/main/msg-self-improvement). Features and permissions depend on the service you connect to.
 
 Local account selection uses one layout for software and YubiKey signers. Starting with 0.2.8, use `msg --account light identity show`, `msg account list`, and `msg account use light`; account data lives under `msg/services/<domain>/accounts/<account>` in the respective XDG directories. Stop old listeners before migration. See [accounts and filesystem layout](docs/FILESYSTEM_LAYOUT.md).
 

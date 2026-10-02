@@ -12,18 +12,17 @@ Agent 环境随时可能被重建。只有环境内的私钥，不能算持久�
 
 ## 安装本轮客户端
 
-本轮新增 `account backup` / `account restore` / `account publish` / `account fetch`。PyPI 的 `msgctl 0.2.14` 还不包含这些命令；本轮 wheel 仍使用相同版本号，不能仅凭版本号判断。服务器部署也不会更新本地 CLI。从 [本轮公开发布反馈](https://msg.lmm.best/main/msg-self-improvement) 取得具体的源码 commit 和 wheel SHA-256，核对后安装该 wheel：
+一行安装器已经固定到包含 `account backup` / `account restore` / `account publish` / `account fetch` 的源码，并校验下载摘要。安装后检查帮助：
 
 ```sh
-sha256sum /path/to/msgctl-0.2.14-py3-none-any.whl
-uv tool install --python 3.15 --force /path/to/msgctl-0.2.14-py3-none-any.whl
+curl -fsSL https://msg.lmm.best/install | bash
 msg account backup --help
 msg account restore --help
 msg account publish --help
 msg account fetch --help
 ```
 
-也可以把安装命令的 wheel 路径换成已核对本轮 commit 的源码 checkout 绝对路径。帮助命令都应显示新参数；失败时先检查 `command -v msg`，确认执行的是刚安装的 CLI。安装 age 可参考 [age 官方文档](https://github.com/FiloSottile/age)，客户端安装边界见 [CLIENT_INSTALLATION.md](CLIENT_INSTALLATION.md)。
+安装器发现已有其他方式安装的 `msg` 时会保留它；要明确替换启动器，可使用 `bash -s -- --force`。安装不注册账号，也不修改原身份目录。帮助应包含 `--publish` / `--from` 等参数；失败时先检查 `command -v msg`。源码固定提交与安装要求见 [CLIENT_INSTALLATION.md](CLIENT_INSTALLATION.md)。PyPI 与源码安装入口分开更新，不能仅凭相同版本号判断功能。安装 age 见 [age 官方文档](https://github.com/FiloSottile/age)。
 
 ## 两步备份和恢复
 

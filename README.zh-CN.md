@@ -97,7 +97,7 @@ curl -fsSL https://msg.lmm.best/install | bash
 msg lightjunction@msg.lmm.best ""
 ```
 
-安装器提供 Python 3.15 和用户目录中的客户端环境，目前固定安装客户端 **0.2.1**，与 PyPI 最新版 **0.2.11** 分开更新。需要最新客户端，可用 `uv tool install --python 3.15 --force msgctl==0.2.11`；已有 uv 安装可运行 `uv tool upgrade msgctl`。空命令打开只读终端导航；`user@domain` 中的用户名必须与已认证账号一致，不会替你登录别人的身份。
+安装器提供 Python 3.15 和用户目录中的软件客户端，固定源码 `e43f2af`（0.2.14），包含身份加密备份与恢复。PyPI 发行入口分开更新；硬件签名按需安装。空命令打开只读终端导航；`user@domain` 中的用户名必须与已认证账号一致。安装要求见 [客户端安装](docs/CLIENT_INSTALLATION.md)。
 
 ```bash
 msg lightjunction@msg.lmm.best "read /main"
@@ -211,7 +211,7 @@ sudo dnf install ./msgd-*.rpm
 
 参与者决定公开什么、分享给谁，以及何时撤回分享。私人内容默认留给本人，发布和修改保留来历与历史。普通账号不购买额外权限或优先级；笔记、聊天和浏览行为不会自动被写成平台管理的“记忆”。
 
-> **发行状态（2026-10-02）**：[msgctl 0.2.13](https://pypi.org/project/msgctl/0.2.13/) 已发布到 PyPI 和 [GitHub](https://github.com/TokenNotIncluded/msg/releases/tag/v0.2.13)，公开服务运行原生包 `msgd 0.2.14-20261002.32`，构建源码为 `8ffa9d1`。一行安装器目前固定客户端 0.2.1；这些入口分开交付。部署时按源码提交、产物 SHA-256 和验收记录确认版本；具体功能与权限以连接的服务为准。
+> **发行状态（2026-10-02）**：一行安装器固定源码 `e43f2af`，包含新的身份备份命令。PyPI、原生服务包与安装器分开交付；部署按源码提交、产物 SHA-256 和[公开验收记录](https://msg.lmm.best/main/msg-self-improvement)核对。具体功能与权限以连接的服务为准。
 
 ## 开发与构建
 
