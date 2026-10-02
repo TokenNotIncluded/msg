@@ -32,6 +32,123 @@
     const sy = Math.sin(yaw), cy = Math.cos(yaw), sp = Math.sin(pitch), cp = Math.cos(pitch);
     return { right: [cy, 0, -sy], up: [-sp * sy, cp, -sp * cy], eye: [cp * sy, sp, cp * cy] };
   }
+  const angleMix = (a, b, t) => a + Math.atan2(Math.sin(b - a), Math.cos(b - a)) * t;
+  // A bounded sample timeline renders peers between authoritative physics ticks.
+  // Network arrival time is deliberately not the interpolation parameter.
+  class MotionTrack {
+    constructor() { this.samples = []; }
+    push(ship, time, reset = false) {
+      const previous = this.samples.at(-1);
+      if (reset || previous && (previous.ship.region !== ship.region ||
+          (previous.ship.hp <= 0) !== (ship.hp <= 0) ||
+          Math.hypot(...ship.position.map((v, i) => v - previous.ship.position[i])) > 45)) this.samples.length = 0;
+      if (this.samples.at(-1)?.time >= time) return;
+      this.samples.push({ ship, time });
+      if (this.samples.length > 8) this.samples.shift();
+    }
+    sample(time) {
+      const samples = this.samples;
+      if (!samples.length) return null;
+      let a = samples[0], b;
+      if (time <= a.time) return { ...a.ship, position: [...a.ship.position], velocity: [...a.ship.velocity] };
+      for (let i = 1; i < samples.length; i++) {
+        b = samples[i];
+        if (time <= b.time) {
+          const duration = (b.time - a.time) / 1000, t = clamp((time - a.time) / (b.time - a.time), 0, 1);
+          const t2 = t * t, t3 = t2 * t;
+          // Hermite uses the server's velocities, avoiding a 5 Hz staircase.
+          const position = a.ship.position.map((p, axis) => (2 * t3 - 3 * t2 + 1) * p +
+            (t3 - 2 * t2 + t) * duration * a.ship.velocity[axis] +
+            (-2 * t3 + 3 * t2) * b.ship.position[axis] + (t3 - t2) * duration * b.ship.velocity[axis]);
+          const velocity = a.ship.velocity.map((v, axis) => mix(v, b.ship.velocity[axis], t));
+          return { ...b.ship, position, velocity, yaw: angleMix(a.ship.yaw, b.ship.yaw, t), pitch: mix(a.ship.pitch, b.ship.pitch, t) };
+        }
+        a = b;
+      }
+      // A delayed snapshot never permits unlimited motion while disconnected.
+      const elapsed = clamp((time - a.time) / 1000, 0, .3);
+      return { ...a.ship, position: a.ship.position.map((p, i) => p + a.ship.velocity[i] * elapsed), velocity: [...a.ship.velocity] };
+    }
+  }
+  function inertialSegment(velocity, dt, target, acceleration, limits = {}) {
+    const cap = limits.max_speed ?? 60, speed = Math.hypot(...velocity);
+    const v = speed > cap ? velocity.map(n => n * cap / speed) : [...velocity];
+    let next, movement;
+    if (!target) {
+      const drag = limits.coast_drag ?? .32, factor = Math.exp(-drag * dt);
+      next = v.map(n => n * factor); movement = v.map(n => n * (drag > 0 ? (1 - factor) / drag : dt));
+    } else {
+      const difference = target.map((n, i) => n - v[i]), distance = Math.hypot(...difference);
+      if (!distance || acceleration <= 0) return { velocity: v, movement: v.map(n => n * dt) };
+      const accelerating = Math.min(dt, distance / acceleration), blend = Math.min(1, acceleration * dt / distance);
+      const weighted = acceleration / distance * accelerating * accelerating / 2 + Math.max(0, dt - accelerating);
+      next = v.map((n, i) => n + difference[i] * blend);
+      movement = v.map((n, i) => n * dt + difference[i] * weighted);
+    }
+    if (Math.hypot(...next) <= (limits.stop_speed ?? .12)) next.fill(0);
+    return { velocity: next, movement };
+  }
+  function integrateFlight(state, seconds, controls, limits = {}, now = 0) {
+    const dt = Number.isFinite(seconds) ? clamp(seconds, 0, .04) : 0;
+    if (!dt || state.hp <= 0) return;
+    const braking = controls.brake === true, yaw = controls.yaw, pitch = controls.pitch;
+    const forward = [Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), -Math.cos(yaw) * Math.cos(pitch)];
+    const right = [Math.cos(yaw), 0, Math.sin(yaw)];
+    const direction = forward.map((v, i) => v * controls.throttle + right[i] * controls.strafe + (i === 1 ? controls.lift : 0));
+    const hasControls = [controls.throttle, controls.strafe, controls.lift].some(n => Math.abs(n) > 1e-8), dashEnd = state.dash_until_ms ?? 0;
+    const start = now - dt * 1000, dashStart = dashEnd - (limits.dash_seconds ?? 1) * 1000;
+    const boundaries = [start, ...[dashStart, dashEnd].filter(at => at > start && at < now), now].sort((a, b) => a - b);
+    const segment = (duration, target = null, acceleration = 0) => {
+      const result = inertialSegment(state.velocity, duration, target, acceleration, limits);
+      state.velocity = result.velocity; state.position = state.position.map((v, i) => v + result.movement[i]);
+    };
+    for (let i = 1; i < boundaries.length; i++) {
+      const duration = (boundaries[i] - boundaries[i - 1]) / 1000, middle = (boundaries[i] + boundaries[i - 1]) / 2;
+      const dash = middle >= dashStart && middle < dashEnd, thrust = hasControls ? direction : dash ? forward : null;
+      if (braking) segment(duration, [0, 0, 0], limits.brake_deceleration ?? 48);
+      else if (thrust && state.fuel > 0) {
+        const powered = Math.min(duration, state.fuel / 8), length = Math.max(1, Math.hypot(...thrust));
+        const speed = dash ? limits.max_speed ?? 60 : limits.cruise_speed ?? 20;
+        segment(powered, thrust.map(v => v * speed / length), dash ? limits.dash_acceleration ?? 96 : limits.thrust_acceleration ?? 24);
+        state.fuel = Math.max(0, state.fuel - powered * 8);
+        if (powered < duration) segment(duration - powered);
+      } else segment(duration);
+    }
+    const radius = Math.hypot(...state.position), extent = limits.world_extent ?? 480;
+    if (radius > extent) {
+      const normal = state.position.map(v => v / radius), outward = Math.max(0, dot(normal, state.velocity));
+      state.position = normal.map(v => v * extent);
+      state.velocity = state.velocity.map((v, i) => v - normal[i] * outward);
+    }
+  }
+  class FlightPrediction {
+    constructor(ship) { this.reset(ship); }
+    reset(ship) {
+      this.state = { ...ship, position: [...ship.position], velocity: [...ship.velocity] };
+      this.offset = [0, 0, 0]; this.position = [...ship.position];
+    }
+    reconcile(ship, reset = false, age = 0, controls = null, limits = {}, now = 0) {
+      const previous = [...this.position], error = previous.map((p, i) => p - ship.position[i]);
+      if (reset || ship.region !== this.state.region || (ship.hp <= 0) !== (this.state.hp <= 0) || Math.hypot(...error) > 45) this.reset(ship);
+      else {
+        this.state = { ...ship, position: [...ship.position], velocity: [...ship.velocity] };
+        // Bring the physical tick to the render clock before applying a visual
+        // correction; otherwise the 15 Hz tick remainder jitters the camera.
+        if (controls) for (let remaining = clamp(age, 0, .15); remaining > 0; ) {
+          const dt = Math.min(remaining, .04); remaining -= dt;
+          integrateFlight(this.state, dt, controls, limits, now - remaining * 1000);
+        }
+        this.offset = previous.map((p, i) => p - this.state.position[i]);
+      }
+    }
+    step(dt, controls, limits, now, reduced = false) {
+      integrateFlight(this.state, dt, controls, limits, now);
+      const decay = reduced ? 0 : Math.exp(-dt * 7);
+      this.offset = this.offset.map(v => v * decay);
+      this.position = this.state.position.map((v, i) => v + this.offset[i]);
+      return this.position;
+    }
+  }
   // Local navigation only. No identity, persistence, network or account side effects.
   class Flight {
     constructor(position, yaw = 0, pitch = 0) {
@@ -115,7 +232,7 @@
     }
   }
   function tokenNebula(seed, count = 2300) {
-    const random = M.random('token-ribbons:v4:' + seed), dust = [], clouds = [];
+    const random = M.random('token-ribbons:v5:' + seed), dust = [], clouds = [];
     const phases = Array.from({ length: 3 }, () => random() * M.TAU);
     const center = (t, band) => {
       const phase = phases[band];
@@ -128,6 +245,8 @@
       const width = 5 + 22 * (1 + Math.sin(t * 13 + phases[band]));
       for (let k = 0; k < 3; k++) p[k] += scatter() * width;
       if (i % 5 === 0) for (let k = 0; k < 3; k++) p[k] = (random() - .5) * (k === 1 ? 750 : 1500);
+      const length = Math.hypot(...p);
+      if (length > 475) for (let k = 0; k < 3; k++) p[k] *= 475 / length;
       const clearance = clamp((Math.hypot(...p) - 24) / 80, .08, 1);
       dust.push(...p, .83, .83, .83, (.14 + random() * .38) * clearance, .23 + random() * .55);
     }
@@ -185,7 +304,7 @@
       this.frame = 0;
       this.available = false;
       this.lost = false;
-      this.sceneSeed = Array.from(crypto.getRandomValues(new Uint32Array(2))).join(':');
+      this.sceneSeed = 'public-preview';
       const scenery = tokenNebula(this.sceneSeed);
       this.dust = scenery.dust;
       this.clouds = scenery.clouds;
@@ -195,6 +314,10 @@
       this.remoteShips = new Map();
       this.shipLabels = new Map();
       this.shotEvents = new Map();
+      this.collectEvents = new Map();
+      this.motionEvents = new Map();
+      this.collectibles = null;
+      this.prediction = null;
       this.gameActions = new Set();
       this.homeBody = null;
       this.homeMesh = null;
@@ -352,12 +475,14 @@
         this.flight = ship ? new Flight(ship.position, -ship.yaw, -ship.pitch)
           : new Flight(c.target.map((v, i) => v + b.eye[i] * Math.max(12, c.distance - 34)), c.yaw, c.pitch);
         if (ship) this.flight.velocity = [...ship.velocity];
+        if (ship) this.prediction = new FlightPrediction(ship);
         this.network?.resume();
         this.updateFlight(0);
       } else {
         this.camera.target = [...this.flight.position];
         this.camera.distance = 90;
         this.flight = null;
+        this.prediction = null;
         this.network?.disconnect();
         this.clearRemoteShips(); this.homeBody = null;
       }
@@ -491,39 +616,78 @@
       if (!this.network?.connected || !this.flight || this.network.self?.hp <= 0) return;
       this.gameActions.add(action); this.wake();
     }
+    flightIntent(controlled = true) {
+      const keys = new Set([...this.keys, ...this.flightControls.values()]);
+      const axis = (positive, negative) => controlled ? Number(keys.has(positive)) - Number(keys.has(negative)) : 0;
+      return { throttle:axis('w', 's'), strafe:axis('d', 'a'), lift:axis('e', 'q'),
+        yaw:-this.flight.yaw, pitch:-this.flight.pitch, brake:controlled && keys.has('b') };
+    }
     sendFlightInput() {
       if (!this.network?.connected || !this.flight) return;
       const keys = new Set([...this.keys, ...this.flightControls.values()]);
-      const axis = (positive, negative) => Number(keys.has(positive)) - Number(keys.has(negative));
       const actions = [...this.gameActions];
       if (keys.has(' ')) actions.push('laser');
-      this.network.setInput({throttle:axis('w', 's'), strafe:axis('d', 'a'), lift:axis('e', 'q'),
-        yaw:-this.flight.yaw, pitch:-this.flight.pitch, brake:keys.has('b'), actions:[...new Set(actions)]});
+      this.network.setInput({...this.flightIntent(), actions:[...new Set(actions)]});
       this.gameActions.clear();
     }
+    syncCollectibles(field) {
+      if (!field) return;
+      if (field.seed && field.seed !== this.sceneSeed) {
+        this.sceneSeed = field.seed;
+        const scenery = tokenNebula(field.seed, field.count);
+        this.dust = scenery.dust; this.clouds = scenery.clouds;
+        for (const token of this.tokenNodes.values()) token.remove();
+        this.tokenNodes.clear();
+      }
+      if (this.collectibles?.revision === field.revision && !field.seed) return;
+      this.collectibles = { ...this.collectibles, ...field };
+      // Keep stable IDs in the full dust array; rebuild the compact GPU stream
+      // only on a server bitmap revision, never 2,300 DOM nodes per frame.
+      const dust = [];
+      for (let i = 0; i < this.dust.length / 8; i++) if (!this.glyphTaken(i))
+        dust.push(...this.dust.subarray(i * 8, i * 8 + 8));
+      this.renderDust = new Float32Array(dust);
+    }
+    glyphTaken(id) { return Boolean(this.collectibles?.mask[id >> 3] & (1 << (id & 7))); }
     receiveFlightHello(hello) {
+      this.syncCollectibles(hello.collectibles);
       this.homeBody = hello.self.home_body?.private ? hello.self.home_body : null;
       this.homeMesh = this.homeBody ? planetMesh(this.homeBody.id) : null;
       if (this.flight) {
         this.flight.position = [...hello.self.position]; this.flight.velocity = [...hello.self.velocity];
         this.flight.yaw = -hello.self.yaw; this.flight.pitch = -hello.self.pitch;
+        this.prediction = new FlightPrediction(hello.self);
       }
       if (this.wantFlight) this.setPilot(true);
     }
     receiveFlightSnapshot(snapshot) {
+      const now = this.network.serverNow, time = snapshot.state_time_ms ?? snapshot.server_time_ms ?? now;
+      this.motionEvents ??= new Map(); this.collectEvents ??= new Map();
+      const reset = new Set();
+      for (const event of snapshot.events) if (['region', 'respawn'].includes(event.type) && !this.motionEvents.has(event.id)) {
+        reset.add(event.player_id); this.motionEvents.set(event.id, event.at_ms);
+      }
+      for (const [id, at] of this.motionEvents) if (now - at > 8000) this.motionEvents.delete(id);
       const live = new Set(snapshot.players.map(ship => ship.id));
       for (const [id] of this.remoteShips) if (!live.has(id)) this.remoteShips.delete(id);
       for (const ship of snapshot.players) {
         const previous = this.remoteShips.get(ship.id);
-        const sameRegion = previous?.state.region === ship.region;
-        this.remoteShips.set(ship.id, {state:ship, position:sameRegion ? previous.position : [...ship.position]});
+        const track = previous?.track ?? new MotionTrack();
+        track.push(ship, time, reset.has(ship.id));
+        const sameRegion = previous?.state.region === ship.region && !reset.has(ship.id) && (previous.state.hp <= 0) === (ship.hp <= 0);
+        this.remoteShips.set(ship.id, {state:ship, track, position:sameRegion ? previous.position : [...ship.position], yaw:ship.yaw, pitch:ship.pitch});
       }
       if (this.flight && this.network?.self) {
         const ship = this.network.self;
-        if (Math.hypot(...this.flight.position.map((value, i) => value - ship.position[i])) > 45)
-          this.flight.position = [...ship.position];
+        this.prediction ??= new FlightPrediction(ship);
+        const controlled = document.activeElement === this.canvas || this.flightControls.size > 0;
+        this.prediction.reconcile(ship, reset.has(ship.id), (now - time) / 1000, this.flightIntent(controlled), this.network.limits, now);
+        this.flight.position = [...this.prediction.position];
       }
-      const now = this.network.serverNow;
+      this.syncCollectibles(snapshot.collectibles);
+      for (const event of snapshot.events) if (event.type === 'collect' && now - event.at_ms < 800 && !this.collectEvents.has(event.id))
+        this.collectEvents.set(event.id, event);
+      for (const [id, event] of this.collectEvents) if (now - event.at_ms >= 800) this.collectEvents.delete(id);
       for (const event of snapshot.events) if (event.type === 'laser' && event.position && event.end && now - event.at_ms < 400)
         this.shotEvents.set(event.id, event);
       for (const [id, event] of this.shotEvents) if (now - event.at_ms > 400) this.shotEvents.delete(id);
@@ -531,6 +695,7 @@
     }
     clearRemoteShips() {
       this.remoteShips.clear(); this.shotEvents.clear();
+      this.collectEvents?.clear(); this.motionEvents?.clear();
       for (const label of this.shipLabels.values()) label.remove();
       this.shipLabels.clear(); this.wake();
     }
@@ -548,16 +713,19 @@
             flight.pitch = clamp(flight.pitch - (Number(keys.has('arrowup')) - Number(keys.has('arrowdown'))) * dt, -1.35, 1.35);
             this.sendFlightInput();
           }
-          const blend = this.reduced.matches || !dt ? 1 : 1 - Math.exp(-dt * 18);
-          flight.position = flight.position.map((value, i) => mix(value, ship.position[i], blend));
-          flight.velocity = [...ship.velocity];
+          this.prediction ??= new FlightPrediction(ship);
+          if (!dt) this.prediction.reset(ship);
+          flight.position = [...this.prediction.step(dt, this.flightIntent(controlled), this.network.limits, this.network.serverNow, this.reduced.matches)];
+          flight.velocity = [...this.prediction.state.velocity];
           flight.thrust = controlled && ship.hp > 0 ? Number(keys.has('w')) - Number(keys.has('s')) : 0;
           flight.boost = false;
-          flight.bank = this.reduced.matches ? 0 : mix(flight.bank, 0, blend);
+          const bank = controlled ? -(Number(keys.has('arrowright')) - Number(keys.has('arrowleft'))) * .25 -
+            (Number(keys.has('d')) - Number(keys.has('a'))) * .16 : 0;
+          flight.bank = this.reduced.matches ? 0 : mix(flight.bank, bank, 1 - Math.exp(-dt * 7));
         } else { flight.thrust = 0; flight.boost = false; }
         for (const remote of this.remoteShips.values()) {
-          const blend = this.reduced.matches || !dt ? 1 : 1 - Math.exp(-dt * 18);
-          remote.position = remote.position.map((value, i) => mix(value, remote.state.position[i], blend));
+          const sample = remote.track?.sample(this.network.serverNow - 240);
+          if (sample) { remote.position = sample.position; remote.yaw = sample.yaw; remote.pitch = sample.pitch; }
         }
       } else flight.step(dt, keys, bodies, this.reduced.matches);
       const smoothing = this.paused || this.reduced.matches || !dt ? 1 : 1 - Math.exp(-dt * 9);
@@ -596,6 +764,15 @@
       const player = document.getElementById('game-player');
       if (player) player.textContent = ship ? ship.handle : '—';
       const score = document.getElementById('game-score'); if (score) score.textContent = ship && Number.isFinite(ship.score) ? String(ship.score) : '—';
+      const collected = document.getElementById('game-collected');
+      if (collected) collected.textContent = ship && Number.isSafeInteger(ship.collected) ? String(ship.collected) : '—';
+      const pickup = document.getElementById('game-pickup');
+      if (pickup) {
+        const latest = [...(this.collectEvents?.values() ?? [])].filter(event => event.player_id === ship?.id).at(-1);
+        const active = latest && now - latest.at_ms < 800;
+        const message = active ? '吸收 +' + latest.glyph_ids.length + (latest.fuel_added > 0 ? ' · 燃料 +' + latest.fuel_added.toFixed(1) : '') : '';
+        if (pickup.textContent !== message) pickup.textContent = message;
+      }
       const respawn = document.getElementById('game-respawn');
       if (respawn) { respawn.hidden = !ship || ship.hp > 0; respawn.textContent = ship && ship.hp <= 0 ? '重生倒计时 ' + Math.max(0, (ship.respawn_at_ms - now) / 1000).toFixed(1) + 's' : ''; }
       const region = document.getElementById('game-region');
@@ -989,7 +1166,7 @@
         gl.drawArrays(mode, 0, vertices.length / 8);
       };
       draw(this.clouds, gl.POINTS, 3);
-      draw(this.dust, gl.POINTS, 2);
+      draw(this.renderDust ?? this.dust, gl.POINTS, 2);
       const geometry = this.geometry();
       gl.enable(gl.DEPTH_TEST);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -1139,9 +1316,9 @@
       if (this.flight && (!this.network || this.network.connected && this.network.self?.hp > 0)) this.shipGeometry({ lines, points, solids });
       if (this.flight && this.network?.connected) {
         const serverNow = this.network.serverNow;
-        for (const {state:ship, position} of this.remoteShips.values()) {
+        for (const {state:ship, position, yaw = ship.yaw, pitch = ship.pitch} of this.remoteShips.values()) {
           if (ship.id === this.network.self?.id || ship.hp <= 0) continue;
-          const flight = {position, yaw:-ship.yaw, pitch:-ship.pitch, bank:0, trail:[],
+          const flight = {position, yaw:-yaw, pitch:-pitch, bank:0, trail:[],
             thrust:Math.hypot(...ship.velocity) > 2 ? 1 : 0, boost:false};
           this.shipGeometry({lines, points, solids}, flight, ship.guest ? [.74, .77, .80] : [.8, .87, .84]);
           if (ship.shield_until_ms > serverNow) ring(position, 4.5, [.6, .87, .95], .6, {tilt:.4, sides:32});
@@ -1155,6 +1332,23 @@
         }
       }
       return { lines, points, triangles, solids };
+    }
+    absorptionGlyphs() {
+      if (!this.flight || !this.network?.connected || this.reduced.matches) return [];
+      const result = [], now = this.network.serverNow;
+      for (const event of this.collectEvents?.values() ?? []) {
+        const age = now - event.at_ms, progress = clamp(age / 500, 0, 1);
+        if (age < 0 || progress >= 1) continue;
+        const destination = event.player_id === this.network.self.id ? this.flight.position : this.remoteShips.get(event.player_id)?.position;
+        if (!destination) continue;
+        for (const id of event.glyph_ids) {
+          const origin = this.dust.subarray(id * 8, id * 8 + 3);
+          const t = progress * progress;
+          result.push({ key:'collect:' + event.id + ':' + id, id, position:[...origin].map((v, i) => mix(v, destination[i], t)), progress });
+          if (result.length >= 64) return result;
+        }
+      }
+      return result;
     }
     renderSoftware() {
       const ctx = this.context, dpr = this.canvas.width / Math.max(this.width, 1);
@@ -1171,11 +1365,12 @@
         fog.addColorStop(1, 'rgba(168,168,168,0)');
         ctx.fillStyle = fog; ctx.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
       }
-      for (let i = 0; i < this.dust.length; i += 8) {
-        const p = this.project(this.dust.slice(i, i + 3));
+      const dust = this.renderDust ?? this.dust;
+      for (let i = 0; i < dust.length; i += 8) {
+        const p = this.project(dust.subarray(i, i + 3));
         if (!p || p.x < 0 || p.x > this.width || p.y < 0 || p.y > this.height) continue;
-        ctx.fillStyle = `rgba(220,220,220,${this.dust[i + 6] * .65})`;
-        const size = clamp(p.scale * this.dust[i + 7], .5, 3);
+        ctx.fillStyle = `rgba(220,220,220,${dust[i + 6] * .65})`;
+        const size = clamp(p.scale * dust[i + 7], .5, 3);
         ctx.fillRect(p.x, p.y, size, size);
       }
       const geometry = this.geometry();
@@ -1218,6 +1413,7 @@
       const visible = new Set();
       const maximum = this.width < 600 ? 20 : 40;
       for (let i = 0; i < this.dust.length && visible.size < maximum; i += 8 * 17) {
+        if (this.glyphTaken(i / 8)) continue;
         const p = this.project(this.dust.slice(i, i + 3));
         if (!p || p.x < 50 || p.x > this.width - 50 || p.y < 115 || p.y > this.height - 130 ||
             occupied.some(q => Math.hypot(q.x - p.x, q.y - p.y) < 28)) continue;
@@ -1228,9 +1424,21 @@
           token.textContent = ['{', '}', '[]', '::', '<>', '/', '+', '_', '01'][(i / 8) % 9];
           this.tokenField.append(token); this.tokenNodes.set(i, token);
         }
-        token.style.transform = `translate(${Math.round(p.x)}px,${Math.round(p.y)}px)`;
+        token.style.transform = `translate(${p.x.toFixed(2)}px,${p.y.toFixed(2)}px)`;
         token.style.fontSize = clamp(p.scale * 4.5, 7, this.flight ? 17 : 12) + 'px';
         token.style.opacity = clamp(.12 + p.scale * .025, .12, .25);
+      }
+      for (const effect of this.absorptionGlyphs()) {
+        const p = this.project(effect.position);
+        if (!p || p.x < 0 || p.x > this.width || p.y < 0 || p.y > this.height) continue;
+        visible.add(effect.key);
+        let token = this.tokenNodes.get(effect.key);
+        if (!token) {
+          token = document.createElement('span'); token.textContent = ['{', '}', '[]', '::', '<>', '/', '+', '_', '01'][effect.id % 9];
+          this.tokenField.append(token); this.tokenNodes.set(effect.key, token);
+        }
+        token.style.transform = `translate(${p.x.toFixed(2)}px,${p.y.toFixed(2)}px)`;
+        token.style.fontSize = clamp(p.scale * 4.5, 8, 18) + 'px'; token.style.opacity = .8 * (1 - effect.progress);
       }
       for (const [id, token] of this.tokenNodes) if (!visible.has(id)) { token.remove(); this.tokenNodes.delete(id); }
     }
@@ -1321,6 +1529,6 @@
       for (const [id, label] of this.shipLabels) if (!visible.has(id)) { label.remove(); this.shipLabels.delete(id); }
     }
   }
-  globalThis.MSGUniverseFlight = Object.freeze({ Flight, flightBasis, tokenNebula, planetMesh });
+  globalThis.MSGUniverseFlight = Object.freeze({ Flight, flightBasis, tokenNebula, planetMesh, MotionTrack, FlightPrediction, integrateFlight, inertialSegment });
   globalThis.MSGUniverseRenderer = UniverseRenderer;
 })();

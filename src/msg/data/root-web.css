@@ -997,7 +997,8 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 .game-meter::-webkit-progress-bar { background: #303030; }
 .game-meter::-webkit-progress-value { background: currentColor; }
 .game-meter::-moz-progress-bar { background: currentColor; }
-#game-score, #game-respawn { font-variant-numeric: tabular-nums; }
+#game-score, #game-collected, #game-respawn { font-variant-numeric: tabular-nums; }
+#game-pickup { display: block; min-height: 20px; margin-top: 6px; color: var(--hud-signal); font-size: 11px; }
 #game-respawn { margin-top: 12px; color: var(--hud-warning); }
 #game-actions { position: absolute; z-index: 5; left: 50%; bottom: max(86px, calc(env(safe-area-inset-bottom) + 72px)); transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; font-family: var(--mono); }
 .game-action { position: relative; display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 4px 12px; min-width: 92px; min-height: 48px; padding: 10px 12px; border: 1px solid var(--hud-line); border-radius: 2px; background: var(--hud-surface); color: var(--hud-text); text-align: left; font: 12px/1.5 var(--mono); touch-action: manipulation; }
