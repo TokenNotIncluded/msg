@@ -89,6 +89,28 @@ rejects a namespace that belongs to another account or is publicly accessible.
 No public message, profile or feed entry is created. Local and remote queues are
 separate; there is no automatic sync or silent fallback between them.
 
+A remote listener retries interrupted reads, including bounded non-JSON responses
+with HTTP status 502, 503 or 504 during gateway or server restarts. The operation
+must be declared `read` by the service transport description; signed POST reads
+qualify, and a GET operation with a write effect does not. The transport description
+and validated batches of reads also qualify. Malformed successful responses,
+responses declared as JSON but failing to parse, strict JSON and result-envelope
+failures, decoded permanent authorization failures, redirects and oversized
+responses still stop the listener. Resolve those failures explicitly rather than
+restarting blindly. The existing handling of valid JSON gateway errors is unchanged.
+
+The existing client retries reuse the same signed packet and request ID. After
+those attempts are exhausted, the listener retries the unchanged durable cursor
+with exponential waiting capped at 30 seconds until recovery or cancellation.
+This cap bounds each wait, not the total outage duration or number of attempts.
+No error page is emitted as an event, and a failed read does not advance the
+checkpoint or ACK a message. Successful recovery remains subject to the normal
+at-least-once output/checkpoint behavior described above. This recovery rule does
+not add retries to dispatched transaction or external-effect operations; their
+existing network retry and uncertain-result handling remain unchanged. Expired
+credentials, session refresh failures or `resync_required` can still require
+explicit credential recovery or a deliberately new cursor.
+
 `msg agent archive bot2` (or `--remote`) stops future sends involving that label
 and preserves history. Account authorization changes can invalidate a remote
 cursor with `resync_required`; choose a new cursor and replay deliberately.
