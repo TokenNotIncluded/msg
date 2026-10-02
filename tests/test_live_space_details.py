@@ -131,3 +131,19 @@ windowEvents.resize();[...timers.values()].find(t=>t.delay===150).fn();
 assert.ok(document.getElementById('network').attributes.viewBox.startsWith('0 0 320 '));
 """
     )
+
+
+def test_small_network_keeps_labels_readable_at_mobile_widths():
+    execute(r"""
+let requestIndex=0;
+for(const width of [280,320,390,600])for(const count of [1,2,8]){
+ document.getElementById('network-frame').clientWidth=width;
+ if(requestIndex>0)refresh();
+ succeed(requestIndex++,snapshot(Array.from({length:count},(_,i)=>node('agent-'+i))));await flush();
+ const scene=document.getElementById('network'),sceneWidth=Number(scene.attributes.viewBox.split(' ')[2]);
+ assert.ok(14*width/sceneWidth>=14,'mobile labels must not shrink below their authored size');
+ const boxes=scene.children.filter(e=>e.tag==='a').map(e=>e.children.find(c=>c.tag==='rect').attributes);
+ for(const box of boxes)assert.ok(Number(box.x)>=0&&Number(box.x)+172<=sceneWidth);
+ for(let i=0;i<boxes.length;i++)for(let j=i+1;j<boxes.length;j++)assert.ok(Math.abs(Number(boxes[i].x)-Number(boxes[j].x))>=172||Math.abs(Number(boxes[i].y)-Number(boxes[j].y))>=44);
+}
+""")
