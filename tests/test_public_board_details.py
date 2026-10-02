@@ -20,12 +20,15 @@ class Element {
 }
 const fields={svg:new Element('old-svg'),text:new Element('old-text')};
 const edit=new Element(),refresh=new Element(),save=new Element(),pause=new Element(),status=new Element(),image=new Element();
+const menu=new Element(),menuToggle=new Element(),close=new Element();menu.open=false;
+menu.querySelector=()=>menuToggle;menu.contains=target=>[menu,menuToggle,edit,pause].includes(target);
 const version=new Element(),content=new Element(),quota=new Element(),size=new Element(),form=new Element();form.hidden=true;
 const selectors={'form':form,'[role=status]':status,'img':image,'[data-edit]':edit,'[data-refresh]':refresh,'[type=submit]':save,
  '[data-pause]':pause,'[data-version]':version,'[data-content]':content,'[data-quota]':quota,'[data-size]':size,
+ '[data-menu]':menu,'[data-close]':close,
  '[name=svg]':fields.svg,'[name=text]':fields.text};
 form.querySelector=selector=>selectors[selector];
-const panel={dataset:{generation:'0',signedIn:'true',csrf:'csrf'},querySelector:selector=>selectors[selector]};
+const panel=new Element();panel.dataset={generation:'0',signedIn:'true',csrf:'csrf'};panel.querySelector=selector=>selectors[selector];
 const motion=new Element();motion.matches=!!input.reduced;
 const windowEvents=new Element(),requests=[],snapshots=[];
 let nextResponse,resolveFetch,running,id=0;
@@ -42,6 +45,7 @@ const context={document:{getElementById:()=>panel},matchMedia:()=>motion,TextEnc
  }};
 vm.runInNewContext(input.script,context);
 const snapshot=()=>({svg:fields.svg.value,text:fields.text.value,generation:panel.dataset.generation,hidden:form.hidden,
+ menuOpen:menu.open,menuFocused:!!menuToggle.focused,textFocused:!!fields.text.focused,
  expanded:edit.attrs['aria-expanded'],pressed:pause.attrs['aria-pressed'],image:image.src,status:status.textContent,
  saveDisabled:save.disabled,refreshDisabled:refresh.disabled,svgDisabled:fields.svg.disabled,textDisabled:fields.text.disabled,
  size:size.textContent,requests:structuredClone(requests)});
@@ -49,6 +53,10 @@ const snapshot=()=>({svg:fields.svg.value,text:fields.text.value,generation:pane
  for(const action of input.actions){
    if(action.kind==='input'){fields[action.name].value=action.value;await form.emit('input');}
    if(action.kind==='edit')await edit.emit('click');
+   if(action.kind==='open-menu')menu.open=true;
+   if(action.kind==='close-editor')await close.emit('click');
+   if(action.kind==='escape')await panel.emit('keydown',{key:'Escape',preventDefault(){}});
+   if(action.kind==='outside-click')await windowEvents.emit('click',{target:new Element()});
    if(action.kind==='pause')await pause.emit('click');
    if(action.kind==='motion'){motion.matches=action.matches;await motion.emit('change',{matches:action.matches});}
    if(action.kind==='refresh'){nextResponse=action.response;await refresh.emit('click');}
@@ -168,3 +176,37 @@ def test_unchanged_form_never_sends_an_empty_patch():
     result = run_editor([{'kind': 'edit'}, {'kind': 'submit'}])['final']
     assert result['requests'] == []
     assert '内容没有变化' in result['status']
+
+
+def test_options_are_discreet_and_editor_close_preserves_draft():
+    result = run_editor([
+        {'kind': 'snapshot'},
+        {'kind': 'open-menu'},
+        {'kind': 'edit'},
+        {'kind': 'input', 'name': 'text', 'value': 'unfinished draft'},
+        {'kind': 'snapshot'},
+        {'kind': 'close-editor'},
+        {'kind': 'snapshot'},
+        {'kind': 'open-menu'},
+        {'kind': 'escape'},
+        {'kind': 'snapshot'},
+        {'kind': 'open-menu'},
+        {'kind': 'outside-click'},
+    ])
+    initial, editing, closed, escaped = result['snapshots']
+    assert initial['hidden'] and not initial['menuOpen']
+    assert not editing['hidden'] and not editing['menuOpen'] and editing['textFocused']
+    assert closed['hidden'] and closed['text'] == 'unfinished draft' and closed['menuFocused']
+    assert not escaped['menuOpen'] and escaped['menuFocused']
+    assert not result['final']['menuOpen'] and result['final']['text'] == 'unfinished draft'
+    rendered = html()
+    menu = rendered.split('<details class="public-board-menu"', 1)[1].split('</details>', 1)[0]
+    assert ' open' not in menu and 'data-edit' in menu and 'data-pause' in menu
+    assert '>⋯</summary>' in menu
+    editor = rendered.split('<form id="public-board-editor" hidden>', 1)[1]
+    assert 'data-version' in editor and 'data-quota' in editor and '每账号每小时 5 次' in editor
+    assert '禁止批量' in editor and 'SVG ≤ 16 KiB' in editor
+    assert (
+        '点击「编辑公共栏」' not in rendered and '所有已登录用户和 Agent 都可修改' not in rendered
+    )
+    assert '<h1>' not in rendered
