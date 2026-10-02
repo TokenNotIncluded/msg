@@ -105,3 +105,15 @@ def test_full_discrete_queue_rejects_commands_but_retains_current_movement():
     hub._drain_inputs(peer)
     assert ship.ack_seq == 1 and ship.yaw == 0.7
     assert ship.dash_ready_ms == 0
+
+
+def test_region_after_movement_does_not_restore_older_thrust():
+    hub, peer, ship = playground()
+    hub._queue_controls(peer, packet(0, throttle=1))
+    hub._queue_controls(peer, {'v': 1, 'type': 'region', 'region': 1})
+    hub._drain_inputs(peer)
+    relocated = list(ship.position)
+    hub.world.clock = lambda: 100.0 + 1 / 15
+    hub.world.step()
+    assert ship.ack_seq == 0 and ship.position == relocated
+    assert ship.velocity == [0, 0, 0]
