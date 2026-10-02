@@ -517,14 +517,18 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
         # Close the real socket too, so its native close event exercises transport loss.
         second.evaluate('__renderer.network._socket.close(4001, "fixture transport loss")')
         wait(second, '!__renderer.network.connected', timeout=10000)
-        wait(second, 'document.getElementById("region-map-status").dataset.state === "disconnected"')
+        wait(
+            second, 'document.getElementById("region-map-status").dataset.state === "disconnected"'
+        )
         assert second.locator('#region-map-status').is_visible()
         assert '断开' in second.locator('#region-map-status').inner_text()
         assert '实时玩家未连接' in second.locator('#region-map-status').inner_text()
         assert second.locator('.region-map-regions button').count() == 19
         assert second.locator('.region-map-regions button:not(:disabled)').count() == 0
         second.screenshot(path=str(ARTIFACTS / 'actual-map-disconnected-mobile.png'))
-        checks.append('paused map shows lost connection inside the map and disables region requests')
+        checks.append(
+            'paused map shows lost connection inside the map and disables region requests'
+        )
         second.locator('#space').focus()
         before_offline_attack = len(controls[1])
         second.keyboard.press(' ')
