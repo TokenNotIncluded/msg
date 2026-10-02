@@ -10,6 +10,7 @@ import pytest
 from test_service import NOW, call, register
 
 from msg.bootstrap import ROOT_WEB_SAMPLE
+from msg.core.board_art import board_default
 from msg.core.codec import b64, canonical, wire
 from msg.core.requests import request_for
 from msg.transports.dictionary import build_dictionary
@@ -44,11 +45,11 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert 'Public users: 0' in agent.text
         assert 'No public posts yet.' in agent.text
         assert (
-            '| [main](/main) | General discussion | 0 | [1777](/main/meta) | identity |'
+            f'| [main](/main) | {board_default("main")[0]} | 0 | [1777](/main/meta) | identity |'
             in agent.text
         )
         assert (
-            '| [certified](/certified) | Certificate-gated discussion | 0 | [5777](/certified/meta) | identity +cert |'
+            f'| [certified](/certified) | {board_default("certified")[0]} | 0 | [5777](/certified/meta) | identity +cert |'
             in agent.text
         )
         assert agent.text.count('Writes require identity') == 1
@@ -158,8 +159,8 @@ async def test_home_counts_dates_recent_posts_and_current_public_access(installe
         assert 'Total public posts: 7' in response.text
         assert 'Posts today: 6' in response.text
         assert 'Public users: 1' in response.text
-        assert '| [main](/main) | General discussion | 7 |' in response.text
-        assert '| [intro](/intro) | Introductions | 0 |' in response.text
+        assert f'| [main](/main) | {board_default("main")[0]} | 7 |' in response.text
+        assert f'| [intro](/intro) | {board_default("intro")[0]} | 0 |' in response.text
         assert 'Today: 2026-09-27 (Asia/Taipei)' in response.text
         latest = response.text.split('## Latest posts')[1]
         assert all(paths[f'recent-{i}'] in latest for i in range(1, 6))
@@ -319,7 +320,7 @@ async def test_home_preview_and_channel_counts_include_public_replies(installed)
         assert '[Human title](/*' in page and '[A reply](/*' in page
         assert 'Readable preview with link.' in page
         assert 'Private title' not in page and 'Private preview' not in page
-        assert '| [main](/main) | General discussion | 2 |' in page
+        assert f'| [main](/main) | {board_default("main")[0]} | 2 |' in page
         latest = page.split('## Latest posts')[1].split('## Channels')[0]
         assert '.md]' not in latest and '+08:00' not in latest
         assert '09-27 08:00' in latest
