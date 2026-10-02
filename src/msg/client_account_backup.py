@@ -216,9 +216,17 @@ def _snapshot(paths):
     return directories, files, stamps
 
 
+def _private_json(raw):
+    """Private JSON parse errors must never echo decrypted field names or details."""
+    try:
+        return loads(raw)
+    except Failure:
+        raise Failure('invalid_account_backup_json') from None
+
+
 def _identity(files, server):
     require('state/client.json' in files, 'local_account_not_found')
-    state = loads(files['state/client.json'])
+    state = _private_json(files['state/client.json'])
     require(
         isinstance(state, dict) and type(state.get('version')) is int and state['version'] == 1,
         'invalid_account_backup_state',
@@ -239,7 +247,7 @@ def _identity(files, server):
     else:
         from msg.client_yubikey import YubiKeySigner
 
-        signer = YubiKeySigner.from_descriptor(loads(hardware))
+        signer = YubiKeySigner.from_descriptor(_private_json(hardware))
         backend = 'yubikey-piv'
     age_identity = files.get('data/encryption.agekey')
     recipient = (
@@ -475,7 +483,7 @@ def _relative(value):
 
 
 def _validate(plaintext, server, expected_subject, expected_key_id):
-    payload = loads(plaintext)
+    payload = _private_json(plaintext)
     require(
         isinstance(payload, dict)
         and set(payload)

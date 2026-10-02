@@ -266,6 +266,63 @@ def test_source_change_during_encryption_is_rejected(local, tmp_path, monkeypatc
     assert not output.exists()
 
 
+@pytest.mark.parametrize('source', ['envelope', 'state', 'hardware'])
+def test_private_json_errors_do_not_echo_fields_to_cli(
+    local, tmp_path, monkeypatch, capsys, source
+):
+    from msg import client_account_backup as module
+
+    state, recovery, recipient = local
+    canary = 'PRIVATE_JSON_FIELD_CANARY_0123456789'
+    malformed = ('{"' + canary + '":0,"' + canary + '":1}').encode()
+    output = tmp_path / 'must-not-exist.age'
+    if source == 'envelope':
+        ciphertext = tmp_path / 'malformed.age'
+        durable_write(ciphertext, b'age-encryption.org/v1\n')
+        monkeypatch.setattr(module, '_age', lambda *args, **kwargs: malformed)
+        environment(monkeypatch, tmp_path / 'after')
+        arguments = [
+            '--server',
+            SERVER,
+            'account',
+            'restore',
+            'recovered',
+            '--input',
+            str(ciphertext),
+            '--identity',
+            str(recovery),
+            '--expected-subject',
+            state.subject,
+        ]
+    else:
+        if source == 'state':
+            durable_write(state.path, malformed)
+        else:
+            (state.paths.data / 'identity.key').unlink()
+            durable_write(state.paths.state / 'hardware-signer.json', malformed)
+        arguments = [
+            '--server',
+            SERVER,
+            '--account',
+            state.account,
+            'account',
+            'backup',
+            '--recipient',
+            recipient,
+            '--output',
+            str(output),
+        ]
+    assert cli.main(arguments) == 1
+    captured = capsys.readouterr()
+    assert captured.out == '' and canary not in captured.err
+    error = loads(captured.err)['error']
+    assert error['code'] == 'invalid_account_backup_json'
+    assert 'field_path' not in error and 'details' not in error
+    assert not output.exists()
+    if source == 'envelope':
+        assert not ClientPaths.discover(server=SERVER, account='recovered').state.exists()
+
+
 @pytest.mark.parametrize(
     'path',
     ['state/../../escape', '/tmp/escape', 'state\\escape', 'state/cache/secret', 'state/./escape'],
