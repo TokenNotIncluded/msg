@@ -1832,15 +1832,44 @@ def create_app(service):
                 if result.error:
                     return json_response(result_wire(result), error_status(result.error.code))
                 value = wire(result.data)
-                payload = canonical(value)
+                browser_diff = (
+                    operation == 'discovery.diff_view'
+                    and not raw_document
+                    and 'text/html' in request.headers.get('accept', '').casefold()
+                )
+                if browser_diff:
+                    from msg.transports.read_representation import representation
+
+                    browser_diff = representation(request.headers['accept']) == 'text/html'
+                account = await browser_account() if browser_diff else None
+                if browser_diff:
+                    from msg.transports.revision_diff import revision_diff_content
+
+                    payload = document_html(
+                        '',
+                        title='msg — Version diff',
+                        body_html=revision_diff_content(value),
+                        account=account,
+                        raw_path=path,
+                        service_url=service.settings.service_url,
+                    )
+                else:
+                    payload = canonical(value)
                 require(len(payload) <= limits.max_response_bytes, 'response_too_large')
-                etag = '"' + digest(value)[7:] + '"'
-                headers = {**BASE_HEADERS, 'ETag': etag, 'Cache-Control': 'no-store'}
+                etag = '"' + digest([value, browser_diff, account])[7:] + '"'
+                headers = {
+                    **BASE_HEADERS,
+                    'ETag': etag,
+                    'Cache-Control': 'no-store',
+                    'Vary': 'Accept, Cookie',
+                }
+                if browser_diff:
+                    headers.update(HOME_BROWSER_HEADERS)
                 if request.headers.get('if-none-match') == etag:
                     return Response(status_code=304, headers=headers)
                 return Response(
                     b'' if request.method == 'HEAD' else payload,
-                    media_type='application/json',
+                    media_type='text/html' if browser_diff else 'application/json',
                     headers=headers,
                 )
             segment = re.fullmatch(rb'/_r(?:ead)?/([A-Za-z0-9_.:-]{1,160})/read', raw_path)
