@@ -3,6 +3,7 @@
 from dataclasses import replace
 from time import perf_counter
 
+import httpx
 import pytest
 from test_client_subagents_remote import client_for
 
@@ -43,12 +44,20 @@ async def test_remote_mailbox_round_trips(installed, tmp_path):
             )
         calls = []
         original = client.transport.call
+        original_reads = client.transport.call_reads
 
         async def counted(packet):
             calls.append(packet.operation)
             return await original(packet)
 
+        async def counted_reads(packets):
+            results = await original_reads(packets)
+            if results is not None:
+                calls.append('graphql.reads')
+            return results
+
         client.transport.call = counted
+        client.transport.call_reads = counted_reads
         start = perf_counter()
         await agents.send('sender', 'recipient', 'bounded private message', message_id='once')
         send_calls, send_seconds = list(calls), perf_counter() - start
@@ -62,7 +71,7 @@ async def test_remote_mailbox_round_trips(installed, tmp_path):
             page = await next_messages(agents, 'recipient', cursor=page['cursor'], limit=2)
         inbox_seconds = perf_counter() - start
         assert [item['id'] for item in page['items']] == ['once']
-        assert len(send_calls) == 8
+        assert send_calls == ['discovery.get', 'graphql.reads', 'file.create']
         inbox_calls = list(calls)
         calls.clear()
         tail = await agents.inbox('recipient', tail=True)
@@ -105,6 +114,125 @@ async def test_remote_mailbox_round_trips(installed, tmp_path):
             'cold_total_requests': len(inbox_calls),
             'inbox_seconds': round(inbox_seconds, 3),
         })
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_batched_send_rechecks_every_private_namespace_and_archive_state(installed, tmp_path):
+    app, _ = installed
+    client, http = await client_for(app, tmp_path / 'owner', 'fresh-private-checks')
+    agents = RemoteAgents(client)
+    try:
+        await agents.create('sender')
+        await agents.create('recipient')
+        await agents.send('sender', 'recipient', 'first', message_id='first')
+        root = '/@fresh-private-checks/files/agents'
+        paths = [root.rpartition('/')[0], root, root + '/sender', root + '/recipient']
+        paths += [root + '/sender/agent.json', root + '/recipient/agent.json']
+        for number, path in enumerate(paths):
+            meta = client.checked(
+                await client.call('discovery.get', {'id': path, 'view': 'meta'})
+            ).data
+            old_mode = meta['mode']
+            client.checked(
+                await client.call(
+                    'content.chmod',
+                    {'id': meta['id'], 'mode': '0711' if meta['type'] == 'topic' else '0644'},
+                    expected=((meta['id'], meta['generation']),),
+                )
+            )
+            with pytest.raises(Failure, match='subagent_private_namespace_conflict'):
+                await agents.send(
+                    'sender', 'recipient', 'must not write', message_id='denied-' + str(number)
+                )
+            absent = await client.call(
+                'discovery.get', {'id': root + '/recipient/msg-denied-' + str(number) + '.json'}
+            )
+            assert absent.status == 'error' and absent.error.code == 'not_found'
+            current = client.checked(
+                await client.call('discovery.get', {'id': path, 'view': 'meta'})
+            ).data
+            client.checked(
+                await client.call(
+                    'content.chmod',
+                    {'id': current['id'], 'mode': old_mode},
+                    expected=((current['id'], current['generation']),),
+                )
+            )
+        await agents.archive('recipient')
+        with pytest.raises(Failure, match='subagent_archived'):
+            await agents.send('sender', 'recipient', 'after archive', message_id='archived')
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_legacy_and_transient_read_batch_fallback_still_check_authority(
+    installed, tmp_path, monkeypatch
+):
+    app, _ = installed
+    client, http = await client_for(app, tmp_path / 'owner', 'fallback-reads')
+    agents = RemoteAgents(client)
+    try:
+        await agents.create('sender')
+        await agents.create('recipient')
+        description = dict(client.transport._description)
+        client.transport._description = {
+            key: value for key, value in description.items() if key != 'transports'
+        }
+        before = client.transport.calls
+        await agents.send('sender', 'recipient', 'legacy', message_id='legacy')
+        assert client.transport.calls - before == 8
+        client.transport._description = description
+        for failure in (
+            httpx.ReadTimeout('read only'),
+            Failure('server_busy', retryable=True),
+            Failure('not_found'),
+        ):
+
+            async def unavailable(requests, failure=failure):
+                raise failure
+
+            with monkeypatch.context() as patch:
+                patch.setattr(client.transport, 'call_reads', unavailable)
+                before = client.transport.calls
+                await agents.send(
+                    'sender',
+                    'recipient',
+                    'fallback',
+                    message_id=type(failure).__name__ + str(before),
+                )
+                assert client.transport.calls - before == 8
+
+        async def denied(requests):
+            raise Failure('credential_ceiling')
+
+        with monkeypatch.context() as patch:
+            patch.setattr(client.transport, 'call_reads', denied)
+            before = client.transport.calls
+            with pytest.raises(Failure, match='credential_ceiling'):
+                await agents.send('sender', 'recipient', 'must not fall back', message_id='denied')
+            assert client.transport.calls - before == 1
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_batched_send_preserves_missing_directory_and_config_errors(installed, tmp_path):
+    app, _ = installed
+    client, http = await client_for(app, tmp_path / 'owner', 'missing-preflight')
+    agents = RemoteAgents(client)
+    try:
+        with pytest.raises(Failure, match='subagent_not_found'):
+            await agents.send('sender', 'recipient', 'missing root')
+        await agents.create('sender')
+        with pytest.raises(Failure, match='subagent_not_found'):
+            await agents.send('sender', 'recipient', 'missing recipient')
+        await agents._directory('/@missing-preflight/files/agents/recipient', create=True)
+        with pytest.raises(Failure) as caught:
+            await agents.send('sender', 'recipient', 'missing config')
+        assert caught.value.code == 'not_found'
     finally:
         await http.aclose()
 

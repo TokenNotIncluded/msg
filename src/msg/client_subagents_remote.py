@@ -12,6 +12,8 @@ import re
 import uuid
 from collections.abc import Mapping
 
+import httpx
+
 from msg.client_subagents import normalize_agent
 from msg.core.codec import b64, canonical, loads, unb64
 from msg.core.errors import Failure, require
@@ -122,6 +124,9 @@ class RemoteAgents:
         # The server applies the current read ACL and returns metadata and
         # content in one projection. Never cache namespace or privacy checks.
         data = await self._call('file.read', {'id': path, 'fields': [*PRIVATE_FIELDS, 'content']})
+        return self._private_json(data)
+
+    def _private_json(self, data):
         meta = self._private_meta(data)
         require(meta['type'] == 'file', 'invalid_subagent_message')
         try:
@@ -130,6 +135,61 @@ class RemoteAgents:
         except (ValueError, TypeError) as exc:
             raise Failure('invalid_subagent_message') from exc
         return meta, value
+
+    async def _send_preflight(self, root, sender, recipient):
+        """Fresh namespace checks, combined only when the read adapter supports it."""
+        paths = [root.rpartition('/')[0], root, root + '/' + sender, root + '/' + recipient]
+        calls = [('discovery.get', {'id': path, 'view': 'meta'}) for path in paths]
+        calls.extend(
+            (
+                'file.read',
+                {'id': root + '/' + name + '/agent.json', 'fields': [*PRIVATE_FIELDS, 'content']},
+            )
+            for name in (sender, recipient)
+        )
+        read_many = getattr(self.client.transport, 'call_reads', None)
+        results = None
+        if read_many is not None:
+            try:
+                results = await read_many([self.client.prepare(op, args) for op, args in calls])
+            except httpx.TimeoutException, httpx.NetworkError:
+                # Reads have no uncertain mutation. Normal calls retain the
+                # client's retry and OAuth-refresh behavior on the fallback.
+                pass
+            except Failure as exc:
+                if not exc.retryable and exc.code not in {'not_found', 'dependency_unavailable'}:
+                    raise
+        retryable = results is not None and any(
+            result.status == 'error' and result.error.retryable for result in results
+        )
+        permanent = results is not None and any(
+            result.status == 'error' and not result.error.retryable for result in results
+        )
+        if results is None or retryable and not permanent:
+            await self._directory(paths[0])
+            await self._directory(root)
+            await self._agent(root, sender)
+            await self._agent(root, recipient)
+            return
+        if retryable:
+            # A transient sibling must never turn an authority rejection into
+            # another read attempt. Permanent errors win in either ordering.
+            for index, result in enumerate(results):
+                if result.status == 'error' and not result.error.retryable:
+                    if index < 4 and result.error.code == 'not_found':
+                        raise Failure('subagent_not_found')
+                    self.client.checked(result)
+        for result in results[:4]:
+            if result.status == 'error' and result.error.code == 'not_found':
+                raise Failure('subagent_not_found')
+            data = self.client.checked(result).data
+            meta = self._private_meta(data)
+            require(meta['type'] == 'topic', 'subagent_private_namespace_conflict')
+        for name, result in zip((sender, recipient), results[4:], strict=True):
+            data = self.client.checked(result).data
+            meta, value = self._private_json(data)
+            config = self._config(meta, value, name)
+            require(not config['archived'], 'subagent_archived')
 
     async def _put(self, parent, name, value, *, existing_match=None):
         result = await self.client.call(
@@ -279,7 +339,7 @@ class RemoteAgents:
         return {'name': name, 'identity': self._full(name), 'archived': True}
 
     async def send(self, sender, recipient, message, message_id=None):
-        root = await self._root()
+        root = await self._identity()
         sender, recipient = self._label(sender), self._label(recipient)
         require(isinstance(message, str) and bool(message.strip()), 'invalid_subagent_message')
         require(len(message.encode()) <= 65536, 'subagent_message_too_large')
@@ -288,8 +348,7 @@ class RemoteAgents:
             isinstance(message_id, str) and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,64}', message_id)),
             'invalid_subagent_message_id',
         )
-        await self._agent(root, sender)
-        await self._agent(root, recipient)
+        await self._send_preflight(root, sender, recipient)
         value = {
             'version': 2,
             'owner': self.client.state.subject,
