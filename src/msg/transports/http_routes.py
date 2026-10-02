@@ -1234,6 +1234,13 @@ def create_app(service):
                 )
             if path in {'/_post/state', '/_post/proofs', '/_post/forks', '/bookmarks'}:
                 require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+                # These browser views authenticate with their session cookie.
+                # Explicit signed or bearer calls belong to /-/p/<operation>.
+                require(
+                    'authorization' not in request.headers
+                    and 'x-msg-request' not in request.headers,
+                    'invalid_request',
+                )
                 pairs = request.query_params.multi_items()
                 query = dict(pairs)
                 require(len(pairs) == len(query), 'duplicate_query_parameter')
