@@ -77,6 +77,19 @@ async def test_old_browser_reads_only_public_forks_and_keeps_signed_ceiling(oaut
     assert hidden.status == 'ok', wire(hidden)
     await private(app, directory.resources[0].id)
     cookie = await browser_login(oauth)
+    for path in ('/_post/state', '/_post/proofs', '/_post/forks', '/bookmarks'):
+        for header in ('Authorization', 'X-Msg-Request'):
+            for value in ('invalid', ''):
+                denied = await http.get(
+                    path,
+                    params={'id': source.id} if path != '/bookmarks' else {},
+                    headers={header: value, 'Accept': 'text/html'},
+                )
+                assert (
+                    denied.status_code == 400
+                    and denied.json()['error']['code'] == 'invalid_request'
+                )
+                assert not denied.json().get('data')
     token_id, secret, restricted = await restrict(
         oauth, cookie, {'discussion.forks', 'discussion.fork'}
     )
