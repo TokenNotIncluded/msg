@@ -180,12 +180,35 @@ test('combat dedup survives same-player reconnection but new hello clears old-wo
   r.receiveCombatEvents([{...event,player_id:fresh.id,at_ms:1200}],1200); assert.equal(r.combatEvents.size,1);
 });
 
-test('combat geometry and caches stay bounded, omit other regions and reduce spatial debris', () => {
+test('combat geometry and caches stay bounded and reduce spatial debris', () => {
   const r=renderer(), events=Array.from({length:600},(_,id)=>({id,type:'death',player_id:'peer',position:[0,0,10],at_ms:900,region:0}));
   r.receiveCombatEvents(events,1000); assert.equal(r.combatSeen.size,512); assert.equal(r.combatEvents.size,48);
   const full=r.geometry().lines.length; r.reduced.matches=true;
   assert.ok(r.geometry().lines.length<full);
   r.network.serverNow=2000; r.geometry(); assert.equal(r.combatEvents.size,0);
-  r.receiveCombatEvents([{id:700,type:'death',player_id:'peer',position:[0,0,10],at_ms:2000,region:1}],2000);
-  assert.equal(r.combatEvents.size,0);
+});
+
+test('cross-region server shots and hits keep confirmation and damage feedback', () => {
+  const r=renderer(), own=r.network.self.id;
+  const laser={id:700,type:'laser',player_id:own,position:[0,0,16],end:[0,0,-20],at_ms:1000,region:0};
+  const hit={id:701,type:'hit',player_id:'peer',target_id:own,position:[0,0,-20],at_ms:1000,region:1};
+  r.receiveFlightSnapshot({players:[r.network.self,{...self(),id:'peer',region:1}],events:[laser,hit]});
+  assert.equal(r.shotEvents.size,1); assert.equal(r.combatEvents.size,1); assert.equal(r.combatStatus.text,'命中确认');
+  r.receiveCombatEvents([{...hit,id:702,player_id:own,target_id:'peer',region:2}],1000);
+  assert.equal(r.combatStatus.text,'受到攻击'); assert.equal(r.network.self.hp,100);
+});
+
+test('complete highway descriptors rebuild only on geometry or availability changes', () => {
+  const r=renderer(); r.tokenNodes=new Map();
+  const field={version:2,layout_version:1,seed:'0'.repeat(32),count:2300,revision:0,mask:Array(288).fill(0),anchors:[
+    {id:'root',position:[0,0,0],radius:5.4},{id:'peer',position:[120,40,-30],radius:2.05},
+  ]};
+  r.syncCollectibles(field); const first=r.dust, compact=r.renderDust;
+  assert.equal(r.tokenLanes.length,1); r.syncCollectibles({...field,anchors:field.anchors.map(a=>({...a}))});
+  assert.equal(r.dust,first); assert.equal(r.renderDust,compact);
+  const mask=[...field.mask];mask[0]=1;
+  r.syncCollectibles({...field,revision:1,mask}); assert.equal(r.dust,first); assert.equal(r.renderDust.length,2299*8);
+  r.collectEvents=new Map([['old-layout',{glyph_ids:[0],at_ms:900}]]);
+  r.syncCollectibles({...field,seed:'1'.repeat(32)}); assert.notEqual(r.dust,first); assert.equal(r.renderDust.length,2300*8);
+  assert.equal(r.collectEvents.size,0); assert.equal(r.collectSince,1000);
 });

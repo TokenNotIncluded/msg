@@ -1054,7 +1054,7 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
   .game-key-legend { display: none; }
   .piloting .flightbar { left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; gap: 0; }
   .piloting .control-capsule { gap: 2px; }
-  .piloting .status { top: 224px; bottom: auto; width: max-content; max-width: calc(100% - 32px); }
+  .piloting .status { top: 276px; bottom: auto; width: max-content; max-width: calc(100% - 32px); }
   #region-map { top: 78px; bottom: max(72px, calc(env(safe-area-inset-bottom) + 60px)); left: 12px; width: calc(100% - 24px); padding: 16px; }
   #region-map-canvas { aspect-ratio: 1 / 1; max-height: 50dvh; }
   #region-map h2 { font-size: 15px; }
@@ -1072,7 +1072,7 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
   #game-hud { top: 64px; width: min(300px, calc(100% - 32px)); }
   .game-session { margin-bottom: 4px; }
   .game-vitals { max-width: 220px; }
-  .piloting .status { top: 150px; }
+  .piloting .status { top: 206px; }
   #pilot-hud { bottom: max(64px, calc(env(safe-area-inset-bottom) + 50px)); }
   .pilot-readout { justify-content: flex-end; padding-right: 18px; }
   .pilot-touch-controls { padding-top: 4px; }
