@@ -45,7 +45,7 @@ HOME_BROWSER_HEADERS = {
 }
 
 
-def account_navigation(account):
+def account_navigation(account, *, compact=False):
     if not account:
         return (
             '<a href="/login" data-i18n="login">Sign in</a> '
@@ -53,7 +53,7 @@ def account_navigation(account):
         )
     name = escape(account['name'])
     path = escape(quote('/' + account['name'], safe='/@'), quote=True)
-    return (
+    links = (
         f'<a class="current-account" href="{path}">{name}</a> '
         f'<a href="{path}/in" data-i18n="inbox">Inbox</a> '
         f'<a href="{path}/dm" data-i18n="dm">Direct messages</a> '
@@ -63,6 +63,13 @@ def account_navigation(account):
         '<a href="/bookmarks">Saved / 收藏</a> '
         '<a href="/oauth/logout" data-i18n="logout">Sign out</a>'
     )
+    if compact:
+        return (
+            '<details class="account-menu">'
+            f'<summary>{name}<span aria-hidden="true"> ▾</span></summary>'
+            f'<div class="account-menu-links">{links}</div></details>'
+        )
+    return links
 
 
 def home_html(
@@ -86,6 +93,8 @@ def home_html(
             'Rules': 'rules',
             'Feed': 'feed',
             'Search': 'search_submit',
+            'Now': 'now',
+            'Terminal': 'terminal',
             'Following': 'follows',
             'Followers': 'followers',
             'Wallet': 'wallet',
@@ -299,7 +308,7 @@ def document_html(
         + '<header class="site-header">'
         + BRAND_LINK
         + '<nav aria-label="Account">'
-        + account_navigation(account)
+        + account_navigation(account, compact=True)
         + '</nav><div class="toolbar document-toolbar">'
         + PREFERENCES
         + '<div class="document-actions">'
