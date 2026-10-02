@@ -1,12 +1,13 @@
-# Open issue resolution ledger · 2026-10-01
+# Open issue resolution ledger · 2026-10-02
 
-Latest delivery snapshot (2026-10-01): PyPI `msgctl 0.2.3`; public native server
-`msgd 0.2.3-20261001.1`; one-command installer pinned separately to client 0.2.1.
-PR #207 (SSH money / native package naming), #208 (public ledger), graceful
-shutdown integration, and public channel discovery are deployed. PR #222 is
-merged on main but is newer than this published/deployed snapshot; existing
-production directories have not migrated and same-instance domain aliases are
-not yet implemented.
+Verified production baseline before this iteration (2026-10-02): native server
+`msgd 0.2.14-20261002.33`, source `8e859f9750c901ba4f5b3f2ec4f1294d93280205`;
+both services active and package files intact. Current delivery must be verified
+against `/usr/share/doc/msgd/build.json` rather than historical version strings.
+PyPI publication and the client installer are independent delivery paths; this
+iteration does not establish a new PyPI release. Instance and ingress-alias code
+is present, but existing production directories have not migrated and target
+DNS/TLS/proxy changes are not inferred from source changes.
 
 The original acceptance ledger below retains its historical evidence and scope.
 New feature delivery does not establish every older production/recovery gate.
@@ -18,13 +19,14 @@ New feature delivery does not establish every older production/recovery gate.
 | #210 SSH Root money | Deployed; public ledger confirms 10000 MSG Root-to-bank and 1000 MSG bank-to-xx. Exact SSH channel/PIN/cancellation evidence remains separate. |
 | #211 native package name | Resolved: installed package is `msgd`; Python distribution remains `msgctl`. |
 | #212 public balance/ledger | Resolved via #208, privacy/permission regression and anonymous production reads. |
-| #213 graceful shutdown | Deployed with mixed kill and 90s stop budget; production in-flight drain evidence remains distinct from isolated SIGTERM tests. |
+| #213 graceful shutdown | Sandbox cancellation now propagates after child cleanup, preserving the in-flight lease. Disposable PostgreSQL/TestRoot SIGTERM probes cover drain, exhausted stop budget and network timeout; production in-flight drain remains unverified. `scripts/check_graceful_shutdown.py --installed` runs an isolated installed-package probe without production config or recipients. |
 | #214 recovery schema catalogue | Resolved: money_visibility is covered by catalogue and real recovery regression, included in production. No production promotion is claimed. |
-| #215 instance paths | #222 merged; #226 fixes its missing hosting-settings contract registration (25 real PostgreSQL hosting/recovery tests passed; new CI pending). These main-branch additions are not yet published or deployed; production directory migration pending. |
+| #215 instance paths | #222/#226 instance and hosting-settings contracts are in source. Runtime Root-directory isolation, named-instance layout validation and preparation collisions are being repaired in this iteration. Production directory migration remains pending; source checks do not move existing keys or data. |
 | #216 same-instance domain aliases | PR #225 implements explicit ingress aliases with unchanged canonical signing authority and local identity, endpoint selection in all transports, strict hosting ingress, and retained recovery policy. The 74-test contract and installed rehearsal passed on source 210d2cf/test merge f5c45b3; later workflow-prerequisite changes and the final full gate need their own verification. DNS/TLS/proxy configuration and target rollout are separate operator steps. |
-| #217 archive retention / #220 retired apps | Cleanup not executed or verified. |
+| #217 archive retention | [Read-only retention planner](DEPLOYMENT_RETENTION.md) protects current and verified rollback releases, signatures, business backups and unknown files. No deletion option; no production cleanup or rollback attestation was fabricated. Real rollback acceptance, file review and cleanup remain pending. |
+| #220 retired apps | [Retirement runbook](PROJECT_RETIREMENT.md) separates `lmm-api`/`cortexfs` ownership from shared services and MSG. Actual target retirement and disk/service acceptance remain pending; no remote cleanup occurred. |
 | #218 PIN record location | Resolved privately from historical records; no secret or credential path is published. |
-| #219 identity selection | Origin/username checks shipped; old server-account archival and full recovery UX acceptance remain separate. |
+| #219 identity selection | Offline `identity show` reports the selected authentication method without opening secret files or probing hardware. Lost-marker legacy recovery rejects ambiguous configured profiles until explicit account selection. Old server-account archival and real upgrade/recovery interaction remain separate. |
 | #221 SSH-style client connections | Resolved: shipped in 0.2.3; installed-client verification, 40 connection checks and real read/post/reply/Git regression recorded on the issue. |
 
 ## Remaining requirements
@@ -44,10 +46,31 @@ New feature delivery does not establish every older production/recovery gate.
 | [#81](https://github.com/TokenNotIncluded/msg/issues/81) events/notifications/collaboration | Current-attempt/deadline fences and controlled isolated sender tests | Event/state/privacy/current-permission assertion matrix; controlled target SMTP/Webhook success/failure/uncertain/retry/recovery evidence. No arbitrary production recipients. |
 | [#82](https://github.com/TokenNotIncluded/msg/issues/82) clients/tools/SSH/RSS | RSS issue resolved; XDG credentials/native layout, environment-based TUI locales, installed-client/SSH and sandbox regressions | Remaining view/output/retry/explicit-write clause map; target application SSH/PAM and bwrap resource/network-limit matrix. Administrator SSH port 22 is not the application's SSH endpoint. |
 | [#83](https://github.com/TokenNotIncluded/msg/issues/83) full design acceptance | Immutable published read contract repaired; exact 2,851+8 evidence gate; finite design inventory exists | All 564 design obligations need concrete positive/negative/concurrency/recovery assertions where applicable. Inventory navigation entries alone are not assertion coverage. Refresh outdated diagnostic-gap entries against actual main. |
-| [#84](https://github.com/TokenNotIncluded/msg/issues/84) production/recovery | Native 0.2.3 deployed; current package, active services, public homepage/install and mixed/90s unit settings verified. Earlier doctor/selftest evidence belongs to the historical 0.2.0 deployment, not a new 0.2.3 retest; protected backup/rollback material retained | Legacy snapshot consistency and independently current authority; actual target capacity/resource exhaustion/shared-topology recovery, cutover and stopping criteria; enabling new rename authority still requires a signed CA policy transition. |
+| [#84](https://github.com/TokenNotIncluded/msg/issues/84) production/recovery | Native 0.2.14 baseline verified as described above; protected backup/rollback material retained. Historical selftests and complete CI runs retain their original source/scope and cannot certify later changes | Legacy snapshot consistency and independently current authority; actual target capacity/resource exhaustion/shared-topology recovery, cutover and stopping criteria; enabling operations beyond the installed signed ceiling still requires the corresponding CA policy transition. |
 | [#85](https://github.com/TokenNotIncluded/msg/issues/85) architecture/test debt | Complete current CI, shared protected ledger/market owners and effect fences | Measure current duplication/hot paths and trace all convergence invariants; keep published versions/signatures and history. Green Ruff or smaller files are not architectural acceptance. |
 
-## Concrete fixes in this pass
+## Concrete fixes in the 2026-10-02 iteration
+
+The Transfer authorization hook no longer dereferences a missing HTTP request
+during internal upload authorization. Frozen board rules also apply to the open
+policy path, closing move/restore mutations while frozen. Empty and EOF FUSE
+reads recheck current file permissions instead of bypassing revocation.
+Homepage Markdown branding escapes user text before insertion into table rows.
+
+Shared-board draft/conflict/retry handling, live polling cancellation and stale
+status, responsive navigation, translated labels and terminal cancellation/IME
+behavior have focused Python and real JavaScript regression checks. Later art
+and compact machine representations require their own final-source checks.
+
+New UI and operations do not grant new signed capabilities. The installed Root
+and online CA policy still rejects newer board/drop/rules operations outside its
+issuance ceiling; logging in or renewing an ordinary credential cannot enlarge
+that ceiling. No Root rotation or direct database grant was performed.
+
+The issues above remain open wherever their original field acceptance is still
+missing. A partial source repair or read-only runbook does not close an epic.
+
+## Historical repairs and evidence
 
 PR #206 has been merged with all checks passing. It repairs published schema
 compatibility, short-code version preservation, strict HTTP boundary fixtures and
