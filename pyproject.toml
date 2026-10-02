@@ -33,6 +33,7 @@ server = [
     "psycopg[binary]>=3.3,<4",
     "valkey>=6.1,<7",
     "markdown-it-py>=4,<5",
+    "pygments>=2.19,<3",
     "websockets>=15,<17",
 ]
 dev = [

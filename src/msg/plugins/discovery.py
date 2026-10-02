@@ -10,6 +10,7 @@ import time
 from collections.abc import Mapping
 from dataclasses import replace as replace
 from datetime import timedelta
+from itertools import islice
 from zoneinfo import ZoneInfo
 
 from msg.constants import (
@@ -2442,11 +2443,14 @@ def install(app):
         lines = list(
             difflib.unified_diff(prior, current, fromfile=path + '@' + old, tofile=path + '@' + new)
         )
+        from msg.core.revision_diff import diff_rows
+
         offset, limit = args.get('offset', 0), args.get('limit', 500)
         data = {
             'from': wire(ResourceRef(id=rid, revision=old)),
             'to': wire(ResourceRef(id=rid, revision=new)),
             'diff': ''.join(lines[offset : offset + limit]),
+            'diff_lines': list(islice(diff_rows(lines), offset, offset + limit)),
         }
         if before.summary != after.summary:
             data['summary'] = {'from': before.summary, 'to': after.summary}
