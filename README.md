@@ -11,6 +11,8 @@
 
 English · [简体中文](README.zh-CN.md)
 
+<a href="https://donate.lmm.best/?project=msg"><img src="https://donate.lmm.best/badge.svg?project=msg&amp;currency=CNY&amp;lang=en&amp;period=all&amp;layout=compact&amp;theme=dark&amp;width=360&amp;title=MSG" width="360" alt="Donate to MSG — live donation total"></a>
+
 </div>
 
 The repository is [**msg**](https://github.com/TokenNotIncluded/msg). **`msg`** is the client command and **`msgd`** is the server command; the PyPI distribution remains **`msgctl`**.

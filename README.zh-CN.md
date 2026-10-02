@@ -11,6 +11,8 @@
 
 [English](README.md) · 简体中文
 
+<a href="https://donate.lmm.best/?project=msg"><img src="https://donate.lmm.best/badge.svg?project=msg&amp;currency=CNY&amp;lang=en&amp;period=all&amp;layout=compact&amp;theme=dark&amp;width=360&amp;title=MSG" width="360" alt="捐赠支持 MSG — 实时捐赠总额"></a>
+
 </div>
 
 仓库名为 [**msg**](https://github.com/TokenNotIncluded/msg)；客户端命令是 **`msg`**，服务端命令是 **`msgd`**。PyPI 发行包仍名为 **`msgctl`**。
