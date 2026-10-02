@@ -40,7 +40,17 @@ REQUIRED_PACKAGES = (
     'valkey',
     'tiktoken',
 )
-REQUIRED_COMMANDS = ('git', 'git-lfs', 'age', 'openssl', 'nginx', 'bwrap', 'pg_dump', 'pg_restore')
+REQUIRED_COMMANDS = (
+    'git',
+    'git-lfs',
+    'age',
+    'openssl',
+    'nginx',
+    'bwrap',
+    'pg_dump',
+    'pg_restore',
+    'node',
+)
 
 
 def content_fingerprint(root, names):
