@@ -1643,8 +1643,10 @@
     }
     absorptionGlyphs() {
       if (!this.flight || !this.network?.connected || this.reduced.matches) return [];
-      const result = [], now = this.network.serverNow;
-      for (const event of this.collectEvents?.values() ?? []) {
+      const result = [], now = this.network.serverNow, own = this.network.self.id;
+      const events = [...(this.collectEvents?.values() ?? [])];
+      events.sort((a, b) => Number(b.player_id === own) - Number(a.player_id === own));
+      for (const event of events) {
         const age = now - event.at_ms, progress = clamp(age / 500, 0, 1);
         if (age < 0 || progress >= 1) continue;
         const destination = event.player_id === this.network.self.id ? this.flight.position : this.remoteShips.get(event.player_id)?.position;
@@ -1652,7 +1654,11 @@
         for (const id of event.glyph_ids) {
           const origin = this.dust.subarray(id * 8, id * 8 + 3);
           const t = progress * progress;
-          result.push({ key:'collect:' + event.id + ':' + id, id, position:[...origin].map((v, i) => mix(v, destination[i], t)), progress });
+          const position = [...origin].map((v, i) => mix(v, destination[i], t));
+          const projected = this.project(position);
+          // Only visible particles use the budget; distant peers cannot hide an own pickup.
+          if (!projected || projected.x < 0 || projected.x > this.width || projected.y < 0 || projected.y > this.height) continue;
+          result.push({ key:'collect:' + event.id + ':' + id, id, position, projected, progress });
           if (result.length >= 64) return result;
         }
       }
@@ -1738,8 +1744,7 @@
         token.style.opacity = flying ? clamp(.22 + p.scale * .035, .22, .42) : clamp(.12 + p.scale * .025, .12, .25);
       }
       for (const effect of this.absorptionGlyphs()) {
-        const p = this.project(effect.position);
-        if (!p || p.x < 0 || p.x > this.width || p.y < 0 || p.y > this.height) continue;
+        const p = effect.projected;
         visible.add(effect.key);
         let token = this.tokenNodes.get(effect.key);
         if (!token) {

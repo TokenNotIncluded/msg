@@ -34,7 +34,7 @@ function renderer(ship = self()) {
   const canvas = {};
   const r = Object.create(Renderer.prototype);
   Object.assign(r, {
-    canvas, flight:new Flight(ship.position), keys:new Set(), flightControls:new Map(), gameActions:new Set(),
+    canvas, width:1280, height:800, flight:new Flight(ship.position), keys:new Set(), flightControls:new Map(), gameActions:new Set(),
     graph:{nodes:[], links:[]}, view:{nodes:[], links:[]}, camera:{target:[0,0,0], yaw:0, pitch:0, distance:34},
     callbacks:{now:() => 1000}, reduced:{matches:false}, paused:true, hudTime:0, clock:0, visualTraits:new WeakMap(),
     remoteShips:new Map(), shotEvents:new Map(), shipLabels:new Map(), homeBody:null,
@@ -129,8 +129,68 @@ test('absorption animation only follows confirmed events and stops immediately o
   assert.deepEqual(r.absorptionGlyphs(),[]);
   r.collectEvents.set('evt_1',{id:'evt_1',type:'collect',player_id:r.network.self.id,at_ms:900,glyph_ids:[0]});
   const effects=r.absorptionGlyphs(); assert.equal(effects.length,1); assert.equal(effects[0].id,0);
+  r.network.serverNow=1399; assert.equal(r.absorptionGlyphs().length,1);
+  r.network.serverNow=1400; assert.deepEqual(r.absorptionGlyphs(),[]);
+  r.network.serverNow=899; assert.deepEqual(r.absorptionGlyphs(),[]);
+  r.network.serverNow=1000; r.reduced.matches=true; assert.deepEqual(r.absorptionGlyphs(),[]);
+  r.reduced.matches=false;
   r.network.connected=false; assert.deepEqual(r.absorptionGlyphs(),[]);
   r.clearRemoteShips(); assert.equal(r.collectEvents.size,0);
+});
+
+for (const offscreen of [false,true]) test(`own absorption survives 64 earlier ${offscreen ? 'offscreen' : 'visible'} peer pickups within the bounded budget`, () => {
+  const r=renderer(); r.tokenNodes=new Map(); r.network.serverNow=0;
+  const field={version:2,layout_version:1,seed:'0'.repeat(32),count:2300,radius:8,fuel:4,respawn_ms:45000,
+    revision:0,mask:Array(288).fill(0),anchors:[
+      {id:'root',position:[0,0,0],radius:3},{id:'east',position:[300,0,0],radius:3},
+    ]};
+  r.syncCollectibles(field);
+  const ownId=1800, ownPosition=Array.from(r.dust.subarray(ownId*8,ownId*8+3));
+  r.network.self={...r.network.self,position:ownPosition}; r.flight.position=[...ownPosition];
+  const peer={...r.network.self,id:'ship-far',position:[5,0,0]};
+  const events=[
+    {id:'evt_far_1',type:'collect',player_id:peer.id,at_ms:900,glyph_ids:Array.from({length:32},(_,i)=>i),fuel_added:0,collected:32},
+    {id:'evt_far_2',type:'collect',player_id:peer.id,at_ms:967,glyph_ids:Array.from({length:32},(_,i)=>i+32),fuel_added:0,collected:64},
+    {id:'evt_own',type:'collect',player_id:r.network.self.id,at_ms:967,glyph_ids:[ownId],fuel_added:4,collected:1},
+  ];
+  const mask=[...field.mask];
+  for (const event of events) for (const id of event.glyph_ids) mask[id>>3]|=1<<(id&7);
+  r.network.serverNow=1000;
+  r.receiveFlightSnapshot({players:[r.network.self,peer],events,collectibles:{...field,revision:65,mask},state_time_ms:1000});
+  assert.equal(r.collectEvents.size,3); assert.equal(r.glyphTaken(ownId),true);
+  const beforeFuel=r.network.self.fuel, beforePosition=[...r.flight.position];
+  let projections=0;
+  r.project=position => {
+    projections++;
+    return {x:offscreen && position[0]<250 ? -20 : 100,y:200,scale:2};
+  };
+  const effects=r.absorptionGlyphs();
+  assert.equal(effects[0].id,ownId,'own confirmation is first even when all peer effects are visible');
+  assert.equal(effects.length,offscreen ? 1 : 64);
+  assert.equal(effects.filter(effect=>effect.key.includes('evt_own')).length,1);
+  assert.ok(effects.every(effect=>effect.projected.x>=0 && effect.projected.x<=r.width));
+  assert.equal(projections,offscreen ? 65 : 64,'offscreen particles never consume the 64 display slots');
+  assert.equal(r.network.self.fuel,beforeFuel); assert.deepEqual(r.flight.position,beforePosition);
+
+  // Render the same visible results without projecting them for a second time.
+  globalThis.document.createElement=()=>({style:{},remove() {}});
+  r.tokenField={append() {}};
+  const dust=r.dust; r.dust=new Float32Array();
+  const absorption=r.absorptionGlyphs; r.absorptionGlyphs=()=>effects;
+  r.updateTokens();
+  assert.equal(r.tokenNodes.size,effects.length); assert.equal(projections,offscreen ? 65 : 64);
+  r.dust=dust; r.absorptionGlyphs=absorption;
+});
+
+test('absorption visibility skips behind-camera and every outside-viewport edge before using a slot', () => {
+  const r=renderer(); r.dust=MSGUniverseFlight.tokenNebula('0'.repeat(32)).dust;
+  r.collectEvents=new Map([['evt_visible',{id:'evt_visible',type:'collect',player_id:r.network.self.id,
+    at_ms:900,glyph_ids:[0,1,2,3,4,5]}]]);
+  const projections=[null,{x:-1,y:200},{x:1281,y:200},{x:100,y:-1},{x:100,y:801},{x:100,y:200,scale:2}];
+  r.project=()=>projections.shift();
+  const effects=r.absorptionGlyphs();
+  assert.deepEqual(effects.map(effect=>effect.id),[5]);
+  assert.deepEqual(effects[0].projected,{x:100,y:200,scale:2});
 });
 
 test('repeated snapshots never replay an expired authoritative impact or change ship values', () => {
