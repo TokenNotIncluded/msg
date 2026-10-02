@@ -1284,7 +1284,7 @@
     if (document.hidden || e.type === "pagehide") {
       const wasPrivate = state.mode === "private";
       publicMode(false);
-      $("account-link").textContent = "Sign in ↗";
+      $("account-link").textContent = "登录 ↗";
       if (renderer.software)
         renderer.context.clearRect(
           0,
