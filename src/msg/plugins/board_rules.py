@@ -22,6 +22,9 @@ async def rules_projection(tx, resource):
 
 async def enforce_rules(tx, ctx, request, parent):
     policy = tx.setting('policy:' + parent, {})
+    # Moving or restoring a post publishes content just like creating one.
+    # Enforce this before the open-policy shortcut so frozen boards stay frozen.
+    require(policy.get('editable', True), 'content_frozen')
     posting = policy.get('posting_policy', 'open')
     if posting == 'open':
         return
