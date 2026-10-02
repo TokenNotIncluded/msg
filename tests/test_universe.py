@@ -14,6 +14,103 @@ from msg.transports.http import create_app
 
 
 @pytest.mark.asyncio
+async def test_universe_avatar_reference_uses_current_anonymous_access(oauth, monkeypatch):
+    from msg.core.codec import b64
+
+    app, key, subject, signed = oauth
+    _, hidden_subject, _ = await register(app, 'hidden-avatar-star')
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg"><text>PUBLIC AVATAR</text>'
+        '<animate attributeName="opacity" values="1;0.5;1" dur="2s" '
+        'repeatCount="indefinite"/></svg>'
+    )
+    made = await call(
+        app,
+        'content.file_put',
+        {
+            'parent': '/@oauth-owner',
+            'name': 'AVATAR.svg',
+            'data': b64(svg.encode()),
+            'media_type': 'image/svg+xml',
+        },
+        key=key,
+        subject=subject,
+    )
+    assert made.status == 'ok', made.error
+    async with app.metadata.transaction(write=True) as tx:
+        resource = await tx.resource(hidden_subject)
+        await tx.replace(
+            replace(resource, mode=0o600, generation=resource.generation + 1), resource.generation
+        )
+    await browser_login(oauth)
+
+    async def no_full_profile(*args, **kwargs):
+        pytest.fail('a universe avatar reference must not scan full profile activity')
+
+    monkeypatch.setattr('msg.plugins.profile.account_activity', no_full_profile)
+    expected = {'avatar': {'url': '/@oauth-owner/art/avatar.svg'}}
+    for query in ('kind=users', 'kind=users&shuffle=1'):
+        response = await signed.get('/_universe?' + query)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data['anchor']['artwork'] == {'avatar': {'url': '/@root/art/avatar.svg'}}
+        for item in data['items']:
+            assert item['artwork'] == {'avatar': {'url': item['path'] + '/art/avatar.svg'}}
+            assert 'profile' not in item
+        assert hidden_subject not in response.text
+        assert made.resources[0].id not in response.text
+        assert made.resources[0].revision not in response.text
+        assert 'AVATAR.svg' not in response.text and '<svg' not in response.text
+    refreshed = await signed.get(
+        '/_universe', params={'kind': 'users', 'ids': ','.join((subject, hidden_subject, 'u_root'))}
+    )
+    assert refreshed.status_code == 200, refreshed.text
+    nodes = {item['id']: item for item in refreshed.json()['items']}
+    assert set(nodes) == {subject, 'u_root'}
+    assert nodes[subject]['artwork'] == expected
+    assert nodes['u_root']['artwork'] == {'avatar': {'url': '/@root/art/avatar.svg'}}
+    minimal = await call(app, 'discovery.get', {'id': subject, 'fields': ['artwork']})
+    assert minimal.status == 'ok' and minimal.data == {'artwork': expected}
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as anonymous:
+        asset = await anonymous.get(expected['avatar']['url'])
+        assert asset.status_code == 200 and asset.headers['x-msg-artwork-source'] == 'custom'
+        assert 'PUBLIC AVATAR' in asset.text and '<animate' in asset.text
+        async with app.metadata.transaction(write=True) as tx:
+            resource = await tx.resource(made.resources[0].id)
+            await tx.replace(
+                replace(resource, mode=0o600, generation=resource.generation + 1),
+                resource.generation,
+            )
+        # The logged-in owner still gets the same anonymous tiny projection;
+        # fetching its public endpoint must recheck the now-private file ACL.
+        private = await signed.get('/_universe', params={'kind': 'users', 'ids': subject})
+        assert private.status_code == 200, private.text
+        assert private.json()['items'][0]['artwork'] == expected
+        assert made.resources[0].id not in private.text
+        assert made.resources[0].revision not in private.text
+        assert 'AVATAR.svg' not in private.text and 'PUBLIC AVATAR' not in private.text
+        denied = await anonymous.get(
+            expected['avatar']['url'], headers={'If-None-Match': asset.headers['etag']}
+        )
+        assert denied.status_code == 200
+        assert denied.headers['x-msg-artwork-source'] == 'generated'
+        assert 'PUBLIC AVATAR' not in denied.text
+        async with app.metadata.transaction(write=True) as tx:
+            resource = await tx.resource(subject)
+            await tx.replace(
+                replace(resource, mode=0o600, generation=resource.generation + 1),
+                resource.generation,
+            )
+        hidden = await signed.get('/_universe', params={'kind': 'users', 'ids': subject})
+        assert hidden.status_code == 200 and not hidden.json()['items']
+        assert '/@oauth-owner' not in hidden.text
+        assert (await anonymous.get(expected['avatar']['url'])).status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_public_universe_excludes_private_posts_and_private_ancestors(installed):
     app, _ = installed
     key, subject, _ = await register(app, 'star-author')

@@ -23,7 +23,7 @@ from msg.core.requests import request_for
 from msg.transports.http_common import BASE_HEADERS
 
 PAGE_FIELDS = {
-    'users': ['id', 'name', 'path', 'star'],
+    'users': ['id', 'name', 'path', 'star', 'artwork'],
     'posts': ['id', 'name', 'path', 'owner', 'parent', 'created_at'],
 }
 HIDDEN = {
@@ -154,7 +154,9 @@ async def public_page(service, query):
         async def refresh(rid):
             async with semaphore:
                 data = await read(
-                    'discovery.get', {'id': rid, 'fields': ['id', 'name', 'path']}, optional=True
+                    'discovery.get',
+                    {'id': rid, 'fields': ['id', 'name', 'path', 'artwork']},
+                    optional=True,
                 )
                 return data
 
