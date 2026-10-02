@@ -12,8 +12,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import math
 import os
 import re
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -119,6 +121,7 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
     contexts, pages, errors, checks = [], [], [], []
     controls = [[], []]
     wire = [[], []]
+    collected_events = [{}, {}]
     probe = """window.__flightTransportEvents=[];
     const Socket=window.WebSocket;
     window.WebSocket=class extends Socket {constructor(...args) {super(...args);
@@ -184,19 +187,33 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
                 packet = json.loads(message)
                 if packet.get('type') == 'input':
                     # Keep only non-secret control fields, never join/resume.
-                    captured.append({key: packet[key] for key in ('seq', 'throttle', 'actions')})
+                    captured.append({
+                        key: packet[key] for key in ('seq', 'throttle', 'actions', 'brake')
+                    })
                     del captured[:-256]
 
             page.on(
                 'websocket', lambda socket, capture=capture_control: socket.on('framesent', capture)
             )
 
-            def capture_server(message, captured=wire[index]):
+            def capture_server(message, captured=wire[index], pickups=collected_events[index]):
                 packet = json.loads(message)
                 safe = {key: packet[key] for key in ('type', 'tick', 'code') if key in packet}
                 if packet.get('type') == 'hello':
                     safe['self_ack'] = packet.get('self', {}).get('ack_seq')
                 if packet.get('type') == 'snapshot':
+                    for event in packet.get('events', []):
+                        if event.get('type') == 'collect':
+                            pickups[event['id']] = {
+                                key: event[key]
+                                for key in (
+                                    'id',
+                                    'player_id',
+                                    'glyph_ids',
+                                    'fuel_added',
+                                    'collected',
+                                )
+                            }
                     safe['ships'] = [
                         {key: ship.get(key) for key in ('ack_seq', 'hp', 'fuel', 'region', 'score')}
                         for ship in packet.get('players', [])
@@ -238,6 +255,139 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
                     .every((value,i) => Math.abs(value-self.home_position[i])<1e-6);
                 }""")
         checks.append('two real identities, WS/CSP connection and server spawn')
+
+        # Exercise ordinary controls in the real app; never relocate a server
+        # ship or fabricate a snapshot to reach the procedural pickup field.
+        for page in pages:
+            page.locator('#space').focus()
+            page.keyboard.down('b')
+            wait(page, 'Math.hypot(...__renderer.network.self.velocity) < .1')
+            wait(page, '__renderer.network.self.fuel > 90', timeout=15000)
+            page.keyboard.up('b')
+        homes = [page.evaluate('__renderer.network.self.position') for page in pages]
+        first.locator('#space').focus()
+        first.keyboard.down('w')
+        wait(first, 'Math.hypot(...__renderer.network.self.velocity) > 18')
+        first.keyboard.up('w')
+        wait(first, '__renderer.network._input.throttle === 0')
+        first.wait_for_timeout(100)
+        neutral_seq = controls[0][-1]['seq']
+        assert controls[0][-1]['throttle'] == 0
+        wait(first, f'__renderer.network.self.ack_seq >= {neutral_seq}')
+        released = first.evaluate(
+            '({position:__renderer.network.self.position,fuel:__renderer.network.self.fuel})'
+        )
+        first.wait_for_timeout(650)
+        coast = first.evaluate(
+            '({position:__renderer.network.self.position,velocity:__renderer.network.self.velocity,fuel:__renderer.network.self.fuel})'
+        )
+        assert math.dist(released['position'], coast['position']) > 6
+        assert 10 < math.hypot(*coast['velocity']) < 20
+        assert coast['fuel'] >= released['fuel'] - 0.01
+        first.keyboard.down('b')
+        wait(first, 'Math.hypot(...__renderer.network.self.velocity) < .1')
+        first.keyboard.up('b')
+        checks.append(
+            'real thrust release coasts without fuel burn and B brakes authoritative velocity'
+        )
+
+        def navigate(page, destination):
+            # The fixture controller uses normal bounded input frames. Keeping
+            # focus off the canvas prevents held UI keys replacing those frames.
+            page.locator('#help-toggle').focus()
+            page.evaluate('() => __renderer.network.resume()')
+            deadline = time.monotonic() + 40
+            refuels = 0
+            while time.monotonic() < deadline:
+                approach = page.evaluate(
+                    """target => {
+                  const r=__renderer, d=target.map((v,i)=>v-r.network.self.position[i]);
+                  const distance=Math.hypot(...d), scale=Math.min(1,distance/20)/Math.max(distance,.001);
+                  r.flight.yaw=r.flight.pitch=0;
+                  r.network.setInput({throttle:-d[2]*scale,strafe:d[0]*scale,lift:d[1]*scale,
+                    yaw:0,pitch:0,brake:false,actions:[]});
+                  r.wake(); return {distance,fuel:r.network.self.fuel};
+                }""",
+                    destination,
+                )
+                distance = approach['distance']
+                if distance < 4:
+                    break
+                if approach['fuel'] < 2:
+                    assert refuels < 3, 'navigation exceeded its bounded fuel budget'
+                    page.evaluate(
+                        """() => __renderer.network.setInput({throttle:0,strafe:0,lift:0,yaw:0,pitch:0,brake:true,actions:[]})"""
+                    )
+                    wait(page, '__renderer.network.self.fuel > 40', timeout=12000)
+                    refuels += 1
+                    deadline += 12
+                page.wait_for_timeout(50)
+            else:
+                raise AssertionError(
+                    f'ordinary input did not reach the requested local point: {distance}'
+                )
+            page.evaluate(
+                """() => __renderer.network.setInput({throttle:0,strafe:0,lift:0,yaw:0,pitch:0,brake:true,actions:[]})"""
+            )
+            wait(page, '__renderer.network._input.brake === true')
+            page.wait_for_timeout(100)
+            brake_frame = controls[pages.index(page)][-1]
+            assert brake_frame['brake']
+            wait(
+                page,
+                f'__renderer.network.self.ack_seq >= {brake_frame["seq"]} && Math.hypot(...__renderer.network.self.velocity) < .1',
+            )
+            page.evaluate(
+                """() => __renderer.network.setInput({throttle:0,strafe:0,lift:0,yaw:0,pitch:0,brake:false,actions:[]})"""
+            )
+            assert math.dist(page.evaluate('__renderer.network.self.position'), destination) < 4.5
+
+        peer_position = second.evaluate('__renderer.network.self.position')
+        target = first.evaluate(
+            """peer => {
+          const r=__renderer, own=r.network.self.position;
+          return Array.from({length:2300},(_,id)=>({id,position:Array.from(r.dust.subarray(id*8,id*8+3))}))
+            .filter(glyph=>!r.glyphTaken(glyph.id) && Math.hypot(...glyph.position.map((v,i)=>v-own[i]))>8 && Math.hypot(...glyph.position.map((v,i)=>v-peer[i]))>8)
+            .sort((a,b)=> Math.hypot(...a.position.map((v,i)=>v-own[i]))+Math.hypot(...a.position.map((v,i)=>v-peer[i]))
+              -Math.hypot(...b.position.map((v,i)=>v-own[i]))-Math.hypot(...b.position.map((v,i)=>v-peer[i])))[0];
+        }""",
+            peer_position,
+        )
+        assert target
+        ids = [page.evaluate('__renderer.network.self.id') for page in pages]
+        navigate(first, target['position'])
+        wait(first, f'__renderer.glyphTaken({target["id"]})')
+        wait(second, f'__renderer.glyphTaken({target["id"]})')
+        first_claims = [
+            event for event in collected_events[0].values() if target['id'] in event['glyph_ids']
+        ]
+        assert len(first_claims) == 1 and first_claims[0]['player_id'] == ids[0]
+        navigate(second, target['position'])
+        second.wait_for_timeout(400)
+        shared_claims = {
+            event['id']: event
+            for seen in collected_events
+            for event in seen.values()
+            if target['id'] in event['glyph_ids']
+        }
+        assert len(shared_claims) == 1
+        assert next(iter(shared_claims.values()))['player_id'] == ids[0]
+        for page in pages:
+            assert page.evaluate(f'__renderer.glyphTaken({target["id"]})')
+            assert page.locator('#game-collected').inner_text() == str(
+                page.evaluate('__renderer.network.self.collected')
+            )
+        assert first.evaluate('__renderer.sceneSeed') == second.evaluate('__renderer.sceneSeed')
+        checks.append(
+            'two real clients share glyph geometry and availability; one glyph credits only the first server claimant'
+        )
+        for index, page in enumerate(pages):
+            page.screenshot(
+                path=str(ARTIFACTS / ('pickup-mobile.png' if index else 'pickup-desktop.png'))
+            )
+            navigate(page, homes[index])
+            # Keep subsequent combat checks independent of navigation fuel.
+            wait(page, '__renderer.network.self.fuel > 80', timeout=15000)
 
         # Aim is ordinary orientation input. Positions/HP are never overwritten.
         def aim(page):
@@ -359,6 +509,13 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
         assert second.locator('#region-map').is_hidden()
         checks.append('paused map selection moves only after server accepts the region')
         # Actual app selection, not the old synthetic renderer callback.
+        inspect_destination = first.evaluate("""() => {
+          const r=__renderer, own=r.network.self.position;
+          const node=r.graph.nodes.filter(n=>n.kind==='user').sort((a,b)=>
+            Math.hypot(...a.position.map((v,i)=>v-own[i]))-Math.hypot(...b.position.map((v,i)=>v-own[i])))[0];
+          return node.position.map((v,i)=>v+(i===1?7:0));
+        }""")
+        navigate(first, inspect_destination)
         first.locator('#space').focus()
         wait(first, '!document.getElementById("pilot-inspect").disabled')
         inspected_id = first.evaluate('__renderer.nearby.id')
