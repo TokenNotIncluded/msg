@@ -1,5 +1,6 @@
 """A real TLS proxy upgrades the game path while ordinary HTTP stays separate."""
 
+import json
 import threading
 from contextlib import contextmanager
 
@@ -15,7 +16,13 @@ from test_nginx_secret_logs import _free_port, _proxy
 def websocket_backend():
     async def echo(socket):
         await socket.accept()
-        await socket.send_text(await socket.receive_text())
+        await socket.send_json({
+            'message': await socket.receive_text(),
+            'client': socket.client.host,
+            'scheme': socket.scope['scheme'],
+            'host': socket.headers['host'],
+            'origin': socket.headers['origin'],
+        })
         await socket.close()
 
     port = _free_port()
@@ -29,6 +36,8 @@ def websocket_backend():
             access_log=False,
             log_config=None,
             lifespan='off',
+            proxy_headers=True,
+            forwarded_allow_ips='127.0.0.1,::1',
         )
     )
     thread = threading.Thread(target=server.run, daemon=True)
@@ -52,13 +61,24 @@ def websocket_backend():
 async def test_real_tls_upgrade_and_non_game_paths(tmp_path):
     with websocket_backend() as port, _proxy(tmp_path, port) as proxy:
         origin = f'https://127.0.0.1:{proxy.tls}'
-        headers = {'Host': 'msg.example.org', 'Origin': 'https://msg.example.org'}
+        headers = {
+            'Host': 'msg.example.org',
+            'Origin': 'https://msg.example.org',
+            'X-Forwarded-For': '198.51.100.17',
+            'X-Forwarded-Proto': 'http',
+        }
         async with aiohttp.ClientSession() as client:
             async with client.ws_connect(origin + '/_flight', headers=headers, ssl=False) as socket:
                 await socket.send_str('flight-proxy-test-only')
                 message = await socket.receive(timeout=5)
                 assert message.type == aiohttp.WSMsgType.TEXT
-                assert message.data == 'flight-proxy-test-only'
+                assert json.loads(message.data) == {
+                    'message': 'flight-proxy-test-only',
+                    'client': '127.0.0.1',
+                    'scheme': 'wss',
+                    'host': 'msg.example.org',
+                    'origin': 'https://msg.example.org',
+                }
             with pytest.raises(aiohttp.WSServerHandshakeError) as rejected:
                 await client.ws_connect(origin + '/not-flight', headers=headers, ssl=False)
             assert rejected.value.status == 404
