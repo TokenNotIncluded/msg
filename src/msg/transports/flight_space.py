@@ -101,12 +101,15 @@ class FlightHub:
         self.geometry_initialized = False
 
     async def _refresh_geometry(self):
-        """Keep topology reads, including lock waits, below the snapshot deadline."""
+        """Bound read waits and reject late results from the bounded CPU layout."""
         from msg.transports.flight_collectibles import CollectibleField
 
+        deadline = time.monotonic() + GEOMETRY_READ_SECONDS
         try:
             async with asyncio.timeout(GEOMETRY_READ_SECONDS):
-                await self._read_geometry()
+                await self._read_geometry(deadline)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError
         except TimeoutError as exc:
             # Stale public ACL facts cannot survive a failed verification. Join
             # rejects this failure; the runner closes the room through its fence.
@@ -116,7 +119,7 @@ class FlightHub:
             self.next_geometry_check = 0.0
             raise Failure('server_busy') from exc
 
-    async def _read_geometry(self):
+    async def _read_geometry(self, deadline):
         """Freeze one public room layout, rebuilding on an ACL removal or empty room.
 
         Geometry uses an anonymous existing read projection; private home points
@@ -141,6 +144,8 @@ class FlightHub:
                 source='manual',
             )
             result = await self.service.executor.execute(request)
+            if time.monotonic() >= deadline:
+                raise TimeoutError
             if result.error:
                 if result.error.code not in HIDDEN:
                     raise Failure(result.error.code)
@@ -163,13 +168,19 @@ class FlightHub:
                     }
                     for rid in sorted(layout, key=lambda rid: (rid != ROOT_SUBJECT, rid))[:256]
                 ]
-                # Deliver cancellation after the bounded synchronous layout pass
-                # before replacing either half of the shared geometry.
+                field = CollectibleField(anchors=records[:64])
+                # CPU work cannot be preempted by asyncio. A bare yield alone
+                # also cannot prove that an expired timer has run yet.
                 await asyncio.sleep(0)
+                if time.monotonic() >= deadline:
+                    raise TimeoutError
                 self.world.set_gravity_wells(records)
-                self.world.collectibles = CollectibleField(anchors=records[:64])
+                self.world.collectibles = field
+            checked_at = time.monotonic()
+            if checked_at >= deadline:
+                raise TimeoutError
             self.geometry_initialized = True
-            self.next_geometry_check = time.monotonic() + REVALIDATE_SECONDS
+            self.next_geometry_check = checked_at + REVALIDATE_SECONDS
 
     def _reserve(self, websocket):
         require(not self.closed and len(self.peers) < MAX_CLIENTS, 'server_busy')
