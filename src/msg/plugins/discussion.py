@@ -11,7 +11,12 @@ from msg.core.codec import (
     wire as wire,
 )
 from msg.core.errors import Failure as Failure, require as require
-from msg.core.models import HandlerOutput as HandlerOutput, Relation, ResourceRef as ResourceRef
+from msg.core.models import (
+    HandlerOutput as HandlerOutput,
+    Relation,
+    ResourcePageOutput,
+    ResourceRef as ResourceRef,
+)
 from msg.core.requests import signing_bytes
 from msg.plugins.common import (
     ADMINS_GROUP as ADMINS_GROUP,
@@ -382,6 +387,7 @@ def install(app):
             else [-1, '', '']
         )
         items = []
+        references = []
         limit = request.arguments.get('limit', 50)
         more = False
         sql = """SELECT r.id,r.created_at,CASE WHEN r.id=? THEN 0 ELSE 1 END AS priority
@@ -393,17 +399,28 @@ def install(app):
         for id, created_at, priority in tx.execute(sql, (root, root, root, root, *position)):
             if not await visible(app, ctx, request, tx, id):
                 continue
-            if len(items) == limit:
+            if len(items) + len(references) == limit:
                 more = True
                 break
-            items.append(await read_projection(app, ctx, request, tx, id))
+            if request.return_fields:
+                resource = await tx.resource(id)
+                references.append(ResourceRef(id=id, revision=resource.revision))
+            else:
+                items.append(await read_projection(app, ctx, request, tx, id))
             position = [priority, created_at, id]
-        data = {'root': root, 'items': items}
+        data = {'root': root}
+        if not request.return_fields:
+            data['items'] = items
         if more:
             cursor = app.cursors.encode('thread', binding, position)
             data.update(
                 cursor=cursor,
-                next=next_link(app, request.operation, {**request.arguments, 'cursor': cursor}),
+                next=next_link(
+                    app,
+                    request.operation,
+                    {**request.arguments, 'cursor': cursor},
+                    return_fields=request.return_fields,
+                ),
                 next_requires_auth=ctx.principal.subject is not None,
             )
         # Exact ancestors of a requested reply are references, not duplicated
@@ -424,6 +441,12 @@ def install(app):
                     break
                 current = await tx.revision(parent)
             data['ancestors'] = ancestors
+        if request.return_fields:
+            if not references:
+                # Even an empty page rejects unknown fields using the readable
+                # focus resource; it never substitutes that resource into the page.
+                await read_projection(app, ctx, request, tx, rid, fields=request.return_fields)
+            return ResourcePageOutput(resources=tuple(references), data=data)
         return HandlerOutput(data=data)
 
     from msg.plugins.post_engagement import install as install_engagement

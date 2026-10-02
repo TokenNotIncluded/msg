@@ -38,9 +38,9 @@ async def test_real_token_and_roundtrip_budget(tmp_path, pg_dsn):
             )
             await client.register('budget-agent')
 
-            async def measured(name, args, budget=900):
+            async def measured(name, args, budget=900, *, return_fields=()):
                 before = transport.calls
-                packet = client.prepare(name, args)
+                packet = client.prepare(name, args, return_fields=return_fields)
                 result = client.checked(await client.send(packet))
                 text = canonical(result_wire(result)).decode()
                 request_text = canonical(packet).decode()
@@ -50,6 +50,7 @@ async def test_real_token_and_roundtrip_budget(tmp_path, pg_dsn):
                     'output_tokens': len(encoding.encode(text)),
                     'output_bytes': len(text.encode()),
                     'roundtrips': transport.calls - before,
+                    'return_fields': list(return_fields),
                 }
                 assert record['roundtrips'] == 1, record
                 assert record['output_tokens'] <= budget, record
@@ -63,7 +64,19 @@ async def test_real_token_and_roundtrip_budget(tmp_path, pg_dsn):
                 'discussion.reply',
                 {'target': wire(post.resources[0]), 'body': 'Received; ready for the next step.'},
             )
-            await measured('discussion.thread', {'id': post.resources[0].id}, budget=2500)
+            await measured(
+                'discussion.thread',
+                {'id': post.resources[0].id},
+                budget=2500,
+                return_fields=(
+                    'id',
+                    'revision',
+                    'content',
+                    'relations',
+                    'stable_path',
+                    'revision_path',
+                ),
+            )
             await measured('transfer.open', {'direction': 'upload', 'size': 0})
             target = Path(os.getenv('MSG_BENCHMARK_PATH', str(tmp_path / 'token-budget.json')))
             target.parent.mkdir(parents=True, exist_ok=True)
