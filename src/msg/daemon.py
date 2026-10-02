@@ -24,17 +24,43 @@ def network_runtime(settings):
     require(sys.version_info[:2] >= (3, 15), 'python_315_required')
     require(not hasattr(os, 'geteuid') or os.geteuid() != 0, 'network_service_must_not_run_as_root')
     # This is a permission probe, not a root material read or signer injection.
+    for protected in (settings.root_private_dir, settings.config_dir / 'root'):
+        require(
+            not os.access(protected, os.R_OK) and not os.access(protected, os.X_OK),
+            'root_material_accessible_to_service',
+        )
+
+
+def require_instance_configuration(directory):
+    from msg.config import has_root_private_state
+
+    # A name such as foo-root can coincide with an older foo installation's
+    # protected directory. Never reinterpret its envelope as public config.
+    for parent in (directory, directory / 'root'):
+        require(not has_root_private_state(parent), 'instance_config_contains_root_material')
+
+
+def require_instance_layout(settings, layout):
+    require_instance_configuration(layout.config)
     require(
-        not os.access(settings.config_dir / 'root', os.R_OK | os.X_OK),
-        'root_material_accessible_to_service',
+        settings.server.content_dir == layout.data / 'git/content'
+        and settings.server.repositories_dir == layout.data / 'git/repos'
+        and settings.server.blob_dir == layout.data / 'blobs/sha256'
+        and settings.server.staging_dir == layout.data / 'transfers/staging'
+        and settings.server.service_keys_dir == layout.data / 'service',
+        'instance_storage_layout_mismatch',
     )
+    require(settings.root_private_dir == layout.root, 'instance_root_layout_mismatch')
 
 
-def load_application(directory):
+def load_application(directory, *, layout=None):
     from msg.application import Application
     from msg.config import load_settings
 
-    return Application(load_settings(directory))
+    settings = load_settings(directory)
+    if layout:
+        require_instance_layout(settings, layout)
+    return Application(settings)
 
 
 SHUTDOWN_GRACE_SECONDS = 60
@@ -298,11 +324,15 @@ def main(argv=None):
     try:
         layout = ServerPaths.for_instance(args.instance) if args.instance else None
         args.config_dir = layout.config if layout else args.config_dir or SERVER_CONFIG_DIR
+        if layout:
+            require_instance_configuration(layout.config)
         if args.command == 'init':
             if layout:
                 require(args.service_url is not None, 'instance_service_url_required')
                 require(args.postgres_dsn is not None, 'instance_postgres_dsn_required')
             args.data_dir = args.data_dir or (layout.data if layout else SERVER_DATA_DIR)
+            if layout:
+                require(args.data_dir == layout.data, 'instance_storage_layout_mismatch')
             args.postgres_dsn = args.postgres_dsn or 'service=msgd'
     except Failure as exc:
         emit({'status': 'error', 'error': {'code': exc.code}})
@@ -478,6 +508,8 @@ def main(argv=None):
             from msg.hosting_runtime import HostingRuntime
 
             settings = load_settings(args.config_dir)
+            if layout:
+                require_instance_layout(settings, layout)
             network_runtime(settings)
             app = HostingRuntime(settings)
 
@@ -500,7 +532,11 @@ def main(argv=None):
                 timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
             )
             return 0
-        app = load_application(args.config_dir)
+        app = (
+            load_application(args.config_dir, layout=layout)
+            if layout
+            else load_application(args.config_dir)
+        )
         if args.command == 'backup':
             from msg.admin.backups import backup
 

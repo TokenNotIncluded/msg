@@ -39,6 +39,23 @@ class MoneyConfig:
     allow_overdraft: bool = False
 
 
+ROOT_PRIVATE_ARTIFACTS = (
+    'key.json',
+    'initialization.pending',
+    'rotation.pending.json',
+    'history',
+    '.rotation.lock',
+)
+
+
+def has_root_private_state(directory: Path) -> bool:
+    """Recognize existing authority state through known names, never key contents."""
+    return any(
+        (directory / name).exists() or (directory / name).is_symlink()
+        for name in ROOT_PRIVATE_ARTIFACTS
+    )
+
+
 def root_private_dir(config_dir: Path) -> Path:
     """Root material is outside the network service configuration tree."""
     directory = Path(config_dir)
@@ -48,15 +65,11 @@ def root_private_dir(config_dir: Path) -> Path:
         legacy = directory.parent / (directory.name + '-root')
         # Existing explicit subdirectories were supported before named instances.
         # Never make their Root envelope disappear merely by upgrading the CLI.
-        has_legacy = any(
-            (legacy / name).exists() for name in ('key.json', 'initialization.pending')
-        )
+        has_legacy = has_root_private_state(legacy)
         if has_legacy and re.fullmatch(r'[a-z][a-z0-9_-]{0,25}', directory.name) is None:
             return legacy
         current = ServerPaths.for_instance(directory.name).root
-        has_current = any(
-            (current / name).exists() for name in ('key.json', 'initialization.pending')
-        )
+        has_current = has_root_private_state(current)
         require(not (has_legacy and has_current), 'ambiguous_root_private_directory')
         return legacy if has_legacy else current
     return directory.parent / (directory.name + '-root')
