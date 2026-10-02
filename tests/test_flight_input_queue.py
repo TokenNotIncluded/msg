@@ -2,6 +2,8 @@
 
 import math
 
+import pytest
+
 from msg.transports.flight_simulation import FlightWorld
 from msg.transports.flight_space import MAX_PENDING_COMMANDS, FlightHub, Peer
 
@@ -117,3 +119,35 @@ def test_region_after_movement_does_not_restore_older_thrust():
     hub.world.step()
     assert ship.ack_seq == 0 and ship.position == relocated
     assert ship.velocity == [0, 0, 0]
+
+
+@pytest.mark.asyncio
+async def test_a_fenced_tick_uses_waiting_input_before_advancing_physics():
+    hub, peer, ship = playground()
+    hub.peers = {peer.id: peer}
+    hub.closed = False
+    hub.next_auth_check = 0.0
+    peer.writer = True
+    clock = [100.0]
+    hub.world.clock = lambda: clock[0]
+    initial = list(ship.position)
+    snapshots = []
+
+    async def gate(*, identities):
+        assert ship.ack_seq == -1 and ship.position == initial
+        clock[0] += 1 / 15
+
+    def deliver(_, body):
+        snapshots.append(body)
+        hub.closed = True
+
+    hub._validate = gate
+    hub._enqueue = deliver
+    hub._queue_controls(peer, packet(0, throttle=1))
+    await hub._run()
+
+    assert len(snapshots) == 1
+    own = snapshots[0]['players'][0]
+    assert own['ack_seq'] == 0
+    assert own['position'][2] < initial[2]
+    assert own['velocity'][2] < 0

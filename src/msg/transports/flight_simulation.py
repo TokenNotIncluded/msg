@@ -12,11 +12,20 @@ import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 
+from msg.transports.flight_collectibles import CollectibleField
+
 TICK_SECONDS = 1 / 15
 WORLD_RADIUS = 480.0
 MAX_EVENTS = 256
 EVENT_SECONDS = 8.0
 INPUT_SECONDS = 0.5
+CRUISE_SPEED = 20.0
+MAX_SPEED = 60.0
+THRUST_ACCELERATION = 24.0
+DASH_ACCELERATION = 96.0
+COAST_DRAG = 0.32
+BRAKE_ACCELERATION = 48.0
+STOP_SPEED = 0.12
 _MASK = 0xFFFFFFFF
 _RANDOM = secrets.SystemRandom()
 
@@ -128,6 +137,31 @@ def valid_input(packet):
     )
 
 
+def _inertial_segment(velocity, delta, target=None, acceleration=0.0):
+    """Integrate bounded linear thrust/braking or exponential free-flight drag."""
+    speed = math.hypot(*velocity)
+    if speed > MAX_SPEED:
+        velocity = [component * MAX_SPEED / speed for component in velocity]
+    if target is None:
+        factor = math.exp(-COAST_DRAG * delta)
+        next_velocity = [component * factor for component in velocity]
+        movement = [component * (1 - factor) / COAST_DRAG for component in velocity]
+    else:
+        difference = [target[axis] - velocity[axis] for axis in range(3)]
+        distance = math.hypot(*difference)
+        if distance == 0:
+            return list(velocity), [component * delta for component in velocity]
+        accelerating = min(delta, distance / acceleration)
+        blend = min(1.0, acceleration * delta / distance)
+        next_velocity = [velocity[axis] + difference[axis] * blend for axis in range(3)]
+        weighted = acceleration / distance * accelerating * accelerating / 2
+        weighted += max(0.0, delta - accelerating)
+        movement = [velocity[axis] * delta + difference[axis] * weighted for axis in range(3)]
+    if math.hypot(*next_velocity) <= STOP_SPEED:
+        next_velocity = [0.0, 0.0, 0.0]
+    return next_velocity, movement
+
+
 @dataclass(slots=True)
 class Ship:
     id: str
@@ -146,15 +180,18 @@ class Ship:
     laser_ready_ms: int = 0
     shield_ready_ms: int = 0
     dash_ready_ms: int = 0
+    dash_until_ms: int = 0
     region_ready_ms: int = 0
     respawn_at_ms: int = 0
     ack_seq: int = -1
     score: int = 0
+    collected: int = 0
     _spawn: list[float] = field(default_factory=list, repr=False)
     _spawn_region: int = field(default=0, repr=False)
     _controls: tuple = field(default=(0.0, 0.0, 0.0, False), repr=False)
     _last_input: float = field(default=0.0, repr=False)
     _last_activity: float = field(default=0.0, repr=False)
+    _stationary_since: float | None = field(default=None, repr=False)
     _offline_since: float | None = field(default=None, repr=False)
     _shield_until: float = field(default=0.0, repr=False)
     _laser_ready: float = field(default=0.0, repr=False)
@@ -188,17 +225,24 @@ class Ship:
             'laser_ready_ms': self.laser_ready_ms,
             'shield_ready_ms': self.shield_ready_ms,
             'dash_ready_ms': self.dash_ready_ms,
+            'dash_until_ms': self.dash_until_ms,
             'region_ready_ms': self.region_ready_ms,
             'respawn_at_ms': self.respawn_at_ms,
             'region': self.region,
             'ack_seq': self.ack_seq,
             'score': self.score,
+            'collected': self.collected,
         }
 
 
 class FlightWorld:
     def __init__(
-        self, max_players=96, max_retained=512, retention_seconds=300, clock=time.monotonic
+        self,
+        max_players=96,
+        max_retained=512,
+        retention_seconds=300,
+        clock=time.monotonic,
+        collectibles=None,
     ):
         if (
             type(max_players) is not int
@@ -221,10 +265,12 @@ class FlightWorld:
         self._events = deque(maxlen=MAX_EVENTS)
         self._event_id = 0
         self._last_step = float(clock())
+        self._simulated_at = self._last_step
         self._remainder = 0.0
         self._epoch_offset_ms = time.time() * 1000 - self._last_step * 1000
         self.tick = 0
         self.regions = region_centers()
+        self.collectibles = CollectibleField() if collectibles is None else collectibles
 
     @property
     def active_count(self):
@@ -240,6 +286,8 @@ class FlightWorld:
         self._event_id = self.tick = 0
         self._remainder = 0.0
         self._last_step = float(self.clock())
+        self._simulated_at = self._last_step
+        self.collectibles.clear()
 
     def _ms(self, now):
         return int(self._epoch_offset_ms + now * 1000)
@@ -322,6 +370,7 @@ class FlightWorld:
             _controls=(0.0, 0.0, 0.0, False),
             _last_input=now,
             _last_activity=now,
+            _stationary_since=now,
             _offline_since=None,
         )
         self._remove(old.id)
@@ -391,6 +440,10 @@ class FlightWorld:
             raise ValueError('identity_active')
         if len(self.active) >= self.max_players:
             raise ValueError('world_full')
+        if not self.active:
+            # Empty worlds have no live physical state to extrapolate during suspension.
+            self._last_step = self._simulated_at = now
+            self._remainder = 0.0
         if ship_id:
             ship = self.ships[ship_id]
             if ship.public_subject_id != public_subject_id:
@@ -400,6 +453,7 @@ class FlightWorld:
             ship._offline_since = None
             ship._controls = (0.0, 0.0, 0.0, False)
             ship._last_input = now
+            ship._stationary_since = now if not any(ship.velocity) else None
             self.active.add(ship.id)
             self._respawn(ship, now)
             return ship, self._ship_tickets[ship.id]
@@ -417,6 +471,7 @@ class FlightWorld:
             _spawn_region=region,
             _last_input=now,
             _last_activity=now,
+            _stationary_since=now,
         )
         ticket = secrets.token_urlsafe(32)
         self.ships[ship.id] = ship
@@ -434,7 +489,7 @@ class FlightWorld:
         ship = self.ships[ship_id]
         ship._offline_since = float(self.clock())
         ship._controls = (0.0, 0.0, 0.0, False)
-        ship.velocity = [0.0, 0.0, 0.0]
+        ship._stationary_since = None
 
     def input(self, ship_id, packet):
         if ship_id not in self.active or not valid_input(packet):
@@ -493,7 +548,7 @@ class FlightWorld:
                 return
             ship.fuel -= 18
             self._deadline(ship, 'dash_ready', now + 6)
-            ship._dash_until = now + 1
+            self._deadline(ship, 'dash_until', now + 1)
         else:
             if now < ship._laser_ready or ship.fuel < 1:
                 return
@@ -501,6 +556,7 @@ class FlightWorld:
             self._deadline(ship, 'laser_ready', now + 0.4)
             self._laser(ship, now)
         ship._last_activity = now
+        ship._stationary_since = now
         if action != 'laser':
             self._event(action, ship, now)
 
@@ -545,6 +601,7 @@ class FlightWorld:
         ship._controls = (0.0, 0.0, 0.0, False)
         ship.fuel -= 20
         ship._last_activity = now
+        ship._stationary_since = now
         self._deadline(ship, 'region_ready', now + 10)
         self._event('region', ship, now)
         return True
@@ -560,6 +617,7 @@ class FlightWorld:
         ship._respawn_at = 0.0
         ship.respawn_at_ms = 0
         ship._last_activity = now
+        ship._stationary_since = now
         self._event('respawn', ship, now)
 
     def _advance(self, delta, now):
@@ -568,42 +626,53 @@ class FlightWorld:
             self._respawn(ship, now)
             if ship.hp <= 0:
                 continue
+            old_position = list(ship.position)
             throttle, strafe, lift, brake = ship._controls
             if now - ship._last_input > INPUT_SECONDS:
                 throttle = strafe = lift = 0.0
+                brake = False
             forward = self._forward(ship)
             right = [math.cos(ship.yaw), 0.0, math.sin(ship.yaw)]
             direction = [
                 forward[axis] * throttle + right[axis] * strafe + (lift if axis == 1 else 0)
                 for axis in range(3)
             ]
-            has_controls = any(direction)
-            # Integrate the actual dash overlap rather than rounding a one-second
-            # action up/down by a complete tick at different monotonic uptimes.
-            dash_seconds = max(
-                0.0,
-                min(now, ship._dash_until) - max(now - delta, ship._dash_until - 1),
-            )
-            if not brake and dash_seconds > 0 and not has_controls:
-                direction = forward
-            magnitude = math.hypot(*direction)
-            if not brake and magnitude > 0 and ship.fuel > 0:
-                moving_seconds = delta if has_controls else dash_seconds
-                distance = 20 * delta + 40 * dash_seconds if has_controls else 60 * dash_seconds
-                speed = 60.0 if now + 1e-9 < ship._dash_until else 20.0 if has_controls else 0.0
-                spent = min(ship.fuel, 8 * moving_seconds)
-                fraction = spent / (8 * moving_seconds)
-                unit = [value / max(1.0, magnitude) for value in direction]
-                ship.velocity = [value * speed * fraction for value in unit]
-                movement = [value * distance * fraction for value in unit]
-                ship.fuel = max(0.0, ship.fuel - spent)
-                ship._last_activity = now
-            else:
-                ship.velocity = [0.0, 0.0, 0.0]
-                movement = [0.0, 0.0, 0.0]
-                if now - ship._last_activity > 2:
-                    ship.hp = min(100.0, ship.hp + 3 * delta)
-                    ship.fuel = min(100.0, ship.fuel + 8 * delta)
+            has_controls = any(abs(component) > 1e-8 for component in (throttle, strafe, lift))
+            # Split at the real action boundaries, independently of server uptime.
+            start = now - delta
+            boundaries = sorted({
+                start,
+                now,
+                *(at for at in (ship._dash_until - 1, ship._dash_until) if start < at < now),
+            })
+            movement = [0.0, 0.0, 0.0]
+            for begin, end in zip(boundaries, boundaries[1:], strict=False):
+                duration = end - begin
+                dashing = ship._dash_until - 1 <= (begin + end) / 2 < ship._dash_until
+                thrust = direction if has_controls else forward if dashing else None
+                if brake:
+                    ship.velocity, travel = _inertial_segment(
+                        ship.velocity, duration, [0.0, 0.0, 0.0], BRAKE_ACCELERATION
+                    )
+                elif thrust is not None and ship.fuel > 0:
+                    powered = min(duration, ship.fuel / 8)
+                    magnitude = max(1.0, math.hypot(*thrust))
+                    speed = MAX_SPEED if dashing else CRUISE_SPEED
+                    target = [component / magnitude * speed for component in thrust]
+                    ship.velocity, travel = _inertial_segment(
+                        ship.velocity,
+                        powered,
+                        target,
+                        DASH_ACCELERATION if dashing else THRUST_ACCELERATION,
+                    )
+                    ship.fuel = max(0.0, ship.fuel - powered * 8)
+                    ship._last_activity = now
+                    if powered < duration:
+                        ship.velocity, coast = _inertial_segment(ship.velocity, duration - powered)
+                        travel = [travel[axis] + coast[axis] for axis in range(3)]
+                else:
+                    ship.velocity, travel = _inertial_segment(ship.velocity, duration)
+                movement = [movement[axis] + travel[axis] for axis in range(3)]
             ship.position = [ship.position[axis] + movement[axis] for axis in range(3)]
             radius = math.hypot(*ship.position)
             if radius > WORLD_RADIUS:
@@ -614,6 +683,28 @@ class FlightWorld:
                     ship.velocity = [
                         ship.velocity[axis] - normal[axis] * outward for axis in range(3)
                     ]
+            if has_controls or now + 1e-9 < ship._dash_until or any(ship.velocity):
+                ship._stationary_since = None
+            else:
+                if ship._stationary_since is None:
+                    ship._stationary_since = now
+                idle = max(ship._stationary_since, ship._last_activity)
+                if now - idle > 2:
+                    ship.hp = min(100.0, ship.hp + 3 * delta)
+                    ship.fuel = min(100.0, ship.fuel + 8 * delta)
+            glyph_ids = self.collectibles.collect(old_position, ship.position, now)
+            if glyph_ids:
+                fuel_added = min(100 - ship.fuel, 4 * len(glyph_ids))
+                ship.fuel += fuel_added
+                ship.collected += len(glyph_ids)
+                self._event(
+                    'collect',
+                    ship,
+                    now,
+                    glyph_ids=glyph_ids,
+                    fuel_added=fuel_added,
+                    collected=ship.collected,
+                )
 
     def step(self, now=None):
         now = float(self.clock()) if now is None else now
@@ -625,6 +716,7 @@ class FlightWorld:
         while self._remainder + 1e-12 >= TICK_SECONDS:
             at = now - self._remainder + TICK_SECONDS
             self._advance(TICK_SECONDS, at)
+            self._simulated_at = at
             self._remainder = max(0.0, self._remainder - TICK_SECONDS)
             self.tick += 1
         self._prune(now)
@@ -652,10 +744,12 @@ class FlightWorld:
             'type': 'snapshot',
             'tick': self.tick,
             'server_time_ms': self._ms(now),
+            'state_time_ms': self._ms(self._simulated_at),
             'self_id': ship_id,
             'region': ship.region,
             'players': [ship.wire(), *(other.wire() for other in others[:95])],
             'events': [_event_wire(event) for _, _, event in list(self._events)[-64:]],
             'total_players': len(self.active),
             'region_counts': counts,
+            'collectibles': self.collectibles.snapshot(now, self._ms),
         }
