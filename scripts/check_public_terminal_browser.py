@@ -11,7 +11,7 @@ import argparse
 import json
 import os
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -46,6 +46,8 @@ def check(options):
                 )
                 # The owner can read the private post normally, but terminal requests omit this cookie.
                 context.add_cookies(accounts['accounts'][1]['cookies'])
+                own = context.request.get(origin + private['path'], headers={'Accept': 'text/html'})
+                assert own.status == 200 and private['marker'] in own.text()
                 page = context.new_page()
                 page.set_default_timeout(15000)
                 page.on('pageerror', lambda value: errors.append(str(value)))
@@ -68,7 +70,7 @@ def check(options):
                     def run(command, expected_status=200, *, page=page, phone=phone, device=device):
                         page.locator('#command').fill(command)
                         with page.expect_response(
-                            lambda item: urlsplit(item.url).path == '/_terminal'
+                            lambda event: urlsplit(event.url).path == '/_terminal'
                         ) as seen:
                             if phone:
                                 page.locator('#run').tap()
@@ -80,7 +82,7 @@ def check(options):
                             result.status,
                             result.text(),
                         )
-                        page.wait_for_function('!document.querySelector("#command").readOnly')
+                        page.wait_for_function('() => !document.querySelector("#command").readOnly')
                         value = result.json()
                         request = result.request
                         assert request.method == 'GET'
@@ -133,14 +135,42 @@ def check(options):
                         + ': public paths/IDs/search render literal text and exclude private content'
                     )
 
+                    long = fixture['long_post']
+                    listing = run('ls /main')
+                    label_prefix = long['path'].rsplit('/', 1)[1][:8]
+                    record = next(
+                        item for item in listing['links'] if item['label'].startswith(label_prefix)
+                    )
+                    target = unquote(urlsplit(record['href']).path)
+                    assert len(target) <= 160
+                    assert target == '/_id/' + long['id']
+                    anchor = (
+                        page
+                        .locator('#transcript .result-links a')
+                        .filter(has_text=record['label'])
+                        .last
+                    )
+                    button = anchor.locator('xpath=following-sibling::button[1]')
+                    with page.expect_response(
+                        lambda event: urlsplit(event.url).path == '/_terminal'
+                    ) as seen:
+                        button.tap() if phone else button.click()
+                    assert seen.value.status == 200
+                    page.wait_for_function('() => !document.querySelector("#command").readOnly')
+                    assert long['marker'] in seen.value.json()['output']
+                    assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
+                    checks.append(
+                        device + ': long Unicode resource names use a readable stable link fallback'
+                    )
+
                     for target in (private['path'], private['id']):
                         page.locator('#command').fill('read ' + target)
                         with page.expect_response(
-                            lambda item: urlsplit(item.url).path == '/_terminal'
+                            lambda event: urlsplit(event.url).path == '/_terminal'
                         ) as seen:
                             page.locator('#command').press('Enter')
                         assert seen.value.status in (403, 404)
-                        page.wait_for_function('!document.querySelector("#command").readOnly')
+                        page.wait_for_function('() => !document.querySelector("#command").readOnly')
                         assert private['marker'] not in seen.value.text()
                         assert page.locator('#command').input_value() == 'read ' + target
                         assert (
@@ -206,18 +236,15 @@ def check(options):
                     assert all(not urlsplit(href).query for href in hrefs)
                     button = page.locator('#transcript .result-links button').last
                     with page.expect_response(
-                        lambda item: urlsplit(item.url).path == '/_terminal'
+                        lambda event: urlsplit(event.url).path == '/_terminal'
                     ) as seen:
                         button.tap() if phone else button.click()
                     assert seen.value.status == 200
-                    page.wait_for_function('!document.querySelector("#command").readOnly')
+                    page.wait_for_function('() => !document.querySelector("#command").readOnly')
                     assert public['marker'] in seen.value.json()['output']
-                    link = (
-                        page
-                        .locator('#transcript .result-links a')
-                        .filter(has_text='terminal-browser-public')
-                        .last
-                    )
+                    link = page.locator(
+                        '#transcript .result-links a[href="' + public['path'] + '"]'
+                    ).last
                     with page.expect_navigation() as navigation:
                         link.tap() if phone else link.click()
                     assert navigation.value.status == 200
@@ -234,6 +261,13 @@ def check(options):
                     run('read ' + public['path'])
                     assert page.evaluate('document.documentElement.scrollWidth <= innerWidth + 1')
                     page.screenshot(path=str(options.output / (device + '.png')), full_page=True)
+                    for request in terminal_requests:
+                        assert request.method == 'GET'
+                        assert list(parse_qs(urlsplit(request.url).query)) == ['command']
+                        assert not any(
+                            name in request.all_headers()
+                            for name in ('cookie', 'authorization', 'x-msg-request')
+                        )
                     checks.append(
                         device
                         + ': CSP executes the real script and the transcript fits the viewport'

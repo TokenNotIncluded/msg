@@ -153,6 +153,21 @@ test('history preserves drafts, IME blocks submission, and Escape aborts only th
   assert.equal(waiting.input.readOnly, false); assert.equal(waiting.timers[0].cleared, true);
 });
 
+test('timeout ignores a late successful response and restores the original command', async () => {
+  let finish;
+  const ui = page({fetch:() => new Promise(resolve => {finish = resolve;})});
+  ui.input.value = 'read /main/one.md'; const running = ui.submit();
+  ui.timers[0].callback();
+  assert.equal(ui.calls[0].args.signal.aborted, true);
+  finish({ok:true, status:200, json:async () => ({output:'LATE_SECRET', links:[]})});
+  await running;
+  assert.match(ui.text(), /did not respond within 15 seconds/);
+  assert.ok(!ui.text().includes('LATE_SECRET'));
+  assert.equal(ui.input.value, 'read /main/one.md');
+  assert.equal(ui.input.readOnly, false); assert.equal(ui.run.textContent, 'Run');
+  assert.equal(ui.form['aria-busy'], 'false');
+});
+
 test('transcript, command history and rendered links stay bounded', async () => {
   const ui = page({data:{output:'ready', links:Array.from({length:50}, (_, i) => ({href:'/main/p' + i + '.md'}))}});
   for (let i = 0; i < 110; i++) {ui.input.value = 'search item' + i; await ui.submit();}
