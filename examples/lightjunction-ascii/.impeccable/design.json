@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-02T15:43:17.150591+00:00",
+  "title": "Design System: 椅子之后",
+  "extensions": {
+    "motion": [
+      {
+        "name": "frame-sequence",
+        "value": "18s steps(1,end) infinite",
+        "purpose": "64 colocated visibility frames; detonation authored at 3.6 seconds."
+      },
+      {
+        "name": "pause-priority",
+        "value": "animation-play-state:paused!important",
+        "purpose": "Pause holds the current frame in ordinary and explicitly restored reduced-motion playback."
+      },
+      {
+        "name": "reduced-motion-default",
+        "value": "animation:none!important",
+        "purpose": "Show the opening chair until the native playback checkbox is explicitly checked."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "footer-stack",
+        "value": "600px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Native pause",
+      "kind": "input",
+      "description": "Native checkbox in its full-height pause label; the snippet records the control appearance.",
+      "html": "<div class=\"ds-stage\"><label class=\"ds-control\"><input type=\"checkbox\">暂停</label></div>",
+      "css": ".ds-stage{color-scheme:dark;background:#080808;color:#d4d4d4}.ds-control{font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,\"Liberation Mono\",monospace;color:#b5b5b5;min-height:44px;display:inline-flex;align-items:center;gap:7px;cursor:pointer}.ds-control input{accent-color:#d4d4d4;width:14px;height:14px;margin:0}.ds-control input:focus-visible{outline:2px solid #dedede;outline-offset:5px}"
+    },
+    {
+      "name": "Reduced-motion playback choice",
+      "kind": "input",
+      "description": "The page shows this native choice only for reduced-motion users; the snippet displays that state.",
+      "html": "<div class=\"ds-stage\"><label class=\"ds-control\"><input type=\"checkbox\">播放动画</label></div>",
+      "css": ".ds-stage{color-scheme:dark;background:#080808;color:#d4d4d4}.ds-control{font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,\"Liberation Mono\",monospace;color:#b5b5b5;min-height:44px;display:inline-flex;align-items:center;gap:7px;cursor:pointer}.ds-control input{accent-color:#d4d4d4;width:14px;height:14px;margin:0}.ds-control input:focus-visible{outline:2px solid #dedede;outline-offset:5px}"
+    },
+    {
+      "name": "Replay link",
+      "kind": "nav",
+      "refersTo": "control-link",
+      "description": "Text link reopening the current website.",
+      "html": "<div class=\"ds-stage\"><a class=\"ds-link\" href=\"./\">重播</a></div>",
+      "css": ".ds-stage{color-scheme:dark;background:#080808;color:#d4d4d4}.ds-link{font:12px/1.6 ui-monospace,SFMono-Regular,Consolas,\"Liberation Mono\",monospace;color:#b5b5b5;text-decoration:none;cursor:pointer;min-height:44px;display:inline-flex;align-items:center;gap:7px}.ds-link:hover{color:#fff;text-decoration:underline;text-underline-offset:4px}.ds-link:focus-visible{outline:2px solid #dedede;outline-offset:5px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "椅子之后",
+    "overview": "This is the built visual system for the personal site at `/@lightjunction/web/`, an Experience surface. A recognisable chair becomes a spatial ASCII nuclear sculpture. The user fixed the subject and rendering language; the work owns the viewport and the interface stays quiet. [SURFACE.md](SURFACE.md) preserves that direction.\n\nA charcoal stage, gray-white glyphs and a sparse perspective floor give the sculpture its space. The opening chair uses a three-quarter view and enlarged projection. The small Chinese title and caption live outside the ASCII field. This personal artwork has its own visual identity, separate from the bright `/@root/web/` introduction.",
+    "keyCharacteristics": [
+      "Real three-dimensional surface sampling and character-density shading.",
+      "One large 96-column, 54-row projection with a small footer.",
+      "An 18-second sequence with 64 discrete frames and a 3.6-second chair opening.",
+      "Native controls and an explicit reduced-motion playback choice.",
+      "One self-contained, script-free HTML file without external assets."
+    ],
+    "dos": [
+      "**Do** preserve the user-fixed chair-to-nuclear-sculpture subject and the stage-first composition.",
+      "**Do** keep scene geometry in the 96-by-54 ASCII grid and retain perspective, depth and lighting.",
+      "**Do** keep the opening chair static by default for reduced motion and require explicit opt-in to animate.",
+      "**Do** preserve native keyboard controls, focus visibility and the pause rule's `!important` priority.",
+      "**Do** publish only `index.html`; the generator, acceptance script and local screenshots are supporting evidence."
+    ],
+    "donts": [
+      "**Don't** import the separate `/@root/web/` brand into this personal artwork.",
+      "**Don't** add scripts, WebGL, external fonts, image assets, audio or external network requests to the hosted page.",
+      "**Don't** widen the opaque-origin CSP sandbox to support this scene.",
+      "**Don't** replace spatial fragments with a two-dimensional dissolve or add whole-screen flashing.",
+      "**Don't** treat the completed local review as proof of public signed publication."
+    ]
+  }
+}
