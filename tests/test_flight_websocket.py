@@ -636,3 +636,151 @@ async def test_network_profile_visibility_changes_rekey_home_and_preserve_battle
     assert {name: restored_home['self'][name] for name in deadlines} == {
         name: before[name] for name in deadlines
     }
+
+
+@pytest.mark.asyncio
+async def test_normal_twenty_hz_controls_survive_slow_revalidation_and_keep_actions(
+    flight_server, oauth, monkeypatch
+):
+    """A slow legitimate OAuth check must not turn normal movement into a flood."""
+    from msg.transports import flight_space
+
+    flight = flight_server
+    cookie = await browser_login(oauth)
+    signed, hello = await flight.join(cookie=cookie)
+    guest, anonymous = await flight.join()
+    await snapshot(signed, lambda body: body['total_players'] == 2)
+    peers = (signed, guest)
+    ship_ids = (hello['self']['id'], anonymous['self']['id'])
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    delayed = False
+    original_credentials = flight.hub.oauth.browser_credentials
+    original_require = flight_space.require
+    rejection_codes = []
+    close_codes = []
+    acknowledgements = {ship_id: [] for ship_id in ship_ids}
+    action_events = {
+        ship_id: {name: set() for name in ('laser', 'shield', 'dash')} for ship_id in ship_ids
+    }
+    laser_directions = {}
+
+    async def delayed_credentials(tx, session_cookie):
+        nonlocal delayed
+        if not delayed:
+            delayed = True
+            entered.set()
+            # Twenty normal movement frames arrive over about one second. The
+            # event keeps the test independent of scheduler pauses while still
+            # performing the original credential verification afterwards.
+            await asyncio.sleep(0.7)
+            async with asyncio.timeout(2):
+                await release.wait()
+        return await original_credentials(tx, session_cookie)
+
+    def recorded_require(condition, code, *args, **kwargs):
+        if not condition:
+            rejection_codes.append(code)
+        return original_require(condition, code, *args, **kwargs)
+
+    async def collect(peer, ship_id):
+        while True:
+            frame = await peer.receive()
+            if frame.type != aiohttp.WSMsgType.TEXT:
+                close_codes.append(peer.close_code or 1006)
+                return
+            body = json.loads(frame.data)
+            if body.get('type') != 'snapshot':
+                continue
+            own = player(body, ship_id)
+            if own and own['ack_seq'] >= 0:
+                history = acknowledgements[ship_id]
+                if not history or history[-1] != own['ack_seq']:
+                    history.append(own['ack_seq'])
+            for event in body['events']:
+                if event['player_id'] == ship_id and event['type'] in action_events[ship_id]:
+                    action_events[ship_id][event['type']].add(event['id'])
+                    if event['type'] == 'laser':
+                        delta = [event['end'][axis] - event['position'][axis] for axis in range(3)]
+                        length = math.hypot(*delta)
+                        laser_directions[ship_id] = [value / length for value in delta]
+
+    monkeypatch.setattr(flight.hub.oauth, 'browser_credentials', delayed_credentials)
+    monkeypatch.setattr(flight_space, 'require', recorded_require)
+    collectors = [
+        asyncio.create_task(collect(peer, ship_id))
+        for peer, ship_id in zip(peers, ship_ids, strict=True)
+    ]
+    max_pending = 0
+    pure_frames = 0
+    try:
+        flight.hub.next_auth_check = 0
+        async with asyncio.timeout(3):
+            await entered.wait()
+        started = time.monotonic()
+        for seq in range(20):
+            try:
+                for peer in peers:
+                    await peer.send_json(controls(seq, throttle=1, yaw=0.4, pitch=0.1))
+            except aiohttp.ClientConnectionError:
+                break
+            pure_frames += 1
+            max_pending = max([
+                max_pending,
+                *(len(peer.pending) for peer in flight.hub.peers.values()),
+            ])
+            await asyncio.sleep(max(0, started + (seq + 1) / 20 - time.monotonic()))
+            if close_codes:
+                break
+        # This diagnosis deliberately contains only fixed error codes and frame
+        # counts, never cookies, identities, incoming frames or server snapshots.
+        assert not rejection_codes and not close_codes, (
+            'normal_20hz_rejected',
+            tuple(rejection_codes),
+            tuple(close_codes),
+            pure_frames,
+        )
+        assert pure_frames == 20
+        for seq, action in enumerate(('laser', 'shield', 'dash'), start=20):
+            for peer in peers:
+                await peer.send_json(controls(seq, throttle=1, yaw=0.4, actions=[action]))
+        for peer in peers:
+            await peer.send_json(controls(23, throttle=0.25, yaw=-0.4))
+        # Let the actual socket reader accept the final packets while OAuth still
+        # waits. There must be one latest movement slot and bounded action slots.
+        await asyncio.sleep(0.02)
+        queued = tuple(flight.hub.peers.values())
+        max_pending = max([max_pending, *(len(peer.pending) for peer in queued)])
+        assert max_pending <= 8
+        assert all(peer.latest_control[1]['seq'] == 23 for peer in queued)
+        assert all(len(peer.pending) == 3 for peer in queued)
+        release.set()
+        async with asyncio.timeout(4):
+            while not all(
+                acknowledgements[ship_id] == [23]
+                and all(len(events) == 1 for events in action_events[ship_id].values())
+                for ship_id in ship_ids
+            ):
+                assert not close_codes, ('normal_20hz_closed', tuple(close_codes))
+                await asyncio.sleep(0.02)
+        assert not rejection_codes and not close_codes
+        assert flight.hub.world.active_count == 2
+        assert all(
+            direction == pytest.approx([math.sin(0.4), 0, -math.cos(0.4)])
+            for direction in laser_directions.values()
+        )
+        for peer in peers:
+            await peer.send_json(controls(24, brake=True))
+        async with asyncio.timeout(4):
+            while not all(acknowledgements[ship_id] == [23, 24] for ship_id in ship_ids):
+                assert not close_codes, ('normal_20hz_closed', tuple(close_codes))
+                await asyncio.sleep(0.02)
+        assert all(
+            len(events) == 1 for actions in action_events.values() for events in actions.values()
+        )
+        assert not rejection_codes and not close_codes
+    finally:
+        release.set()
+        for collector in collectors:
+            collector.cancel()
+        await asyncio.gather(*collectors, return_exceptions=True)
