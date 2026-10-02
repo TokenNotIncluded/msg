@@ -195,6 +195,16 @@ test('shield and dash are consumed once per press while laser can remain held', 
   assert.deepEqual(ws.sent.at(-1).actions, ['shield']);
 });
 
+test('a quick laser button press survives the renderer clearing actions before the 20Hz send', () => {
+  const b = browser(), ws = b.join();
+  b.client.setInput({ actions: ['laser'] }); b.clock.advance(16);
+  b.client.setInput({ actions: [] }); b.clock.advance(34);
+  assert.deepEqual(ws.sent.at(-1).actions, ['laser']);
+  b.clock.advance(50); assert.deepEqual(ws.sent.at(-1).actions, []);
+  b.client.setInput({ actions: ['laser'] }); b.clock.advance(50);
+  assert.deepEqual(ws.sent.at(-1).actions, ['laser'], 'held laser is de-duplicated against its pending press');
+});
+
 test('region selection is explicit, validated and releases pending movement and skills first', () => {
   const b = browser(), ws = b.join();
   b.client.setInput({ throttle: 1, actions: ['dash', 'laser'] });
