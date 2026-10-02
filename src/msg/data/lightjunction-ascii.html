@@ -1,15 +1,18 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>椅子之后 · lightjunction</title><style>
-:root{color-scheme:dark;background:#080808;color:#d6d6d6;font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}*{box-sizing:border-box}body{margin:0;height:100svh;min-height:560px;display:grid;grid-template-rows:1fr auto;overflow-x:hidden}::selection{background:#d6d6d6;color:#080808}#stage{min-width:0;display:flex;align-items:center;justify-content:center;min-height:0;padding:14px 8px}#world{font:12px/1 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;letter-spacing:0;margin:0;white-space:pre;touch-action:none;user-select:none;cursor:grab}#world:active{cursor:grabbing}footer{min-width:0;padding:0 24px 16px;display:grid;gap:8px}h1{font-size:12px;font-weight:400;margin:0}#status{font-size:12px;line-height:1.6;margin:0;color:#c8c8c8;min-height:20px}.bar{display:flex;justify-content:space-between;gap:12px;align-items:center}.buttons{display:flex;flex-wrap:wrap;gap:8px}button{font:inherit;font-size:12px;color:#d6d6d6;border:1px solid #454545;background:#101010;min-height:44px;padding:8px 11px;border-radius:2px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}button:hover:not(:disabled){background:#242424;border-color:#aaa}button:disabled{color:#888;border-color:#303030;cursor:default}button:focus-visible{outline:2px solid #e2e2e2;outline-offset:3px}.profile{font-size:11px;color:#aaa}.held{background:#393939!important}#movement{display:none}.hint{font-size:11px;color:#aaa;margin:0;line-height:1.5}#start[hidden],#actions[hidden]{display:none}@media(max-width:600px){footer{min-width:0;padding:0 12px 12px;gap:6px}.bar{align-items:flex-start}footer>.bar:last-child{flex-direction:column;gap:6px}#movement{display:flex;gap:5px}#movement button{min-width:44px;padding:8px}.buttons{gap:5px}button{padding:7px 9px;font-size:11px}.hint{max-width:40ch}#stage{padding:8px 4px}.profile{display:none}}
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>椅子之后 · lightjunction</title><style>
+:root{color-scheme:dark;background:#080808;color:#d6d6d6;font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}*{box-sizing:border-box}body{margin:0;height:100svh;min-height:280px;display:grid;grid-template-rows:minmax(0,1fr) auto;overflow:hidden}::selection{background:#d6d6d6;color:#080808}#stage{position:relative;min-width:0;display:flex;align-items:center;justify-content:center;min-height:0;padding:14px 8px}#world{font:12px/1 ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace;letter-spacing:0;margin:0;white-space:pre;touch-action:none;user-select:none;cursor:grab}#world:active{cursor:grabbing}footer{min-width:0;padding:0 max(24px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(24px,env(safe-area-inset-left));display:grid;gap:8px}h1{font-size:12px;font-weight:400;margin:0}#status{font-size:12px;line-height:1.6;margin:0;color:#c8c8c8;min-height:20px}.bar{display:flex;justify-content:space-between;gap:12px;align-items:center}.buttons{display:flex;flex-wrap:wrap;gap:8px}button{font:inherit;font-size:12px;color:#d6d6d6;border:1px solid #454545;background:#101010;min-height:44px;padding:8px 11px;border-radius:2px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;text-decoration:none}button:hover:not(:disabled){background:#242424;border-color:#aaa}button:disabled{color:#888;border-color:#303030;cursor:default}button:focus-visible{outline:2px solid #e2e2e2;outline-offset:3px}.profile{font-size:11px;color:#aaa}.held{background:#242424!important}#movement,#touch-look{display:none}.hint{font-size:11px;color:#aaa;margin:0;line-height:1.5}#start[hidden],#actions[hidden]{display:none}.build-row{display:flex;flex-wrap:wrap;gap:5px;align-items:center}#build-tools{display:grid;gap:6px}#build-tools[hidden]{display:none}#actions[data-building="true"] #stance,#actions[data-building="true"] #coffee,#actions[data-building="true"] [data-look]{display:none}#build-tools button[aria-pressed="true"]{border-color:#c8d7c4;background:#233025}.material-grass{color:#abd39d}.material-dirt{color:#d3b392}.material-stone{color:#c2cdd0}.material-wood{color:#d4b28b}#build-hint{font-size:11px;line-height:1.5;color:#aaa;margin:0}#world .chalk{color:#d6d6d6}#world .sky{color:#7eabc8}#world .grass{color:#91ba84}#world .dirt{color:#b79774}#world .stone{color:#aeb7bc}#world .wood{color:#c79b70}#world .leaf{color:#a5cf83}#world .bark{color:#bc9167}#world .ash{color:#b5aaa0}#world .metal{color:#9dadad}#world .adcyan{color:#a1d5d2}#world .adamber{color:#e2c486}#world .adpink{color:#dcb6c7}#world .fire{color:#f0c493}#move-stick{position:relative;width:112px;height:112px;border-radius:50%;padding:0;touch-action:none;user-select:none;background:#101010;overflow:visible}#move-stick::before,#move-stick::after{content:"";position:absolute;background:#303030;pointer-events:none}#move-stick::before{height:1px;left:12px;right:12px;top:50%}#move-stick::after{width:1px;top:12px;bottom:12px;left:50%}#move-knob{position:absolute;z-index:1;left:calc(50% - 18px);top:calc(50% - 18px);width:36px;height:36px;border:1px solid #aaa;border-radius:50%;background:#242424;pointer-events:none}#move-stick:disabled #move-knob{border-color:#555;background:#161616}.touch-label,#touch-look{font-size:11px;line-height:1.5;color:#aaa;margin:0}.touch-label{display:block;margin-top:7px;text-align:center}#touch-look{position:absolute;right:max(14px,env(safe-area-inset-right));bottom:28px;pointer-events:none}
+@media(max-width:600px),(any-pointer:coarse){footer{padding:0 max(12px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));gap:6px}.bar{align-items:flex-start}.buttons{gap:5px}button{padding:7px 9px;font-size:11px}footer>.bar:last-child{display:none}#stage{padding:8px 4px 140px}#movement{display:block;position:absolute;left:max(12px,env(safe-area-inset-left));bottom:8px}#touch-look{display:block}.profile{display:none}}
+@media(max-height:500px) and (orientation:landscape){footer{gap:4px}footer>.bar:first-child{display:none}#status{min-height:20px;font-size:11px}#stage{padding:8px 124px 8px}#movement{bottom:8px}#move-stick{width:96px;height:96px}.touch-label{font-size:10px}#touch-look{right:max(16px,env(safe-area-inset-right));bottom:18px;max-width:6em}}
+
 </style></head><body>
 <!-- THESIS: A chair and a slumped person become the visitor's body inside a real-time 3D ASCII nuclear scene.
-OWN-WORLD: Black stage, gray-white 7-bit world glyphs, perspective and depth; native low-key text controls.
-STORY: See the seated person, enter their eyes, choose to move, turn away, watch or drink coffee; the shockwave arrives, death leads to another loop.
-FIRST VIEWPORT: The chair and person occupy the stage; the camera moves from a clear three-quarter view into first person. Text controls stay below the world.
+OWN-WORLD: Black stage and gray-white 7-bit perspective glyphs outside before survival; colored shelter materials and two physical ads, then colored grass, trees, ruins and editable cubes after survival.
+STORY: Enter the slumped person's eyes; move, turn away or drink coffee. Behind the chair, descend and close the shelter door to survive. After the shockwave, step out and build among trees and ruins; death and replay reset the loop and placed blocks.
+FIRST VIEWPORT: The chair and person occupy the stage; the camera moves from a clear three-quarter view into first person. Text actions stay below the world; a left thumb stick and a separate scene drag work together on touch screens.
 FORM: Code-led interactive ASCII world; fixed user direction. Rendering samples 3D surfaces at runtime, never pre-recorded frames.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance -->
-<main id="stage"><pre id="world" role="img" aria-label="实时三维字符场景：椅子、瘫坐的人与远处核爆。拖动场景转动视角。"></pre></main>
-<footer><div class="bar"><h1>椅子之后</h1><span class="profile">@lightjunction</span></div><p id="status" role="status" aria-live="polite"></p><button id="start" hidden>开始互动</button><div id="actions" class="buttons"><button id="stance">[E] 起身</button><button id="away" data-look>[B] 背对，不看</button><button id="face" data-look>[F] 默默面对</button><button id="coffee">[C] 喝咖啡</button><button id="door">[E] 开避难门</button><button id="pause">[P] 暂停</button><button id="restart">[R] 重开</button></div><div class="bar"><p class="hint">WASD / 方向键移动 · Shift 跑 · 点击捕获鼠标 / 拖动转头 · Esc 释放</p><div id="movement" aria-label="触屏移动"><button data-move="a" aria-label="向左移动">A</button><button data-move="w" aria-label="向前移动">W</button><button data-move="s" aria-label="向后移动">S</button><button data-move="d" aria-label="向右移动">D</button><button data-move="shift" aria-label="按住加速跑">跑</button></div></div></footer>
+BOUNDARY: One reviewed, hash-pinned HTML file. Local gameplay only; no network, tracking, storage requirement or account authority. -->
+<main id="stage"><pre id="world" role="img" aria-label="实时三维字符场景：椅子、瘫坐的人与远处核爆。拖动场景转动视角。"></pre><div id="movement"><button id="move-stick" aria-label="移动摇杆：拖动控制方向和速度，放开停止；也可用方向键。" disabled><span id="move-knob" aria-hidden="true"></span></button><span class="touch-label">移动 · 放开即停</span></div><p id="touch-look">右侧拖动转头</p></main>
+<footer><div class="bar"><h1>椅子之后</h1><span class="profile">@lightjunction</span></div><p id="status" role="status" aria-live="polite"></p><button id="start" hidden>开始互动</button><div id="actions" class="buttons"><button id="stance">[E] 起身</button><button id="away" data-look>[B] 背对，不看</button><button id="face" data-look>[F] 默默面对</button><button id="coffee">[C] 喝咖啡</button><button id="door">[E] 开避难门</button><button id="pause">[P] 暂停</button><button id="restart">[R] 重开</button></div><div id="build-tools" hidden><div class="build-row" role="group" aria-label="方块材料"><button data-material="grass" class="material-grass" aria-pressed="true">[1] 草</button><button data-material="dirt" class="material-dirt" aria-pressed="false">[2] 土</button><button data-material="stone" class="material-stone" aria-pressed="false">[3] 石</button><button data-material="wood" class="material-wood" aria-pressed="false">[4] 木</button><button id="place">[Q] 放置</button><button id="remove">[X] 拆除</button><button id="jump">跳 / 空格</button></div><p id="build-hint">准星对准 5 米内的地面或方块 · 点击 / Q 放置 · 右键 / X 拆除 · 空格跳</p></div><div class="bar"><p class="hint">WASD / 方向键移动 · Shift 跑 · 点击捕获鼠标 / 拖动转头 · Esc 释放</p></div></footer>
 <script>
 // Static meshes only. The caller owns terrain, movement, doors and survival state.
 function createShelterWorld({ box, sphere, limb }) {
@@ -176,6 +179,328 @@ function createShelterWorld({ box, sphere, limb }) {
   return { entrance, stairs, chamber, door, ruins };
 }
 
+// Two physical posters recessed into the shelter's inward-facing far wall.
+// Each point is [x, y, z, nx, ny, nz, shade, colorTag, glyph?].
+function createShelterAds() {
+  const points = [];
+  const spacing = 0.095;
+  const wallZ = -9.595, frameZ = -9.535, panelZ = -9.57;
+
+  function plane(a, b, c, normal, shade, colorTag, glyph) {
+    const u = b.map((value, axis) => value - a[axis]);
+    const v = c.map((value, axis) => value - a[axis]);
+    const nu = Math.max(1, Math.ceil(Math.hypot(...u) / spacing));
+    const nv = Math.max(1, Math.ceil(Math.hypot(...v) / spacing));
+    for (let i = 0; i <= nu; i++) {
+      for (let j = 0; j <= nv; j++) {
+        points.push([
+          ...a.map((value, axis) => value + u[axis] * i / nu + v[axis] * j / nv),
+          ...normal, shade, colorTag, glyph,
+        ]);
+      }
+    }
+  }
+
+  function rail(x0, x1, y0, y1, colorTag) {
+    // Front face and real edges; the back lies against the opaque room wall.
+    plane([x0, y0, frameZ], [x1, y0, frameZ], [x0, y1, frameZ], [0, 0, 1], 1.12, colorTag);
+    plane([x0, y0, wallZ], [x0, y1, wallZ], [x0, y0, frameZ], [-1, 0, 0], 0.76, "metal");
+    plane([x1, y0, wallZ], [x1, y1, wallZ], [x1, y0, frameZ], [1, 0, 0], 0.76, "metal");
+    plane([x0, y0, wallZ], [x1, y0, wallZ], [x0, y0, frameZ], [0, -1, 0], 0.68, "metal");
+    plane([x0, y1, wallZ], [x1, y1, wallZ], [x0, y1, frameZ], [0, 1, 0], 0.86, "metal");
+  }
+
+  function text(value, centerX, y, advance, colorTag, shade = 1.45) {
+    // Facing -z gives camera.right = [-1, 0, 0]. Decreasing world x
+    // therefore moves right on screen: never reverse the actual string.
+    const firstX = centerX + (value.length - 1) * advance / 2;
+    for (let i = 0; i < value.length; i++) {
+      if (value[i] !== " ") {
+        // A thin painted layer remains on the physical panel, behind the rim.
+        // One sample per glyph avoids copies fighting over the depth buffer.
+        points.push([firstX - i * advance, y, panelZ + 0.004, 0, 0, 1, shade, colorTag, value[i]]);
+      }
+    }
+  }
+
+  const signs = [
+    { x: 0.94, tag: "adcyan", title: "MSG", lines: ["POSTS . TOPICS", "AGENT COLLAB"], address: "msg.lmm.best" },
+    { x: -0.94, tag: "adamber", title: "API.LMM.BEST", lines: ["AI API RELAY"], address: "api.lmm.best" },
+  ];
+  const halfWidth = 0.825, bottom = -1.65, top = -0.40, trim = 0.047;
+  for (const sign of signs) {
+    const left = sign.x - halfWidth, right = sign.x + halfWidth;
+    const innerLeft = left + trim, innerRight = right - trim;
+    const innerBottom = bottom + trim, innerTop = top - trim;
+    plane([innerLeft, innerBottom, panelZ], [innerRight, innerBottom, panelZ],
+      [innerLeft, innerTop, panelZ], [0, 0, 1], 0.32, "metal", " ");
+    rail(left, right, bottom, innerBottom, sign.tag);
+    rail(left, right, innerTop, top, sign.tag);
+    rail(left, innerLeft, innerBottom, innerTop, sign.tag);
+    rail(innerRight, right, innerBottom, innerTop, sign.tag);
+    text(sign.title, sign.x, -0.65, 0.115, sign.tag);
+    for (let row = 0; row < sign.lines.length; row++) {
+      text(sign.lines[row], sign.x, sign.lines.length === 1 ? -1.01 : -0.91 - row * 0.25, 0.101, sign.tag, 1.30);
+    }
+    text(sign.address, sign.x, -1.44, 0.111, sign.tag, 1.35);
+  }
+  points.panels=signs.map(sign=>({x:sign.x,halfWidth:halfWidth-trim,bottom:bottom+trim,top:top-trim,z:panelZ}));
+  return points;
+}
+
+// Editable one-metre blocks and deterministic trees; all coordinates are world space.
+function createAsciiBuildWorld({ terrain, box, sphere }) {
+  const materials = Object.freeze(["grass", "dirt", "stone", "wood"]);
+  const blocks = new Map(), blockChunks = new Map(), meshes = new Map();
+  const CHUNK = 8, VIEW = 3, LIMIT = 512, REACH = 5, RADIUS = 0.24;
+  const faces = [[-1,0,0],[1,0,0],[0,-1,0],[0,1,0],[0,0,-1],[0,0,1]];
+  const seeds = [], treeChunks = new Map();
+  let trees = null, revision = 0, cachedKey = "", cachedPoints = [];
+  const key = (x,y,z) => `${x},${y},${z}`;
+  const chunkKey = (x,z) => `${Math.floor(x/CHUNK)},${Math.floor(z/CHUNK)}`;
+  const finite = a => Array.isArray(a) && a.length === 3 && a.every(Number.isFinite);
+  const ground = (x,z) => { const y=terrain(x,z); return Number.isFinite(y)?y:0; };
+  // Test the whole cube footprint against the stair/room corridor, not one corner.
+  const protectedCell = (x,z) => x < 3 && x+1 > -3 && z < 0 && z+1 > -12;
+  const hash = n => { const v=Math.sin(n*127.1+311.7)*43758.5453; return v-Math.floor(v); };
+  for (const x of [-25,-18,-11,-7.6,7.6,11,18,25]) {
+    for (const z of [-4,4,13,24,37,52,68]) {
+      if (protectedCell(x,z)) continue;
+      const n=seeds.length+1;
+      seeds.push({x:x+(hash(n)-.5)*.9,z:z+(hash(n+42)-.5)*1.5,
+        height:3.9+hash(n+83)*1.5,width:.48+hash(n+127)*.12,seed:n});
+    }
+  }
+
+  // This coarse surface sampler avoids the dense chair box helper.
+  function facePoints(out, bounds, normal, shade, tag, glyph, spacing=.34) {
+    const axis=normal.findIndex(n=>n!==0), other=[0,1,2].filter(n=>n!==axis);
+    const [a,b]=other, na=Math.max(1,Math.ceil((bounds[1][a]-bounds[0][a])/spacing));
+    const nb=Math.max(1,Math.ceil((bounds[1][b]-bounds[0][b])/spacing));
+    for (let i=0;i<=na;i++) for (let j=0;j<=nb;j++) {
+      const p=bounds[0].slice();
+      p[axis]=bounds[normal[axis]>0?1:0][axis];
+      p[a]+=(bounds[1][a]-bounds[0][a])*i/na;
+      p[b]+=(bounds[1][b]-bounds[0][b])*j/nb;
+      out.push([...p,...normal,shade,tag,glyph]);
+    }
+  }
+  function ensureTrees() {
+    if (trees) return;
+    trees=[]; treeChunks.clear();
+    for (const seed of seeds) {
+      const y=ground(seed.x,seed.z), half=seed.width/2, out=[];
+      const bounds=[[seed.x-half,y,seed.z-half],[seed.x+half,y+seed.height,seed.z+half]];
+      for (const n of faces) facePoints(out,bounds,n,.70,"bark","|",.25);
+      const crowns=[];
+      for (let i=0;i<3;i++) {
+        const rx=1.25+hash(seed.seed+201+i)*.55, ry=.90+hash(seed.seed+302+i)*.40;
+        const cx=seed.x+(hash(seed.seed+401+i)-.5)*.5;
+        const cy=y+seed.height-.45+i*.58, cz=seed.z+(hash(seed.seed+503+i)-.5)*.5;
+        crowns.push({center:[cx,cy,cz],radii:[rx,ry,rx*.85]});
+        if (typeof sphere === "function") {
+          for (const p of sphere(cx,cy,cz,rx,ry,rx*.85,.74+i*.05,16,9)) out.push([...p,"leaf","*"]);
+        } else {
+          for (const n of faces) facePoints(out,[[cx-rx,cy-ry,cz-rx*.85],[cx+rx,cy+ry,cz+rx*.85]],n,.8,"leaf","*",.45);
+        }
+      }
+      const tree={...seed,y,bounds,crowns,points:out}; trees.push(tree);
+      const ck=chunkKey(seed.x,seed.z);
+      if (!treeChunks.has(ck)) treeChunks.set(ck,[]);
+      treeChunks.get(ck).push(tree);
+    }
+  }
+  function invalidate(cell) {
+    revision++; cachedKey="";
+    meshes.delete(key(...cell));
+    for (const n of faces) meshes.delete(key(...cell.map((v,i)=>v+n[i])));
+  }
+  function blockPoints(block) {
+    const k=key(...block.cell);
+    if (meshes.has(k)) return meshes.get(k);
+    const [x,y,z]=block.cell, out=[], bounds=[[x,y,z],[x+1,y+1,z+1]];
+    for (const n of faces) {
+      if (blocks.has(key(x+n[0],y+n[1],z+n[2]))) continue;
+      // A ground-anchored cube may be partly buried in a crater's curved surface.
+      if (n[1]<0 && y <= ground(x+.5,z+.5)+1e-5) continue;
+      const tag=block.material==="grass"&&n[1]!==1?"dirt":block.material;
+      const glyph=tag==="grass"?'"':tag==="dirt"?":":tag==="stone"?"#":"=";
+      facePoints(out,bounds,n,n[1]>0?.93:.76,tag,glyph);
+    }
+    meshes.set(k,out); return out;
+  }
+  function points(x,z) {
+    ensureTrees();
+    const cx=Math.floor(x/CHUNK), cz=Math.floor(z/CHUNK), ck=`${cx},${cz}:${revision}`;
+    if (ck===cachedKey) return cachedPoints;
+    const out=[];
+    for (let a=cx-VIEW;a<=cx+VIEW;a++) for (let b=cz-VIEW;b<=cz+VIEW;b++) {
+      const bucket=`${a},${b}`;
+      for (const tree of treeChunks.get(bucket)||[]) out.push(...tree.points);
+      for (const k of blockChunks.get(bucket)||[]) {
+        const block=blocks.get(k); if (block) out.push(...blockPoints(block));
+      }
+    }
+    cachedKey=ck; cachedPoints=out; return out;
+  }
+  function boxHit(origin, direction, bounds, reach) {
+    let entry=-Infinity, exit=Infinity, enterNormal=null, exitNormal=null;
+    for (let a=0;a<3;a++) {
+      if (Math.abs(direction[a])<1e-10) {
+        if (origin[a]<bounds[0][a] || origin[a]>bounds[1][a]) return null;
+        continue;
+      }
+      let lo=(bounds[0][a]-origin[a])/direction[a], hi=(bounds[1][a]-origin[a])/direction[a];
+      let nl=[0,0,0], nh=[0,0,0]; nl[a]=-1;nh[a]=1;
+      if (lo>hi) { [lo,hi]=[hi,lo]; [nl,nh]=[nh,nl]; }
+      if (lo>entry) {entry=lo;enterNormal=nl;}
+      if (hi<exit) {exit=hi;exitNormal=nh;}
+      if (entry>exit) return null;
+    }
+    const inside=entry<0, distance=inside?exit:entry;
+    if (!Number.isFinite(distance)||distance<1e-6||distance>reach) return null;
+    return {distance,normal:inside?exitNormal:enterNormal,
+      point:origin.map((v,i)=>v+direction[i]*distance)};
+  }
+  function crownHit(origin,direction,crown,reach) {
+    const o=origin.map((v,i)=>(v-crown.center[i])/crown.radii[i]);
+    const d=direction.map((v,i)=>v/crown.radii[i]);
+    const a=d.reduce((s,v)=>s+v*v,0), b=2*o.reduce((s,v,i)=>s+v*d[i],0);
+    const c=o.reduce((s,v)=>s+v*v,0)-1, discriminant=b*b-4*a*c;
+    if (discriminant<0) return null;
+    const near=(-b-Math.sqrt(discriminant))/(2*a), far=(-b+Math.sqrt(discriminant))/(2*a);
+    const distance=near>1e-6?near:far;
+    if (distance<1e-6||distance>reach) return null;
+    const point=origin.map((v,i)=>v+direction[i]*distance);
+    const raw=point.map((v,i)=>(v-crown.center[i])/(crown.radii[i]**2));
+    const length=Math.hypot(...raw);
+    return {distance,point,normal:raw.map(v=>v/length)};
+  }
+  function terrainHit(origin,direction,reach) {
+    const delta=(t)=>{
+      const x=origin[0]+direction[0]*t,z=origin[2]+direction[2]*t;
+      return origin[1]+direction[1]*t-ground(x,z);
+    };
+    let previous=delta(0), last=0;
+    // Only enter the upper surface: being underground must not select a false ground face.
+    for (let t=.10;t<=reach+.099;t+=.10) {
+      const end=Math.min(t,reach), value=delta(end);
+      if (previous>0 && value<=0) {
+        let lo=last,hi=end;
+        for (let i=0;i<12;i++) { const mid=(lo+hi)/2; if(delta(mid)>0)lo=mid;else hi=mid; }
+        const distance=(lo+hi)/2, point=origin.map((v,i)=>v+direction[i]*distance);
+        if (protectedCell(Math.floor(point[0]),Math.floor(point[2]))) return null;
+        const e=.04, gx=(ground(point[0]+e,point[2])-ground(point[0]-e,point[2]))/(2*e);
+        const gz=(ground(point[0],point[2]+e)-ground(point[0],point[2]-e))/(2*e), length=Math.hypot(gx,1,gz);
+        return {distance,point,normal:[-gx/length,1/length,-gz/length],
+          cell:[Math.floor(point[0]),Math.floor(point[1])-1,Math.floor(point[2])],material:"grass",removable:false,kind:"ground"};
+      }
+      previous=value; last=end; if(end===reach)break;
+    }
+    return null;
+  }
+  function raycast(origin,direction,reach=REACH) {
+    if (!finite(origin)||!finite(direction)) return null;
+    const length=Math.hypot(...direction);
+    if (length<1e-9 || !Number.isFinite(reach)||reach<=0) return null;
+    direction=direction.map(v=>v/length); reach=Math.min(REACH,reach);
+    ensureTrees(); let hit=terrainHit(origin,direction,reach);
+    const nearer=candidate=>candidate && (!hit||candidate.distance<hit.distance-1e-6);
+    for (const block of blocks.values()) {
+      const [x,y,z]=block.cell, candidate=boxHit(origin,direction,[[x,y,z],[x+1,y+1,z+1]],reach);
+      if (nearer(candidate)) hit={...candidate,cell:block.cell.slice(),material:block.material,removable:true,kind:"block"};
+    }
+    for (const tree of trees) {
+      if (Math.hypot(tree.x-origin[0],tree.z-origin[2])>reach+2.5) continue;
+      const trunk=boxHit(origin,direction,tree.bounds,reach);
+      if (nearer(trunk)) hit={...trunk,cell:[Math.floor(tree.x),Math.floor(tree.y),Math.floor(tree.z)],material:"wood",removable:false,kind:"tree"};
+      for (const crown of tree.crowns) {
+        const candidate=crownHit(origin,direction,crown,reach);
+        if (nearer(candidate)) hit={...candidate,cell:[Math.floor(tree.x),Math.floor(tree.y),Math.floor(tree.z)],material:"leaf",removable:false,kind:"tree"};
+      }
+    }
+    return hit;
+  }
+  function overlapsBody(bounds,player) {
+    const radius=Number.isFinite(player.radius)?Math.max(0,player.radius):RADIUS;
+    const nearestX=Math.max(bounds[0][0],Math.min(bounds[1][0],player.x));
+    const nearestZ=Math.max(bounds[0][2],Math.min(bounds[1][2],player.z));
+    const eye=Number.isFinite(player.eye)?Math.max(.5,player.eye):2.06;
+    return (nearestX-player.x)**2+(nearestZ-player.z)**2<radius**2+1e-9 &&
+      bounds[0][1]<player.feet+eye-.001 && bounds[1][1]>player.feet+.001;
+  }
+  function place(hit,material,player) {
+    if (!materials.includes(material)) return {ok:false,reason:"未知材料"};
+    if (!hit || !finite(hit.point)||!finite(hit.normal)||!finite(hit.cell) || !(hit.distance>0&&hit.distance<=REACH+.001)) return {ok:false,reason:"目标太远"};
+    if (!player||![player.x,player.z,player.feet].every(Number.isFinite)) return {ok:false,reason:"玩家位置无效"};
+    let cell;
+    if (hit.kind==="ground") cell=[Math.floor(hit.point[0]),Math.floor(ground(hit.point[0],hit.point[2])+1e-5),Math.floor(hit.point[2])];
+    else if (hit.kind==="block" && blocks.has(key(...hit.cell))) cell=hit.cell.map((v,i)=>v+hit.normal[i]);
+    else return {ok:false,reason:"请选择地面或已有方块"};
+    const [x,y,z]=cell, k=key(...cell);
+    if (!cell.every(Number.isInteger)||Math.abs(x)>80||z<-14||z>80||y<-8||y>24) return {ok:false,reason:"这里超出建造范围"};
+    if (protectedCell(x,z)) return {ok:false,reason:"避难所和楼梯附近不能建造"};
+    if (blocks.has(k)) return {ok:false,reason:"这里已有方块"};
+    if (blocks.size>=LIMIT) return {ok:false,reason:"最多放置512个方块"};
+    const bounds=[[x,y,z],[x+1,y+1,z+1]];
+    if (overlapsBody(bounds,player)) return {ok:false,reason:"不能把方块放进身体里"};
+    ensureTrees();
+    for (const tree of trees) if (bounds[0].every((v,i)=>v<tree.bounds[1][i])&&bounds[1].every((v,i)=>v>tree.bounds[0][i])) return {ok:false,reason:"树干占据了这里"};
+    // A side neighbour whose entire cube lies below the curved ground is not placeable.
+    if (y+1<ground(x+.5,z+.5)-.001) return {ok:false,reason:"不能放到地下"};
+    blocks.set(k,{cell,material}); const ck=chunkKey(x,z);
+    if (!blockChunks.has(ck)) blockChunks.set(ck,new Set());
+    blockChunks.get(ck).add(k); invalidate(cell); return {ok:true};
+  }
+  function remove(hit) {
+    if (!hit||hit.kind!=="block"||!hit.removable||!finite(hit.cell)||!(hit.distance>0&&hit.distance<=REACH+.001)) return {ok:false,reason:"只能拆除自己放的方块"};
+    const k=key(...hit.cell), block=blocks.get(k);
+    if (!block) return {ok:false,reason:"方块已经不在了"};
+    blocks.delete(k);const ck=chunkKey(block.cell[0],block.cell[2]), bucket=blockChunks.get(ck);
+    if (bucket) {bucket.delete(k);if(!bucket.size)blockChunks.delete(ck);}
+    invalidate(block.cell); return {ok:true};
+  }
+  function nearBlocks(x,z,callback) {
+    const a=Math.floor((x-RADIUS)/CHUNK),b=Math.floor((x+RADIUS)/CHUNK);
+    const c=Math.floor((z-RADIUS)/CHUNK),d=Math.floor((z+RADIUS)/CHUNK);
+    for (let i=a;i<=b;i++) for (let j=c;j<=d;j++) for (const k of blockChunks.get(`${i},${j}`)||[]) callback(blocks.get(k));
+  }
+  function floor(x,z,base=ground(x,z),maximum=Infinity) {
+    let top=base;
+    nearBlocks(x,z,block=>{
+      const [a,b,c]=block.cell;
+      const dx=x-Math.max(a,Math.min(a+1,x)), dz=z-Math.max(c,Math.min(c+1,z));
+      if (b+1<=maximum+.001&&dx*dx+dz*dz<=RADIUS*RADIUS+1e-9) top=Math.max(top,b+1);
+    });
+    return top;
+  }
+  function ceiling(x,z,head) {
+    let bottom=Infinity;
+    nearBlocks(x,z,block=>{
+      const [a,b,c]=block.cell;
+      const dx=x-Math.max(a,Math.min(a+1,x)),dz=z-Math.max(c,Math.min(c+1,z));
+      if(b>=head-.001&&dx*dx+dz*dz<=RADIUS*RADIUS+1e-9)bottom=Math.min(bottom,b);
+    });
+    return bottom;
+  }
+  function blocked(x,z,feet) {
+    if (![x,z,feet].every(Number.isFinite)) return true;
+    const player={x,z,feet,eye:2.06,radius:RADIUS};let solid=false;
+    nearBlocks(x,z,block=>{const [a,b,c]=block.cell;if(b+1>feet+.5+.001&&overlapsBody([[a,b,c],[a+1,b+1,c+1]],player))solid=true;});
+    ensureTrees();
+    if (!solid) for (const tree of trees) {
+      if (Math.abs(tree.x-x)>1 || Math.abs(tree.z-z)>1) continue;
+      if (tree.bounds[1][1]>feet+.5+.001&&overlapsBody(tree.bounds,player)) {solid=true;break;}
+    }
+    return solid;
+  }
+  function reset() {
+    blocks.clear();blockChunks.clear();meshes.clear();trees=null;treeChunks.clear();
+    revision++;cachedKey="";cachedPoints=[];
+  }
+  return {reset,materials,points,raycast,place,remove,floor,ceiling,blocked,get count(){return blocks.size;}};
+}
+
 (() => {
   "use strict";
   const screen = document.querySelector("#world"), status = document.querySelector("#status");
@@ -183,9 +508,14 @@ function createShelterWorld({ box, sphere, limb }) {
   const pause = document.querySelector("#pause"), stance = document.querySelector("#stance"), coffee = document.querySelector("#coffee");
   const doorControl = document.querySelector("#door");
   const reduce = matchMedia("(prefers-reduced-motion: reduce)");
-  const TAU = Math.PI * 2, ramp = " .,:;itfx*#%@", keys = new Set(), pointers = new Map(), pulses = new Map();
-  const held = key => keys.has(key)||[...pointers.values()].includes(key)||pulses.has(key);
-  let cols = 112, rows = 60, depth, pixels, last = 0, painted = 0, drag = null, pointerYaw = null;
+  const TAU = Math.PI * 2, ramp = " .,:;itfx*#%@", keys = new Set();
+  const held = key => keys.has(key);
+  const moveStick = document.querySelector("#move-stick"), moveKnob = document.querySelector("#move-knob");
+  const touch = matchMedia("(any-pointer: coarse)"), stick = { id:null, x:0, y:0 }, buttonTouches=new Map();
+  let cols = 112, rows = 60, depth, pixels, colors, last = 0, painted = 0, drag = null, pointerYaw = null;
+  const buildTools=document.querySelector("#build-tools"),placeControl=document.querySelector("#place"),removeControl=document.querySelector("#remove"),jumpControl=document.querySelector("#jump"),buildHint=document.querySelector("#build-hint");
+  const palette=new Set(["chalk","sky","grass","dirt","stone","wood","leaf","bark","ash","metal","adcyan","adamber","adpink","fire"]);
+  let material="grass", buildTarget=null;
   let state;
   let lockEpoch=0,lockWanted=null,lockPending=false,lockHeld=null;
   const clamp = (n,a,b) => Math.max(a,Math.min(b,n));
@@ -244,19 +574,21 @@ function createShelterWorld({ box, sphere, limb }) {
   const rimCloud=sphere(0,0,0,1,1,1,1,22,12);
   const shelter=createShelterWorld({box,sphere,limb});
   const craters=[[2.7,6,2.2,.95],[-3.9,11,2.8,1.3],[1,18,4.2,1.65],[5,1.2,1.4,.65]];
-  function terrain(x,z) {
-    if(!state.aftermath)return 0;
+  function terrain(x,z,after=state?.aftermath) {
+    if(!after)return 0;
     let y=0;
     for(const [cx,cz,r,d] of craters){const q=Math.hypot(x-cx,z-cz)/r;if(q<1)y-=d*(1-q*q)**2;else if(q<1.2)y+=.18*Math.sin((q-1)/.2*Math.PI);}
     return y;
   }
-  function floorAt(x=state.x,z=state.z,room=state.room) {
+  function floorAt(x=state.x,z=state.z,room=state.room,maximum=(state.airY??state.supportY)+.5) {
     if(room)return -2.6;
     if(Math.abs(x)<.78&&z<-2&&z>=-5.05)return -2.6*(-z-2)/3.05;
-    return terrain(x,z);
+    const ground=terrain(x,z);return state.aftermath?buildWorld.floor(x,z,ground,maximum):ground;
   }
+  function feet() { return state.airY===null?floorAt():Math.max(floorAt(state.x,state.z,state.room,state.airY),state.airY); }
   function nearDoor() { return Math.hypot(state.x,state.z+5.05)<1.5&&floorAt()<-.9; }
   function moveTo(x,z) {
+    const previousFeet=feet();if(state.aftermath&&!state.room&&buildWorld.blocked(x,z,previousFeet))return;
     if(state.room){
       if(Math.abs(x)>2.40||z<-9.4)return;
       if(z>-5.05){if(!state.doorOpen||state.doorAngle<1.3||Math.abs(x)>.66)return;state.room=false;}
@@ -265,11 +597,18 @@ function createShelterWorld({ box, sphere, limb }) {
       if(z<-5.05){if(!state.doorOpen||state.doorAngle<1.3||Math.abs(x)>.66)return;state.room=true;}
     }else if(Math.abs(x)<.78&&z<-2.25&&z>=-5.05)return;
     state.x=x;state.z=z;
+    const support=floorAt(x,z,state.room,previousFeet+.5);state.supportY=support;
+    if(state.aftermath&&!state.room){
+      if(state.airY===null&&previousFeet-support>.35){state.airY=previousFeet;state.vy=0;}
+      else if(state.airY!==null&&support>state.airY){state.airY=null;state.vy=0;}
+    }
   }
+  const buildWorld=createAsciiBuildWorld({terrain:(x,z)=>terrain(x,z,true),box,sphere});
+  const shelterAds=createShelterAds();
   let renderCamera;
   function camera() {
     const eye=state.standing?2.06:1.76, bob=state.moving?Math.sin(state.step*9)*.026:0;
-    let pos=[state.x,floorAt()+eye+bob,state.z-.10], f=norm([Math.sin(state.yaw)*Math.cos(state.pitch),Math.sin(state.pitch),Math.cos(state.yaw)*Math.cos(state.pitch)]);
+    let pos=[state.x,feet()+eye+bob,state.z-.10], f=norm([Math.sin(state.yaw)*Math.cos(state.pitch),Math.sin(state.pitch),Math.cos(state.yaw)*Math.cos(state.pitch)]);
     if(state.time<6) { const t=smooth(clamp((state.time-2.3)/3.7,0,1)),a=mix(1.02,Math.PI,t),r=mix(5.1,.10,t);
       pos=[Math.sin(a)*r,mix(2.7,eye,t),Math.cos(a)*r];
       const target=[0,mix(1.40,eye,smooth(clamp((t-.55)/.45,0,1))),20*smooth(clamp((t-.65)/.35,0,1))];
@@ -299,31 +638,31 @@ function createShelterWorld({ box, sphere, limb }) {
     if(col<0||col>=cols||row<0||row>=rows) return;
     const at=row*cols+col; if(z>=depth[at]) return; depth[at]=z;
     const lit=clamp(p[6]*(.25+.70*Math.max(0,p[3]*.35+p[4]*.8+p[5]*.5)),.10,1);
-    pixels[at]=glyph||ramp[Math.max(1,Math.round(lit*(ramp.length-1)))];
+    pixels[at]=glyph||p[8]||ramp[Math.max(1,Math.round(lit*(ramp.length-1)))];colors[at]=(state.room||state.aftermath)&&palette.has(p[7])?p[7]:"chalk";
   }
-  function model(points,offset=[0,0,0],scale=[1,1,1],shade=1) {
-    for(const p of points) point([p[0]*scale[0]+offset[0],p[1]*scale[1]+offset[1],p[2]*scale[2]+offset[2],p[3],p[4],p[5],p[6]*shade]);
+  function model(points,offset=[0,0,0],scale=[1,1,1],shade=1,tag="chalk") {
+    for(const p of points) point([p[0]*scale[0]+offset[0],p[1]*scale[1]+offset[1],p[2]*scale[2]+offset[2],p[3],p[4],p[5],p[6]*shade,p[7]||tag,p[8]]);
   }
   function cloud() {
     const t=state.time-8; if(t<0||state.aftermath) return;
-    if(t<2) { const r=1+t*3;model(unitCloud,[0,4+t*2,48],[r,r,r],1.12); }
+    if(t<2) { const r=1+t*3;model(unitCloud,[0,4+t*2,48],[r,r,r],1.12,"fire"); }
     else { const rise=clamp((t-2)/10,0,1),r=7+11*rise,y=11+15*rise;
-      model(unitCloud,[0,y,48],[r,4+3*rise,r*.82],1.12);
-      for(let i=0;i<8;i++) { const a=TAU*i/8;model(rimCloud,[Math.cos(a)*r*.68,y-.5,48+Math.sin(a)*r*.60],[r*.38,3+rise,r*.34],.97); }
-      for(let i=0;i<7;i++) { const h=1+i*(y-3)/7;model(rimCloud,[Math.sin(i+t*.22)*.6,h,48],[1.7+Math.sin(i)*.25,(y-3)/7,1.8],.71); }
-      model(rimCloud,[0,.6,48],[7+rise*8,.8,7+rise*8],.58);
+      model(unitCloud,[0,y,48],[r,4+3*rise,r*.82],1.12,"fire");
+      for(let i=0;i<8;i++) { const a=TAU*i/8;model(rimCloud,[Math.cos(a)*r*.68,y-.5,48+Math.sin(a)*r*.60],[r*.38,3+rise,r*.34],.97,"fire"); }
+      for(let i=0;i<7;i++) { const h=1+i*(y-3)/7;model(rimCloud,[Math.sin(i+t*.22)*.6,h,48],[1.7+Math.sin(i)*.25,(y-3)/7,1.8],.71,"fire"); }
+      model(rimCloud,[0,.6,48],[7+rise*8,.8,7+rise*8],.58,"adamber");
     }
     const radius=Math.max(0,(t-3)*5.8);
-    for(let i=0;i<860;i++) { const a=i*TAU/860;point([Math.cos(a)*radius,.08,48+Math.sin(a)*radius,0,1,0,.85],":"); }
+    for(let i=0;i<860;i++) { const a=i*TAU/860;point([Math.cos(a)*radius,.08,48+Math.sin(a)*radius,0,1,0,.85,"fire"],":"); }
     if(t<4) for(let i=0;i<180;i++) { const a=i*2.399,r=t*(1+(i%11)*.25),h=(1+(i%7)*.4)*t-t*t*.4;
-      if(h>0) point([Math.cos(a)*r,h,48+Math.sin(a)*r,0,1,0,1],"+");
+      if(h>0) point([Math.cos(a)*r,h,48+Math.sin(a)*r,0,1,0,1,"fire"],"+");
     }
   }
   function hands() {
     if(state.time<6||state.dead) return;
     const drink=clamp((state.time-state.sipTime)/2.5,0,1),sipping=drink>0&&drink<1;
     if(sipping) { const lift=Math.sin(drink*Math.PI),x=mix(.16,-.06,lift),y=mix(-.32,-.10,lift),z=mix(.66,.34,lift);
-      for(const p of cup(x,y,z)) point(p,null,true);
+      for(const p of cup(x,y,z)) point([...p,"adamber"],null,true);
       for(const p of sphere(x+.08,y-.08,z+.035,.065,.055,.06,.8,28,16)) point(p,null,true);
       for(const p of limb([.37,-.48,.78],[x+.09,y-.09,z+.035],.065,.8)) point(p,null,true);
     } else if(state.moving) { const swing=Math.sin(state.step*8)*.05;
@@ -341,34 +680,91 @@ function createShelterWorld({ box, sphere, limb }) {
         if(axis===2&&value===-5.05&&Math.abs(p[0])<.85&&p[1]<-.35&&(state.doorOpen||state.doorAngle>.04))continue;
         depth[at]=t;const seam=axis===1?false:Math.abs((p[1]+2.6)*4-Math.round((p[1]+2.6)*4))<.04;
         const doorFace=axis===2&&value===-5.05&&Math.abs(p[0])<.85&&p[1]<-.35;
-        pixels[at]=seam?":":ramp[Math.round((doorFace?.65:shade)*(ramp.length-1))];
+        pixels[at]=seam?":":ramp[Math.round((doorFace?.65:shade)*(ramp.length-1))];colors[at]="metal";
       }
     }
   }
+  function adsBackdrop() {
+    if(!state.room)return;
+    const cam=renderCamera;
+    for(let row=0;row<rows;row++)for(let col=0;col<cols;col++){
+      const x=(col-cols/2)/(cols*.91),y=-(row-rows/2)/(cols*.51),ray=cam.f.map((v,i)=>v+cam.right[i]*x+cam.up[i]*y);
+      if(Math.abs(ray[2])<.001)continue;
+      for(const panel of shelterAds.panels){
+        const t=(panel.z-cam.pos[2])/ray[2],at=row*cols+col;if(t<.08||t>=depth[at])continue;
+        const px=cam.pos[0]+ray[0]*t,py=cam.pos[1]+ray[1]*t;
+        if(Math.abs(px-panel.x)>panel.halfWidth||py<panel.bottom||py>panel.top)continue;
+        depth[at]=t;pixels[at]=" ";colors[at]="metal";
+      }
+    }
+  }
+  function groundBackdrop() {
+    if(!state.aftermath||state.room||renderCamera.pos[1]<.05)return;
+    const cam=renderCamera;
+    for(let row=0;row<rows;row++)for(let col=0;col<cols;col++){
+      const x=(col-cols/2)/(cols*.91),y=-(row-rows/2)/(cols*.51),ray=cam.f.map((v,i)=>v+cam.right[i]*x+cam.up[i]*y);
+      if(ray[1]>=-.012)continue;
+      let t=-cam.pos[1]/ray[1];
+      for(let i=0;i<4;i++){const px=cam.pos[0]+ray[0]*t,pz=cam.pos[2]+ray[2]*t;t=(terrain(px,pz)-cam.pos[1])/ray[1];}
+      const at=row*cols+col;if(t<.08||t>70||t>=depth[at])continue;
+      const px=cam.pos[0]+ray[0]*t,pz=cam.pos[2]+ray[2]*t;
+      if(Math.abs(px)<.85&&pz<-2&&pz>-5.05)continue;
+      const ground=terrain(px,pz),seed=Math.sin(px*18.17+pz*31.73)*43758.54,noise=seed-Math.floor(seed);
+      depth[at]=t;pixels[at]=noise<.26?",":noise<.67?".":":";colors[at]=ground<-.2?"dirt":"grass";
+    }
+  }
   function render() {
-    renderCamera=camera();depth.fill(Infinity);pixels.fill(" ");
-    roomBackdrop();
+    renderCamera=camera();depth.fill(Infinity);pixels.fill(" ");colors.fill(state.aftermath&&!state.room?"sky":"chalk");
+    if(state.aftermath&&!state.room)for(let r=0;r<rows/2;r++)for(let c=0;c<cols;c++)if((c*13+r*7)%53===0)pixels[r*cols+c]=".";
+    roomBackdrop();adsBackdrop();groundBackdrop();
     const cx=Math.round(state.x),cz=Math.round(state.z);
-    for(let x=cx-22;x<=cx+22;x++) for(let z=cz-12;z<=cz+45;z++) if((x+z)%2===0&&!(Math.abs(x)<.85&&z<-2&&z>-5.05)) point([x,terrain(x,z),z,0,1,0,.16],".");
-    model(shelter.entrance);model(shelter.stairs);if(floorAt()<-.65)model(shelter.chamber);
+    for(let x=cx-22;x<=cx+22;x++) for(let z=cz-12;z<=cz+45;z++) if((x+z)%2===0&&!(Math.abs(x)<.85&&z<-2&&z>-5.05)) point([x,terrain(x,z),z,0,1,0,.16,state.aftermath?"grass":"ash"],".");
+    model(shelter.entrance,[0,0,0],[1,1,1],1,"metal");model(shelter.stairs,[0,0,0],[1,1,1],1,"metal");if(floorAt()<-.65){model(shelter.chamber,[0,0,0],[1,1,1],1,"metal");model(shelterAds);}
     const angle=state.doorAngle;
     for(const p of shelter.door){const dx=p[0]+.85,dz=p[2]+5.05,c=Math.cos(angle),s=Math.sin(angle);point([-.85+dx*c+dz*s,p[1],-5.05-dx*s+dz*c,p[3]*c+p[5]*s,p[4],-p[3]*s+p[5]*c,p[6]]);}
-    if(state.aftermath){model(shelter.ruins);for(const [x,z,r,d] of craters)for(let i=0;i<80;i++)for(let j=0;j<=16;j++){const a=i*TAU/80,q=r*j/16,px=x+Math.cos(a)*q,pz=z+Math.sin(a)*q,g=4*d*(1-q*q/(r*r))/(r*r),normal=norm([-g*(px-x),1,-g*(pz-z)]);point([px,terrain(px,pz),pz,...normal,.17+.56*(j/16)**2],j===16?"*":null);}}
-    else {model(chair,[0,0,0],[1,1,1],.58);model(table);if(state.time-state.sipTime>2.5) model(mug);}
+    if(state.aftermath){model(buildWorld.points(state.x,state.z));model(shelter.ruins,[0,0,0],[1,1,1],1,"ash");for(const [x,z,r,d] of craters)for(let i=0;i<80;i++)for(let j=0;j<=16;j++){const a=i*TAU/80,q=r*j/16,px=x+Math.cos(a)*q,pz=z+Math.sin(a)*q,g=4*d*(1-q*q/(r*r))/(r*r),normal=norm([-g*(px-x),1,-g*(pz-z)]);point([px,terrain(px,pz),pz,...normal,.17+.56*(j/16)**2,j<13?"dirt":"grass"],j===16?"*":null);}}
+    else {model(chair,[0,0,0],[1,1,1],.58,"wood");model(table,[0,0,0],[1,1,1],1,"wood");if(state.time-state.sipTime>2.5) model(mug,[0,0,0],[1,1,1],1,"adamber");}
     if(state.time<5.4) model(person);
     cloud();hands();
-    const lines=[];for(let r=0;r<rows;r++) lines.push(pixels.slice(r*cols,(r+1)*cols).join(""));
-    screen.textContent=lines.join("\n");
+    buildTarget=state.aftermath&&!state.room?buildWorld.raycast(renderCamera.pos,renderCamera.f,5):null;
+    if(state.aftermath&&!state.room){const at=Math.floor(rows/2)*cols+Math.floor(cols/2);pixels[at]="+";colors[at]=buildTarget?"adamber":"chalk";}
+    const escapeGlyphs=text=>text.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+    const lines=[];
+    for(let r=0;r<rows;r++){
+      let line="",tag=colors[r*cols],run="";
+      for(let c=0;c<cols;c++){const at=r*cols+c;if(colors[at]!==tag){line+=`<span class="${tag}">${escapeGlyphs(run)}</span>`;tag=colors[at];run="";}run+=pixels[at];}
+      lines.push(line+`<span class="${tag}">${escapeGlyphs(run)}</span>`);
+    }
+    screen.innerHTML=lines.join("\n");
     screen.dataset.phase=state.dead?"dead":state.waiting?"waiting":state.aftermath?"aftermath":state.survived?"sheltered":state.time<6?"third-person":state.time<8?"first-person":"choice";
     screen.dataset.cycle=String(state.cycle);screen.dataset.stance=state.standing?"standing":"sitting";
     screen.dataset.position=`${state.x.toFixed(2)},${state.z.toFixed(2)}`;
     screen.dataset.yaw=state.yaw.toFixed(3);screen.dataset.time=state.time.toFixed(2);
     screen.dataset.sipping=String(state.time-state.sipTime>=0&&state.time-state.sipTime<2.5);
+    screen.dataset.blocks=String(buildWorld.count);screen.dataset.material=material;screen.dataset.feet=feet().toFixed(2);screen.dataset.target=buildTarget?buildTarget.material||"ground":"none";
     screen.dataset.room=String(state.room);screen.dataset.floor=floorAt().toFixed(2);screen.dataset.door=state.doorOpen?"open":state.doorAngle>.04?"closing":"closed";screen.dataset.pitch=state.pitch.toFixed(3);
   }
   function announce(message) { status.textContent=message;state.noticeUntil=state.time+2.5; }
   function ready() { return !document.hidden&&!state.waiting&&!state.paused&&!state.dead&&state.time>=8.5; }
-  function clearInput() { keys.clear();pointers.clear();for(const timer of pulses.values())clearTimeout(timer);pulses.clear();drag=null;state.moving=false;document.querySelectorAll("[data-move]").forEach(b=>b.classList.remove("held")); }
+  function releaseStick() {
+    const id=stick.id;stick.id=null;stick.x=0;stick.y=0;moveKnob.style.transform="translate(0px, 0px)";moveStick.classList.remove("held");
+    if(id!==null&&moveStick.hasPointerCapture(id))moveStick.releasePointerCapture(id);
+  }
+  function clearInput() {
+    keys.clear();releaseStick();
+    for(const [id,b] of buttonTouches){b.classList.remove("held");if(b.hasPointerCapture(id))b.releasePointerCapture(id);}buttonTouches.clear();
+    const id=drag?.id;drag=null;
+    if(id!==undefined&&screen.hasPointerCapture(id))screen.releasePointerCapture(id);
+    state.moving=false;
+  }
+  function moveJoystick(e) {
+    const rect=moveStick.getBoundingClientRect(),radius=(rect.width-moveKnob.offsetWidth)/2-6;
+    const x=e.clientX-rect.left-rect.width/2,y=e.clientY-rect.top-rect.height/2,length=Math.hypot(x,y);
+    const fraction=Math.min(1,length/radius),strength=Math.max(0,(fraction-.14)/.86),scale=length?strength/length:0;
+    stick.x=x*scale;stick.y=y*scale;
+    const visual=length?Math.min(1,radius/length):0;
+    moveKnob.style.transform=`translate(${x*visual}px, ${y*visual}px)`;
+  }
   function releasePointer() {lockEpoch++;lockWanted=null;if(document.pointerLockElement)document.exitPointerLock();}
   function requestPointer() {
     if(lockPending||!ready()||document.pointerLockElement)return;
@@ -379,41 +775,61 @@ function createShelterWorld({ box, sphere, limb }) {
   }
   function reset() {
     const cycle=state?state.cycle+1:1;
-    releasePointer();state={cycle,time:0,x:0,z:0,yaw:0,pitch:0,standing:false,moving:false,step:0,sipTime:-99,noticeUntil:0,paused:false,waiting:reduce.matches,dead:false,deathTime:0,room:false,doorOpen:false,doorAngle:0,survived:false,aftermath:false};
+    releasePointer();buildWorld.reset();material="grass";buildTarget=null;state={cycle,time:0,airY:null,supportY:0,vy:0,x:0,z:0,yaw:0,pitch:0,standing:false,moving:false,step:0,sipTime:-99,noticeUntil:0,paused:false,waiting:reduce.matches,dead:false,deathTime:0,room:false,doorOpen:false,doorAngle:0,survived:false,aftermath:false};
     clearInput();last=0;pointerYaw=null;status.textContent=state.waiting?"椅子上，有个瘫坐的人。开始后可拖动视角、起身、喝咖啡。":"椅子上，有个瘫坐的人。";
     updateControls();render();
   }
   function updateControls() {
     const live=ready(),nearChair=!state.aftermath&&Math.hypot(state.x,state.z)<1.4,nearCoffee=!state.aftermath&&Math.hypot(state.x+.88,state.z-.6)<1.8;
-    start.hidden=!state.waiting;action.hidden=state.waiting;
+    start.hidden=!state.waiting;action.hidden=state.waiting;action.dataset.building=String(state.aftermath);
     stance.disabled=!live||(state.standing&&!nearChair);stance.textContent=state.standing?"[E] 坐回":"[E] 起身";
     coffee.disabled=!live||!nearCoffee||state.time-state.sipTime<3;pause.textContent=state.paused?"[P] 继续":"[P] 暂停";
     doorControl.disabled=!live||!nearDoor();doorControl.textContent=state.doorOpen?"[E] 关避难门":"[E] 开避难门";
     if(nearDoor())stance.textContent=state.standing?"坐回":"起身";
-    document.querySelectorAll("[data-look],[data-move]").forEach(b=>b.disabled=!live);
+    document.querySelectorAll("[data-look]").forEach(b=>b.disabled=!live);moveStick.disabled=!live;
+    buildTools.hidden=!state.aftermath;
+    const building=live&&state.aftermath&&!state.room;
+    placeControl.disabled=!building;removeControl.disabled=!building;jumpControl.disabled=!building;
+    document.querySelectorAll("[data-material]").forEach(b=>{b.disabled=!building;b.setAttribute("aria-pressed",String(b.dataset.material===material));});
   }
   function toggleStance() { if(!ready()) return; if(state.standing&&(state.aftermath||Math.hypot(state.x,state.z)>=1.4)) return;
-    state.standing=!state.standing;if(!state.standing){state.x=0;state.z=0;clearInput();}announce(state.standing?"你站起来了。WASD / 方向键移动。":"你坐回了椅子。");updateControls();
+    state.standing=!state.standing;if(!state.standing){state.x=0;state.z=0;clearInput();}announce(state.standing?"你站起来了。摇杆 / WASD 移动。":"你坐回了椅子。");updateControls();
   }
   function sip() { if(!ready()||coffee.disabled) return;state.sipTime=state.time;announce("你拿起旁边的咖啡，喝了一口。");updateControls(); }
   function toggleDoor() {if(!ready()||!nearDoor())return;state.doorOpen=!state.doorOpen;announce(state.doorOpen?"门正在打开。沿楼梯进出；冲击波结束前开门会失去保护。":"门正在关闭。");updateControls();}
   function interact() { if(nearDoor())toggleDoor();else toggleStance(); }
   function face(away) { if(!ready())return;const target=Math.atan2(-state.x,48-state.z)+(away?Math.PI:0);pointerYaw=target;announce(away?"你背过身，不再看那道光。":"你默默面对那道光。"); }
+  function chooseMaterial(next) { if(!buildWorld.materials.includes(next))return;material=next;updateControls();render(); }
+  function editBlock(removing=false) {
+    if(!ready()||!state.aftermath||state.room)return;
+    const cam=camera(),hit=buildWorld.raycast(cam.pos,cam.f,5);
+    const previousFeet=feet(),result=removing?buildWorld.remove(hit):buildWorld.place(hit,material,{x:state.x,z:state.z,feet:previousFeet,eye:2.06,radius:.24});
+    if(result.ok&&removing&&state.airY===null&&previousFeet-floorAt()>.35){state.airY=previousFeet;state.vy=0;}
+    announce(result.ok?(removing?"方块已拆除。":"方块已放置。"):(result.reason||"把准星对准 5 米内的地面或方块。"));render();
+  }
+  function jump() {if(!ready()||!state.aftermath||state.room||state.airY!==null)return;state.standing=true;state.airY=feet();state.vy=5.8;}
   function togglePause() { if(state.waiting)return;state.paused=!state.paused;clearInput();releasePointer();last=0;announce(state.paused?"已暂停。P / 继续。":"继续。");updateControls();render(); }
   function moveKey(key) { return ["w","a","s","d","arrowup","arrowdown","arrowleft","arrowright"].includes(key); }
   function advance(dt) {
     state.time+=dt;
+    if(state.airY!==null){
+      const previous=state.airY,ceiling=state.aftermath&&!state.room?buildWorld.ceiling(state.x,state.z,previous+2.06):Infinity;
+      state.vy-=14*dt;state.airY+=state.vy*dt;
+      if(state.vy>0&&state.airY+2.06>ceiling){state.airY=ceiling-2.06;state.vy=0;}
+      const support=floorAt(state.x,state.z,state.room,Math.max(previous,state.airY));
+      if(state.airY<=support){state.airY=null;state.supportY=support;state.vy=0;}
+    }
     const previousDoor=state.doorAngle;
     state.doorAngle=mix(state.doorAngle,state.doorOpen?Math.PI/2:0,Math.min(1,dt*9));
     if(!state.doorOpen&&previousDoor>.04&&state.doorAngle<=.04)announce(state.room?"地下室的门已关好。待在里面，等冲击波过去。":"门已关好，但你仍在门外。");
     if(state.dead){if(state.time-state.deathTime>6)reset();return;}
     if(pointerYaw!==null&&ready()){let d=Math.atan2(Math.sin(pointerYaw-state.yaw),Math.cos(pointerYaw-state.yaw));state.yaw+=d*Math.min(1,dt*5);if(Math.abs(d)<.01)pointerYaw=null;}
-    let forward=(held("w")||held("arrowup")?1:0)-(held("s")||held("arrowdown")?1:0),side=(held("d")||held("arrowright")?1:0)-(held("a")||held("arrowleft")?1:0);
+    let forward=(held("w")||held("arrowup")?1:0)-(held("s")||held("arrowdown")?1:0)-stick.y,side=(held("d")||held("arrowright")?1:0)-(held("a")||held("arrowleft")?1:0)+stick.x;
     state.moving=ready()&&(forward!==0||side!==0);
-    if(state.moving){state.standing=true;const n=Math.hypot(forward,side),speed=held("shift")?3.3:2.5;
-      moveTo(state.x+(Math.sin(state.yaw)*forward+Math.cos(state.yaw)*side)/n*speed*dt,state.z+(Math.cos(state.yaw)*forward-Math.sin(state.yaw)*side)/n*speed*dt);state.step+=dt*speed;}
+    if(state.moving){state.standing=true;const strength=Math.hypot(forward,side),n=Math.max(1,strength),speed=held("shift")?3.3:2.5;
+      moveTo(state.x+(Math.sin(state.yaw)*forward+Math.cos(state.yaw)*side)/n*speed*dt,state.z+(Math.cos(state.yaw)*forward-Math.sin(state.yaw)*side)/n*speed*dt);state.step+=dt*speed*Math.min(1,strength);}
     if(state.time>=8&&(state.time-11)*5.8>=Math.hypot(state.x,48-state.z)) {
-      if(state.time>=28&&state.survived){if(!state.aftermath){state.aftermath=true;announce("爆炸过去了。可以开门走出去，看地面的弹坑和废墟。R / 重开。");}}
+      if(state.time>=28&&state.survived){if(!state.aftermath){state.aftermath=true;announce("爆炸过去了。可以开门出去：树木、弹坑和废墟里，开始建造。1–4 选材料，Q 放、X 拆。");}}
       else if(state.room&&!state.doorOpen&&state.doorAngle<=.04){if(!state.survived){state.survived=true;announce("冲击波掠过。地下室和关好的门挡住了它，先别开门。");}}
       else {state.dead=true;state.deathTime=state.time;clearInput();releasePointer();announce("冲击波到了。你死了。R / 重开，或等下一轮。");updateControls();}
     } else if(state.time>=8.5&&state.time-dt<8.5) announce("远处亮了。身后有地下避难所：沿楼梯下去，E 开门，进去再关门。");
@@ -425,39 +841,70 @@ function createShelterWorld({ box, sphere, limb }) {
     requestAnimationFrame(frame);
     if(document.hidden||state.paused||state.waiting){last=now;return;}
     const dt=last?Math.min(.08,(now-last)/1000):0;last=now;advance(dt);
-    const interval=innerWidth<600?50:1000/30;
+    const interval=innerWidth<600||touch.matches?50:1000/30;
     if(now-painted>=interval){render();painted=now-((now-painted)%interval);}
   }
   function resize() {
-    cols=innerWidth<600?76:112;rows=innerWidth<600?56:60;
-    depth=new Float32Array(cols*rows);pixels=new Array(cols*rows);
-    const area=document.querySelector("#stage").getBoundingClientRect(),size=Math.max(4,Math.min(area.width/(cols*.61),area.height/rows));
+    const mobile=innerWidth<600||touch.matches;cols=mobile?76:112;rows=mobile?(innerWidth>innerHeight?40:56):60;
+    depth=new Float32Array(cols*rows);pixels=new Array(cols*rows);colors=new Array(cols*rows);
+    const stage=document.querySelector("#stage"),area=stage.getBoundingClientRect(),style=getComputedStyle(stage);
+    const width=area.width-parseFloat(style.paddingLeft)-parseFloat(style.paddingRight)-4;
+    const height=area.height-parseFloat(style.paddingTop)-parseFloat(style.paddingBottom)-12;
+    const size=Math.max(2,Math.min(width/(cols*.61),height/rows));
     screen.style.fontSize=`${size}px`;render();
+    // Inline glyph metrics may round differently from CSS font-size. Fit the
+    // actual rendered box, including the thumb control's real outer bounds.
+    const drawn=screen.getBoundingClientRect(),stickBox=moveStick.getBoundingClientRect();
+    let maximumHeight=height;
+    if(mobile&&innerWidth<=innerHeight&&stickBox.width>0)maximumHeight=Math.min(maximumHeight,2*(stickBox.top-8-(drawn.top+drawn.height/2)));
+    const fit=Math.min(1,width/drawn.width,Math.max(1,maximumHeight)/drawn.height);
+    if(fit<1)screen.style.fontSize=`${Math.max(1,size*fit*.98)}px`;
+
   }
   start.addEventListener("click",()=>{state.waiting=false;last=0;announce("椅子上，有个瘫坐的人。");updateControls();});
   pause.addEventListener("click",togglePause);stance.addEventListener("click",toggleStance);coffee.addEventListener("click",sip);
   doorControl.addEventListener("click",toggleDoor);
+  placeControl.addEventListener("click",()=>editBlock(false));removeControl.addEventListener("click",()=>editBlock(true));jumpControl.addEventListener("click",jump);
+  document.querySelectorAll("[data-material]").forEach(b=>b.addEventListener("click",()=>chooseMaterial(b.dataset.material)));
   document.querySelector("#restart").addEventListener("click",reset);
   document.querySelector("#away").addEventListener("click",()=>face(true));document.querySelector("#face").addEventListener("click",()=>face(false));
   addEventListener("keydown",e=>{if(e.target instanceof HTMLButtonElement&&[" ","enter"].includes(e.key.toLowerCase()))return;
     const k=e.key.toLowerCase();if(moveKey(k)){e.preventDefault();if(ready())keys.add(k);}if(k==="shift"&&ready())keys.add(k);if(e.repeat)return;
-    if(k==="e")interact();else if(k==="g")toggleDoor();else if(k==="c")sip();else if(k==="b")face(true);else if(k==="f")face(false);else if(k==="p"||k==="escape")togglePause();else if(k==="r")reset();
+    if(k===" "){e.preventDefault();jump();}else if(k==="q")editBlock(false);else if(k==="x")editBlock(true);else if(["1","2","3","4"].includes(k))chooseMaterial(buildWorld.materials[Number(k)-1]);else if(k==="e")interact();else if(k==="g")toggleDoor();else if(k==="c")sip();else if(k==="b")face(true);else if(k==="f")face(false);else if(k==="p"||k==="escape")togglePause();else if(k==="r")reset();
   });
   addEventListener("keyup",e=>keys.delete(e.key.toLowerCase()));
   addEventListener("blur",()=>{clearInput();releasePointer();if(!document.hidden&&!state.waiting&&!state.paused&&!state.dead)togglePause();});
   document.addEventListener("visibilitychange",()=>{clearInput();releasePointer();last=0;});
-  document.addEventListener("pointerlockchange",()=>{lockPending=false;if(document.pointerLockElement===screen){if(!ready()||lockWanted!==lockEpoch)releasePointer();else lockHeld=lockEpoch;}else{lockHeld=null;lockWanted=null;lockEpoch++;}drag=null;clearInput();});
+  document.addEventListener("pointerlockchange",()=>{lockPending=false;if(document.pointerLockElement===screen){if(!ready()||lockWanted!==lockEpoch)releasePointer();else lockHeld=lockEpoch;}else{lockHeld=null;lockWanted=null;lockEpoch++;}clearInput();});
   document.addEventListener("pointerlockerror",()=>{lockPending=false;lockWanted=null;});
   screen.addEventListener("pointerdown",e=>{if(!ready()||drag)return;drag={id:e.pointerId,x:e.clientX,y:e.clientY};screen.setPointerCapture(e.pointerId);if(e.pointerType==="mouse")requestPointer();});
+  screen.addEventListener("click",()=>{if(document.pointerLockElement===screen)editBlock(false);});
+  screen.addEventListener("contextmenu",e=>{e.preventDefault();editBlock(true);});
   addEventListener("mousemove",e=>{if(document.pointerLockElement!==screen||!ready())return;pointerYaw=null;state.yaw+=e.movementX*.0036;state.pitch=clamp(state.pitch-e.movementY*.0036,-1.28,1.28);});
   screen.addEventListener("pointermove",e=>{if(document.pointerLockElement||!drag||drag.id!==e.pointerId||!ready())return;pointerYaw=null;state.yaw+=(e.clientX-drag.x)*.006;state.pitch=clamp(state.pitch-(e.clientY-drag.y)*.004,-1.28,1.28);drag.x=e.clientX;drag.y=e.clientY;});
   for(const event of ["pointerup","pointercancel","lostpointercapture"])screen.addEventListener(event,e=>{if(drag?.id===e.pointerId)drag=null;});
-  for(const b of document.querySelectorAll("[data-move]")){b.addEventListener("pointerdown",e=>{if(!ready())return;e.preventDefault();b.setPointerCapture(e.pointerId);pointers.set(e.pointerId,b.dataset.move);b.classList.add("held");});
-    b.addEventListener("click",e=>{if(e.detail===0&&ready()){const key=b.dataset.move;clearTimeout(pulses.get(key));pulses.set(key,setTimeout(()=>pulses.delete(key),200));}});
-    for(const ev of ["pointerup","pointercancel","lostpointercapture"])b.addEventListener(ev,e=>{pointers.delete(e.pointerId);if(![...pointers.values()].includes(b.dataset.move))b.classList.remove("held");});}
+  moveStick.addEventListener("pointerdown",e=>{
+    if(!ready()||stick.id!==null||e.pointerType==="mouse"&&e.button!==0)return;
+    e.preventDefault();stick.id=e.pointerId;moveStick.setPointerCapture(e.pointerId);moveStick.classList.add("held");moveJoystick(e);
+  });
+  moveStick.addEventListener("pointermove",e=>{if(stick.id===e.pointerId&&ready()){e.preventDefault();moveJoystick(e);}});
+  for(const event of ["pointerup","pointercancel","lostpointercapture"])moveStick.addEventListener(event,e=>{if(stick.id===e.pointerId)releaseStick();});
+  // Browsers emit compatibility clicks only for the primary touch. A third
+  // finger must still reach actions while the stick and look fingers stay held.
+  for(const b of document.querySelectorAll("button:not(#move-stick)")){
+    const cancelTap=e=>{if(buttonTouches.get(e.pointerId)!==b)return;buttonTouches.delete(e.pointerId);b.classList.remove("held");if(b.hasPointerCapture(e.pointerId))b.releasePointerCapture(e.pointerId);};
+    b.addEventListener("pointerdown",e=>{if(e.pointerType!=="touch"||e.isPrimary||b.disabled)return;e.preventDefault();buttonTouches.set(e.pointerId,b);b.classList.add("held");b.setPointerCapture(e.pointerId);});
+    b.addEventListener("pointerup",e=>{
+      if(buttonTouches.get(e.pointerId)!==b)return;e.preventDefault();const rect=b.getBoundingClientRect();
+      const inside=e.clientX>=rect.left&&e.clientX<=rect.right&&e.clientY>=rect.top&&e.clientY<=rect.bottom;
+      cancelTap(e);if(inside&&!b.disabled)b.click();
+    });
+    for(const event of ["pointercancel","lostpointercapture"])b.addEventListener(event,cancelTap);
+  }
   reduce.addEventListener("change",()=>{if(reduce.matches&&!state.waiting&&!state.paused)togglePause();});
-  addEventListener("resize",resize);
-  depth=new Float32Array(cols*rows);pixels=new Array(cols*rows);reset();resize();requestAnimationFrame(frame);
+  addEventListener("resize",()=>{clearInput();resize();});
+  new ResizeObserver(resize).observe(document.querySelector("#stage"));
+  depth=new Float32Array(cols*rows);pixels=new Array(cols*rows);colors=new Array(cols*rows);reset();resize();requestAnimationFrame(frame);
 })();
 
 </script></body></html>
