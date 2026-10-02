@@ -149,3 +149,42 @@ async def test_synchronous_layout_over_budget_is_rejected_before_publishing(monk
     assert published == [[]], 'Only the fail-closed clear may publish after the deadline'
     assert not hub.world.gravity_wells and not hub.geometry_initialized
     assert hub.next_geometry_check == 0 and not hub.geometry_lock.locked()
+
+
+@pytest.mark.asyncio
+async def test_geometry_cadence_does_not_wait_for_the_next_identity_refresh(monkeypatch):
+    hub, _, _, _ = slow_room(monkeypatch)
+    moment, waits = [100.0], []
+    identity_checks, refreshes = [], []
+    hub.next_auth_check = 100.0
+    hub.next_geometry_check = 100.02
+    monkeypatch.setattr(flight_space, 'time', SimpleNamespace(monotonic=lambda: moment[0]))
+
+    async def validate(*, identities):
+        identity_checks.append(identities)
+
+    async def refresh():
+        refreshes.append(moment[0])
+        if moment[0] >= hub.next_geometry_check:
+            hub.closed = True
+
+    async def schedule(seconds):
+        waits.append(seconds)
+        assert len(waits) < 3, 'The near-due geometry read must run on the following tick'
+        moment[0] += seconds
+
+    hub._validate = validate
+    hub._refresh_geometry = refresh
+    monkeypatch.setattr(
+        flight_space,
+        'asyncio',
+        SimpleNamespace(
+            sleep=schedule,
+            CancelledError=asyncio.CancelledError,
+            gather=asyncio.gather,
+        ),
+    )
+    await hub._run()
+    assert identity_checks == [True, False]
+    assert refreshes == pytest.approx([100.0, 100.0 + 1 / 15])
+    assert hub.closed and moment[0] < hub.next_auth_check

@@ -596,8 +596,11 @@ class FlightHub:
                 # the clock; each socket has its own bounded writer queue.
                 await self._validate(identities=identities)
                 if identities:
-                    await self._refresh_geometry()
                     self.next_auth_check = now + REVALIDATE_SECONDS
+                # Geometry has its own completion-based cadence; an earlier
+                # identity check must not defer a nearly due ACL read by 2s.
+                if identities or time.monotonic() >= self.next_geometry_check:
+                    await self._refresh_geometry()
                 for peer in tuple(self.peers.values()):
                     if peer.ship_id:
                         self._drain_inputs(peer)
