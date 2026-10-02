@@ -13,11 +13,16 @@ change the surface shading without changing positions or physics.
 
 The renderer starts with 128 solid triangles on a cold cache. It builds nearby
 surfaces during idle time, with at most four pending jobs and up to 64 faces or
-3 ms of work per callback. Desktop near views reach 2,048 solid triangles; mobile
-and software views reach 512. Cloud shells add at most 512 sparse triangles.
+3 ms of work per callback. Near views with a projected radius of at least 60 pixels
+reach 2,048 solid triangles on desktop, mobile and software; intermediate views
+use 512. Cloud shells follow the same detail level, with at most 512 sparse,
+lightly transparent triangles so they do not cover the underlying geology.
 The cache keeps at most 32 identities, with one detail level each. The renderer
 also caps the number of detailed visible bodies; distant identities remain small
 points. These are geometry budgets, not a promise of a particular frame rate.
+Visual captures must wait for `surfacePendingSize() === 0` and a subsequent render;
+the cold fallback does not demonstrate the finished terrain. Crater rim and basin
+materials have distinct values, including the dim ambient light on the night side.
 
 Profile avatars come only from the current anonymous `artwork.avatar.url`
 projection. The client accepts the exact same-origin `/@handle/art/avatar.svg`

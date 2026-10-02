@@ -19,8 +19,10 @@ test('identity geology is stable, varied, continuous at shared vertices and boun
   P.clearSurfaceCache();assert.deepEqual(P.surface('u_ocean',100),a);
 });
 test('LOD and cache bound work across eviction; root remains pale and solid terrain stays inside radius',()=>{
-  assert.equal(P.surface('u_a',100,{mobile:true}).level,3);
-  assert.equal(P.surface('u_a',100,{software:true}).level,3);
+  assert.equal(P.surface('u_a',100,{mobile:true}).level,4);
+  assert.equal(P.surface('u_a',100,{software:true}).level,4);
+  assert.equal(P.surface('u_a',32,{mobile:true}).level,3);
+  assert.equal(P.surface('u_a',32,{software:true}).level,3);
   assert.equal(P.surface('u_a',3).faces.length,128);
   for(let i=0;i<64;i++)P.surface('u_'+i,3);
   assert.equal(P.surfaceCacheSize(),P.BUDGET.meshEntries);
@@ -74,6 +76,8 @@ class Element {
   setAttribute(k,v){this.attributes.set(k,v);}getAttribute(k){return k==='src'?this.src??null:this.attributes.get(k)??null;}
   removeAttribute(k){this.attributes.delete(k);if(k==='src')delete this.src;}
   addEventListener(k,fn){this.events[k]=fn;}
+  querySelectorAll(selector){return selector==='.star-label'?this.children.filter(n=>n.className==='star-label'):[];}
+  getBoundingClientRect(){return this.rect||{left:0,top:0,right:0,bottom:0,width:0,height:0};}
 }
 function dom(){
   globalThis.document={hidden:false,createElement(){return new Element();},addEventListener(){},removeEventListener(){}};
@@ -124,4 +128,60 @@ test('a failed refresh removes the old artwork and a changed projected path fetc
     fail=false;const renamed=user(1,{path:'/@new-name',artwork:{avatar:{url:'/@new-name/art/avatar.svg'}}});
     layer.update(view([renamed]));await drained(layer);assert.ok(marker.img.src);assert.equal(calls.at(-1),'https://msg.example/@new-name/art/avatar.svg');
   }finally{layer.dispose();}
+});
+const rectangle=(left,top,width,height)=>({left,top,right:left+width,bottom:top+height,width,height});
+function markerRectangle(marker) {
+  const [left,top]=marker.el.style.transform.match(/-?\d+(?:\.\d+)?/g).map(Number);
+  return rectangle(left,top,parseFloat(marker.el.style.width),parseFloat(marker.el.style.height));
+}
+const overlaps=(a,b)=>a.left<b.right&&a.right>b.left&&a.top<b.bottom&&a.bottom>b.top;
+test('avatar placement measures the whole local username and tries another side without shrinking',async()=>{
+  dom();const container=new Element(),label=new Element();container.rect=rectangle(120,80,1000,700);
+  label.className='star-label';label.rect=rectangle(582,392,240,18);container.append(label);
+  const layer=new P.AvatarLayer(container,{origin:'https://msg.example',fetcher:async()=>response()});
+  try {
+    layer.update(view([user(1)],{project:()=>({x:450,y:320,depth:40,scale:30})}));await drained(layer);
+    const badge=markerRectangle(layer.nodes.get('u_1'));
+    assert.equal(badge.width,36);assert.equal(badge.height,36);
+    assert.ok(badge.right<450,'long username on the right makes the avatar change sides');
+    assert.ok(!overlaps(badge,rectangle(462,312,240,18)),'DOM viewport rectangles are converted to container coordinates');
+  } finally {layer.dispose();}
+});
+test('visible flight HUD and labels force a diagonal; hidden HUD does not reserve empty space',async()=>{
+  dom();const container=new Element(),label=new Element(),hud=new Element();
+  label.className='star-label';label.rect=rectangle(462,300,240,44);container.append(label);
+  hud.rect=rectangle(300,285,110,70);document.querySelectorAll=()=>[hud];
+  const layer=new P.AvatarLayer(container,{origin:'https://msg.example',fetcher:async()=>response()});
+  try {
+    const scene=view([user(1)],{project:()=>({x:450,y:320,depth:40,scale:30})});
+    layer.update(scene);await drained(layer);
+    let badge=markerRectangle(layer.nodes.get('u_1'));
+    assert.ok(badge.top<300-6-badge.height,'both horizontal positions are blocked, so the badge moves above');
+    assert.ok(!overlaps(badge,label.rect)&&!overlaps(badge,hud.rect));
+    hud.hidden=true;layer.update(scene);badge=markerRectangle(layer.nodes.get('u_1'));
+    assert.ok(badge.right<450&&badge.top>285,'hidden HUD permits the original left-side alternative');
+  } finally {layer.dispose();}
+});
+test('a full HUD hides and cancels avatars instead of covering controls or fetching hidden images',async()=>{
+  dom();const container=new Element(),hud=new Element(),pending=[];
+  document.querySelectorAll=()=>hud.hidden?[]:[hud];hud.hidden=true;hud.rect=rectangle(320,210,300,230);
+  const layer=new P.AvatarLayer(container,{origin:'https://msg.example',fetcher:(url,options)=>new Promise(resolve=>pending.push({resolve,options}))});
+  try {
+    const scene=view([user(1)],{project:()=>({x:450,y:320,depth:40,scale:30})});
+    layer.update(scene);const request=[...layer.requests.values()][0];assert.equal(layer.nodes.size,1);
+    hud.hidden=false;layer.update(scene);
+    assert.equal(layer.nodes.size,0);assert.equal(layer.wanted.size,0);assert.equal(layer.requests.size,0);
+    assert.ok(pending[0].options.signal.aborted);
+    pending[0].resolve(response());await request.promise;
+    assert.equal(layer.cache.size,0);assert.equal(layer.nodes.size,0,'late response cannot revive a hidden badge');
+    layer.update(scene);assert.equal(pending.length,1,'no request starts while all positions are blocked');
+  } finally {layer.dispose();}
+});
+test('mobile edge placement stays inside the viewport and keeps its 42px size cap',async()=>{
+  dom();const layer=new P.AvatarLayer(new Element(),{origin:'https://msg.example',fetcher:async()=>response()});
+  try {
+    layer.update(view([user(1)],{width:390,project:()=>({x:360,y:220,depth:80,scale:40})}));await drained(layer);
+    const badge=markerRectangle(layer.nodes.get('u_1'));
+    assert.equal(badge.width,42);assert.ok(badge.left>=12&&badge.right<=378);
+  } finally {layer.dispose();}
 });
