@@ -35,6 +35,7 @@ function page(options={}) {
     fetch: async (url, args) => {
       calls.push({url,args});
       if(url.startsWith('/_post/state')) {
+        if(options.state) return options.state();
         if(options.stateError) return {ok:false,json:async()=>({status:'error',error:{code:options.stateError}})};
         return {ok:true,json:async()=>({status:'ok',data:{proofs:{USED:1},my_proofs:options.publicFallback?[]:['USED'],personal_state_available:!options.publicFallback}})};
       }
@@ -79,6 +80,27 @@ test('public fallback displays public counts without inventing personal toggle s
   for(const kind of ['bookmark','follow']) assert.equal(ui.buttons.find(item=>item.dataset.action===kind).disabled,true);
   assert.match(ui.status.textContent,/Showing public proof counts/);
   assert.equal(ui.calls.length,1);
+});
+
+test('a late initial read cannot replace an explicit claim with stale or anonymous proof state', async () => {
+  for(const publicFallback of [false,true]) {
+    let finishRead;
+    const ui=page({state:()=>new Promise(resolve=>{finishRead=resolve;})});
+    await ui.buttons.find(item=>item.dataset.action==='USED').events.click();
+    ui.field.value='Fresh claim';
+    await ui.form.events.submit({preventDefault(){}});
+    const proof=ui.buttons.find(item=>item.dataset.action==='USED');
+    assert.equal(proof.querySelector('small').textContent,'1');
+    assert.equal(proof['aria-pressed'],'true');
+    assert.equal(ui.buttons.find(item=>item.dataset.action==='bookmark').disabled,true);
+    finishRead({ok:true,json:async()=>({status:'ok',data:{proofs:{USED:0},my_proofs:[],personal_state_available:!publicFallback}})});
+    await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(proof.querySelector('small').textContent,'1');
+    assert.equal(proof['aria-pressed'],'true');
+    assert.equal(ui.buttons.find(item=>item.dataset.action==='bookmark').disabled,publicFallback);
+    assert.match(ui.status.textContent,/Claim recorded/);
+    assert.equal(ui.calls.length,2);
+  }
 });
 
 test('authorization failure retains draft and request ID; only expired sign-in offers login', async () => {

@@ -67,7 +67,7 @@ POST_ACTIONS_SCRIPT = r"""(() => {
   const text = (en, zh) => document.documentElement.lang.startsWith('zh') ? zh : en;
   const status = panel.querySelector('[role=status]');
   const buttons = [...panel.querySelectorAll('[data-action]')];
-  let ready = false, writing = false, countsAvailable = false;
+  let ready = false, writing = false, countsAvailable = false, proofsKnown = false, proofWritten = false;
   const field = panel.querySelector('textarea');
   const closeCompose = panel.querySelector('[data-compose-close]');
   const availability = () => {
@@ -95,7 +95,7 @@ POST_ACTIONS_SCRIPT = r"""(() => {
       const kind = button.dataset.action;
       const enabled = state.my_proofs.includes(kind) ? true : kind === 'bookmark' ? state.bookmarked : kind === 'follow' ? state.following : false;
       if(!['comment','fork'].includes(kind)) {
-        if(ready) button.setAttribute('aria-pressed', String(enabled));
+        if(['bookmark','follow'].includes(kind) ? ready : proofsKnown) button.setAttribute('aria-pressed', String(enabled));
         else button.removeAttribute('aria-pressed');
       }
       const pair = labels[kind][enabled ? 1 : 0];
@@ -165,15 +165,24 @@ POST_ACTIONS_SCRIPT = r"""(() => {
       const isProof=!['comment','fork'].includes(kind);
       const operation=isProof?'discussion.prove':kind==='fork'?'discussion.fork':'discussion.reply';
       const result=await send(operation,isProof?{kind,note:body,revision:panel.dataset.revision}:{body,revision:panel.dataset.revision},pending.id);
-      if(isProof) { state={...state,...result.data};update();field.value='';pending=null;panel.querySelector('form').hidden=true;status.textContent=text('Claim recorded for this revision.','已记录对此版本的证明声明。');return; }
+      if(isProof) { state={...state,...result.data};proofWritten=true;countsAvailable=proofsKnown=true;update();field.value='';pending=null;panel.querySelector('form').hidden=true;status.textContent=text('Claim recorded for this revision.','已记录对此版本的证明声明。');return; }
       field.value='';pending=null;status.textContent=kind==='fork'?text('Branch created. ','分支已创建。'):text('Comment posted. ','评论已发表。');
       const link=document.createElement('a');link.href='/_id/'+encodeURIComponent(result.resources[0].id);
       link.textContent=kind==='fork'?text('View branch','查看分支'):text('View comment','查看评论');status.append(link);
     } catch(error) {recover(error);} finally {writing=false;availability();}
   });
   fetch('/_post/state?id='+encodeURIComponent(panel.dataset.id)+'&revision='+encodeURIComponent(panel.dataset.revision),{credentials:'same-origin',headers:{Accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(15000)})
-    .then(async response=>{const result=await response.json();if(!response.ok || result.status!=='ok') throw new Error(typeof result.error==='string'?result.error:result.error?.code || 'request_failed');state={...state,...result.data};countsAvailable=true;ready=result.data.personal_state_available!==false;availability();update();if(!ready) status.textContent=text('Showing public proof counts. Saved and followed status are unavailable for your current authorization.','仅显示公开证明次数；当前授权无法读取你的收藏和关注状态。');})
-    .catch(recover);
+    .then(async response=>{
+      const result=await response.json();
+      if(!response.ok || result.status!=='ok') throw new Error(typeof result.error==='string'?result.error:result.error?.code || 'request_failed');
+      const data={...result.data};
+      // This initial read may predate an explicit claim made while it was pending.
+      if(proofWritten) { delete data.proofs;delete data.my_proofs; }
+      state={...state,...data};countsAvailable=true;ready=result.data.personal_state_available!==false;
+      proofsKnown=proofWritten || ready;availability();update();
+      if(!ready && !proofWritten) status.textContent=text('Showing public proof counts. Saved and followed status are unavailable for your current authorization.','仅显示公开证明次数；当前授权无法读取你的收藏和关注状态。');
+    })
+    .catch(error=>{if(!proofWritten) recover(error);});
 })();"""
 
 POST_ACTIONS_HASH = b64encode(sha256(POST_ACTIONS_SCRIPT.encode()).digest()).decode()
