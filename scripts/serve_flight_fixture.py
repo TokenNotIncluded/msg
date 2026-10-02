@@ -260,6 +260,11 @@ async def serve(options):
                             port=port,
                             access_log=False,
                             log_level='warning',
+                            ws='websockets-sansio',
+                            ws_max_size=8192,
+                            ws_max_queue=8,
+                            proxy_headers=True,
+                            forwarded_allow_ips='127.0.0.1,::1',
                             timeout_graceful_shutdown=5,
                         )
                     )
