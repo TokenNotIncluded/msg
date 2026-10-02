@@ -52,6 +52,28 @@ def selected_service(args):
 
 def run_command(args):
     require(args.config_dir is None, 'account_conflicts_with_config_dir')
+    if args.action in {'backup', 'restore'}:
+        from msg.client_account_backup import backup_account, restore_account
+
+        require(args.server is not None, 'account_backup_server_required')
+        require(args.profile is None, 'account_backup_profile_not_supported')
+        require(getattr(args, 'key', None) is None, 'account_backup_external_signer_not_supported')
+        require(
+            getattr(args, 'migrate_from', None) is None, 'account_backup_migration_not_supported'
+        )
+        if args.action == 'backup':
+            require(args.account is not None, 'account_backup_account_required')
+            return backup_account(args.server, args.account, args.recipient, args.output)
+        require(args.account is None, 'account_restore_account_conflict')
+        return restore_account(
+            args.server,
+            args.name,
+            args.input,
+            args.identity,
+            expected_subject=args.expected_subject,
+            expected_key_id=args.expected_key_id,
+            expected_sha256=args.expected_sha256,
+        )
     if args.action == 'import':
         source = args.directory.expanduser().absolute()
         if args.server is not None:
