@@ -1,6 +1,8 @@
 """Local account selection; hardware and software identities share one layout."""
 
 import os
+import tempfile
+from pathlib import Path
 
 from msg.atomic_file import durable_write
 from msg.client import ClientState, private_client_json
@@ -63,8 +65,11 @@ def run_command(args):
         )
         if args.action == 'backup':
             require(args.account is not None, 'account_backup_account_required')
+            require(args.output is not None, 'account_backup_output_required')
+            require(not getattr(args, 'recovery_hint', None), 'account_backup_publish_required')
             return backup_account(args.server, args.account, args.recipient, args.output)
         require(args.account is None, 'account_restore_account_conflict')
+        require(args.expected_subject is not None, 'account_backup_expected_subject_required')
         return restore_account(
             args.server,
             args.name,
@@ -136,3 +141,125 @@ def run_command(args):
             else None,
         })
     return {'server': server, 'accounts': result}
+
+
+async def run_backup_command(args, *, transport_factory, client_factory):
+    """Explicit public ciphertext publication, or anonymous profile restore discovery."""
+    from msg.client_account_backup import backup_account, ciphertext_digest_pin, restore_account
+    from msg.client_backup_remote import fetch_backup, publish_backup
+
+    require(args.config_dir is None, 'account_conflicts_with_config_dir')
+    require(args.server is not None, 'account_backup_server_required')
+    require(args.profile is None, 'account_backup_profile_not_supported')
+    require(args.key is None, 'account_backup_external_signer_not_supported')
+    require(args.migrate_from is None, 'account_backup_migration_not_supported')
+    server = service_origin(args.server)
+    if args.action == 'fetch':
+        expected = ciphertext_digest_pin(args.expected_sha256)
+        manifest = await fetch_backup(
+            server,
+            args.from_profile,
+            args.output,
+            expected_sha256=expected.removeprefix('sha256:') if expected is not None else None,
+        )
+        return {
+            'server': server,
+            'source_profile': args.from_profile,
+            'ciphertext_sha256': 'sha256:' + manifest['file']['sha256'],
+            'output': str(args.output.expanduser().absolute()),
+            'manifest': manifest,
+            'decrypted': False,
+        }
+    if args.action == 'publish':
+        require(args.account is not None, 'account_backup_account_required')
+        state = ClientState(server=server, account=args.account)
+        require(state.subject is not None and state.signer is not None, 'signing_identity_required')
+        options = {'endpoint': args.endpoint} if args.endpoint is not None else {}
+        transport = transport_factory(server, **options)
+        client = client_factory(state, transport)
+        try:
+            manifest = await publish_backup(
+                client,
+                args.input,
+                {
+                    'server': server,
+                    'subject_id': state.subject,
+                    'key_id': state.signer.key_id,
+                    'archive_format': args.archive_format,
+                    'encryption_format': args.encryption,
+                },
+                recovery_hint=args.recovery_hint,
+            )
+        finally:
+            await transport.close()
+        return {
+            'server': server,
+            'account': args.account,
+            'public_ciphertext': True,
+            'manifest': manifest,
+        }
+    with tempfile.TemporaryDirectory(prefix='msg-account-backup-') as directory:
+        temporary = Path(directory) / 'identity.age'
+        if args.action == 'backup':
+            require(args.account is not None, 'account_backup_account_required')
+            ciphertext = args.output or temporary
+            receipt = backup_account(server, args.account, args.recipient, ciphertext)
+            state = ClientState(server=server, account=args.account)
+            require(
+                state.subject == receipt['subject_id']
+                and state.signer is not None
+                and state.signer.key_id == receipt['key_id'],
+                'account_backup_identity_mismatch',
+            )
+            options = {'endpoint': args.endpoint} if args.endpoint is not None else {}
+            transport = transport_factory(server, **options)
+            client = client_factory(state, transport)
+            try:
+                metadata = {
+                    key: receipt[key]
+                    for key in (
+                        'server',
+                        'subject_id',
+                        'key_id',
+                        'ciphertext_sha256',
+                        'client_version',
+                    )
+                } | {'archive_format': 'msg.account-backup/1'}
+                metadata['ciphertext_sha256'] = metadata['ciphertext_sha256'].removeprefix(
+                    'sha256:'
+                )
+                published = await publish_backup(
+                    client,
+                    ciphertext,
+                    metadata,
+                    recovery_hint=args.recovery_hint,
+                )
+            finally:
+                await transport.close()
+            if args.output is None:
+                receipt.pop('output', None)
+            return receipt | {'published': published, 'public_ciphertext': True}
+        require(
+            args.action == 'restore' and args.account is None, 'account_restore_account_conflict'
+        )
+        expected = ciphertext_digest_pin(args.expected_sha256)
+        manifest = await fetch_backup(
+            server,
+            args.from_profile,
+            temporary,
+            expected_sha256=expected.removeprefix('sha256:') if expected is not None else None,
+        )
+        require(
+            manifest['archive_format'] == 'msg.account-backup/1'
+            and manifest['encryption']['format'] == 'age',
+            'account_backup_automatic_restore_not_supported',
+        )
+        return restore_account(
+            server,
+            args.name,
+            temporary,
+            args.identity,
+            expected_subject=args.expected_subject or manifest['subject_id'],
+            expected_key_id=args.expected_key_id or manifest['key_id'],
+            expected_sha256=args.expected_sha256 or manifest['file']['sha256'],
+        ) | {'source_profile': args.from_profile, 'manifest': manifest}

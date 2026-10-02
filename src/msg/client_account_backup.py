@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import os
 import re
+import selectors
 import shutil
 import stat
 import subprocess
+import time
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
@@ -27,6 +29,8 @@ MAX_ENVELOPE = 24 * 1024 * 1024
 MAX_ENTRIES = 2048
 MAX_DEPTH = 12
 SCOPES = ('config', 'data', 'state')
+AGE_TIMEOUT = 180
+MAX_AGE_STDERR = 65536
 
 
 def _path(value):
@@ -202,21 +206,77 @@ def _identity(files, server):
 def _age(arguments, data, *, pass_fds=()):
     executable = shutil.which('age')
     require(executable is not None, 'age_dependency_unavailable')
+    process = None
+    output, stderr_bytes, written = bytearray(), 0, 0
+    deadline = time.monotonic() + AGE_TIMEOUT
     try:
-        result = subprocess.run(
+        # Preserve the caller's terminal session for age/plugin PIN and touch prompts.
+        process = subprocess.Popen(
             [executable, *arguments],
-            input=data,
-            capture_output=True,
-            timeout=180,
-            check=False,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             pass_fds=pass_fds,
         )
+        with selectors.DefaultSelector() as poller:
+            for stream, kind in (
+                (process.stdin, 'input'),
+                (process.stdout, 'output'),
+                (process.stderr, 'error'),
+            ):
+                os.set_blocking(stream.fileno(), False)
+                poller.register(
+                    stream, selectors.EVENT_WRITE if kind == 'input' else selectors.EVENT_READ, kind
+                )
+            while poller.get_map():
+                remaining = deadline - time.monotonic()
+                require(remaining > 0, 'age_operation_failed')
+                for key, _ in poller.select(min(remaining, 1)):
+                    stream, kind = key.fileobj, key.data
+                    if kind == 'input':
+                        if written == len(data):
+                            poller.unregister(stream)
+                            stream.close()
+                            continue
+                        try:
+                            written += os.write(
+                                stream.fileno(), memoryview(data)[written : written + 65536]
+                            )
+                        except BrokenPipeError:
+                            poller.unregister(stream)
+                            stream.close()
+                        except BlockingIOError:
+                            continue
+                    else:
+                        chunk = os.read(stream.fileno(), 65536)
+                        if not chunk:
+                            poller.unregister(stream)
+                            stream.close()
+                        elif kind == 'output':
+                            require(
+                                len(output) + len(chunk) <= MAX_ENVELOPE, 'account_backup_too_large'
+                            )
+                            output.extend(chunk)
+                        else:
+                            # Count and discard stderr; never return plugin/runtime secret text.
+                            stderr_bytes += len(chunk)
+                            require(stderr_bytes <= MAX_AGE_STDERR, 'age_output_limit_exceeded')
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, 'age_operation_failed')
+            require(process.wait(timeout=remaining) == 0, 'age_operation_failed')
+        return bytes(output)
     except OSError, subprocess.TimeoutExpired:
         raise Failure('age_operation_failed') from None
-    # Never print age/plugin stderr: it can include identity or local runtime details.
-    require(result.returncode == 0, 'age_operation_failed')
-    require(len(result.stdout) <= MAX_ENVELOPE, 'account_backup_too_large')
-    return result.stdout
+    finally:
+        if process is not None:
+            if process.poll() is None:
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
+            process.wait()
+            for stream in (process.stdin, process.stdout, process.stderr):
+                stream.close()
 
 
 def _write_new(parent, name, raw):
@@ -273,6 +333,16 @@ def _receipt(server, account, subject, key_id, backend, ciphertext):
         'client_version': __version__,
         'server_credentials_verified': False,
     }
+
+
+def ciphertext_digest_pin(value):
+    if value is None:
+        return None
+    require(
+        isinstance(value, str) and re.fullmatch(r'(?:sha256:)?[0-9a-f]{64}', value),
+        'invalid_backup_hash',
+    )
+    return 'sha256:' + value.removeprefix('sha256:')
 
 
 def backup_account(server, account, recipients, output):
@@ -532,6 +602,7 @@ def restore_account(
         'account_restore_destination_exists',
     )
     ciphertext = _read_path(ciphertext_path, private=False)
+    expected_sha256 = ciphertext_digest_pin(expected_sha256)
     require(
         expected_sha256 is None or digest(ciphertext) == expected_sha256,
         'account_backup_ciphertext_mismatch',
