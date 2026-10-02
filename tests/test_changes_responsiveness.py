@@ -4,6 +4,7 @@ import asyncio
 import json
 from dataclasses import replace
 from time import perf_counter
+from types import SimpleNamespace
 
 import pytest
 from test_client_subagents_remote import client_for
@@ -47,6 +48,27 @@ async def append_history(app, actor, resource, count, prefix):
                     data={'operation': 'file.create'},
                 )
             )
+
+
+async def wait_for_scan_phase(signal, pending):
+    """A later phase can start after real ACL work, within the 30s operation budget."""
+    phase = asyncio.create_task(signal.wait())
+    try:
+        done, _ = await asyncio.wait(
+            (phase, pending), timeout=35, return_when=asyncio.FIRST_COMPLETED
+        )
+        if phase in done:
+            return
+        if pending in done:
+            result = await pending
+            error = result.error.code if result.error is not None else result.status
+            pytest.fail(f'change scan exited before the observed phase: {error}')
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+        pytest.fail('change scan did not reach the observed phase within its operation budget')
+    finally:
+        phase.cancel()
+        await asyncio.gather(phase, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -366,7 +388,7 @@ async def test_multi_ref_relevance_pass_also_yields(installed, tmp_path, monkeyp
 
         monkeypatch.setattr(communication, 'direct_ancestor', observe)
         pending = asyncio.create_task(owner.call('communication.changes', {'cursor': cursor}))
-        await asyncio.wait_for(inside.wait(), 10)
+        await wait_for_scan_phase(inside, pending)
         assert not pending.done()
         assert (await http.get('/healthz')).status_code == 200
         assert not pending.done()
@@ -399,6 +421,10 @@ async def test_multi_ref_event_yields_and_cancellation_deadline_leave_http_usabl
 ):
     app, _ = installed
     owner, http = await client_for(app, tmp_path / 'owner', 'fair-multi')
+    # Scheduling, cancellation and the deadline are separate properties. Enough
+    # real ACL checks must remain during parallel reads/writes; a successful
+    # 128-ref scan cannot be assumed to fit every runner's 30-second budget.
+    reference_count = 32
     try:
         own_file = await make_file(owner, 'fair-multi', 'visible.txt')
         baseline = owner.checked(await owner.call('communication.changes', {})).data
@@ -412,7 +438,7 @@ async def test_multi_ref_event_yields_and_cancellation_deadline_leave_http_usabl
                     request_id='big-event',
                     actor=owner.state.subject,
                     subject=owner.state.subject,
-                    resources=(ResourceRef(id=own_file),) * 128,
+                    resources=(ResourceRef(id=own_file),) * reference_count,
                     data={'operation': 'file.create'},
                 )
             )
@@ -446,16 +472,17 @@ async def test_multi_ref_event_yields_and_cancellation_deadline_leave_http_usabl
         refs_at_read = seen
         # Completion before all ACL checks proves actual scheduling progress;
         # an absolute latency threshold measures the CI runner's speed instead.
-        assert not pending.done() and 2 <= refs_at_read < 128
+        assert not pending.done() and 2 <= refs_at_read < reference_count
         write_start = perf_counter()
         await make_file(owner, 'fair-multi', 'created-during-scan.txt')
         write_seconds = perf_counter() - write_start
         refs_at_write = seen
-        assert not pending.done() and refs_at_read <= refs_at_write < 128
+        assert not pending.done() and refs_at_read <= refs_at_write < reference_count
         page = owner.checked(await pending).data
-        assert len(page['items']) == 1 and len(page['items'][0]['resources']) == 128
+        assert len(page['items']) == 1
+        assert len(page['items'][0]['resources']) == reference_count
         assert page['items'][0]['id'] == 'big-event'
-        assert seen == 128
+        assert seen == reference_count
 
         seen = 0
         inside.clear()
@@ -474,6 +501,22 @@ async def test_multi_ref_event_yields_and_cancellation_deadline_leave_http_usabl
                 },
             )
         )
+        tail = owner.checked(
+            await owner.call('communication.changes', {'cursor': page['sync_cursor']})
+        ).data['tail_cursor']
+        async with app.metadata.transaction(write=True) as tx:
+            await tx.append_event(
+                Event(
+                    id='deadline-event',
+                    type='file.create',
+                    time=NOW,
+                    request_id='deadline-event',
+                    actor=owner.state.subject,
+                    subject=owner.state.subject,
+                    resources=(ResourceRef(id=own_file),) * 128,
+                    data={'operation': 'file.create'},
+                )
+            )
         spec = app.registry.operation('communication.changes')
 
         async def expired(ctx, request, tx):
@@ -485,10 +528,38 @@ async def test_multi_ref_event_yields_and_cancellation_deadline_leave_http_usabl
         failure = await owner.call('communication.changes', {'cursor': cursor})
         assert failure.error.code == 'query_cost_exceeded'
         assert (await http.get('/healthz')).status_code == 200
+
+        # Keep the large event and real ACL checks, but expire the clock after
+        # two checks so deadline enforcement does not depend on runner speed.
+        scan_clock = SimpleNamespace(value=90.0)
+        monkeypatch.setattr(
+            communication, 'time', SimpleNamespace(monotonic=lambda: scan_clock.value)
+        )
+        checked_refs = 0
+
+        async def expire_during_scan(*args):
+            nonlocal checked_refs
+            result = await original_visible(*args)
+            checked_refs += 1
+            if checked_refs == 2:
+                scan_clock.value = 101.0
+            return result
+
+        async def finite_budget(ctx, request, tx):
+            return await spec.handler(replace(ctx, deadline_monotonic=100.0), request, tx)
+
+        monkeypatch.setattr(communication, 'visible', expire_during_scan)
+        app.registry._operations[(spec.name, spec.version)] = replace(spec, handler=finite_budget)
+        interrupted = await owner.call('communication.changes', {'cursor': tail})
+        assert interrupted.error.code == 'query_cost_exceeded'
+        assert interrupted.data is None and checked_refs == 2
+        assert (await http.get('/healthz')).status_code == 200
+        owner.checked(await owner.call('discovery.get', {'id': own_file, 'fields': ['id']}))
         async with app.metadata.transaction(write=False) as tx:
             assert tx.one("SELECT COUNT(*) FROM events WHERE id='big-event'")[0] == 1
+            assert tx.one("SELECT COUNT(*) FROM events WHERE id='deadline-event'")[0] == 1
         print({
-            'multi_refs': 128,
+            'multi_refs': reference_count,
             'refs_at_signed_read': refs_at_read,
             'refs_at_signed_write': refs_at_write,
             'parallel_health_and_read_seconds': round(parallel_seconds, 3),
