@@ -4,9 +4,11 @@ import json
 from base64 import b64encode
 from hashlib import sha256
 
+from msg.transports.browser_i18n import ACTION_LABELS, LANGUAGES, TRANSLATIONS
 from msg.transports.browser_palette import ACCENTS
 
-WEBMCP_SCRIPT = r"""(() => {
+WEBMCP_SCRIPT = (
+    r"""(() => {
   const brand = document.querySelector('a.brand');
   let logoRun = {count: 0, first: 0};
   brand?.addEventListener('click', event => {
@@ -83,7 +85,13 @@ WEBMCP_SCRIPT = r"""(() => {
     search_local: ['Searches this MSG service and only content you can read.','仅搜索当前 MSG 服务中你有权限读取的内容。'],
     search_copy_engine: ['Copy search engine URL','复制搜索引擎地址']
   });
-  Object.assign(translations, __ACCENT_LABELS__);
+  Object.assign(translations, __ACCENT_LABELS__, __ACTION_LABELS__);
+  const locales = __LOCALES__;
+  const localized = __LOCALIZED__;
+  let language = 'en';
+  const translate = key => localized[language]?.[key] ?? translations[key]?.[language === 'zh' ? 1 : 0];
+  const sourceKeys = Object.fromEntries(Object.entries(translations).map(([key, pair]) => [pair[0], key]));
+  globalThis.msgText = (en, zh) => language === 'zh' ? zh : language === 'en' ? en : translate(sourceKeys[en]) ?? en;
   const palettes = __ACCENT_PALETTES__;
   const load = (key, fallback) => {try {return localStorage.getItem(key) || fallback;} catch {return fallback;}};
   const save = (key, value) => {try {localStorage.setItem(key, value);} catch {}};
@@ -128,14 +136,19 @@ WEBMCP_SCRIPT = r"""(() => {
   document.addEventListener('scroll', repositionMenus, true);
   window.visualViewport?.addEventListener('resize', repositionMenus);
   window.visualViewport?.addEventListener('scroll', repositionMenus);
+  const normalizeLanguage = value => String(value || '').toLowerCase().split(/[-_]/)[0];
+  const browserLanguage = () => (navigator.languages || [navigator.language || 'en'])
+    .map(normalizeLanguage).find(value => Object.hasOwn(locales, value)) || 'en';
   const applyLanguage = value => {
-    const language = value === 'zh' ? 'zh' : 'en';
-    document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
+    const requested = normalizeLanguage(value);
+    language = Object.hasOwn(locales, requested) ? requested : 'en';
+    document.documentElement.lang = locales[language].tag;
+    document.documentElement.dir = locales[language].direction;
     document.querySelectorAll('[data-i18n]').forEach(node => {
-      const text = translations[node.dataset.i18n]; if (text) node.textContent = text[language === 'zh' ? 1 : 0];
+      const value = translate(node.dataset.i18n); if (value !== undefined) node.textContent = value;
     });
     document.querySelectorAll('[data-i18n-placeholder]').forEach(node => {
-      const text = translations[node.dataset.i18nPlaceholder]; if (text) node.placeholder = text[language === 'zh' ? 1 : 0];
+      const value = translate(node.dataset.i18nPlaceholder); if (value !== undefined) node.placeholder = value;
     });
     const selector = document.getElementById('msg-language'); if (selector) selector.value = language;
     save('msg.language', language);
@@ -168,7 +181,7 @@ WEBMCP_SCRIPT = r"""(() => {
     document.querySelectorAll('input[name=msg-theme]').forEach(input => { input.checked = input.value === theme; });
     save('msg.theme', theme);
   };
-  applyLanguage(load('msg.language', 'en')); applyAccent(load('msg.accent', 'blue')); applyTheme(load('msg.theme','system'));
+  applyLanguage(load('msg.language', browserLanguage())); applyAccent(load('msg.accent', 'blue')); applyTheme(load('msg.theme','system'));
   for (const [key, apply] of [['language',applyLanguage],['accent',applyAccent],['theme',applyTheme]]) {
     document.getElementById('msg-' + key)?.addEventListener('change', event => apply(event.target.value));
   }
@@ -335,10 +348,20 @@ WEBMCP_SCRIPT = r"""(() => {
     Promise.all(tools.map(tool => context.registerTool(tool, {signal: controller.signal})))
       .catch(() => { controller.abort(); });
   } catch { controller.abort(); }
-})();""".replace(
-    '__ACCENT_LABELS__', json.dumps({key: [en, zh] for key, en, zh, _, _ in ACCENTS})
-).replace(
-    '__ACCENT_PALETTES__', json.dumps({key: [light, dark] for key, _, _, light, dark in ACCENTS})
+})();"""
+    .replace('__ACTION_LABELS__', json.dumps(ACTION_LABELS, ensure_ascii=False))
+    .replace(
+        '__LOCALES__',
+        json.dumps({
+            code: {'tag': tag, 'direction': direction} for code, _, tag, direction in LANGUAGES
+        }),
+    )
+    .replace('__LOCALIZED__', json.dumps(TRANSLATIONS, ensure_ascii=False))
+    .replace('__ACCENT_LABELS__', json.dumps({key: [en, zh] for key, en, zh, _, _ in ACCENTS}))
+    .replace(
+        '__ACCENT_PALETTES__',
+        json.dumps({key: [light, dark] for key, _, _, light, dark in ACCENTS}),
+    )
 )
 
 WEBMCP_HASH = b64encode(sha256(WEBMCP_SCRIPT.encode()).digest()).decode()
