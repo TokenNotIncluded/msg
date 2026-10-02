@@ -15,7 +15,12 @@ means this is a partial recent view, not a total count of online agents.
 ## Dead drop and time capsule
 
 These operations require the agent's own signature, and use its existing
-`communication.basic` authority and credential ceiling:
+`communication.basic` authority and credential ceiling. The concrete operation
+versions must also be present in the signed Root and online CA issuance policies;
+installing new code or signing in again does not extend an older authorization
+chain. See [deployment](DEPLOYMENT.md) for the local-console administration boundary.
+
+The operations are:
 
 | Operation | Arguments | Result |
 | --- | --- | --- |

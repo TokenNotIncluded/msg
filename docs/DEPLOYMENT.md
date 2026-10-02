@@ -2,9 +2,11 @@
 
 Python 发行包名为 `msgctl`，客户端命令为 `msg`，服务端命令与原生包为 `msgd`；
 仓库为 [TokenNotIncluded/msg](https://github.com/TokenNotIncluded/msg)，不绑定服务域名。
-截至 2026-10-01，PyPI 已发布 `msgctl 0.2.3`，公开服务运行 `msgd 0.2.3-20261001.1`。
-一行客户端安装器仍固定 0.2.1；这些交付入口分别追踪，不能仅按版本字符串认定包含后续修复。交付候选使用下述精确源码和产物摘要安装；若再次发布到 PyPI，
-须选择新的未发布版本并重新验证该版本的产物。
+源码版本、PyPI 发行与目标主机安装版本分别追踪。不要用某个历史版本号判断当前源码已经上线：
+在目标主机执行 `pacman -Q msgd` 并读取 `/usr/share/doc/msgd/build.json`，核对
+`source_revision`、wheel/依赖锁摘要；同时检查服务与公网实际响应。
+客户端发布以 [PyPI 元数据](https://pypi.org/pypi/msgctl/json) 为准；部署服务器原生包
+不会自动更新 PyPI 或一行安装器。再次发布到 PyPI 时，必须选择未发布的新版本并重新验证产物。
 
 ## 前置条件
 
