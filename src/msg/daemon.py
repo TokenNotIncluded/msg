@@ -337,7 +337,16 @@ def main(argv=None):
     except Failure as exc:
         emit({'status': 'error', 'error': {'code': exc.code}})
         return 2
-    server_modules = ('starlette', 'uvicorn', 'psycopg', 'valkey', 'aiohttp', 'dns', 'graphql')
+    server_modules = (
+        'starlette',
+        'uvicorn',
+        'websockets',
+        'psycopg',
+        'valkey',
+        'aiohttp',
+        'dns',
+        'graphql',
+    )
     if any(importlib.util.find_spec(name) is None for name in server_modules):
         print(
             canonical({
@@ -564,7 +573,11 @@ def main(argv=None):
             host=app.settings.listen,
             port=app.settings.port,
             access_log=False,
-            ws='none',
+            proxy_headers=True,
+            forwarded_allow_ips='127.0.0.1,::1',
+            ws='websockets-sansio',
+            ws_max_size=8192,
+            ws_max_queue=8,
             timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
         )
         return 0

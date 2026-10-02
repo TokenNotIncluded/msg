@@ -14,7 +14,7 @@ from urllib.parse import quote, unquote_to_bytes, urlencode, urlsplit
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
-from starlette.routing import Route
+from starlette.routing import Route, WebSocketRoute
 
 from msg.core.codec import canonical, decode, digest, loads, wire
 from msg.core.errors import Failure, require
@@ -919,6 +919,9 @@ def parse_stable_view(path, raw_path):
 
 
 def create_app(service):
+    from msg.transports.flight_space import FlightHub
+
+    flight_hub = FlightHub(service)
     mcp = MCPServer(service)
     graphql_adapter = None
     short_codes = None
@@ -930,6 +933,7 @@ def create_app(service):
                 await service.load()
             yield
         finally:
+            await flight_hub.close()
             await service.close()
 
     async def dispatch(request: Request):
@@ -3757,13 +3761,16 @@ def create_app(service):
                 {'status': 'error', 'error': {'code': 'internal_error', 'retryable': False}}, 500
             )
 
-    return Starlette(
+    app = Starlette(
         routes=[
+            WebSocketRoute('/_flight', flight_hub.websocket),
             Route(
                 '/{path:path}',
                 dispatch,
                 methods=['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-            )
+            ),
         ],
         lifespan=lifespan,
     )
+    app.state.flight_hub = flight_hub
+    return app
