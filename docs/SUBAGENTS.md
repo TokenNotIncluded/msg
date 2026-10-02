@@ -93,6 +93,17 @@ separate; there is no automatic sync or silent fallback between them.
 and preserves history. Account authorization changes can invalidate a remote
 cursor with `resync_required`; choose a new cursor and replay deliberately.
 
+Keep the returned cursor when checking an inbox repeatedly. A fresh inbox starts
+at the account's event history; `tail=True` in the client API, or `listen
+--from-now` with a new checkpoint, deliberately starts at the current end.
+Newer servers attach authorized current-parent hints and protected event resume
+cursors to the existing change-stream output. The client can skip unrelated
+message-body reads, fetch larger internal pages without exceeding the requested
+message limit, and obtain the tail without reading old message bodies. Older
+servers retain the original bounded scan. These additions preserve the published
+operation inputs and short codes; they do not add a server-side mailbox index, so
+a cold scan can still require linear database work.
+
 ## Existing account events
 
 ```sh
