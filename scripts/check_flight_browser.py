@@ -1,8 +1,9 @@
-"""Offline renderer integration fixtures, not live sessions or HTTP CSP acceptance.
+"""Actual-app Inspect regression plus offline renderer integration fixtures.
 
 Run: python scripts/check_flight_browser.py
 Requires Playwright and Chromium. MSG_BROWSER_PATH overrides the browser path.
-No server, external requests, signing key, account or database is used.
+Only a disposable loopback HTTP fixture is used. No external requests, signing
+key, real account, WebSocket game session or database is used.
 """
 
 from __future__ import annotations
@@ -12,7 +13,10 @@ import hashlib
 import json
 import os
 import re
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -97,6 +101,76 @@ def assemble() -> str:
     )
 
 
+def check_actual_app_inspect(browser) -> None:
+    """Use the real app callback and native pointer focus/click ordering."""
+    from msg.bootstrap import ROOT_WEB_SAMPLE
+    from msg.core.codec import digest
+    from msg.extensions.hosting import hosted_headers
+
+    root = {'id': 'u_root', 'name': 'root', 'path': '/@root'}
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_GET(self):
+            parsed = urlsplit(self.path)
+            if parsed.path == '/':
+                body = ROOT_WEB_SAMPLE
+                headers = hosted_headers('w_root_web', 'index.html', digest(body))
+                content_type = 'text/html'
+            else:
+                kind = parse_qs(parsed.query).get('kind', ['users'])[0]
+                body = json.dumps({
+                    'version': 1,
+                    'kind': kind,
+                    'items': [root] if kind == 'users' else [],
+                    'cursor': None,
+                    'service': {'url': f'http://127.0.0.1:{self.server.server_port}'},
+                }).encode()
+                headers = {}
+                content_type = 'application/json'
+            self.send_response(200)
+            self.send_header('Content-Type', content_type)
+            self.send_header('Content-Length', str(len(body)))
+            for key, value in headers.items():
+                self.send_header(key, value)
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        for viewport in ({'width': 1280, 'height': 800}, {'width': 390, 'height': 844}):
+            context = browser.new_context(viewport=viewport)
+            # Expose the actual renderer instance, retaining all real callbacks.
+            context.add_init_script("""Object.defineProperty(window, 'MSGUniverseRenderer', {
+              configurable: true, set(Renderer) {
+                Object.defineProperty(window, 'MSGUniverseRenderer', {configurable:true,
+                  value:class extends Renderer {constructor(...args) {super(...args); window.__renderer=this;}}
+                });
+              }
+            });""")
+            page = context.new_page()
+            page.goto(f'http://127.0.0.1:{server.server_port}/')
+            page.wait_for_function("window.__renderer?.graph.nodes.some(n => n.id === 'u_root')")
+            page.locator('#pilot-toggle').click()
+            page.evaluate("""() => {
+              __renderer.flight.position = [0, 0, 16]; __renderer.flight.yaw = 0;
+              __renderer.flight.pitch = 0; __renderer.updateFlight(0); __renderer.wake();
+            }""")
+            page.wait_for_function("!document.getElementById('pilot-inspect').disabled")
+            page.locator('#pilot-inspect').click()
+            page.wait_for_function("!document.getElementById('inspector').hidden")
+            assert page.locator('#detail-title').inner_text() == '@root'
+            assert page.evaluate('__renderer.flight === null')
+            assert page.locator('#detail-body .identity-facts').count() == 1
+            context.close()
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
 def run() -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     checks = []
@@ -106,6 +180,7 @@ def run() -> None:
         if executable:
             options['executable_path'] = executable
         browser = pw.chromium.launch(**options)
+        check_actual_app_inspect(browser)
         for label, width, height, reduced, software in (
             ('desktop', 1440, 900, False, False),
             ('mobile', 390, 844, False, False),
