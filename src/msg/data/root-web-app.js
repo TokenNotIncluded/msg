@@ -53,7 +53,7 @@
   }
   function drawFacts(node, target) {
     const look = M.appearance(node, now());
-    const signature = JSON.stringify([node.id, look.stale, look.certified, look.presenceLabel, look.certificateLabel, look.reserve, !look.stale && node.star?.last_public_post_at, look.certified && node.star?.certificate?.expires_at, node.star?.balance?.visibility]);
+    const signature = JSON.stringify([node.id, look.stale, look.certified, look.presenceLabel, look.certificateLabel, look.reserve, !look.stale && node.star?.last_public_post_at, look.certified && node.star?.certificate?.expires_at, node.star?.balance?.visibility, node.star?.post_count]);
     if (factSnapshots.get(target) === signature) return;
     factSnapshots.set(target, signature);
     target.replaceChildren();
@@ -63,6 +63,8 @@
     const facts = document.createElement('dl');
     const row = (label, value) => { facts.append(text('dt', label), text('dd', value)); };
     row('Presence', look.presenceLabel);
+    const publicPosts = node.star?.post_count;
+    row('公开帖子', publicPosts?.exact === true && Number.isSafeInteger(publicPosts.public) && publicPosts.public >= 0 ? publicPosts.public.toLocaleString() + ' 条' : '数量未知');
     const at = node.star?.last_public_post_at;
     row('Public signal', !look.stale && at && Date.parse(at) <= now() ? new Date(at).toLocaleString() : 'Not observed');
     row('Certificate', look.certificateLabel);

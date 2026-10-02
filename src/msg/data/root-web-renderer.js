@@ -196,6 +196,7 @@
       this.shotEvents = new Map();
       this.gameActions = new Set();
       this.homeBody = null;
+      this.homeMesh = null;
       this.flightPointers = new Map();
       this.flightControls = new Map();
       this.flightHud = document.getElementById('pilot-hud');
@@ -501,6 +502,7 @@
     }
     receiveFlightHello(hello) {
       this.homeBody = hello.self.home_body?.private ? hello.self.home_body : null;
+      this.homeMesh = this.homeBody ? planetMesh(this.homeBody.id) : null;
       if (this.flight) {
         this.flight.position = [...hello.self.position]; this.flight.velocity = [...hello.self.velocity];
         this.flight.yaw = -hello.self.yaw; this.flight.pitch = -hello.self.pitch;
@@ -1128,7 +1130,7 @@
       }
       if (this.homeBody && this.flight) {
         const body = this.homeBody;
-        const mesh = planetMesh(body.id);
+        const mesh = this.homeMesh || planetMesh(body.id);
         for (const face of mesh) for (const v of face)
           solids.push(...vertex(v.map((value, i) => body.position[i] + value * body.radius), [.38, .43, .40], 1));
         ring(body.position, body.radius * 1.5, [.67, .75, .7], .3, {tilt:.15});
@@ -1294,10 +1296,10 @@
         for (const label of this.shipLabels.values()) label.remove();
         this.shipLabels.clear(); return;
       }
-      const visible = new Set(), now = this.network.serverNow;
+      const visible = new Set(), now = this.network.serverNow, up = this.basis().up;
       for (const {state:ship, position} of this.remoteShips.values()) {
         if (ship.hp <= 0) continue;
-        const projected = this.project(position.map((value, i) => value + this.basis().up[i] * 4));
+        const projected = this.project(position.map((value, i) => value + up[i] * 4));
         if (!projected || projected.x < 0 || projected.y < 75 || projected.x > this.width || projected.y > this.height - 65) continue;
         visible.add(ship.id);
         let label = this.shipLabels.get(ship.id);
@@ -1307,11 +1309,13 @@
           const hp = document.createElement('progress'); hp.className = 'ship-hp'; hp.max = 100; hp.value = 0;
           label.append(name, hp); container.append(label); this.shipLabels.set(ship.id, label);
         }
-        label.firstElementChild.textContent = ship.handle;
-        label.lastElementChild.value = ship.hp;
-        label.dataset.self = String(ship.id === this.network.self?.id);
-        label.dataset.shielded = String(ship.shield_until_ms > now);
-        label.style.transform = `translate(${Math.round(projected.x)}px,${Math.round(projected.y)}px)`;
+        if (label.firstElementChild.textContent !== ship.handle) label.firstElementChild.textContent = ship.handle;
+        if (label.lastElementChild.value !== ship.hp) label.lastElementChild.value = ship.hp;
+        const own = String(ship.id === this.network.self?.id), shielded = String(ship.shield_until_ms > now);
+        if (label.dataset.self !== own) label.dataset.self = own;
+        if (label.dataset.shielded !== shielded) label.dataset.shielded = shielded;
+        const transform = `translate(${Math.round(projected.x)}px,${Math.round(projected.y)}px)`;
+        if (label.style.transform !== transform) label.style.transform = transform;
       }
       for (const [id, label] of this.shipLabels) if (!visible.has(id)) { label.remove(); this.shipLabels.delete(id); }
     }
