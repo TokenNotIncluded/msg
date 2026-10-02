@@ -5,6 +5,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 import pytest
+from test_oauth import browser_login, oauth as oauth
 from test_service import call, register
 
 from msg.core.codec import b64
@@ -156,7 +157,126 @@ def test_browser_artwork_escapes_names_and_uses_isolated_images():
     html = document_html('', resource=value).decode()
     assert '@&lt;script&gt;' in html and '<script>bad</script>' not in html
     assert '<img class="profile-avatar"' in html
-    assert 'data:image' not in html
+    assert 'src="data:image' not in html
     assert 'Looping ASCII' not in html and '@keyframes tide' not in html
     assert '/art/footer.svg' in html
     assert 'IntersectionObserver' in html and 'visibilitychange' in html
+
+
+@pytest.mark.asyncio
+async def test_default_system_art_uses_authoritative_roles_and_is_stable(installed):
+    app, _ = installed
+    _, uid, _ = await register(app, 'role-art-reader')
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        for kind in ('avatar', 'background'):
+            root = await http.get('/@root/art/' + kind + '.svg')
+            ca = await http.get('/@online-ca/art/' + kind + '.svg')
+            normal = await http.get('/@role-art-reader/art/' + kind + '.svg')
+            assert root.status_code == ca.status_code == normal.status_code == 200
+            assert root.text == generate_svg('u_root', kind, 'root')
+            assert ca.text == generate_svg('u_online_ca', kind, 'online_ca')
+            assert normal.text == generate_svg(uid, kind)
+            assert len({root.text, ca.text, normal.text}) == 3
+            repeated = await http.get('/@root/art/' + kind + '.svg')
+            assert (
+                repeated.content == root.content
+                and repeated.headers['etag'] == root.headers['etag']
+            )
+
+
+@pytest.mark.asyncio
+async def test_owner_can_create_and_replace_artwork_with_existing_signed_file_operations(installed):
+    app, _ = installed
+    key, uid, _ = await register(app, 'art-owner')
+    other_key, other, _ = await register(app, 'art-stranger')
+    first = '<svg xmlns="http://www.w3.org/2000/svg"><text>owner first</text></svg>'
+    second = first.replace('owner first', 'owner second')
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        missing = await http.get(
+            '/@art-owner/AVATAR.svg/meta', headers={'Accept': 'application/json'}
+        )
+        assert missing.status_code == 404
+        args = {
+            'parent': '/@art-owner',
+            'name': 'AVATAR.svg',
+            'data': b64(first.encode()),
+            'media_type': 'image/svg+xml',
+        }
+        denied = await call(app, 'file.create', args, key=other_key, subject=other)
+        assert denied.status == 'error'
+        created = await call(app, 'file.create', args, key=key, subject=uid)
+        assert created.status == 'ok', created.error
+        meta_response = await http.get(
+            '/@art-owner/AVATAR.svg/meta', headers={'Accept': 'application/json'}
+        )
+        assert meta_response.status_code == 200
+        meta = meta_response.json()
+        args = {
+            'id': meta['id'],
+            'base_revision': meta['revision'],
+            'data': b64(second.encode()),
+            'media_type': 'image/svg+xml',
+        }
+        expected = ((meta['id'], meta['generation']),)
+        denied = await call(
+            app, 'file.write', args, key=other_key, subject=other, expected=expected
+        )
+        assert denied.status == 'error'
+        untouched = await http.get('/@art-owner/art/avatar.svg')
+        assert untouched.text == first and untouched.headers['x-msg-artwork-source'] == 'custom'
+        updated = await call(
+            app,
+            'file.write',
+            args,
+            key=key,
+            subject=uid,
+            expected=expected,
+            rid='profile-art-update',
+        )
+        assert updated.status == 'ok', updated.error
+        retried = await call(
+            app,
+            'file.write',
+            args,
+            key=key,
+            subject=uid,
+            expected=expected,
+            rid='profile-art-update',
+        )
+        assert retried.status == 'ok' and retried.resources == updated.resources
+        visible = await http.get('/@art-owner/art/avatar.svg')
+        assert visible.text == second and visible.headers['x-msg-artwork-source'] == 'custom'
+        stale = await call(app, 'file.write', args, key=key, subject=uid, expected=expected)
+        assert stale.status == 'error'
+        ordinary_write = await http.post('/@art-owner/AVATAR.svg', content=first)
+        assert ordinary_write.status_code == 405
+
+
+@pytest.mark.asyncio
+async def test_artwork_editor_does_not_expand_browser_file_write_authority(oauth):
+    from msg.security.oauth import OAuthService
+
+    app, _, subject, _ = oauth
+    cookie = await browser_login(oauth)
+    async with app.metadata.transaction(write=False) as tx:
+        _, credential_id, token = await OAuthService(app).browser_credentials(tx, cookie)
+        credential = await tx.credential(credential_id)
+        operations = {operation for grant in credential.ceiling for operation in grant.operations}
+    assert not operations & {'file.create@1', 'file.write@1', 'content.file_put@1'}
+    denied = await call(
+        app,
+        'file.create',
+        {
+            'parent': '/@oauth-owner',
+            'name': 'AVATAR.svg',
+            'data': b64(b'<svg xmlns="http://www.w3.org/2000/svg"/>'),
+            'media_type': 'image/svg+xml',
+        },
+        subject=subject,
+        token=token,
+    )
+    assert denied.status == 'error'
