@@ -390,11 +390,13 @@ class RemoteAgents:
         mailbox = config_meta['parent']
         page_limit = 1 if tail else limit
         large_pages = True
+        pages = 0
         while True:
             arguments = {'limit': page_limit}
             if sync_cursor is not None:
                 arguments['cursor'] = sync_cursor
             page = await self._call('communication.changes', arguments)
+            pages += 1
             require(not page.get('resync_required'), 'resync_required')
             if tail and isinstance(page.get('tail_cursor'), str):
                 sync_cursor = page['tail_cursor']
@@ -407,6 +409,9 @@ class RemoteAgents:
                 # before consuming any of that non-resumable large page.
                 page_limit = limit
                 large_pages = False
+                if pages >= 8:
+                    more = True
+                    break
                 continue
             for number, event in enumerate(page['items']):
                 if event['type'] not in {'file.create', 'content.file_put'}:
@@ -442,12 +447,14 @@ class RemoteAgents:
                     # A protected cursor after this event keeps the remaining
                     # large page unread, without embedding messages in a cursor.
                     sync_cursor = event['resume_cursor']
-                    more = number + 1 < len(page['items']) or len(page['items']) == page_limit
+                    more = number + 1 < len(page['items']) or page.get(
+                        'has_more', len(page['items']) == page_limit
+                    )
                     break
             else:
                 sync_cursor = page['sync_cursor']
-                more = len(page['items']) == page_limit
-            if not more or (items and not tail):
+                more = page.get('has_more', len(page['items']) == page_limit)
+            if not more or (items and not tail) or (pages >= 8 and not tail):
                 break
             # Only servers with event resume markers can enlarge a page without
             # consuming messages beyond the caller's bound. Old servers keep
