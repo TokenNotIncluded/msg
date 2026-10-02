@@ -351,7 +351,10 @@
       this.flightControls?.clear();
       this.flight?.halt();
       for (const button of document.querySelectorAll('[data-flight-key]')) button.classList.remove('held');
-      if (this.flight) this.updateFlightHud(true);
+      // Focusing Inspect must not disable that button between pointerdown and
+      // click. Re-resolve its identity when clicked; input cancellation alone
+      // does not invalidate the current nearby star.
+      if (this.flight) this.updateFlightHud();
     }
     flightEvents() {
       const canvas = this.canvas;
