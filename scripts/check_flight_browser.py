@@ -254,7 +254,14 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
                   return !!node && self.home_position && MSGUniverse.starPosition(node)
                     .every((value,i) => Math.abs(value-self.home_position[i])<1e-6);
                 }""")
-        checks.append('two real identities, WS/CSP connection and server spawn')
+            assert page.evaluate("""() => {
+                  const n=__renderer.network, field=n.snapshot.collectibles;
+                  return n.limits.fuel_burn_rate===1.5 && field.version===2 && field.radius===8 &&
+                    field.anchors.length>1 && n.gravity.wells.length>1;
+                }""")
+        checks.append(
+            'two real identities, WS/CSP spawn, public gravity and shared fuel-highway descriptor'
+        )
 
         # Exercise ordinary controls in the real app; never relocate a server
         # ship or fabricate a snapshot to reach the procedural pickup field.
