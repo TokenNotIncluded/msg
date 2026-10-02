@@ -22,6 +22,7 @@ class Element {
   constructor(document) {
     this.ownerDocument = document; this.listeners = new Map(); this.children = [];
     this.attributes = {}; this.textContent = ''; this.classList = { add() {} };
+    this.dataset = {};
   }
   append(...children) { for (const child of children) { child.parentElement = this; this.children.push(child); } }
   remove() { if (this.parentElement) this.parentElement.children = this.parentElement.children.filter(c => c !== this); }
@@ -54,6 +55,7 @@ function setup() {
   const map = new F.Map(canvas, { container, status, actions,
     onSelectRegion: id => selected.push(id), onRegionFocus: id => focused.push(id),
     onReturn3D: () => { returned++; } });
+  map.update({ connected: true, fuel: 100, hp: 100, connectionMessage: '' });
   return { map, canvas, container, status, actions, selected, focused, draws, returned: () => returned };
 }
 const pointer = (canvas, type, id, x, y) => canvas.dispatch(type, {
@@ -137,6 +139,7 @@ test('pointer taps select real markers; drag, cancellation and pinch never reque
   const t = setup(); t.map.update({ regions, currentRegion: 2 }); t.map.show();
   pointer(t.canvas, 'pointerdown', 1, 360, 240); pointer(t.canvas, 'pointerup', 1, 360, 240);
   assert.deepEqual(t.selected, [0]); t.selected.length = 0;
+  t.map.update({ currentRegion: 0 }); t.map.update({ currentRegion: 2 });
   pointer(t.canvas, 'pointerdown', 2, 360, 240); pointer(t.canvas, 'pointermove', 2, 380, 240);
   pointer(t.canvas, 'pointermove', 2, 360, 240); pointer(t.canvas, 'pointerup', 2, 360, 240);
   assert.deepEqual(t.selected, []);
@@ -180,4 +183,125 @@ test('bounded canvas drawing keeps Root and own ship distinct and creates only f
   t.map.hide(); const before = t.draws.length; t.map.update({ players }); flush(); assert.equal(t.draws.length, before);
   t.map.destroy(); assert.equal(t.actions.children.length, 0); assert.equal(t.canvas.listeners.get('pointerup').size, 0);
   t.canvas.dispatch('keydown', { key: 'Enter' }); assert.deepEqual(t.selected, []);
+});
+
+test('disconnection removes live positions and counts and blocks every region selection path', () => {
+  const t = setup(), graph = { nodes: [{ id: 'u_1', kind: 'user', position: [55, 66, 77] }] };
+  t.map.update({ graph, regions, currentRegion: 2, selfId: 'ship',
+    players: [{ id: 'ship', position: [11, 7, 19] }], regionCounts: { 2: 1 } }); t.map.show();
+  t.map.update({ connected: false, connectionMessage: '连接已断开，返回飞行重新连接。' });
+  assert.equal(t.map.currentRegion, null); assert.equal(t.map.counts, null);
+  assert.equal(t.map.selfId, null); assert.deepEqual(t.map.players, []);
+  assert.equal(t.map.stars.length, 1); assert.equal(t.map.regions.length, 19);
+  assert.match(t.status.textContent, /实时玩家未连接.*连接已断开/);
+  assert.doesNotMatch(t.status.textContent, /1 人在线|1 个实时玩家/);
+  assert.equal(t.status.attributes['data-state'], 'disconnected');
+  assert.ok([...t.map.buttons.values()].every(b => b.disabled));
+  t.map.buttons.get(0).dispatch('click'); t.map.select(1);
+  t.canvas.dispatch('keydown', { key: 'Enter' }); assert.deepEqual(t.selected, []);
+  assert.equal(t.map.pendingRegion, null); assert.equal(t.map.visible, true); t.map.destroy();
+});
+
+test('region requests stay pending until their authoritative region arrives, and rejection stays in the map', () => {
+  const t = setup(), confirmed = []; t.map.options.onRegionConfirmed = id => confirmed.push(id);
+  t.map.update({ regions, currentRegion: 2, connectionMessage: '已暂停控制，仍可选择区域。' }); t.map.show();
+  t.map.select(0); assert.deepEqual(t.selected, [0]); assert.equal(t.map.currentRegion, 2);
+  assert.equal(t.map.visible, true); assert.equal(t.map.pendingRegion, 0);
+  assert.match(t.status.textContent, /等待服务器确认进入区域 00/);
+  t.map.select(1); assert.deepEqual(t.selected, [0]); assert.equal(t.map.pendingRegion, 0);
+  t.map.update({ currentRegion: 1 }); assert.deepEqual(confirmed, []); assert.equal(t.map.pendingRegion, 0);
+  t.map.rejectRegion('服务器拒绝切区，请检查燃料。');
+  assert.equal(t.map.pendingRegion, null); assert.equal(t.map.visible, true);
+  assert.match(t.status.textContent, /服务器拒绝切区/); assert.equal(t.status.attributes['data-state'], 'error');
+  t.map.select(0); assert.deepEqual(t.selected, [0, 0]);
+  t.map.update({ currentRegion: 0 }); assert.deepEqual(confirmed, [0]);
+  assert.equal(t.map.pendingRegion, null); assert.equal(t.map.buttons.get(0).disabled, true);
+  assert.equal(t.map.buttons.get(2).disabled, false); t.map.destroy();
+});
+
+test('fuel, cooldown, respawn and the current region explain why a jump cannot be requested', () => {
+  for (const [changes, target, reason] of [
+    [{ fuel: 19.9 }, 0, /燃料不足/], [{ hp: 0 }, 0, /重生后/],
+    [{ regionReadyMs: 103500, serverTimeMs: 100000 }, 0, /冷却 4 秒/], [{}, 2, /已在此区域/],
+  ]) {
+    const t = setup(); t.map.update({ regions, currentRegion: 2, ...changes });
+    t.map.select(target); assert.deepEqual(t.selected, []); assert.equal(t.map.pendingRegion, null);
+    assert.equal(t.map.buttons.get(target).disabled, true); assert.match(t.status.textContent, reason);
+    t.map.destroy();
+  }
+  const t = setup(); t.map.update({ regions, currentRegion: 2, fuel: 20, regionReadyMs: 100000, serverTimeMs: 100000 });
+  t.map.select(0); assert.deepEqual(t.selected, [0]); t.map.destroy();
+});
+
+function appFlightMap() {
+  const fs = require('node:fs'), vm = require('node:vm');
+  const source = fs.readFileSync(require('node:path').join(__dirname, '../../src/msg/data/root-web-app.js'), 'utf8');
+  const clientStart = source.indexOf('  if (globalThis.MSGFlightClient?.Client) {');
+  const clientEnd = source.indexOf('  renderer = new globalThis.MSGUniverseRenderer', clientStart);
+  const mapStart = source.indexOf('  if (globalThis.MSGFlatMap?.Map) {', clientEnd);
+  const mapEnd = source.indexOf('  $("pause").setAttribute', mapStart);
+  assert.ok(clientStart >= 0 && clientEnd > clientStart && mapStart > clientEnd && mapEnd > mapStart);
+  const t = setup(), elements = new Map([['region-map-canvas', t.canvas], ['region-map', t.container],
+    ['region-map-status', t.status], ['region-map-actions', t.actions]]), notices = [];
+  const $ = id => { if (!elements.has(id)) elements.set(id, new Element(t.canvas.ownerDocument)); return elements.get(id); };
+  const renderer = { flight: true, clearCount: 0, clearRemoteShips() { this.clearCount++; },
+    stopFlightInput() {}, updateGameHud() {}, receiveFlightHello() {}, receiveFlightSnapshot() {} };
+  const context = { $, renderer, notice: text => notices.push(text),
+    MSGFlatMap: { Map: class { constructor(_, options) { t.map.options = options; return t.map; } } },
+    MSGFlightClient: { Client: class {
+      constructor(handlers) { this.handlers = handlers; this.connected = true; this.sent = []; this.resumed = 0; this.sendResult = true;
+        this.self = { id: 'ship', region: 2, fuel: 100, hp: 100, region_ready_ms: 0 }; this.serverNow = 100000; }
+      chooseRegion(id) { this.sent.push(id); return this.sendResult; }
+      resume() { this.resumed++; }
+    } },
+  };
+  vm.runInNewContext('let flightClient, flatMap;\n' + source.slice(clientStart, clientEnd) + source.slice(mapStart, mapEnd) +
+    '\nglobalThis.client = flightClient;', context);
+  const client = context.client;
+  client.handlers.onHello({ self: client.self, region: 2, regions });
+  const snapshot = region => ({ players: [{ ...client.self, region, position: [11, 7, 19] }], self_id: 'ship', region,
+    region_counts: { [region]: 1 } });
+  client.handlers.onSnapshot(snapshot(2));
+  return { ...t, client, renderer, $, notices, snapshot };
+}
+
+test('app keeps connected pause usable but marks a lost pause disconnected and clears live map data', () => {
+  const t = appFlightMap(); t.map.show(); t.client.handlers.onStatus('suspended');
+  assert.equal(t.map.connected, true); assert.equal(t.map.currentRegion, 2); assert.equal(t.map.players.length, 1);
+  assert.equal(t.map.buttons.get(0).disabled, false);
+  assert.equal(t.$('game-connection').textContent, '已暂停');
+  t.client.connected = false; t.client.self = null; t.client.handlers.onStatus('suspended');
+  assert.equal(t.map.connected, false); assert.deepEqual(t.map.players, []); assert.equal(t.map.counts, null);
+  assert.equal(t.$('game-connection').dataset.state, 'disconnected');
+  assert.match(t.$('game-connection').textContent, /已断开/); assert.match(t.status.textContent, /返回飞行重新连接/);
+  t.map.select(0); assert.deepEqual(t.client.sent, []); assert.equal(t.renderer.clearCount, 1);
+  t.client.connected = true; t.client.self = { id: 'ship', region: 2, fuel: 100, hp: 100, region_ready_ms: 0 };
+  t.client.handlers.onStatus('connected'); t.client.handlers.onHello({ self: t.client.self, region: 2, regions });
+  t.client.handlers.onSnapshot(t.snapshot(2));
+  assert.equal(t.map.currentRegion, 2); assert.equal(t.map.players.length, 1); assert.equal(t.map.buttons.get(0).disabled, false);
+  assert.doesNotMatch(t.status.textContent, /已断开|未连接/); t.map.destroy();
+});
+
+test('app shows recoverable rejection inside the open map and returns to flight only after server confirmation', () => {
+  const t = appFlightMap(); t.map.show(); t.map.select(0);
+  assert.deepEqual(t.client.sent, [0]); assert.equal(t.map.visible, true); assert.equal(t.client.resumed, 0);
+  t.client.handlers.onSnapshot(t.snapshot(2)); assert.equal(t.map.visible, true);
+  t.client.handlers.onError('区域暂不可用，请检查燃料。');
+  assert.match(t.status.textContent, /区域暂不可用/); assert.deepEqual(t.notices, []);
+  assert.equal(t.map.visible, true); assert.equal(t.map.pendingRegion, null);
+  t.map.select(1); assert.deepEqual(t.client.sent, [0, 1]);
+  t.client.self = { ...t.client.self, region: 1, fuel: 80, region_ready_ms: 110000 };
+  t.client.handlers.onSnapshot(t.snapshot(1)); assert.equal(t.map.visible, false); assert.equal(t.client.resumed, 1);
+  assert.equal(t.map.currentRegion, 1); assert.equal(t.map.pendingRegion, null); t.map.destroy();
+});
+
+test('failed sends stay in the map and a late server confirmation cannot steal focus after returning manually', () => {
+  const t = appFlightMap(); t.map.show(); t.client.sendResult = false; t.map.select(0);
+  assert.equal(t.map.pendingRegion, null); assert.equal(t.map.visible, true); assert.match(t.status.textContent, /未发出/);
+  assert.equal(t.client.resumed, 0); t.client.sendResult = true; t.map.select(1);
+  assert.equal(t.map.pendingRegion, 1); t.map.return3D(); assert.equal(t.client.resumed, 1);
+  const focused = t.$('space'); t.canvas.ownerDocument.activeElement = t.$('other-control');
+  t.client.self = { ...t.client.self, region: 1 }; t.client.handlers.onSnapshot(t.snapshot(1));
+  assert.equal(t.map.currentRegion, 1); assert.equal(t.client.resumed, 1);
+  assert.notEqual(t.canvas.ownerDocument.activeElement, focused); t.map.destroy();
 });
