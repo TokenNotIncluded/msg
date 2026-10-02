@@ -45,7 +45,8 @@ const context={document:{getElementById:()=>panel},matchMedia:()=>motion,TextEnc
    if(response?.defer)return await new Promise(resolve=>{resolveFetch=resolve;});
    if(response?.throw)throw new Error('network_failed');
    if(!response)throw new Error('unexpected_fetch');
-   return {ok:response.ok??true,json:async()=>response.body};
+   return {ok:response.ok??true,json:async()=>response.body,
+     headers:{get:name=>response.headers?.[name]??null}};
  }};
 vm.runInNewContext(input.script,context);
 const snapshot=()=>({svg:fields.svg.value,text:fields.text.value,generation:panel.dataset.generation,hidden:form.hidden,
@@ -53,7 +54,7 @@ const snapshot=()=>({svg:fields.svg.value,text:fields.text.value,generation:pane
  successHidden:success.hidden,successText:success.textContent,
  expanded:edit.attrs['aria-expanded'],pressed:pause.attrs['aria-pressed'],image:image.src,status:status.textContent,
  saveDisabled:save.disabled,refreshDisabled:refresh.disabled,svgDisabled:fields.svg.disabled,textDisabled:fields.text.disabled,
- size:size.textContent,requests:structuredClone(requests)});
+ size:size.textContent,quota:quota.textContent,requests:structuredClone(requests)});
 (async()=>{
  for(const action of input.actions){
    if(action.kind==='input'){fields[action.name].value=action.value;await form.emit('input');}
@@ -99,6 +100,35 @@ def value(generation, *, svg='new-svg', text='new-text'):
         'text': text,
         'quota': {'hour_count': 1, 'day_count': 1},
     }
+
+
+def test_public_only_refresh_preserves_user_draft_without_inventing_zero_quota():
+    public = {**value(3), 'quota': None}
+    result = run_editor([
+        {'kind': 'edit'},
+        {'kind': 'input', 'name': 'text', 'value': 'my-draft'},
+        {
+            'kind': 'refresh',
+            'response': {
+                'body': public,
+                'headers': {'X-Msg-Public-Fallback': 'credential-ceiling'},
+            },
+        },
+    ])['final']
+    assert result['text'] == 'my-draft' and result['svg'] == 'new-svg'
+    assert result['generation'] == '3' and '已读取公共内容' in result['status']
+    assert '不代表额度已用完' in result['quota'] and '/5' not in result['quota']
+    assert len(result['requests']) == 1 and result['requests'][0]['body'] is None
+
+
+def test_malformed_refresh_leaves_all_draft_fields_and_generation_untouched():
+    result = run_editor([
+        {'kind': 'edit'},
+        {'kind': 'input', 'name': 'text', 'value': 'my-draft'},
+        {'kind': 'refresh', 'response': {'body': {'svg': 'new-svg', 'generation': 3}}},
+    ])['final']
+    assert result['text'] == 'my-draft' and result['svg'] == 'old-svg'
+    assert result['generation'] == '0' and '草稿未变' in result['status']
 
 
 def test_conflict_refresh_keeps_draft_and_only_submits_changed_field():
