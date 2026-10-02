@@ -1,6 +1,6 @@
 # YubiKey hardware identity
 
-The `yubikey` backend ships with msgctl 0.2.7 by default, using Yubico's official Python SDK. Initial physical-device acceptance uses a YubiKey 5C NFC, firmware 5.8.0, on Linux. Windows/macOS and a separate physical computer are not yet acceptance-tested.
+The `yubikey` signer backend is built into msgctl. Install the `hardware` extra to use Yubico's official Python SDK and card drivers. Initial physical-device acceptance uses a YubiKey 5C NFC, firmware 5.8.0, on Linux. Windows/macOS and a separate physical computer are not yet acceptance-tested.
 
 ## Install
 
@@ -12,11 +12,13 @@ sudo pacman -S --needed pcsclite swig
 sudo systemctl enable --now pcscd.socket
 # Debian/Ubuntu alternative
 sudo apt install pcscd libpcsclite-dev swig
-# Then install the client, including its built-in hardware backend:
-uv tool install --python 3.15 --refresh-package msgctl msgctl==0.2.11
+# Then install the client and hardware drivers from source:
+python -m pip install '.[hardware]'
+# Once a release with the hardware extra is published:
+uv tool install --python 3.15 --force 'msgctl[hardware]'
 ```
 
-The native server is not needed on the client computer. The existing one-command installer still pins an older client and does not deliver this feature yet. Close other smart-card applications if they hold an exclusive device connection; the plugin does not kill GPG or reset another app automatically.
+The native server is not needed on the client computer. The base client and one-command installer support software identities without card drivers; help and hardware signer descriptors also work without them. Using a card requires the `hardware` extra and PC/SC runtime. An unavailable driver returns `yubikey_driver_unavailable` and never falls back to a software key. Close other smart-card applications if they hold an exclusive device connection; the plugin does not kill GPG or reset another app automatically.
 
 ## Create a hardware identity
 

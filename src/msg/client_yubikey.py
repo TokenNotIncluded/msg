@@ -214,8 +214,6 @@ class YubiKeySigner:
         raise Failure('hardware_private_key_not_exportable')
 
     def sign(self, payload, *, purpose):
-        from yubikit.piv import KEY_TYPE, SLOT
-
         message = framed(payload, purpose)
         require(
             len(message) <= MAX_MESSAGE,
@@ -223,6 +221,8 @@ class YubiKeySigner:
             details={'maximum': MAX_MESSAGE, 'bytes': len(message)},
         )
         with device_session(slot_number(self.slot), self.public_key) as session:
+            from yubikit.piv import KEY_TYPE, SLOT
+
             verify_pin(session)
             print('MSG: touch your YubiKey to authorize this signature.', file=sys.stderr)
             signature = Signature(
@@ -247,11 +247,11 @@ def state_operation(method):
 
 @state_operation
 def initialize(state, slot):
-    from yubikit.piv import KEY_TYPE, PIN_POLICY, SLOT, TOUCH_POLICY
-
     require(state.subject is None and state.signer is None, 'identity_already_configured')
     number = slot_number(slot)
     with device_session() as session:
+        from yubikit.piv import KEY_TYPE, PIN_POLICY, SLOT, TOUCH_POLICY
+
         require(metadata_or_none(session, number) is None, 'yubikey_slot_occupied')
         read_directory(session)  # Refuse an unrelated application object before writing any key.
         authenticate_management(session)
@@ -339,8 +339,6 @@ def validate_profile(entry):
 
 @state_operation
 def save_profile(state):
-    from yubikit.piv import KEY_TYPE, SLOT
-
     require(isinstance(state.signer, YubiKeySigner) and state.subject, 'hardware_identity_required')
     signer = state.signer
     body = {
@@ -354,6 +352,8 @@ def save_profile(state):
     message = framed(payload, 'hardware-profile-v1')
     require(len(message) <= MAX_MESSAGE, 'yubikey_message_too_large')
     with device_session(slot_number(signer.slot), signer.public_key) as session:
+        from yubikit.piv import KEY_TYPE, SLOT
+
         directory = read_directory(session)
         profiles = [
             x
