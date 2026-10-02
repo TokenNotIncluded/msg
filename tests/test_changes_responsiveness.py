@@ -375,12 +375,15 @@ async def test_multi_ref_relevance_pass_also_yields(installed, tmp_path, monkeyp
         start = perf_counter()
         owner.checked(await owner.call('discovery.get', {'id': own_file, 'fields': ['id']}))
         read_seconds = perf_counter() - start
+        refs_at_read = seen
+        assert not pending.done() and refs_at_health <= refs_at_read < 32
         result = owner.checked(await pending).data
         assert seen == 32 and not result['items'] and not result['has_more']
         assert result['sync_cursor'] != cursor
         print({
             'relevance_refs': seen,
             'relevance_refs_at_health': refs_at_health,
+            'relevance_refs_at_signed_read': refs_at_read,
             'parallel_signed_read_seconds': round(read_seconds, 3),
         })
     finally:
