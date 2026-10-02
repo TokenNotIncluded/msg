@@ -2,8 +2,10 @@
 
 import os
 import shutil
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -443,6 +445,107 @@ def test_age_subprocess_output_caps_and_timeout_kill_and_reap(tmp_path, monkeypa
     )
     assert time.monotonic() - started < 3
     assert len(spawned) == 1 and spawned[0].returncode is not None
+
+
+def test_age_timeout_kills_plugin_child_holding_pipes(tmp_path, monkeypatch):
+    from msg import client_account_backup as module
+
+    pidfile, executable = tmp_path / 'child.pid', tmp_path / 'fake-age'
+    executable.write_text(
+        f'#!{sys.executable}\nimport subprocess, sys, time\n'
+        'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])\n'
+        f'open({str(pidfile)!r}, "w").write(str(child.pid))\n'
+        'time.sleep(60)\n'
+    )
+    executable.chmod(0o700)
+    monkeypatch.setattr(module.shutil, 'which', lambda name: str(executable))
+    monkeypatch.setattr(module, 'AGE_TIMEOUT', 0.5)
+    started = time.monotonic()
+    with pytest.raises(Failure, match='age_operation_failed'):
+        module._age(['--decrypt'], b'inert-fixture')
+    assert time.monotonic() - started < 4
+    child_pid = int(pidfile.read_text())
+    status = Path(f'/proc/{child_pid}/status')
+    for _ in range(50):
+        if not status.exists() or '\nState:\tZ' in status.read_text():
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail('age plugin child remained running after timeout')
+
+
+def test_age_separate_group_can_read_foreground_tty_and_restores_caller(tmp_path):
+    executable = tmp_path / 'tty-age'
+    executable.write_text(
+        f'#!{sys.executable}\nimport os\n'
+        'terminal = os.open("/dev/tty", os.O_RDWR)\n'
+        'os.write(terminal, b"READY\\n")\n'
+        'value = os.read(terminal, 32)\n'
+        'os.close(terminal)\n'
+        'os.write(1, value)\n'
+    )
+    executable.chmod(0o700)
+    # A fresh subprocess avoids forking pytest's possible background threads.
+    driver = """import os, pty, select, signal, sys, time
+from msg import client_account_backup as module
+module.shutil.which = lambda name: sys.argv[1]
+module.AGE_TIMEOUT = 3
+pid, terminal = pty.fork()
+if pid == 0:
+    original_signal = signal.getsignal(signal.SIGTTOU)
+    try:
+        assert module._age([], b"inert") == b"X\\n"
+        fd = os.open("/dev/tty", os.O_RDWR)
+        assert os.tcgetpgrp(fd) == os.getpgrp()
+        assert signal.getsignal(signal.SIGTTOU) == original_signal
+        os.close(fd)
+        print("DONE", flush=True)
+        os._exit(0)
+    except BaseException as exc:
+        print("ERROR:" + type(exc).__name__, flush=True)
+        os._exit(1)
+body, sent = b"", False
+deadline = time.monotonic() + 5
+try:
+    while time.monotonic() < deadline:
+        if select.select([terminal], [], [], 0.1)[0]:
+            try:
+                chunk = os.read(terminal, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            body += chunk
+            if b"READY" in body and not sent:
+                os.write(terminal, b"X\\n")
+                sent = True
+        ended, status = os.waitpid(pid, os.WNOHANG)
+        if ended:
+            assert status == 0 and b"DONE" in body, (status, body)
+            sys.exit(0)
+    ended, status = os.waitpid(pid, os.WNOHANG)
+    if not ended:
+        ended, status = os.waitpid(pid, 0)
+    assert ended and status == 0 and b"DONE" in body, (status, body)
+finally:
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except ChildProcessError:
+        pass
+    os.close(terminal)
+"""
+    result = subprocess.run(
+        [sys.executable, '-c', driver, str(executable)],
+        env=os.environ | {'PYTHONPATH': str(Path(__file__).parents[1] / 'src')},
+        capture_output=True,
+        timeout=8,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode()
 
 
 @pytest.mark.parametrize(

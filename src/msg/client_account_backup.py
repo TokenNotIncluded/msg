@@ -10,8 +10,10 @@ import os
 import re
 import selectors
 import shutil
+import signal
 import stat
 import subprocess
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -31,6 +33,49 @@ MAX_DEPTH = 12
 SCOPES = ('config', 'data', 'state')
 AGE_TIMEOUT = 180
 MAX_AGE_STDERR = 65536
+
+
+def _age_terminal(process_id):
+    """Let a separate age process group use our foreground terminal when present."""
+    if threading.current_thread() is not threading.main_thread():
+        return None
+    try:
+        descriptor = os.open('/dev/tty', os.O_RDWR | os.O_NOCTTY)
+    except OSError:
+        return None
+    previous_signal = signal.getsignal(signal.SIGTTOU)
+    try:
+        previous_group = os.tcgetpgrp(descriptor)
+        if previous_group != os.getpgrp():
+            os.close(descriptor)
+            return None
+        signal.signal(signal.SIGTTOU, signal.SIG_IGN)
+        os.tcsetpgrp(descriptor, process_id)
+        os.killpg(process_id, signal.SIGCONT)
+        return descriptor, previous_group, previous_signal, process_id
+    except OSError:
+        try:
+            if os.tcgetpgrp(descriptor) == process_id:
+                os.tcsetpgrp(descriptor, previous_group)
+        except OSError:
+            pass
+        signal.signal(signal.SIGTTOU, previous_signal)
+        os.close(descriptor)
+        return None
+
+
+def _restore_age_terminal(terminal):
+    if terminal is None:
+        return
+    descriptor, previous_group, previous_signal, process_id = terminal
+    try:
+        if os.tcgetpgrp(descriptor) == process_id:
+            os.tcsetpgrp(descriptor, previous_group)
+    except OSError:
+        pass
+    finally:
+        signal.signal(signal.SIGTTOU, previous_signal)
+        os.close(descriptor)
 
 
 def _path(value):
@@ -206,18 +251,20 @@ def _identity(files, server):
 def _age(arguments, data, *, pass_fds=()):
     executable = shutil.which('age')
     require(executable is not None, 'age_dependency_unavailable')
-    process = None
+    process, terminal = None, None
     output, stderr_bytes, written = bytearray(), 0, 0
     deadline = time.monotonic() + AGE_TIMEOUT
     try:
-        # Preserve the caller's terminal session for age/plugin PIN and touch prompts.
+        # A distinct group permits bounded cleanup of plugins too, without killing msg.
         process = subprocess.Popen(
             [executable, *arguments],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             pass_fds=pass_fds,
+            process_group=0,
         )
+        terminal = _age_terminal(process.pid)
         with selectors.DefaultSelector() as poller:
             for stream, kind in (
                 (process.stdin, 'input'),
@@ -269,14 +316,18 @@ def _age(arguments, data, *, pass_fds=()):
         raise Failure('age_operation_failed') from None
     finally:
         if process is not None:
-            if process.poll() is None:
-                try:
-                    process.kill()
-                except ProcessLookupError:
-                    pass
-            process.wait()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             for stream in (process.stdin, process.stdout, process.stderr):
                 stream.close()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                raise Failure('age_cleanup_failed') from None
+            finally:
+                _restore_age_terminal(terminal)
 
 
 def _write_new(parent, name, raw):
