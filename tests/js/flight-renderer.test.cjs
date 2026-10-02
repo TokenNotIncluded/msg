@@ -142,6 +142,22 @@ test('a modal neutralizes flight axes and fire without rotating or changing auth
   assert.equal(r.localShot, undefined);
   delete globalThis.document.querySelector;
 });
+test('death clears client-held and pending controls before respawn without suspending the connection', () => {
+  const r = renderer(); r.updateFlight(0); r.keys = new Set(['w','d','e',' ']); r.sendFlightInput();
+  r.pointers = new Map(); r.flightPointers = new Map(); r.flightSticks = [];
+  r.network.pendingActions = new Set(['dash']); let cleared = 0;
+  r.network.clearInput = function () {
+    cleared++; this.pendingActions.clear(); this.input={throttle:0,strafe:0,lift:0,brake:false,actions:[],yaw:this.self.yaw,pitch:this.self.pitch};
+  };
+  r.network.suspend = () => {throw Error('death must keep automatic respawn connected');};
+  r.network.self = {...self(), hp:0, yaw:.8, pitch:-.2};
+  r.receiveFlightSnapshot({players:[r.network.self],events:[]});
+  assert.equal(cleared,1);assert.equal(r.network.input.throttle,0);assert.equal(r.network.input.strafe,0);assert.equal(r.network.input.lift,0);
+  assert.deepEqual(r.network.input.actions,[]);assert.equal(r.network.pendingActions.size,0);assert.equal(r.keys.size,0);
+  r.network.self = {...self(), yaw:1.2, pitch:.3};
+  r.receiveFlightSnapshot({players:[r.network.self],events:[]});
+  assert.equal(cleared,2);assert.equal(r.flight.yaw,-1.2);assert.equal(r.flight.pitch,-.3);assert.equal(r.flight.yawRate,0);
+});
 
 test('shared bitmap removes every glyph from GPU/software dust only after confirmation and restores availability', () => {
   const r=renderer(); r.sceneSeed='preview'; r.tokenNodes=new Map();
