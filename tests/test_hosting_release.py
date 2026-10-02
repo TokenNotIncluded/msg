@@ -467,3 +467,80 @@ async def test_real_pointer_lock_requires_exact_pin_and_allows_relative_mouse(
                 assert await page.evaluate('document.pointerLockElement') is None
         finally:
             await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_packaged_ascii_executes_through_real_pg_route(installed, monkeypatch):
+    """The actual package asset must run with the production pin, not a mock grant."""
+    from playwright.async_api import async_playwright
+
+    body = hosted_release.ascii_release()
+    assert body is not None, 'The reviewed release HTML must be packaged and pinned.'
+    assert digest(body) == hosted_release.ASCII_RELEASE_DIGEST
+    monkeypatch.setitem(globals(), 'APPROVED', body)
+    app, _ = installed
+    await publish_fixture(app, monkeypatch)
+    async with browser_server(app) as (url, requests), async_playwright() as tool:
+        browser = await tool.chromium.launch(
+            executable_path=os.environ.get('MSG_BROWSER_PATH') or shutil.which('chromium')
+        )
+        try:
+            page = await browser.new_page()
+
+            async def wait_state(predicate, *, timeout=5):
+                # Poll from the debugger instead of invoking an eval loop in
+                # the page, which intentionally has no unsafe-eval grant.
+                async with asyncio.timeout(timeout):
+                    while not await page.evaluate(predicate):
+                        await asyncio.sleep(0.02)
+
+            response = await page.goto(url + '/@ascii-release-owner/web/index.html')
+            assert response.status == 200
+            assert await response.body() == body
+            headers = await response.all_headers()
+            expected = hosting.hosted_headers(
+                hosted_release.ASCII_SITE_ID, 'index.html', digest(body)
+            )
+            assert headers['content-security-policy'] == expected['Content-Security-Policy']
+            assert 'allow-same-origin' not in headers['content-security-policy']
+            assert headers['content-security-policy'].split(';', 1)[0].split() == [
+                'sandbox',
+                'allow-scripts',
+                'allow-pointer-lock',
+            ]
+            assert 'set-cookie' not in headers and 'access-control-allow-origin' not in headers
+            assert await page.evaluate('window.origin') == 'null'
+            assert await page.locator('a[href], form, iframe, [src]').count() == 0
+            await wait_state(
+                '() => Number(document.querySelector("#world").dataset.time) >= 8.5',
+                timeout=15,
+            )
+            assert len(await page.locator('#world').text_content()) > 1000
+            before = len(requests)
+            await page.locator('#coffee').click()
+            await wait_state('() => document.querySelector("#world").dataset.sipping === "true"')
+            await page.locator('#stance').click()
+            await wait_state('() => document.querySelector("#world").dataset.stance === "standing"')
+            position = await page.locator('#world').get_attribute('data-position')
+            await page.keyboard.down('w')
+            try:
+                async with asyncio.timeout(5):
+                    while await page.locator('#world').get_attribute('data-position') == position:
+                        await asyncio.sleep(0.02)
+            finally:
+                await page.keyboard.up('w')
+            await page.locator('#world').click()
+            await wait_state(
+                '() => document.pointerLockElement === document.querySelector("#world")'
+            )
+            yaw = await page.locator('#world').get_attribute('data-yaw')
+            await page.mouse.move(30, 20)
+            async with asyncio.timeout(5):
+                while await page.locator('#world').get_attribute('data-yaw') == yaw:
+                    await asyncio.sleep(0.02)
+            await page.keyboard.press('Escape')
+            await wait_state('() => document.pointerLockElement === null')
+            assert '继续' in await page.locator('#pause').text_content()
+            assert len(requests) == before
+        finally:
+            await browser.close()

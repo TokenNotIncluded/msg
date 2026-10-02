@@ -14,8 +14,8 @@ from msg.core.codec import digest
 ASCII_SITE_ID = 'r_27e7106a06c8432187567cb506cf7f6f'
 ASCII_FILE_PATH = 'index.html'
 ASCII_ASSET = 'lightjunction-ascii.html'
-# Filled only after the author hands off the reviewed candidate.
-ASCII_RELEASE_DIGEST = None
+# Whole-file fingerprint of the reviewed and packaged release.
+ASCII_RELEASE_DIGEST = 'sha256:80c8d39141b7e60e921352809615c5485ddcbc1bbc09cdd07ba792fda0fc31b1'
 
 
 @lru_cache(maxsize=1)
