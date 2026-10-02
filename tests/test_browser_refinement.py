@@ -134,7 +134,10 @@ def test_user_groups_are_account_details_instead_of_navigation():
     document = document_html('# Hello', account=account).decode().split('<script>')[0]
     assert 'href="/&amp;admins"' not in document
     home = home_html(account=account).decode().split('<script>')[0]
-    assert '<details class="account-groups"><summary>User groups / 用户分类</summary>' in home
+    assert (
+        '<details class="account-groups"><summary data-i18n="user_groups">User groups</summary>'
+        in home
+    )
     assert 'href="/&amp;admins"' in home
     for nav in home.split('<nav')[1:]:
         assert '&amp;admins' not in nav.split('</nav>')[0]

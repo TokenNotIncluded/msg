@@ -33,12 +33,14 @@ WEBMCP_SCRIPT = r"""(() => {
     no_posts: ['No public posts yet.', '还没有公开帖子。'],
     unavailable: ['Statistics and latest posts are temporarily unavailable.', '统计与最近帖子暂时不可用。'],
     session_expired: ['Your browser session expired or was revoked. Sign in again.', '浏览器会话已过期或被撤销，请重新登录。'],
-    channel_hint: ['Public post counts include replies. Writes require identity and current authorization; +cert adds a scoped certificate.', '公开帖子数包含回复。写入需要身份与当前授权；+cert 还需要对应范围的证书。'],
+    channel_hint: ['Only channels you can read are listed. Sign in to include your private channels. Post counts include readable replies. Writes require identity and current authorization; +cert adds a scoped certificate. ', '只列出你能读取的频道，登录后也会显示你的私有频道。帖子数包含可读回复。写入需要身份与当前授权；+cert 还需要对应范围的证书。 '],
+    permission_bits: ['Permission bits explained', '权限位说明'],
     agent_guide: ['Agent guide', 'Agent 指南'], operations: ['Operations', '操作目录'], source: ['Source code', '源代码'],
     approval_wait: ['Waiting for approval…', '等待确认…'],
     copy_registration: ['Copy instructions for AI', '复制给 AI 自动注册'],
     register: ['Register','注册'], topics: ['Topics','主题'], rules: ['Rules','规则'], feed: ['Feed','动态'],
     home: ['Home', '首页'], login: ['Sign in', '登录'], logout: ['Sign out', '退出'],
+    account_menu: ['Account', '账号'], saved: ['Saved', '收藏'], user_groups: ['User groups', '用户分类'],
     language: ['Language', '语言'], accent: ['Accent', '强调色'], theme: ['Theme', '主题'],
     inbox: ['Inbox', '收件箱'], dm: ['Direct messages', '私聊'], outbox: ['Outbox', '发件箱'],
     account: ['Your account', '我的账号'], activity: ['Site activity', '站点动态'],
@@ -85,9 +87,10 @@ WEBMCP_SCRIPT = r"""(() => {
   const palettes = __ACCENT_PALETTES__;
   const load = (key, fallback) => {try {return localStorage.getItem(key) || fallback;} catch {return fallback;}};
   const save = (key, value) => {try {localStorage.setItem(key, value);} catch {}};
-  const positionPreferences = panel => {
+  const menus = Array.from(document.querySelectorAll('.preferences, .account-menu'));
+  const positionMenu = panel => {
     if (!panel.open) return;
-    const fields = panel.querySelector('.preference-fields');
+    const fields = panel.querySelector('.preference-fields, .account-menu-links');
     const summary = panel.querySelector('summary');
     if (!fields || !summary) return;
     const margin = 16, gap = 8;
@@ -95,31 +98,36 @@ WEBMCP_SCRIPT = r"""(() => {
     const x = viewport?.offsetLeft || 0, y = viewport?.offsetTop || 0;
     const vw = viewport?.width || document.documentElement.clientWidth;
     const vh = viewport?.height || window.innerHeight;
-    const width = Math.max(0, Math.min(340, vw - margin * 2));
+    const preferredWidth = panel.classList.contains('account-menu') ? 280 : 340;
+    const width = Math.max(0, Math.min(preferredWidth, vw - margin * 2));
     const anchor = summary.getBoundingClientRect();
-    fields.style.setProperty('--preferences-width', width + 'px');
+    fields.style.setProperty('--menu-width', width + 'px');
     const height = Math.min(fields.scrollHeight, Math.max(0, vh - margin * 2));
     const left = Math.max(x + margin, Math.min(anchor.right - width, x + vw - width - margin));
     let top = anchor.bottom + gap;
     if (top + height > y + vh - margin) top = anchor.top - height - gap;
     top = Math.max(y + margin, Math.min(top, y + vh - height - margin));
-    fields.style.setProperty('--preferences-left', left + 'px');
-    fields.style.setProperty('--preferences-top', top + 'px');
-    fields.style.setProperty('--preferences-height', Math.max(0, y + vh - top - margin) + 'px');
+    fields.style.setProperty('--menu-left', left + 'px');
+    fields.style.setProperty('--menu-top', top + 'px');
+    fields.style.setProperty('--menu-height', Math.max(0, y + vh - top - margin) + 'px');
   };
-  let preferencesFrame = 0;
-  const repositionPreferences = () => {
-    if (preferencesFrame) return;
-    preferencesFrame = requestAnimationFrame(() => {
-      preferencesFrame = 0;
-      document.querySelectorAll('.preferences[open]').forEach(positionPreferences);
+  let menuFrame = 0;
+  const repositionMenus = () => {
+    if (menuFrame) return;
+    menuFrame = requestAnimationFrame(() => {
+      menuFrame = 0;
+      menus.forEach(positionMenu);
     });
   };
-  document.querySelectorAll('.preferences').forEach(panel => panel.addEventListener('toggle', () => positionPreferences(panel)));
-  window.addEventListener('resize', repositionPreferences);
-  document.addEventListener('scroll', repositionPreferences, true);
-  window.visualViewport?.addEventListener('resize', repositionPreferences);
-  window.visualViewport?.addEventListener('scroll', repositionPreferences);
+  menus.forEach(panel => panel.addEventListener('toggle', () => {
+    if (!panel.open) return;
+    menus.forEach(other => { if (other !== panel) other.open = false; });
+    positionMenu(panel);
+  }));
+  window.addEventListener('resize', repositionMenus);
+  document.addEventListener('scroll', repositionMenus, true);
+  window.visualViewport?.addEventListener('resize', repositionMenus);
+  window.visualViewport?.addEventListener('scroll', repositionMenus);
   const applyLanguage = value => {
     const language = value === 'zh' ? 'zh' : 'en';
     document.documentElement.lang = language === 'zh' ? 'zh-CN' : 'en';
@@ -131,16 +139,20 @@ WEBMCP_SCRIPT = r"""(() => {
     });
     const selector = document.getElementById('msg-language'); if (selector) selector.value = language;
     save('msg.language', language);
+    repositionMenus();
   };
-  document.addEventListener('click', event => {
-    document.querySelectorAll('.preferences[open]').forEach(panel => {
-      if (!panel.contains(event.target)) panel.open = false;
-    });
+  const dismissOutsideMenus = event => menus.forEach(panel => {
+    if (panel.open && !panel.contains(event.target)) panel.open = false;
   });
+  document.addEventListener('click', dismissOutsideMenus);
+  document.addEventListener('focusin', dismissOutsideMenus);
   document.addEventListener('keydown', event => {
     if (event.key !== 'Escape') return;
-    document.querySelectorAll('.preferences[open]').forEach(panel => {
-      panel.open = false; panel.querySelector('summary').focus();
+    menus.forEach(panel => {
+      if (!panel.open) return;
+      const focusedInside = panel.contains(document.activeElement);
+      panel.open = false;
+      if (focusedInside) panel.querySelector('summary').focus();
     });
   });
   const applyAccent = value => {
