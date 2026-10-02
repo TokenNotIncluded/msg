@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import difflib
 import fnmatch
 import re as re
@@ -147,6 +148,9 @@ async def normalize_search_scope(app, ctx, request, tx, scope_spec):
 
 
 async def visible(app, ctx, request, tx, rid):
+    # Database and certificate checks below can be synchronous despite their
+    # async interface. Give other HTTP requests a turn between candidates.
+    await asyncio.sleep(0)
     try:
         await check_access(app, ctx, request, tx, rid, 'read')
         return True
