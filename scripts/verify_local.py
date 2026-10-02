@@ -33,6 +33,7 @@ REQUIRED_PACKAGES = (
     'referencing',
     'starlette',
     'uvicorn',
+    'websockets',
     'aiohttp',
     'dnspython',
     'graphql-core',
