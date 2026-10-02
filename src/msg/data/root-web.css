@@ -11,6 +11,7 @@
   font-display: swap;
 }
 :root {
+  --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
   --ink: #e7e7e7;
   --muted: #969696;
   --quiet: #5e5e5e;
@@ -33,7 +34,10 @@
 }
 body {
   margin: 0;
+  scrollbar-color: var(--muted) var(--bg);
 }
+::selection { background: var(--ink); color: var(--bg); }
+input, textarea { caret-color: var(--ink); }
 button,
 input,
 textarea {
@@ -925,4 +929,145 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 @media (prefers-reduced-motion: reduce) {
   [data-intro] { transition: none !important; }
   body.exploring [data-intro] { transform: none; }
+}
+
+/* Flight is an operating view. These values are scene units from the game,
+   never account presence, balance, or an encryption/security claim. */
+:root {
+  --hud-text: #efefed;
+  --hud-muted: #aaa;
+  --hud-line: #414141;
+  --hud-surface: #090909ed;
+  --hud-signal: #b4d9c3;
+  --hud-warning: #ffc5ac;
+  --hud-danger: #ffb4b4;
+  --hud-gap: 18px;
+  --hud-edge: max(24px, env(safe-area-inset-left));
+}
+#pilot-toggle { min-width: 66px; }
+#pilot-toggle[aria-pressed="true"] { color: #111; background: var(--hud-text); }
+.piloting .coordinates, .piloting #drift, .piloting .expedition,
+.piloting .flight-controls > p, .piloting .flightbar .telemetry { display: none; }
+.piloting .topbar { height: 76px; }
+.piloting .switcher { background: transparent; padding: 0; border-radius: 2px; }
+.piloting .switcher button { border-radius: 2px; min-height: 44px; }
+.piloting .topbar, .piloting .flightbar { font-family: var(--mono); }
+.piloting .topbar .brand b { letter-spacing: -.03em; }
+.piloting #space { cursor: crosshair; }
+.piloting .flightbar { justify-content: center; align-items: center; bottom: max(20px, env(safe-area-inset-bottom)); }
+.piloting .control-capsule { border-radius: 2px; gap: 4px; padding: 4px; border: 1px solid var(--hud-line); background: var(--hud-surface); }
+.piloting .control-capsule button { border-radius: 2px; font: 12px/1.5 var(--mono); }
+.piloting .status { bottom: max(84px, calc(env(safe-area-inset-bottom) + 72px)); border-radius: 2px; font: 12px/1.7 var(--mono); }
+#pilot-hud { position: absolute; z-index: 4; inset: auto 0 154px; pointer-events: none; color: var(--hud-text); font-family: var(--mono); }
+.pilot-readout { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 18px; font: 12px/1.5 var(--mono); color: var(--hud-muted); }
+.pilot-readout strong { color: var(--hud-text); font-size: 20px; font-weight: 400; font-variant-numeric: tabular-nums; }
+#pilot-inspect { pointer-events: auto; max-width: min(44vw, 260px); min-height: 44px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 12px var(--mono); background: var(--hud-surface); border-radius: 2px; }
+.pilot-reticle { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; transform: translate(-50%, -50%); pointer-events: none; opacity: .6; }
+.pilot-reticle::before, .pilot-reticle::after { content: ""; position: absolute; background: var(--hud-text); }
+.pilot-reticle::before { width: 12px; height: 1px; left: 2px; top: 8px; }
+.pilot-reticle::after { width: 1px; height: 12px; left: 8px; top: 2px; }
+#pilot-reticle { display: none; }
+.piloting #pilot-reticle { display: block; }
+.pilot-touch-controls { display: none; }
+[data-flight-key] { min-width: 44px; min-height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; pointer-events: auto; border: 1px solid var(--hud-line); border-radius: 2px; color: var(--hud-text); background: var(--hud-surface); font: 16px var(--mono); padding: 8px; }
+[data-flight-key].held { color: #111; background: var(--hud-text); }
+.pilot-pad { display: grid; grid-template-columns: repeat(3, 44px); gap: 4px; }
+.pilot-pad .up { grid-column: 2; }
+.pilot-pad .left { grid-column: 1; grid-row: 2; }
+.pilot-pad .down { grid-column: 2; grid-row: 2; }
+.pilot-pad .right { grid-column: 3; grid-row: 2; }
+.pilot-throttle { display: flex; gap: 6px; align-items: flex-end; }
+.pilot-throttle [data-flight-key="w"] { background: var(--hud-text); color: #111; }
+.pilot-throttle [data-flight-key="w"].held { background: #fff; }
+
+#game-hud { position: absolute; z-index: 4; top: 100px; left: var(--hud-edge); width: min(410px, calc(100% - 48px)); color: var(--hud-text); font: 12px/1.7 var(--mono); pointer-events: none; }
+.game-session { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-bottom: 12px; }
+#game-connection { color: var(--hud-muted); font-size: 11px; letter-spacing: .04em; }
+#game-connection[data-state="connected"] { color: var(--hud-signal); }
+#game-connection:is([data-state="stale"], [data-state="connecting"]) { color: var(--hud-warning); }
+#game-connection:is([data-state="disconnected"], [data-state="error"]) { color: var(--hud-danger); }
+#game-region { color: var(--hud-text); min-height: 44px; pointer-events: auto; font: 12px var(--mono); padding: 8px 0; }
+#game-region:hover { text-decoration: underline; text-underline-offset: 5px; }
+.game-vitals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; max-width: 280px; }
+.game-vital { min-width: 0; display: grid; grid-template-columns: 1fr auto; align-items: baseline; gap: 5px 12px; }
+.game-vital > :first-child { color: var(--hud-muted); font-size: 11px; }
+.game-vital output, #game-hp, #game-fuel { color: var(--hud-text); font-size: 18px; font-weight: 400; font-variant-numeric: tabular-nums; }
+.game-vital[data-critical="true"] output, .game-vital[data-critical="true"] .game-meter { color: var(--hud-danger); }
+.game-meter { grid-column: 1 / -1; width: 100%; height: 2px; margin: 0; border: 0; border-radius: 0; appearance: none; background: #303030; color: var(--hud-text); overflow: hidden; }
+.game-meter::-webkit-progress-bar { background: #303030; }
+.game-meter::-webkit-progress-value { background: currentColor; }
+.game-meter::-moz-progress-bar { background: currentColor; }
+#game-score, #game-respawn { font-variant-numeric: tabular-nums; }
+#game-respawn { margin-top: 12px; color: var(--hud-warning); }
+#game-actions { position: absolute; z-index: 5; left: 50%; bottom: max(86px, calc(env(safe-area-inset-bottom) + 72px)); transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; font-family: var(--mono); }
+.game-action { position: relative; display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 4px 12px; min-width: 92px; min-height: 48px; padding: 10px 12px; border: 1px solid var(--hud-line); border-radius: 2px; background: var(--hud-surface); color: var(--hud-text); text-align: left; font: 12px/1.5 var(--mono); touch-action: manipulation; }
+.game-action:hover:not(:disabled), .game-action:focus-visible { background: #202020; }
+.game-action:disabled { opacity: 1; color: var(--hud-muted); cursor: default; border-color: #303030; }
+.game-action[data-active="true"] { background: var(--hud-text); color: #111; }
+.game-action kbd { margin: 0; padding: 0; border: 0; border-radius: 0; font: 11px var(--mono); color: var(--hud-muted); text-align: right; }
+.game-cooldown { font: 11px var(--mono); color: var(--hud-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.game-key-legend { color: var(--hud-muted); text-align: center; margin: 10px 0 0; font: 11px/1.8 var(--mono); }
+.game-key-legend kbd { margin: 0 4px 0 0; padding: 0; border: 0; color: var(--hud-text); font: inherit; }
+.game-combat-controls { display: flex; gap: 8px; }
+
+#region-map { position: absolute; z-index: 7; top: 96px; bottom: max(82px, calc(env(safe-area-inset-bottom) + 70px)); left: max(24px, calc((100% - 700px) / 2)); width: min(700px, calc(100% - 48px)); overflow: auto; padding: 20px; background: #070707f5; border: 1px solid var(--hud-line); border-radius: 2px; color: var(--hud-text); font: 12px/1.7 var(--mono); scrollbar-color: var(--hud-muted) #070707; }
+.region-map-head, #region-map > .panel-top { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+#region-map h2 { margin: 0; font: 16px/1.5 var(--mono); letter-spacing: 0; }
+#region-map-close { min-height: 44px; padding: 10px 0 10px 16px; font: 12px var(--mono); }
+#region-map-canvas { display: block; width: 100%; aspect-ratio: 4 / 3; max-height: 52dvh; touch-action: none; background: #050505; outline-offset: 4px; }
+#region-map-status, .region-map-note { color: var(--hud-muted); font: 12px/1.7 var(--mono); margin: 12px 0; overflow-wrap: anywhere; }
+#region-map-actions, .region-map-tools, .region-map-regions { display: flex; flex-wrap: wrap; gap: 6px; }
+#region-map-actions button, .region-map-tools button, .region-map-regions button { min-height: 44px; min-width: 44px; padding: 10px 14px; border: 1px solid var(--hud-line); border-radius: 2px; color: var(--hud-muted); font: 12px var(--mono); background: transparent; }
+#region-map-actions button[aria-pressed="true"], .region-map-regions button[aria-pressed="true"] { background: var(--hud-text); color: #111; border-color: var(--hud-text); }
+#region-map-actions button:hover:not(:disabled), .region-map-tools button:hover:not(:disabled), .region-map-regions button:hover:not(:disabled) { color: var(--hud-text); border-color: var(--hud-text); }
+
+@media (pointer: coarse), (max-width: 800px) {
+  :root { --hud-edge: max(16px, env(safe-area-inset-left)); }
+  .piloting #universe, #universe.piloting { height: 100dvh; min-height: 0; }
+  .piloting .topbar { height: 68px; padding-inline: 16px; gap: 8px; }
+  .piloting .switcher { top: 72px; left: 16px; }
+  .piloting .switcher button { padding: 8px 12px; }
+  .piloting .top-actions { gap: 4px; }
+  .piloting .top-actions button, .piloting .top-actions a { min-height: 44px; padding-inline: 8px; display: inline-flex; align-items: center; font-size: 12px; }
+  #game-hud { top: 122px; width: calc(100% - 32px); }
+  .game-session { justify-content: space-between; gap: 4px 12px; margin-bottom: 8px; }
+  .game-vitals { max-width: 260px; gap: 8px 24px; }
+  #game-actions { left: auto; right: max(16px, env(safe-area-inset-right)); bottom: max(238px, calc(env(safe-area-inset-bottom) + 222px)); transform: none; gap: 6px; }
+  .game-action { min-width: 62px; min-height: 48px; padding: 8px; grid-template-columns: 1fr; gap: 2px; text-align: center; }
+  .game-action kbd { display: none; }
+  .game-combat-controls { gap: 6px; }
+  #pilot-hud { bottom: max(80px, calc(env(safe-area-inset-bottom) + 66px)); }
+  .pilot-readout { justify-content: flex-start; padding-inline: 16px; gap: 12px; }
+  .pilot-readout strong { font-size: 16px; }
+  #pilot-inspect { max-width: calc(100% - 110px); background: transparent; padding-inline: 0; }
+  .pilot-touch-controls { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; padding: 10px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+  .game-key-legend { display: none; }
+  .piloting .flightbar { left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; gap: 0; }
+  .piloting .control-capsule { gap: 2px; }
+  .piloting .status { top: 224px; bottom: auto; width: max-content; max-width: calc(100% - 32px); }
+  #region-map { top: 78px; bottom: max(72px, calc(env(safe-area-inset-bottom) + 60px)); left: 12px; width: calc(100% - 24px); padding: 16px; }
+  #region-map-canvas { aspect-ratio: 1 / 1; max-height: 50dvh; }
+  #region-map h2 { font-size: 15px; }
+}
+@media (max-width: 360px) {
+  .piloting .top-actions #origin { display: none; }
+  .game-vitals { max-width: 236px; }
+  .game-action { min-width: 58px; }
+  .pilot-throttle { gap: 4px; }
+  .pilot-touch-controls { gap: 8px; }
+}
+@media (max-height: 560px) and (orientation: landscape) {
+  .piloting .topbar { height: 56px; }
+  .piloting .switcher { position: static; }
+  #game-hud { top: 64px; width: min(300px, calc(100% - 32px)); }
+  .game-session { margin-bottom: 4px; }
+  .game-vitals { max-width: 220px; }
+  .piloting .status { top: 150px; }
+  #pilot-hud { bottom: max(64px, calc(env(safe-area-inset-bottom) + 50px)); }
+  .pilot-readout { justify-content: flex-end; padding-right: 18px; }
+  .pilot-touch-controls { padding-top: 4px; }
+  #game-actions { bottom: auto; top: 72px; right: 16px; }
+  .piloting .flightbar { bottom: max(8px, env(safe-area-inset-bottom)); }
+  #region-map { top: 16px; bottom: 16px; max-width: 720px; }
+  #region-map-canvas { max-height: 44dvh; aspect-ratio: 2 / 1; }
 }
