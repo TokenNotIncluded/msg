@@ -20,6 +20,12 @@ from msg.security.quarantine import RuntimeGeneration, require_live_authority
 FOLLOW_OPERATIONS = frozenset({'communication.follow@1', 'communication.unfollow@1'})
 
 
+def _require_unmarked(app):
+    # Re-resolve the current/legacy marker at each check, including after PIN input.
+    marker = app.settings.recovery_marker
+    require(not marker.exists() and not marker.is_symlink(), 'recovery_quarantined')
+
+
 async def _subject(tx, reference):
     require(type(reference) is str, 'invalid_follow_repair_subject')
     if reference.startswith('@'):
@@ -147,11 +153,7 @@ async def open_for_repair(config_dir):
     app = Application(load_settings(config_dir))
     app.metadata = PostgresMetadataStore(app.settings.server.postgres_dsn, initialize=False)
     try:
-        require(
-            not app.settings.recovery_marker.exists()
-            and not app.settings.recovery_marker.is_symlink(),
-            'recovery_quarantined',
-        )
+        _require_unmarked(app)
         trust = loads(app.settings.trust_file.read_bytes())
         require(
             set(trust) == {'version', 'public_key', 'certificate'} and trust['version'] == 1,
@@ -181,6 +183,7 @@ async def repair_follows(app, subject, signer, *, key_id=None, expected_digest, 
     require(type(operator) is str and bool(operator), 'follow_repair_operator_required')
     async with app.metadata.transaction(write=True) as tx:
         app.runtime_generation.require_current(tx)
+        _require_unmarked(app)
         require(
             await root_verifier(tx, now=app.clock()) == signer.public_key,
             'root_key_mismatch',
@@ -217,6 +220,7 @@ async def repair_follows(app, subject, signer, *, key_id=None, expected_digest, 
             resources=(ResourceRef(id=identity.resource_id),),
             data={**statement, 'signature': signature},
         )
+        _require_unmarked(app)
         await tx.append_audit(
             AuditEvent(
                 event=event,
