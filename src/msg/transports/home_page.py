@@ -15,6 +15,7 @@ from msg.transports.browser_style import (
     SKIP_LINK,
     THEME_CSS as THEME_CSS,
 )
+from msg.transports.code_views import CODE_CSS, CODE_HASH, CODE_SCRIPT, markdown_renderer
 from msg.transports.document_outline import (
     CSS as OUTLINE_CSS,
     HASH as OUTLINE_HASH,
@@ -40,7 +41,7 @@ from msg.transports.wiki_actions import WIKI_HASH, WIKI_SCRIPT
 
 HOME_BROWSER_HEADERS = {
     **BASE_HEADERS,
-    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}'; "
+    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{CODE_HASH}' 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}'; "
     "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'",
 }
@@ -265,8 +266,6 @@ def document_html(
     post_actions='',
     wiki_actions='',
 ):
-    from markdown_it import MarkdownIt
-
     metadata = ''
     if resource and resource.get('type') == 'post' and markdown.startswith('---\n'):
         _, separator, body_markdown = markdown.partition('\n---\n')
@@ -288,11 +287,7 @@ def document_html(
         for key in ['id', 'revision', 'modified_at']:
             metadata += f'<dt>{escape(key)}</dt><dd>{escape(str(resource.get(key, "")))}</dd>'
         metadata += '</dl></details></aside>'
-    body = (
-        MarkdownIt('commonmark', {'html': False}).enable('table').render(markdown)
-        if body_html is None
-        else body_html
-    )
+    body = markdown_renderer().render(markdown) if body_html is None else body_html
     is_profile = bool(resource and resource.get('type') == 'user' and 'profile' in resource)
     if is_profile and body_html is None:
         body = profile_art_body(resource)
@@ -300,7 +295,7 @@ def document_html(
     if is_board and body_html is None:
         board_value = {key: value for key, value in resource.items() if key != 'presentation'}
         board_markdown = resource_markdown(board_value, markdown)
-        body = MarkdownIt('commonmark', {'html': False}).enable('table').render(board_markdown)
+        body = markdown_renderer().render(board_markdown)
         body = re.sub(r'<h1(?:\s[^>]*)?>.*?</h1>\s*', '', body, count=1, flags=re.DOTALL)
         body = board_header_html(resource) + body
     body, outline = outline_html(body) if not is_profile and not is_board else (body, '')
@@ -315,7 +310,7 @@ def document_html(
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{escape(title)}</title><link rel="icon" href="/favicon.png">'
         '<link rel="search" type="application/opensearchdescription+xml" title="MSG" href="/opensearch.xml">'
-        f'<style>{THEME_CSS}{BOARD_CSS if is_board else ""}{OUTLINE_CSS if outline else ""}{PROFILE_CSS if is_profile else ""}{POST_ACTIONS_CSS if post_actions or wiki_actions else ""}{ATTACHMENT_CSS if attachments else ""}</style></head><body class="page-document{" has-outline" if outline else ""}">'
+        f'<style>{THEME_CSS}{CODE_CSS}{BOARD_CSS if is_board else ""}{OUTLINE_CSS if outline else ""}{PROFILE_CSS if is_profile else ""}{POST_ACTIONS_CSS if post_actions or wiki_actions else ""}{ATTACHMENT_CSS if attachments else ""}</style></head><body class="page-document{" has-outline" if outline else ""}">'
         + SKIP_LINK
         + '<header class="site-header">'
         + BRAND_LINK
@@ -335,7 +330,7 @@ def document_html(
         + (f'<script>{PROFILE_SCRIPT}</script>' if is_profile or is_board else '')
         + (f'<script>{POST_ACTIONS_SCRIPT}</script>' if post_actions else '')
         + (f'<script>{WIKI_SCRIPT}</script>' if wiki_actions else '')
-        + f'{WEBMCP_TAG}</body></html>'
+        + f'<script>{CODE_SCRIPT}</script>{WEBMCP_TAG}</body></html>'
     ).encode()
 
 
