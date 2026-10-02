@@ -62,7 +62,7 @@ def run():
             page.on('pageerror', lambda error, errors=errors: errors.append(str(error)))
             state = {'authenticated': True, 'existing': False, 'custom': False}
 
-            def route(request_route, state=state, requests=requests):
+            def route(request_route, _request, state=state, requests=requests):
                 request = request_route.request
                 requests.append((request.method, request.url))
                 url = urlsplit(request.url)
@@ -117,7 +117,7 @@ def run():
                 page.goto(ORIGIN + '/@' + handle)
                 page.locator('.profile-avatar').wait_for()
                 page.wait_for_function(
-                    "[...document.querySelectorAll('[data-motion-src]')].every(i=>i.complete&&i.naturalWidth>0)"
+                    "() => [...document.querySelectorAll('[data-motion-src]')].every(i=>i.complete&&i.naturalWidth>0)"
                 )
                 assert page.locator('.profile-edit-link').is_visible() == (handle == 'owner')
                 assert page.evaluate('document.documentElement.scrollWidth <= innerWidth'), handle
@@ -131,12 +131,14 @@ def run():
                 'mimeType': 'image/svg+xml',
                 'buffer': CUSTOM.encode(),
             })
-            page.wait_for_function("document.querySelector('.profile-art-prepared').hidden===false")
+            page.wait_for_function(
+                "() => document.querySelector('.profile-art-prepared').hidden===false"
+            )
             assert (
                 'file.create @msg-profile-avatar.json --request-id profile_art_'
                 in page.locator('.profile-art-prepared code').inner_text()
             )
-            assert 'not saved yet' in page.locator('[role=status]').inner_text()
+            assert 'not saved yet' in page.locator('.profile-art-editor [role=status]').inner_text()
             assert page.locator('.profile-art-preview').is_visible()
             with page.expect_download() as download_info:
                 page.locator('.profile-art-editor a[download]').click()
@@ -151,7 +153,9 @@ def run():
                 'mimeType': 'image/svg+xml',
                 'buffer': CUSTOM.encode(),
             })
-            page.wait_for_function("document.querySelector('.profile-art-prepared').hidden===false")
+            page.wait_for_function(
+                "() => document.querySelector('.profile-art-prepared').hidden===false"
+            )
             assert (
                 'file.write @msg-profile-avatar.json --request-id profile_art_'
                 in page.locator('.profile-art-prepared code').inner_text()
@@ -170,7 +174,7 @@ def run():
                 'buffer': b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
             })
             page.wait_for_function(
-                "document.querySelector('[role=status]').textContent.includes('Unsupported SVG')"
+                "() => document.querySelector('.profile-art-editor [role=status]').textContent.includes('Unsupported SVG')"
             )
             assert page.locator('.profile-art-prepared').is_hidden()
             assert page.locator('.profile-art-preview').is_hidden() and len(requests) == before
@@ -183,12 +187,12 @@ def run():
             state['custom'] = True
             page.reload()
             page.wait_for_function(
-                "document.querySelector('.profile-avatar').complete&&document.querySelector('.profile-avatar').naturalWidth>0"
+                "() => document.querySelector('.profile-avatar').complete&&document.querySelector('.profile-avatar').naturalWidth>0"
             )
             assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
             page.emulate_media(reduced_motion='reduce')
             page.wait_for_function(
-                "[...document.querySelectorAll('[data-motion-src]')].every(i=>i.getAttribute('src').endsWith('?still=1'))"
+                "() => [...document.querySelectorAll('[data-motion-src]')].every(i=>i.getAttribute('src').endsWith('?still=1'))"
             )
             assert not errors, errors
             results.append({
