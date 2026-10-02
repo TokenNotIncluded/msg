@@ -1,8 +1,8 @@
 """Browsers receive the rendered homepage; agents receive Markdown."""
 
-import re
 from dataclasses import replace
 from datetime import timedelta
+from html.parser import HTMLParser
 from importlib.resources import files
 
 import httpx
@@ -15,6 +15,16 @@ from msg.core.codec import b64, canonical, wire
 from msg.core.requests import request_for
 from msg.transports.dictionary import build_dictionary
 from msg.transports.http import create_app
+
+
+class PageElements(HTMLParser):
+    def __init__(self, html):
+        super().__init__()
+        self.tags = []
+        self.feed(html)
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append((tag, dict(attrs)))
 
 
 @pytest.mark.asyncio
@@ -86,7 +96,24 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert hosted.content == ROOT_WEB_SAMPLE
         assert '<canvas id="space"' in hosted.text
         assert 'aria-label="Accessible star catalog"' in hosted.text
-        assert not re.search(r'[\u3400-\u9fff]', hosted.text)
+        elements = PageElements(hosted.text)
+        canvases = [
+            attrs for tag, attrs in elements.tags if tag == 'canvas' and attrs.get('id') == 'space'
+        ]
+        assert len(canvases) == 1
+        assert canvases[0].get('tabindex') == '0'
+        assert canvases[0].get('aria-label', '').strip()
+        by_id = {attrs['id']: attrs for _, attrs in elements.tags if 'id' in attrs}
+        for localized in (
+            'space',
+            'pilot-toggle',
+            'pilot-hud',
+            'game-hud',
+            'game-actions',
+            'region-map',
+            'help-title',
+        ):
+            assert by_id[localized].get('lang') == 'zh-CN'
         csp = hosted.headers['content-security-policy']
         assert "style-src 'unsafe-inline'" in csp
         assert 'font-src data:' in csp and 'img-src data:' in csp
