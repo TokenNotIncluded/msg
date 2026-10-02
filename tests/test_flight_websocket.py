@@ -531,15 +531,34 @@ async def test_network_laser_skills_cooldowns_regeneration_and_resume(flight_ser
     shield_hit = await snapshot(target, lambda body: player(body, target_id)['hp'] < damaged_hp)
     assert player(shield_hit, target_id)['hp'] == damaged_hp - 6
     wounded = player(shield_hit, target_id)['hp']
-    clock_state[0] += 3.5
-    healed = await snapshot(target, lambda body: player(body, target_id)['hp'] > wounded)
+    # The world intentionally caps catch-up after a paused clock. Advance real
+    # socket inputs and simulation ticks continuously so the ship can brake,
+    # finish its dash, and actually spend two seconds stationary before healing.
+    target_sequence = 1
+    healed = None
+    for _ in range(75):
+        clock_state[0] += 1 / 15
+        target_sequence += 1
+        await target.send_json(controls(target_sequence, brake=True))
+        current = await snapshot(
+            target,
+            lambda body, expected=target_sequence: player(body, target_id)['ack_seq'] == expected,
+        )
+        current_ship = player(current, target_id)
+        if math.hypot(*current_ship['velocity']) > 0:
+            assert current_ship['hp'] == wounded
+        if current_ship['hp'] > wounded:
+            assert math.hypot(*current_ship['velocity']) == 0
+            healed = current
+            break
+    assert healed is not None, 'A stopped ship must heal after its idle delay'
     assert wounded < player(healed, target_id)['hp'] <= 100
     assert player(healed, target_id)['fuel'] <= 100
     await aim_at(
         target,
         player(healed, target_id)['position'],
         player(healed, source_id)['position'],
-        2,
+        target_sequence + 1,
         action='laser',
     )
     retaliation = await snapshot(attacker, lambda body: player(body, source_id)['hp'] < 100)
