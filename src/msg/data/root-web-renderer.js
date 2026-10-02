@@ -1030,7 +1030,10 @@
         if (correction) {
           this.stopFlightInput(false);
           this.flight.yaw = -ship.yaw; this.flight.pitch = -ship.pitch;
-          this.sendFlightInput();
+          // Clear both continuous input and pending one-shot actions, even at HP 0.
+          // clearInput sends a neutral frame without suspending/status recursion.
+          if (this.network.clearInput) this.network.clearInput();
+          else this.network.setInput({...this.flightIntent(false), actions:[]});
         }
         const controlled = this.flightControlled() && ship.hp > 0;
         this.prediction.reconcile(ship, correction, (now - time) / 1000, this.flightIntent(controlled), this.network.limits, now, this.network.gravity);
