@@ -250,6 +250,7 @@
         marker.el.style.width=marker.el.style.height=size+'px';
         const saved=this.cache.get(url);
         if(saved?.data && marker.img.getAttribute('src')!==saved.data) {marker.img.src=saved.data;marker.el.classList.add('has-image');}
+        else if(saved && !saved.data) {marker.img.removeAttribute('src');marker.el.classList.remove('has-image');}
       }
       for(const [id,marker] of this.nodes)if(!visible.has(id)){marker.el.remove();this.nodes.delete(id);}
       this.pump();this.schedule();

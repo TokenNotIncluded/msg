@@ -112,3 +112,16 @@ test('hidden, departed and disposed markers cancel requests and never resurrect 
   layer.update(view([user(3)]));const last=[...layer.requests.values()][0];layer.dispose();pending.at(-1).resolve(response());await last.promise;
   assert.equal(layer.nodes.size,0);assert.equal(layer.cache.size,0);
 });
+test('a failed refresh removes the old artwork and a changed projected path fetches its current avatar',async()=>{
+  dom();let now=1000,fail=false;const calls=[];
+  const layer=new P.AvatarLayer(new Element(),{origin:'https://msg.example',now:()=>now,fetcher:async url=>{
+    calls.push(url);return fail?new Response('<html>denied</html>',{status:403,headers:{'content-type':'text/html'}}):response();
+  }});
+  try {
+    layer.update(view([user(1)]));await drained(layer);const marker=layer.nodes.get('u_1');assert.ok(marker.img.src);
+    fail=true;now+=P.BUDGET.avatarTTL+1;layer.update(view([user(1)]));await drained(layer);assert.equal(marker.img.src,undefined);
+    layer.update(view([user(1)]));assert.equal(calls.length,2,'failed refresh is bounded');
+    fail=false;const renamed=user(1,{path:'/@new-name',artwork:{avatar:{url:'/@new-name/art/avatar.svg'}}});
+    layer.update(view([renamed]));await drained(layer);assert.ok(marker.img.src);assert.equal(calls.at(-1),'https://msg.example/@new-name/art/avatar.svg');
+  }finally{layer.dispose();}
+});
