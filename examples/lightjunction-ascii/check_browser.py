@@ -47,6 +47,38 @@ async def capture(page, name):
         await session.detach()
 
 
+async def check_playback_controls(page):
+    frame = "[...document.querySelectorAll('.frame')].findIndex(p=>getComputedStyle(p).visibility==='visible')"
+    before = await page.evaluate(frame)
+    await page.wait_for_timeout(650)
+    moving = await page.evaluate(frame)
+    assert moving != before, (before, moving)
+    await page.locator('#pause').check()
+    paused = await page.evaluate(frame)
+    await page.wait_for_timeout(650)
+    stable = await page.evaluate(frame)
+    assert stable == paused
+    assert await page.evaluate(
+        "[...document.querySelectorAll('.frame')].every(p=>getComputedStyle(p).animationPlayState==='paused')"
+    )
+    await page.locator('#pause').uncheck()
+    await page.wait_for_timeout(650)
+    resumed = await page.evaluate(frame)
+    assert resumed != paused
+    await page.locator('#pause').focus()
+    await page.keyboard.press('Space')
+    assert await page.locator('#pause').is_checked()
+    keyboard_paused = await page.evaluate(frame)
+    await page.wait_for_timeout(650)
+    assert await page.evaluate(frame) == keyboard_paused
+    return {
+        'advanced': [before, moving],
+        'paused': [paused, stable],
+        'resumed': resumed,
+        'space_paused': keyboard_paused,
+    }
+
+
 async def inspect(browser, origin, name, viewport, reduced=False):
     context = await browser.new_context(
         viewport=viewport, reduced_motion='reduce' if reduced else 'no-preference'
@@ -74,28 +106,9 @@ async def inspect(browser, origin, name, viewport, reduced=False):
     )
     assert visible_later == (0 if reduced else 1), visible_later
     await capture(page, f'{name}-{"static" if reduced else "nuclear"}.png')
-    # Actual CSS animations must advance, pause stably, then resume from that point.
+    # These same controls must work after reduced-motion users explicitly opt in.
     if not reduced:
-        await page.locator('#pause').check()
-        first = await page.locator('.frame:visible').count()  # CSS visibility contributes here.
-        current = await page.evaluate(
-            "[...document.querySelectorAll('.frame')].findIndex(p=>getComputedStyle(p).visibility==='visible')"
-        )
-        await page.wait_for_timeout(650)
-        after = await page.evaluate(
-            "[...document.querySelectorAll('.frame')].findIndex(p=>getComputedStyle(p).visibility==='visible')"
-        )
-        assert first == 1 and current == after
-        await page.locator('#pause').uncheck()
-        await page.wait_for_timeout(650)
-        advanced = await page.evaluate(
-            "[...document.querySelectorAll('.frame')].findIndex(p=>getComputedStyle(p).visibility==='visible')"
-        )
-        assert advanced != current
-        # Native keyboard checkbox also pauses, and replay remains the current website.
-        await page.locator('#pause').focus()
-        await page.keyboard.press('Space')
-        assert await page.locator('#pause').is_checked()
+        controls = await check_playback_controls(page)
         assert await page.get_by_role('link', name='重播').get_attribute('href') == './'
     else:
         assert (
@@ -109,6 +122,7 @@ async def inspect(browser, origin, name, viewport, reduced=False):
             "[...document.querySelectorAll('.frame')].filter(p=>getComputedStyle(p).visibility==='visible').length"
         )
         assert visible == 1
+        controls = await check_playback_controls(page)
     assert not errors, errors
     assert requests == [origin + '/@lightjunction/web/'], requests
     await context.close()
@@ -118,6 +132,7 @@ async def inspect(browser, origin, name, viewport, reduced=False):
         'geometry': measured,
         'errors': errors,
         'requests': requests,
+        'controls': controls,
     }
 
 

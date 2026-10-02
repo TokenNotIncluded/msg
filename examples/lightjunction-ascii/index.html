@@ -7,7 +7,7 @@
 pre{font:inherit;line-height:1;margin:0;white-space:pre;position:absolute;inset:0;color:#d0d0d0;user-select:none}.frame{visibility:hidden}.still{visibility:hidden}
 .accessibility{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 footer{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:0 28px 22px;font-size:12px;line-height:1.6;color:#b5b5b5}h1{font:inherit;margin:0;color:#dedede}p{margin:2px 0 0;font-size:11px;color:#aaa}.controls{display:flex;align-items:center;gap:16px;flex-shrink:0}label,a{color:inherit;text-decoration:none;cursor:pointer;min-height:44px;display:inline-flex;align-items:center;gap:7px}a:hover{color:#fff;text-decoration:underline;text-underline-offset:4px}input{accent-color:#d4d4d4;width:14px;height:14px;margin:0}a:focus-visible,input:focus-visible{outline:2px solid #dedede;outline-offset:5px}
-body:has(#pause:checked) .frame{animation-play-state:paused}
+body:has(#pause:checked) .frame{animation-play-state:paused!important}
 .motion-choice{display:none}
 @media(max-width:600px){.screen{padding:12px 4px 0}.projection{font-size:min(1.67vw,1.58vh)}footer{margin:0 18px 16px;gap:12px;align-items:flex-start;flex-direction:column}.controls{gap:24px}p{max-width:32ch}}
 @media(prefers-reduced-motion:reduce){.frame{animation:none!important;visibility:hidden}.still{visibility:visible}.motion-choice{display:inline-flex}body:has(#motion:checked) .frame{animation-duration:18s!important;animation-timing-function:steps(1,end)!important;animation-iteration-count:infinite!important}body:has(#motion:checked) .still{visibility:hidden}}
