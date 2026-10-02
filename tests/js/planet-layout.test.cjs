@@ -135,7 +135,7 @@ test('two authoritative explicit edges form a mutual pair even when legacy metad
 // Backend owns and regenerates this shared precision fixture. It can be passed
 // explicitly during isolated worktree integration before its commit is merged.
 const fixturePath = process.env.MSG_PLANET_FIXTURE || path.join(__dirname, '../fixtures/planet-layout-v4.json');
-test('Python-generated planet layouts pass through JS unchanged across pages and render time', { skip: !fs.existsSync(fixturePath) }, () => {
+test('Python-generated planet layouts pass through JS unchanged across pages and render time', () => {
   const fixture = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
   assert.equal(fixture.version, M.LAYOUT_VERSION);
   for (const scenario of fixture.scenarios) {
