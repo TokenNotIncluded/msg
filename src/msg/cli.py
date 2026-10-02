@@ -114,13 +114,27 @@ def parser():
     login.add_argument('--no-browser', action='store_true')
     login.add_argument('--scope', default='openid profile msg.read msg.write offline_access')
     accounts = commands.add_parser(
-        'account', help='List, select or import local accounts.'
+        'account', help='List, select, import or age-backup local accounts.'
     ).add_subparsers(dest='action', required=True)
     accounts.add_parser('list')
     accounts.add_parser('use').add_argument('name')
     importing = accounts.add_parser('import')
     importing.add_argument('name')
     importing.add_argument('directory', type=Path)
+    account_backup = accounts.add_parser('backup', help='Offline encrypted named-account backup.')
+    account_backup.add_argument('--recipient', action='append', required=True)
+    account_backup.add_argument('--output', type=Path, required=True)
+    account_restore = accounts.add_parser(
+        'restore', help='Offline restore into a new local account.'
+    )
+    account_restore.add_argument('name')
+    account_restore.add_argument('--input', type=Path, required=True)
+    account_restore.add_argument('--identity', type=Path, action='append', required=True)
+    account_restore.add_argument('--expected-subject', required=True)
+    account_restore.add_argument('--expected-key-id')
+    account_restore.add_argument(
+        '--expected-sha256', help='Pin the ciphertext digest from a separate receipt.'
+    )
     commands.add_parser('logout')
     auth = commands.add_parser('auth').add_subparsers(dest='action', required=True)
     auth.add_parser('status')
@@ -551,7 +565,11 @@ async def run(args):
     if args.command == 'account':
         from msg.client_accounts import run_command
 
-        print_result(run_command(args), args, context='account')
+        print_result(
+            run_command(args),
+            args,
+            context=None if args.action in {'backup', 'restore'} else 'account',
+        )
         return 0
     signer_override = private_identity_key(args.key) if args.key else None
     state = ClientState(
