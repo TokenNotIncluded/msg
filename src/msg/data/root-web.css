@@ -1001,7 +1001,7 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 #game-respawn { margin-top: 12px; color: var(--hud-warning); }
 #game-actions { position: absolute; z-index: 5; left: 50%; bottom: max(86px, calc(env(safe-area-inset-bottom) + 72px)); transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; font-family: var(--mono); }
 .game-action { position: relative; display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 4px 12px; min-width: 92px; min-height: 48px; padding: 10px 12px; border: 1px solid var(--hud-line); border-radius: 2px; background: var(--hud-surface); color: var(--hud-text); text-align: left; font: 12px/1.5 var(--mono); touch-action: manipulation; }
-.game-action:hover:not(:disabled), .game-action:focus-visible { background: #202020; }
+.game-action:hover:not(:disabled):not([data-active="true"]), .game-action:focus-visible { background: #202020; }
 .game-action:disabled { opacity: 1; color: var(--hud-muted); cursor: default; border-color: #303030; }
 .game-action[data-active="true"] { background: var(--hud-text); color: #111; }
 .game-action kbd { margin: 0; padding: 0; border: 0; border-radius: 0; font: 11px var(--mono); color: var(--hud-muted); text-align: right; }
@@ -1019,7 +1019,7 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 #region-map-actions, .region-map-tools, .region-map-regions { display: flex; flex-wrap: wrap; gap: 6px; }
 #region-map-actions button, .region-map-tools button, .region-map-regions button { min-height: 44px; min-width: 44px; padding: 10px 14px; border: 1px solid var(--hud-line); border-radius: 2px; color: var(--hud-muted); font: 12px var(--mono); background: transparent; }
 #region-map-actions button[aria-pressed="true"], .region-map-regions button[aria-pressed="true"] { background: var(--hud-text); color: #111; border-color: var(--hud-text); }
-#region-map-actions button:hover:not(:disabled), .region-map-tools button:hover:not(:disabled), .region-map-regions button:hover:not(:disabled) { color: var(--hud-text); border-color: var(--hud-text); }
+#region-map-actions button:hover:not(:disabled):not([aria-pressed="true"]), .region-map-tools button:hover:not(:disabled):not([aria-pressed="true"]), .region-map-regions button:hover:not(:disabled):not([aria-pressed="true"]) { color: var(--hud-text); border-color: var(--hud-text); }
 
 @media (pointer: coarse), (max-width: 800px) {
   :root { --hud-edge: max(16px, env(safe-area-inset-left)); }
