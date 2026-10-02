@@ -14,12 +14,15 @@ const input=JSON.parse(fs.readFileSync(0,'utf8'));
 class Element {
  constructor(value=''){this.value=value;this.textContent='';this.disabled=false;this.hidden=false;this.attrs={};this.events={};}
  setAttribute(name,value){this.attrs[name]=value;}
+ getAttribute(name){return name==='src'?this.src:this.attrs[name];}
  addEventListener(name,listener){(this.events[name]??=[]).push(listener);}
  focus(){this.focused=true;}
  async emit(name,event={}){for(const listener of this.events[name]??[])await listener(event);}
 }
 const fields={svg:new Element('old-svg'),text:new Element('old-text')};
 const edit=new Element(),refresh=new Element(),save=new Element(),pause=new Element(),status=new Element(),image=new Element();
+const imageLoads=[];image.attrs.src='/_public-board/art.svg?v=0&motion=still';
+Object.defineProperty(image,'src',{get(){return this.attrs.src;},set(value){this.attrs.src=value;imageLoads.push(value);}});
 const success=new Element();success.hidden=true;
 const menu=new Element(),menuToggle=new Element(),close=new Element();menu.open=false;
 menu.querySelector=()=>menuToggle;menu.contains=target=>[menu,menuToggle,edit,pause].includes(target);
@@ -35,7 +38,8 @@ const motion=new Element();motion.matches=!!input.reduced;
 const windowEvents=new Element(),requests=[],snapshots=[];
 let nextResponse,resolveFetch,running,id=0;
 const timers=new Map();let timerId=0;
-const context={document:{getElementById:()=>panel},matchMedia:()=>motion,TextEncoder,
+const document=new Element();document.hidden=false;document.getElementById=()=>panel;let intersect;
+const context={document,matchMedia:()=>motion,TextEncoder,
  setTimeout:callback=>{timers.set(++timerId,callback);return timerId;},clearTimeout:id=>timers.delete(id),
  crypto:{randomUUID:()=>`request-${++id}`},AbortSignal:{timeout:()=>undefined},
  addEventListener:(...args)=>windowEvents.addEventListener(...args),location:{assign:()=>{}},
@@ -48,11 +52,15 @@ const context={document:{getElementById:()=>panel},matchMedia:()=>motion,TextEnc
    return {ok:response.ok??true,json:async()=>response.body,
      headers:{get:name=>response.headers?.[name]??null}};
  }};
+if(input.observe)context.IntersectionObserver=class {
+ constructor(callback){intersect=callback;}
+ observe(target){if(target!==image)throw new Error('observer_target');}
+};
 vm.runInNewContext(input.script,context);
 const snapshot=()=>({svg:fields.svg.value,text:fields.text.value,generation:panel.dataset.generation,hidden:form.hidden,
  menuOpen:menu.open,menuFocused:!!menuToggle.focused,textFocused:!!fields.text.focused,
  successHidden:success.hidden,successText:success.textContent,
- expanded:edit.attrs['aria-expanded'],pressed:pause.attrs['aria-pressed'],image:image.src,status:status.textContent,
+ expanded:edit.attrs['aria-expanded'],pressed:pause.attrs['aria-pressed'],image:image.src,imageLoads:[...imageLoads],status:status.textContent,
  saveDisabled:save.disabled,refreshDisabled:refresh.disabled,svgDisabled:fields.svg.disabled,textDisabled:fields.text.disabled,
  size:size.textContent,quota:quota.textContent,requests:structuredClone(requests)});
 (async()=>{
@@ -66,6 +74,8 @@ const snapshot=()=>({svg:fields.svg.value,text:fields.text.value,generation:pane
    if(action.kind==='expire-success'){for(const callback of [...timers.values()])callback();}
    if(action.kind==='pause')await pause.emit('click');
    if(action.kind==='motion'){motion.matches=action.matches;await motion.emit('change',{matches:action.matches});}
+   if(action.kind==='visibility'){document.hidden=action.hidden;await document.emit('visibilitychange');}
+   if(action.kind==='intersection')intersect([{isIntersecting:action.visible}]);
    if(action.kind==='refresh'){nextResponse=action.response;await refresh.emit('click');}
    if(action.kind==='submit'){nextResponse=action.response;await form.emit('submit',{preventDefault(){}});}
    if(action.kind==='start-submit'){nextResponse={defer:true};running=form.emit('submit',{preventDefault(){}});}
@@ -78,13 +88,18 @@ const snapshot=()=>({svg:fields.svg.value,text:fields.text.value,generation:pane
 """
 
 
-def run_editor(actions, *, reduced=False):
+def run_editor(actions, *, reduced=False, observe=False):
     node = shutil.which('node')
     if not node:
         pytest.skip('Node is needed to execute the shipped browser script')
     result = subprocess.run(
         [node, '-e', HARNESS],
-        input=json.dumps({'script': SCRIPT, 'actions': actions, 'reduced': reduced}),
+        input=json.dumps({
+            'script': SCRIPT,
+            'actions': actions,
+            'reduced': reduced,
+            'observe': observe,
+        }),
         text=True,
         capture_output=True,
         timeout=10,
@@ -272,3 +287,75 @@ def test_success_is_visible_outside_closed_editor_then_returns_to_quiet_default(
         '<form id="public-board-editor" hidden>'
     )
     assert 'aria-atomic="true" data-success' in rendered
+
+
+def test_art_visibility_resumes_only_after_page_and_image_are_visible():
+    result = run_editor(
+        [
+            {'kind': 'snapshot'},
+            {'kind': 'intersection', 'visible': True},
+            {'kind': 'snapshot'},
+            {'kind': 'intersection', 'visible': True},
+            {'kind': 'visibility', 'hidden': True},
+            {'kind': 'visibility', 'hidden': True},
+            {'kind': 'snapshot'},
+            {'kind': 'intersection', 'visible': False},
+            {'kind': 'visibility', 'hidden': False},
+            {'kind': 'snapshot'},
+            {'kind': 'intersection', 'visible': True},
+        ],
+        observe=True,
+    )
+    initial, playing, hidden, offscreen = result['snapshots']
+    assert 'motion=still' in initial['image'] and initial['imageLoads'] == []
+    assert 'motion=still' not in playing['image']
+    assert 'motion=still' in hidden['image'] and hidden['pressed'] == 'false'
+    assert offscreen['imageLoads'] == hidden['imageLoads']
+    assert 'motion=still' not in result['final']['image']
+    assert len(result['final']['imageLoads']) == 3
+
+
+def test_art_user_pause_and_reduced_intent_survive_automatic_resume():
+    paused = run_editor(
+        [
+            {'kind': 'intersection', 'visible': True},
+            {'kind': 'pause'},
+            {'kind': 'intersection', 'visible': False},
+            {'kind': 'visibility', 'hidden': True},
+            {'kind': 'motion', 'matches': True},
+            {'kind': 'motion', 'matches': False},
+            {'kind': 'visibility', 'hidden': False},
+            {'kind': 'intersection', 'visible': True},
+        ],
+        observe=True,
+    )['final']
+    assert paused['pressed'] == 'true' and 'motion=still' in paused['image']
+    assert len(paused['imageLoads']) == 2
+    reduced = run_editor(
+        [
+            {'kind': 'intersection', 'visible': True},
+            {'kind': 'intersection', 'visible': False},
+            {'kind': 'visibility', 'hidden': True},
+            {'kind': 'visibility', 'hidden': False},
+            {'kind': 'intersection', 'visible': True},
+        ],
+        reduced=True,
+        observe=True,
+    )['final']
+    assert reduced['pressed'] == 'true' and reduced['imageLoads'] == []
+
+
+def test_art_same_revision_refresh_does_not_restart_image():
+    result = run_editor(
+        [
+            {'kind': 'intersection', 'visible': True},
+            {'kind': 'refresh', 'response': {'body': value(0)}},
+            {'kind': 'refresh', 'response': {'body': value(1)}},
+            {'kind': 'refresh', 'response': {'body': value(1)}},
+        ],
+        observe=True,
+    )['final']
+    assert result['imageLoads'] == [
+        '/_public-board/art.svg?v=0',
+        '/_public-board/art.svg?v=1',
+    ]
