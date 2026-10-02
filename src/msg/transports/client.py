@@ -121,6 +121,67 @@ class HTTPTransport:
         value = await self._json('POST', path, body=wire(request))
         return decode_result(value)
 
+    async def call_reads(self, requests):
+        """One HTTP query, with a separate signed, authorized envelope per read.
+
+        This uses the published GraphQL adapter rather than a transaction batch.
+        Missing transport support returns None so callers can retain their normal
+        read path. Responses remain bounded and bound to each request alias.
+        """
+        require(1 <= len(requests) <= 8, 'read_batch_limit')
+        for request in requests:
+            self._secure_delivery(request)
+            require(request.target_service == self.server, 'service_mismatch')
+            require(await self._effect(request.operation) == 'read', 'read_batch_required')
+        description = await self.description()
+        transports = description.get('transports')
+        require(transports is None or isinstance(transports, dict), 'invalid_transport_description')
+        if self.name != 'http' or not transports or transports.get('graphql') != '/-/graphql':
+            return None
+        parameters = ','.join(f'$p{index}: JSON!' for index in range(len(requests)))
+        fields = ' '.join(f'r{index}: call(packet: $p{index})' for index in range(len(requests)))
+        result = await self._json(
+            'POST',
+            '/_read/graphql',
+            body={
+                'query': f'query MsgReads({parameters}) {{ {fields} }}',
+                'variables': {f'p{index}': wire(request) for index, request in enumerate(requests)},
+            },
+        )
+        require(isinstance(result, dict), 'invalid_graphql_result')
+        if result.get('status') == 'error':
+            # Older routes can use the ordinary HTTP failure envelope.
+            # Never echo its free text or treat an authority failure as support.
+            error = result.get('error')
+            require(isinstance(error, dict), 'invalid_graphql_result')
+            retryable = error.get('retryable', False)
+            require(type(retryable) is bool, 'invalid_graphql_result')
+            raise Failure(safe_error_code(error.get('code'), 'graphql_error'), retryable=retryable)
+        errors = result.get('errors')
+        require(errors is None or isinstance(errors, list), 'invalid_graphql_result')
+        if errors:
+            require(isinstance(errors[0], dict), 'invalid_graphql_result')
+            extensions = errors[0].get('extensions')
+            code = extensions.get('code') if isinstance(extensions, dict) else None
+            raise Failure(safe_error_code(code, 'graphql_error'))
+        data = result.get('data')
+        require(
+            isinstance(data, dict) and set(data) == {f'r{i}' for i in range(len(requests))},
+            'invalid_graphql_result',
+        )
+        values = []
+        for index, request in enumerate(requests):
+            value = decode_result(data[f'r{index}'])
+            require(
+                value.request_id == request.request_id
+                and value.operation == request.operation
+                and (value.status != 'ok' or value.subject == request.subject)
+                and not value.replayed,
+                'invalid_graphql_result',
+            )
+            values.append(value)
+        return values
+
     async def close(self):
         if self._owns_http:
             await self.http.aclose()
