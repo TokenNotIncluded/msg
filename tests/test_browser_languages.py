@@ -1,9 +1,10 @@
 """Language choice survives navigation and preserves unknown content and RTL code."""
 
 import json
+import re
 import subprocess
 
-from msg.transports.browser_i18n import LANGUAGES, TRANSLATIONS
+from msg.transports.browser_i18n import ACTION_LABELS, LANGUAGES, TRANSLATIONS
 from msg.transports.browser_style import PREFERENCES
 from msg.transports.webmcp import WEBMCP_SCRIPT
 
@@ -12,6 +13,8 @@ def test_locale_catalog_and_native_picker_labels():
     assert {code for code, *_ in LANGUAGES} == {'en', 'zh', 'hi', 'es', 'ar', 'fr', 'bn', 'pt'}
     for code, label, tag, _ in LANGUAGES:
         assert f'<option value="{code}" lang="{tag}">{label}</option>' in PREFERENCES
+    base_keys = set(re.findall(r'\b(\w+):\s*\[', WEBMCP_SCRIPT.split('const locales')[0]))
+    assert base_keys | set(ACTION_LABELS) <= set(TRANSLATIONS['es'])
     assert len({frozenset(messages) for messages in TRANSLATIONS.values()}) == 1
 
 
