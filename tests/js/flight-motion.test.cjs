@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const {createHash} = require('node:crypto');
 require('../../src/msg/data/root-web-model.js');
 require('../../src/msg/data/root-web-renderer.js');
-const {MotionTrack, FlightPrediction, integrateFlight, inertialSegment, tokenNebula} = MSGUniverseFlight;
+const {MotionTrack, FlightPrediction, integrateFlight, inertialSegment, tokenNebula, gravityAcceleration, planetContact} = MSGUniverseFlight;
 const close = (actual, expected, tolerance = 1e-8) => assert.ok(Math.abs(actual - expected) <= tolerance, `${actual} != ${expected}`);
 const ship = (overrides = {}) => ({id:'own',position:[0,0,0],velocity:[0,0,0],hp:100,fuel:100,region:0,yaw:0,pitch:0,dash_until_ms:0,...overrides});
 const neutral = {throttle:0,strafe:0,lift:0,yaw:0,pitch:0,brake:false};
@@ -102,5 +102,58 @@ test('slow render frames subdivide the whole interval without advancing a paused
     const before=[...prediction.position];
     for(const invalid of [0,-1,NaN,Infinity]) prediction.step(invalid,{...neutral,throttle:1},{},3000);
     assert.deepEqual(prediction.position,before);
+  }
+});
+
+test('public gravity and swept planet contact match the Python authority reference values', () => {
+  const wells=[{id:'root',position:[0,0,0],radius:5.4,influence:43.2},{id:'peer',position:[30,0,0],radius:2.05,influence:36}];
+  for (const [position,expected] of [
+    [[10,4,0],[-3.8279726390237356,-1.7458860167950383,0]],
+    [[0,0,0],[.024938888888888882,0,0]],
+    [[100,0,0],[0,0,0]],
+    [[12,-3,9],[-1.682618293243182,.5566654339997548,-1.669996301999264]],
+  ]) gravityAcceleration(position,wells).forEach((value,i)=>close(value,expected[i],1e-12));
+  const contact=planetContact([10,0,0],[0,0,0],[-20,4,0],wells);
+  assert.deepEqual(contact.position,[6.62,0,0]); assert.deepEqual(contact.velocity,[0,4,0]);
+  const escape=planetContact([10,4,0],[12,4,0],[20,4,0],wells);
+  assert.deepEqual(escape.position,[12,4,0]); assert.deepEqual(escape.velocity,[20,4,0]);
+  const center=planetContact([0,0,0],[0,0,0],[0,-2,0],wells);
+  assert.deepEqual(center.position,[0,6.62,0]); assert.deepEqual(center.velocity,[0,0,0]);
+});
+
+test('visual fuel burn, coasting recovery and emergency recovery use advertised rates without editing authority', () => {
+  const authority=Object.freeze({...ship({fuel:10}),position:Object.freeze([0,0,0]),velocity:Object.freeze([0,0,0])});
+  const prediction=new FlightPrediction(authority), limits={fuel_burn_rate:1.5,fuel_regen_rate:6,fuel_emergency_regen_rate:2};
+  prediction.step(.04,{...neutral,throttle:1},limits,40); close(prediction.state.fuel,9.94);
+  prediction.step(.04,neutral,limits,80); close(prediction.state.fuel,10.18);
+  assert.equal(authority.fuel,10); assert.deepEqual(authority.velocity,[0,0,0]);
+  const exhausted=ship({fuel:0}); integrateFlight(exhausted,.04,{...neutral,throttle:1},limits,40);
+  close(exhausted.fuel,.08); assert.deepEqual(exhausted.velocity,[0,0,0]);
+});
+
+test('gravity prediction attracts the living ship while braking hovers and a private home remains local', () => {
+  const gravity={wells:[{id:'public',position:[0,0,0],radius:5.4,influence:43.2}]};
+  const state=ship({position:[12,4,0],fuel:50}), start=[...state.position];
+  integrateFlight(state,.04,neutral,{},40,gravity);
+  assert.ok(state.position[0]<start[0]); assert.ok(state.velocity[0]<0);
+  const hovering=ship({position:[12,4,0],fuel:50}); integrateFlight(hovering,.04,{...neutral,brake:true},{},40,gravity);
+  assert.deepEqual(hovering.position,[12,4,0]); assert.deepEqual(hovering.velocity,[0,0,0]); close(hovering.fuel,50.24);
+  const privateHome={private:true,position:[0,0,0],radius:3}, own=ship({position:[12,0,0],home_body:privateHome});
+  integrateFlight(own,.04,neutral,{},40,{}); assert.ok(own.velocity[0]<0);
+  assert.equal(gravity.wells.length,1); assert.deepEqual(privateHome.position,[0,0,0]);
+});
+
+test('public highway glyphs match every Python Float32 coordinate across MST, vertical, zero and Unicode layouts', () => {
+  const references=require('../fixtures/flight-token-goldens.json');
+  for (const reference of references) {
+    const {dust,lanes}=tokenNebula(reference.seed,2300,{version:2,layout_version:1,anchors:reference.anchors});
+    const positions=new Float32Array(2300*3);
+    for (let i=0;i<2300;i++) {
+      const point=dust.subarray(i*8,i*8+3); positions.set(point,i*3);
+      assert.ok(Math.hypot(...point)<=475.00004);
+    }
+    assert.equal(lanes.length,reference.anchors.length-1);
+    assert.equal(createHash('sha256').update(Buffer.from(positions.buffer)).digest('hex'),reference.sha256,reference.name);
+    for (const [i,id] of [0,1839,1840,2299].entries()) assert.deepEqual(Array.from(positions.subarray(id*3,id*3+3)),reference.points[i]);
   }
 });

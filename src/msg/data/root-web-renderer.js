@@ -88,7 +88,65 @@
     if (Math.hypot(...next) <= (limits.stop_speed ?? .12)) next.fill(0);
     return { velocity: next, movement };
   }
-  function integrateFlight(state, seconds, controls, limits = {}, now = 0) {
+  function gravityAcceleration(position, wells, limits = {}) {
+    const acceleration = [0, 0, 0], strength = limits.gravity_strength ?? 8;
+    for (const well of wells) {
+      const offset = well.position.map((v, i) => v - position[i]), distance = Math.hypot(...offset);
+      if (distance < 1e-8 || distance >= well.influence) continue;
+      const magnitude = Math.min(strength, strength * (well.radius + (limits.gravity_softening ?? 8)) ** 2 / Math.max(distance ** 2, .01)) * (1 - distance / well.influence) ** 2;
+      for (let i = 0; i < 3; i++) acceleration[i] += offset[i] / distance * magnitude;
+    }
+    const length = Math.hypot(...acceleration), cap = limits.gravity_max_acceleration ?? 8;
+    return length > cap ? acceleration.map(v => v * cap / length) : acceleration;
+  }
+  function planetContact(start, end, velocity, wells, limits = {}) {
+    let beginning = [...start];
+    const shipRadius = limits.ship_radius ?? 1.2, margin = .02;
+    for (const well of wells) {
+      const offset = beginning.map((v, i) => v - well.position[i]), distance = Math.hypot(...offset);
+      const boundary = well.radius + shipRadius + margin;
+      if (distance < boundary) {
+        const normal = distance > 1e-8 ? offset.map(v => v / distance) : [0, 1, 0];
+        const correction = well.position.map((v, i) => v + normal[i] * boundary - beginning[i]);
+        beginning = beginning.map((v, i) => v + correction[i]); end = end.map((v, i) => v + correction[i]);
+        const inward = dot(velocity, normal);
+        if (inward < 0) velocity = velocity.map((v, i) => v - normal[i] * inward);
+      }
+    }
+    const movement = end.map((v, i) => v - beginning[i]), length2 = dot(movement, movement);
+    let first = null;
+    if (length2 > 1e-12) for (const well of wells) {
+      const offset = beginning.map((v, i) => v - well.position[i]), along = dot(offset, movement);
+      const boundary = well.radius + shipRadius, discriminant = along ** 2 - length2 * (dot(offset, offset) - boundary ** 2);
+      if (along >= 0 || discriminant < 0) continue;
+      const fraction = (-along - Math.sqrt(discriminant)) / length2;
+      if (fraction >= 0 && fraction <= 1 && (!first || fraction < first.fraction)) first = {fraction, well};
+    }
+    if (first) {
+      const {fraction, well} = first, touch = beginning.map((v, i) => v + movement[i] * fraction);
+      const offset = touch.map((v, i) => v - well.position[i]), distance = Math.hypot(...offset);
+      const normal = offset.map(v => v / Math.max(distance, 1e-8));
+      end = well.position.map((v, i) => v + normal[i] * (well.radius + shipRadius + margin));
+      const inward = dot(velocity, normal);
+      if (inward < 0) velocity = velocity.map((v, i) => v - normal[i] * inward);
+    }
+    for (let pass = 0; pass < 4; pass++) {
+      let corrected = false;
+      for (const well of wells) {
+        const offset = end.map((v, i) => v - well.position[i]), distance = Math.hypot(...offset);
+        const boundary = well.radius + shipRadius + margin;
+        if (distance >= boundary - 1e-9) continue;
+        const normal = distance > 1e-8 ? offset.map(v => v / distance) : [0, 1, 0];
+        end = well.position.map((v, i) => v + normal[i] * boundary);
+        const inward = dot(velocity, normal);
+        if (inward < 0) velocity = velocity.map((v, i) => v - normal[i] * inward);
+        corrected = true;
+      }
+      if (!corrected) break;
+    }
+    return {position:end, velocity};
+  }
+  function integrateFlight(state, seconds, controls, limits = {}, now = 0, gravity = {}) {
     const dt = Number.isFinite(seconds) ? clamp(seconds, 0, .04) : 0;
     if (!dt || state.hp <= 0) return;
     const braking = controls.brake === true, yaw = controls.yaw, pitch = controls.pitch;
@@ -98,21 +156,42 @@
     const hasControls = [controls.throttle, controls.strafe, controls.lift].some(n => Math.abs(n) > 1e-8), dashEnd = state.dash_until_ms ?? 0;
     const start = now - dt * 1000, dashStart = dashEnd - (limits.dash_seconds ?? 1) * 1000;
     const boundaries = [start, ...[dashStart, dashEnd].filter(at => at > start && at < now), now].sort((a, b) => a - b);
+    const burn = limits.fuel_burn_rate ?? 1.5, regen = limits.fuel_regen_rate ?? 6, emergency = limits.fuel_emergency_regen_rate ?? 2;
+    const wells = [...(gravity?.wells ?? [])];
+    if (state.home_body?.private) wells.push({...state.home_body, influence:Math.max(36, state.home_body.radius * 8)});
     const segment = (duration, target = null, acceleration = 0) => {
       const result = inertialSegment(state.velocity, duration, target, acceleration, limits);
-      state.velocity = result.velocity; state.position = state.position.map((v, i) => v + result.movement[i]);
+      state.velocity = result.velocity; return result.movement;
     };
     for (let i = 1; i < boundaries.length; i++) {
       const duration = (boundaries[i] - boundaries[i - 1]) / 1000, middle = (boundaries[i] + boundaries[i - 1]) / 2;
       const dash = middle >= dashStart && middle < dashEnd, thrust = hasControls ? direction : dash ? forward : null;
-      if (braking) segment(duration, [0, 0, 0], limits.brake_deceleration ?? 48);
+      let movement;
+      if (braking) {
+        movement = segment(duration, [0, 0, 0], limits.brake_deceleration ?? 48);
+        state.fuel = Math.min(100, state.fuel + regen * duration);
+      }
       else if (thrust && state.fuel > 0) {
-        const powered = Math.min(duration, state.fuel / 8), length = Math.max(1, Math.hypot(...thrust));
+        const powered = Math.min(duration, state.fuel / burn), length = Math.max(1, Math.hypot(...thrust));
         const speed = dash ? limits.max_speed ?? 60 : limits.cruise_speed ?? 20;
-        segment(powered, thrust.map(v => v * speed / length), dash ? limits.dash_acceleration ?? 96 : limits.thrust_acceleration ?? 24);
-        state.fuel = Math.max(0, state.fuel - powered * 8);
-        if (powered < duration) segment(duration - powered);
-      } else segment(duration);
+        movement = segment(powered, thrust.map(v => v * speed / length), dash ? limits.dash_acceleration ?? 96 : limits.thrust_acceleration ?? 24);
+        state.fuel = Math.max(0, state.fuel - powered * burn);
+        if (powered < duration) {
+          const coast = segment(duration - powered); movement = movement.map((v, i) => v + coast[i]);
+          state.fuel = Math.min(100, state.fuel + emergency * (duration - powered));
+        }
+      } else {
+        movement = segment(duration); state.fuel = Math.min(100, state.fuel + (thrust ? emergency : regen) * duration);
+      }
+      if (!braking) {
+        const acceleration = gravityAcceleration(state.position, wells, limits);
+        movement = movement.map((v, i) => v + acceleration[i] * duration ** 2 / 2);
+        state.velocity = state.velocity.map((v, i) => v + acceleration[i] * duration);
+        const speed = Math.hypot(...state.velocity), cap = limits.max_speed ?? 60;
+        if (speed > cap) state.velocity = state.velocity.map(v => v * cap / speed);
+      }
+      const contact = planetContact(state.position, state.position.map((v, i) => v + movement[i]), state.velocity, wells, limits);
+      state.position = contact.position; state.velocity = contact.velocity;
     }
     const radius = Math.hypot(...state.position), extent = limits.world_extent ?? 480;
     if (radius > extent) {
@@ -127,7 +206,7 @@
       this.state = { ...ship, position: [...ship.position], velocity: [...ship.velocity] };
       this.offset = [0, 0, 0]; this.position = [...ship.position];
     }
-    reconcile(ship, reset = false, age = 0, controls = null, limits = {}, now = 0) {
+    reconcile(ship, reset = false, age = 0, controls = null, limits = {}, now = 0, gravity = {}) {
       const previous = [...this.position], error = previous.map((p, i) => p - ship.position[i]);
       if (reset || ship.region !== this.state.region || (ship.hp <= 0) !== (this.state.hp <= 0) || Math.hypot(...error) > 45) this.reset(ship);
       else {
@@ -136,18 +215,18 @@
         // correction; otherwise the 15 Hz tick remainder jitters the camera.
         if (controls) for (let remaining = clamp(age, 0, .15); remaining > 0; ) {
           const dt = Math.min(remaining, .04); remaining -= dt;
-          integrateFlight(this.state, dt, controls, limits, now - remaining * 1000);
+          integrateFlight(this.state, dt, controls, limits, now - remaining * 1000, gravity);
         }
         this.offset = previous.map((p, i) => p - this.state.position[i]);
       }
     }
-    step(seconds, controls, limits, now, reduced = false) {
+    step(seconds, controls, limits, now, reduced = false, gravity = {}) {
       const dt = Number.isFinite(seconds) ? clamp(seconds, 0, .12) : 0;
       // A slow 20-30 FPS device still advances the whole visible interval.
       // Smaller physics substeps retain dash/fuel boundaries and hard bounds.
       for (let remaining = dt; remaining > 0; ) {
         const step = Math.min(remaining, .04); remaining -= step;
-        integrateFlight(this.state, step, controls, limits, now - remaining * 1000);
+        integrateFlight(this.state, step, controls, limits, now - remaining * 1000, gravity);
       }
       const decay = reduced ? 0 : Math.exp(-dt * 7);
       this.offset = this.offset.map(v => v * decay);
@@ -237,8 +316,37 @@
       }
     }
   }
-  function tokenNebula(seed, count = 2300) {
-    const random = M.random('token-ribbons:v5:' + seed), dust = [], clouds = [];
+  const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  function tokenLanes(seed, anchors = []) {
+    const points = anchors.slice(0, 64), visited = new Set([0]), lanes = [];
+    while (visited.size < points.length) {
+      let best = null;
+      for (const i of visited) for (let j = 0; j < points.length; j++) {
+        if (visited.has(j)) continue;
+        const delta = points[j].position.map((v, k) => v - points[i].position[k]), distance2 = dot(delta, delta);
+        if (!best || distance2 < best.distance2 || distance2 === best.distance2 && (i < best.i || i === best.i && j < best.j)) best = {i, j, distance2, delta};
+      }
+      if (!best) break;
+      const {i, j, delta, distance2} = best, length = Math.sqrt(distance2), direction = length ? delta.map(v => v / length) : [1, 0, 0];
+      const lateral = cross(direction, [0, 1, 0]);
+      const sideways = Math.sqrt(dot(lateral, lateral)) <= 1e-6 ? cross(direction, [1, 0, 0]) : lateral;
+      const normalLength = Math.sqrt(dot(sideways, sideways)), normal = sideways.map(v => v / normalLength);
+      const binormal = cross(direction, normal);
+      const sign = M.random('token-lane:v1:' + seed + ':' + points[i].id + ':' + points[j].id)() < .5 ? 1 : -1;
+      lanes.push({a:points[i].position, b:points[j].position, normal, binormal, length, sign});
+      visited.add(j);
+    }
+    return lanes;
+  }
+  function lanePoint(lane, t) {
+    const bend = Math.sin(Math.PI * t) * Math.min(18, lane.length * .08) * lane.sign;
+    return lane.a.map((v, i) => v + (lane.b[i] - v) * t + lane.normal[i] * bend);
+  }
+  function tokenNebula(seed, count = 2300, layout = {}) {
+    const highway = layout.version === 2 && layout.layout_version === 1 && layout.anchors?.length >= 2;
+    const random = M.random((highway ? 'token-highways:v6:' : 'token-ribbons:v5:') + seed), dust = [], clouds = [];
+    const lanes = highway ? tokenLanes(seed, layout.anchors) : [], total = lanes.reduce((sum, lane) => sum + lane.length, 0);
+    const laneCount = highway ? Math.floor(count * 4 / 5) : 0;
     const phases = Array.from({ length: 3 }, () => random() * M.TAU);
     const center = (t, band) => {
       const phase = phases[band];
@@ -247,10 +355,24 @@
     };
     const scatter = () => (random() + random() + random() - 1.5);
     for (let i = 0; i < count; i++) {
-      const t = random(), band = i % 3, p = center(t, band);
-      const width = 5 + 22 * (1 + Math.sin(t * 13 + phases[band]));
-      for (let k = 0; k < 3; k++) p[k] += scatter() * width;
-      if (i % 5 === 0) for (let k = 0; k < 3; k++) p[k] = (random() - .5) * (k === 1 ? 750 : 1500);
+      let p;
+      if (i < laneCount) {
+        let distance = (i + .5) / laneCount * total, lane = lanes[0];
+        for (const candidate of lanes) {
+          if (!candidate.length) continue;
+          lane = candidate;
+          if (distance <= candidate.length) break;
+          distance -= candidate.length;
+        }
+        p = lanePoint(lane, lane.length ? clamp(distance / lane.length, 0, 1) : 0);
+        const across = (random() - .5) * 3, around = (random() - .5) * 3;
+        p = p.map((v, k) => v + lane.normal[k] * across + lane.binormal[k] * around);
+      } else {
+        const t = random(), band = i % 3; p = center(t, band);
+        const width = 5 + 22 * (1 + Math.sin(t * 13 + phases[band]));
+        for (let k = 0; k < 3; k++) p[k] += scatter() * width;
+        if (i % 5 === 0) for (let k = 0; k < 3; k++) p[k] = (random() - .5) * (k === 1 ? 750 : 1500);
+      }
       const length = Math.hypot(...p);
       if (length > 475) for (let k = 0; k < 3; k++) p[k] *= 475 / length;
       const clearance = clamp((Math.hypot(...p) - 24) / 80, .08, 1);
@@ -261,7 +383,7 @@
       const clearance = clamp((Math.hypot(...p) - 30) / 100, 0, 1);
       clouds.push(...p, .66, .66, .66, .09 * clearance, 36 + random() * 32);
     }
-    return { dust: new Float32Array(dust), clouds: new Float32Array(clouds) };
+    return { dust: new Float32Array(dust), clouds: new Float32Array(clouds), lanes };
   }
   function planetMesh(id) {
     const phase = M.random('terrain:' + id)() * M.TAU;
@@ -664,6 +786,7 @@
         const text = active ? this.combatStatus.text : '';
         if (status.textContent !== text) status.textContent = text;
         status.dataset.state = active ? this.combatStatus.kind : 'ready';
+        status.setAttribute('aria-live', active && ['hit', 'kill', 'damaged', 'destroyed', 'empty'].includes(this.combatStatus.kind) ? 'polite' : 'off');
       }
       const reticle = document.getElementById('pilot-reticle');
       if (reticle) reticle.dataset.combat = active ? this.combatStatus.kind : 'ready';
@@ -675,7 +798,7 @@
       for (const event of events) {
         const age = now - event.at_ms;
         if (!['laser', 'hit', 'death'].includes(event.type) || age < 0 || age >= 900 ||
-            event.at_ms < (this.combatSince ?? 0) || event.region !== undefined && event.region !== this.network.self?.region ||
+            event.at_ms < (this.combatSince ?? 0) ||
             this.combatSeen.has(event.id)) continue;
         this.combatSeen.set(event.id, event.at_ms);
         if (this.combatSeen.size > 512) this.combatSeen.delete(this.combatSeen.keys().next().value);
@@ -712,14 +835,19 @@
     }
     syncCollectibles(field) {
       if (!field) return;
-      if (field.seed && field.seed !== this.sceneSeed) {
+      const geometryKey = field.seed ? field.seed + ':' + (field.layout_version ?? 0) + ':' + JSON.stringify(field.anchors ?? []) : this.fieldKey;
+      const changed = field.seed && geometryKey !== this.fieldKey;
+      if (changed) {
         this.sceneSeed = field.seed;
-        const scenery = tokenNebula(field.seed, field.count);
+        this.fieldKey = geometryKey;
+        const scenery = tokenNebula(field.seed, field.count, field);
         this.dust = scenery.dust; this.clouds = scenery.clouds;
+        this.tokenLanes = scenery.lanes;
+        this.collectEvents?.clear(); this.collectSince = this.network?.serverNow ?? 0;
         for (const token of this.tokenNodes.values()) token.remove();
         this.tokenNodes.clear();
       }
-      if (this.collectibles?.revision === field.revision && !field.seed) return;
+      if (!changed && this.collectibles?.revision === field.revision) return;
       this.collectibles = { ...this.collectibles, ...field };
       // Keep stable IDs in the full dust array; rebuild the compact GPU stream
       // only on a server bitmap revision, never 2,300 DOM nodes per frame.
@@ -766,16 +894,14 @@
         const ship = this.network.self;
         this.prediction ??= new FlightPrediction(ship);
         const controlled = document.activeElement === this.canvas || this.flightControls.size > 0;
-        this.prediction.reconcile(ship, reset.has(ship.id), (now - time) / 1000, this.flightIntent(controlled), this.network.limits, now);
+        this.prediction.reconcile(ship, reset.has(ship.id), (now - time) / 1000, this.flightIntent(controlled), this.network.limits, now, this.network.gravity);
         this.flight.position = [...this.prediction.position];
       }
       this.syncCollectibles(snapshot.collectibles);
-      for (const event of snapshot.events) if (event.type === 'collect' && now - event.at_ms < 800 && !this.collectEvents.has(event.id))
+      for (const event of snapshot.events) if (event.type === 'collect' && event.at_ms >= (this.collectSince ?? 0) && now - event.at_ms >= 0 && now - event.at_ms < 800 && !this.collectEvents.has(event.id))
         this.collectEvents.set(event.id, event);
       for (const [id, event] of this.collectEvents) if (now - event.at_ms >= 800) this.collectEvents.delete(id);
       this.receiveCombatEvents(snapshot.events, now);
-      for (const [id, event] of this.combatEvents) if (event.region !== undefined && event.region !== this.network.self?.region) this.combatEvents.delete(id);
-      for (const [id, event] of this.shotEvents) if (event.region !== undefined && event.region !== this.network.self?.region) this.shotEvents.delete(id);
       for (const [id, event] of this.shotEvents) if (now - event.at_ms > 400) this.shotEvents.delete(id);
       this.wake();
     }
@@ -804,7 +930,7 @@
           }
           this.prediction ??= new FlightPrediction(ship);
           if (!dt) this.prediction.reset(ship);
-          flight.position = [...this.prediction.step(dt, this.flightIntent(controlled), this.network.limits, this.network.serverNow, this.reduced.matches)];
+          flight.position = [...this.prediction.step(dt, this.flightIntent(controlled), this.network.limits, this.network.serverNow, this.reduced.matches, this.network.gravity)];
           flight.velocity = [...this.prediction.state.velocity];
           flight.thrust = controlled && ship.hp > 0 ? Number(keys.has('w')) - Number(keys.has('s')) : 0;
           flight.boost = false;
@@ -1294,6 +1420,23 @@
           line(at(start + j / sides * M.TAU), at(start + Math.min(fraction, (j + 1) / sides) * M.TAU), col, alpha);
         }
       };
+      if (this.flight && this.network?.connected) {
+        // These guides use only the server's frozen public lane descriptor.
+        // Limit nearby guide geometry; availability still comes from the bitmap.
+        const nearby = (this.tokenLanes ?? []).map(lane => {
+          const direction = lane.b.map((v, i) => v - lane.a[i]), length2 = dot(direction, direction);
+          const offset = this.flight.position.map((v, i) => v - lane.a[i]);
+          const t = length2 ? clamp(dot(offset, direction) / length2, 0, 1) : 0;
+          return {lane, distance:Math.hypot(...lanePoint(lane, t).map((v, i) => v - this.flight.position[i]))};
+        }).filter(item => item.distance < 120).sort((a, b) => a.distance - b.distance).slice(0, this.width < 600 ? 6 : 12);
+        for (const {lane} of nearby) {
+          let previous = lanePoint(lane, 0);
+          for (let i = 1; i <= 24; i++) {
+            const current = lanePoint(lane, i / 24);
+            line(previous, current, [.7, .7, .69], .13); previous = current;
+          }
+        }
+      }
       for (const [a, z, type] of this.view.links) {
         const related = [a.id, z.id, a.author?.id, z.author?.id].includes(this.focusId);
         const col = type.startsWith('private') ? palette.private : palette.reply;
@@ -1462,6 +1605,9 @@
           const tip = event.position.map((v, k) => v + direction[k] * radius);
           const tail = event.position.map((v, k) => v + direction[k] * radius * .55);
           line(tail, tip, alpha); points.push(...vertex(tip, alpha, death ? .45 : .3));
+          const size = death ? .24 : .14;
+          const corners = [[-1,-1],[1,-1],[1,1],[-1,1]].map(([x,y]) => tip.map((v,k) => v + basis.right[k]*x*size + basis.up[k]*y*size));
+          for (const index of [0,1,2,0,2,3]) triangles.push(...vertex(corners[index], alpha));
         }
         points.push(...vertex(event.position, alpha * .7, death ? 3.2 : 1.4));
       }
@@ -1663,6 +1809,6 @@
       for (const [id, label] of this.shipLabels) if (!visible.has(id)) { label.remove(); this.shipLabels.delete(id); }
     }
   }
-  globalThis.MSGUniverseFlight = Object.freeze({ Flight, flightBasis, tokenNebula, planetMesh, MotionTrack, FlightPrediction, integrateFlight, inertialSegment });
+  globalThis.MSGUniverseFlight = Object.freeze({ Flight, flightBasis, tokenNebula, tokenLanes, lanePoint, planetMesh, MotionTrack, FlightPrediction, integrateFlight, inertialSegment, gravityAcceleration, planetContact });
   globalThis.MSGUniverseRenderer = UniverseRenderer;
 })();
