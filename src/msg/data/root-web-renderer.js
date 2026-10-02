@@ -6,14 +6,15 @@
   const mix = (a, b, t) => a + (b - a) * t;
   const vs = `attribute vec3 aPosition; attribute vec4 aColor; attribute float aSize;
     uniform vec3 uTarget; uniform vec3 uRight; uniform vec3 uUp; uniform vec3 uEye;
-    uniform vec3 uLens; uniform float uHeight; uniform float uShift; varying mediump vec4 vColor; varying mediump float vSeed;
+    uniform mediump float uPoints; uniform vec3 uLens; uniform float uHeight; uniform float uShift; varying mediump vec4 vColor; varying mediump float vSeed;
     void main(){ vec3 r=aPosition-uTarget; float d=uLens.z-dot(r,uEye);
       gl_Position=vec4(dot(r,uRight)*uLens.x/uLens.y,dot(r,uUp)*uLens.x,1.0002*d-0.2,d);
       gl_Position.y+=uShift*gl_Position.w;
-      gl_PointSize=clamp(aSize*uLens.x*uHeight/max(d,0.1),1.0,100.0); vColor=aColor; vSeed=fract(dot(aPosition,vec3(.17,.31,.53))); }`;
-  const fs = `precision mediump float; varying mediump vec4 vColor; varying mediump float vSeed; uniform float uPoints;
+      gl_PointSize=clamp(aSize*uLens.x*uHeight/max(d,0.1),1.0,uPoints>2.5?280.0:100.0); vColor=aColor; vSeed=fract(dot(aPosition,vec3(.17,.31,.53))); }`;
+  const fs = `precision mediump float; varying mediump vec4 vColor; varying mediump float vSeed; uniform mediump float uPoints;
     void main(){float alpha=vColor.a;
-      if(uPoints>1.5){ vec2 p=abs(gl_PointCoord-.5); float mask;
+      if(uPoints>2.5){float d=length(gl_PointCoord-.5)*2.0; if(d>1.0)discard; alpha*=pow(1.0-d*d,3.0);}
+      else if(uPoints>1.5){ vec2 p=abs(gl_PointCoord-.5); float mask;
         if(vSeed<.33) mask=step(.22,p.x)*step(p.x,.40)*step(p.y,.38)+step(.27,p.y)*step(p.y,.4)*step(.13,p.x)*step(p.x,.40);
         else if(vSeed<.66) mask=max(step(p.x,.12)*step(p.y,.4),step(p.y,.12)*step(p.x,.4));
         else mask=step(p.x,.32)*step(p.y,.32);
@@ -25,6 +26,137 @@
     user: [.85, .85, .83], post: [.80, .80, .78], reply: [.94, .94, .92],
     private: [.75, .84, .76], 'private-message': [.75, .84, .76],
   };
+  const dot = (a, b) => a.reduce((sum, v, i) => sum + v * b[i], 0);
+  const unit = v => { const length = Math.hypot(...v) || 1; return v.map(n => n / length); };
+  function flightBasis(yaw, pitch) {
+    const sy = Math.sin(yaw), cy = Math.cos(yaw), sp = Math.sin(pitch), cp = Math.cos(pitch);
+    return { right: [cy, 0, -sy], up: [-sp * sy, cp, -sp * cy], eye: [cp * sy, sp, cp * cy] };
+  }
+  // Local navigation only. No identity, persistence, network or account side effects.
+  class Flight {
+    constructor(position, yaw = 0, pitch = 0) {
+      this.position = [...position];
+      this.velocity = [0, 0, 0];
+      this.yaw = yaw;
+      this.pitch = pitch;
+      this.bank = 0;
+      this.thrust = 0;
+      this.boost = false;
+      this.trail = [];
+      this.trailClock = 0;
+    }
+    get speed() { return Math.hypot(...this.velocity); }
+    halt() { this.velocity.fill(0); this.thrust = 0; this.boost = false; this.trail.length = 0; }
+    step(seconds, keys, obstacles = [], reduced = false) {
+      const dt = Number.isFinite(seconds) ? clamp(seconds, 0, .04) : 0;
+      if (!dt) return;
+      const axis = (positive, negative) => Number(keys.has(positive)) - Number(keys.has(negative));
+      const turn = axis('arrowright', 'arrowleft');
+      this.yaw = (this.yaw - turn * dt * 1.15) % M.TAU;
+      this.pitch = clamp(this.pitch + axis('arrowup', 'arrowdown') * dt, -1.35, 1.35);
+      const b = flightBasis(this.yaw, this.pitch);
+      const local = [axis('d', 'a'), axis('e', 'q'), -axis('w', 's')];
+      const length = Math.max(1, Math.hypot(...local));
+      const braking = keys.has(' ') || (reduced && !local.some(Boolean));
+      this.boost = !reduced && !braking && keys.has('shift') && local[2] < 0;
+      this.thrust = braking ? 0 : -local[2];
+      this.bank = mix(this.bank, reduced ? 0 : clamp(-turn * .4 - local[0] * .18, -.5, .5), 1 - Math.exp(-dt * 7));
+      const drag = braking ? 12 : .65, damping = Math.exp(-drag * dt);
+      const acceleration = braking ? 0 : this.boost ? 115 : 42;
+      const limit = this.boost ? 155 : Math.max(65, this.speed * damping);
+      const from = [...this.position];
+      for (let i = 0; i < 3; i++) {
+        const a = (local[0] * b.right[i] + local[1] * b.up[i] + local[2] * b.eye[i]) * acceleration / length;
+        // Exact constant-force integration: 30/60/120 Hz have the same handling.
+        this.position[i] += this.velocity[i] * (1 - damping) / drag + a / drag * (dt - (1 - damping) / drag);
+        this.velocity[i] = this.velocity[i] * damping + a * (1 - damping) / drag;
+      }
+      const speed = this.speed;
+      if (speed > limit) this.velocity = this.velocity.map(v => v * limit / speed);
+      if (braking && this.speed < .025) this.velocity.fill(0);
+      // Swept sphere checks prevent tunneling through loaded planets during boost.
+      // Four contact passes are bounded; overlapping planets may require strafing out.
+      for (let pass = 0; pass < 4; pass++) {
+        const delta = this.position.map((v, i) => v - from[i]);
+        const length2 = dot(delta, delta);
+        let first = null;
+        for (const body of obstacles) {
+          const radius = body.radius + 4.0, rel = from.map((v, i) => v - body.position[i]);
+          const c = dot(rel, rel) - radius * radius;
+          if (c < 0) { first = { t: 0, body, radius, inside: true }; break; }
+          if (length2 < 1e-12) continue;
+          const q = dot(rel, delta), discriminant = q * q - length2 * c;
+          if (q >= 0 || discriminant < 0) continue;
+          const t = (-q - Math.sqrt(discriminant)) / length2;
+          if (t >= 0 && t <= 1 && (!first || t < first.t)) first = { t, body, radius };
+        }
+        if (!first) break;
+        const hit = from.map((v, i) => v + delta[i] * first.t);
+        let normal = hit.map((v, i) => v - first.body.position[i]);
+        normal = Math.hypot(...normal) < 1e-9 ? b.eye : unit(normal);
+        this.position = first.body.position.map((v, i) => v + normal[i] * (first.radius + .015));
+        const inward = Math.min(0, dot(this.velocity, normal));
+        this.velocity = this.velocity.map((v, i) => v - normal[i] * inward);
+        for (let i = 0; i < 3; i++) from[i] = this.position[i];
+      }
+      for (let i = 0; i < 3; i++) {
+        const bounded = clamp(this.position[i], -1200, 1200);
+        if (bounded !== this.position[i]) this.velocity[i] = 0;
+        this.position[i] = bounded;
+      }
+      for (const sample of this.trail) sample.age += dt;
+      this.trail = this.trail.filter(sample => sample.age < 1.4);
+      this.trailClock += dt;
+      if (!reduced && this.speed > 5 && this.trailClock >= .04) {
+        this.trail.push({ position: this.position.map((v, i) => v + b.eye[i] * 2.6), age: 0 });
+        this.trailClock = 0;
+        if (this.trail.length > 36) this.trail.shift();
+      }
+    }
+  }
+  function tokenNebula(seed, count = 2300) {
+    const random = M.random('token-ribbons:v4:' + seed), dust = [], clouds = [];
+    const phases = Array.from({ length: 3 }, () => random() * M.TAU);
+    const center = (t, band) => {
+      const phase = phases[band];
+      return [(t - .5) * 940, Math.sin(t * 8 + phase) * (35 + band * 30) + (band - 1) * 44,
+        Math.cos(t * 6 + phase) * 115 + (band - 1) * 160];
+    };
+    const scatter = () => (random() + random() + random() - 1.5);
+    for (let i = 0; i < count; i++) {
+      const t = random(), band = i % 3, p = center(t, band);
+      const width = 5 + 22 * (1 + Math.sin(t * 13 + phases[band]));
+      for (let k = 0; k < 3; k++) p[k] += scatter() * width;
+      if (i % 5 === 0) for (let k = 0; k < 3; k++) p[k] = (random() - .5) * (k === 1 ? 750 : 1500);
+      const clearance = clamp((Math.hypot(...p) - 24) / 80, .08, 1);
+      dust.push(...p, .83, .83, .83, (.14 + random() * .38) * clearance, .23 + random() * .55);
+    }
+    for (let i = 0; i < 72; i++) {
+      const band = i % 3, t = Math.floor(i / 3) / 23, p = center(t, band);
+      const clearance = clamp((Math.hypot(...p) - 30) / 100, 0, 1);
+      clouds.push(...p, .66, .66, .66, .09 * clearance, 36 + random() * 32);
+    }
+    return { dust: new Float32Array(dust), clouds: new Float32Array(clouds) };
+  }
+  function planetMesh(id) {
+    const phase = M.random('terrain:' + id)() * M.TAU;
+    const top = [0, 1, 0], bottom = [0, -1, 0], rim = [[1, 0, 0], [0, 0, 1], [-1, 0, 0], [0, 0, -1]];
+    let faces = [];
+    for (let i = 0; i < 4; i++) faces.push([top, rim[(i + 1) % 4], rim[i]], [bottom, rim[i], rim[(i + 1) % 4]]);
+    for (let depth = 0; depth < 2; depth++) {
+      const next = [];
+      for (const [a, b, c] of faces) {
+        const middle = (p, q) => unit(p.map((v, i) => v + q[i]));
+        const ab = middle(a, b), bc = middle(b, c), ca = middle(c, a);
+        next.push([a, ab, ca], [ab, b, bc], [ca, bc, c], [ab, bc, ca]);
+      }
+      faces = next;
+    }
+    return faces.map(face => face.map(v => {
+      const height = .045 * Math.sin(v[0] * 8 + phase) * Math.cos(v[2] * 7 - phase) + .02 * Math.sin(v[1] * 12 + phase);
+      return v.map(n => n * (1 + height));
+    }));
+  }
   class UniverseRenderer {
     constructor(canvas, labels, callbacks = {}) {
       this.canvas = canvas;
@@ -53,15 +185,26 @@
       this.available = false;
       this.lost = false;
       this.sceneSeed = Array.from(crypto.getRandomValues(new Uint32Array(2))).join(':');
-      this.dust = M.nebula(2300, this.sceneSeed);
+      const scenery = tokenNebula(this.sceneSeed);
+      this.dust = scenery.dust;
+      this.clouds = scenery.clouds;
+      this.flight = null;
+      this.flightPointers = new Map();
+      this.flightControls = new Map();
+      this.flightHud = document.getElementById('pilot-hud');
+      this.flightButton = document.getElementById('pilot-toggle');
+      this.nearby = null;
+      this.hudTime = 0;
       this.visualTraits = new WeakMap();
       this.tokenField = document.getElementById('token-field');
       this.tokenNodes = new Map();
       this.hoverId = null;
       canvas.addEventListener("webglcontextlost", (e) => {
         e.preventDefault();
+        this.stopFlightInput();
         this.lost = true;
         this.available = false;
+        if (this.flightButton) this.flightButton.disabled = true;
         cancelAnimationFrame(this.frame);
         this.frame = 0;
         this.labels.replaceChildren();
@@ -75,10 +218,13 @@
         this.lost = false;
         this.labelNodes.clear();
         this.init();
+        if (this.flightButton) this.flightButton.disabled = !this.available;
         this.wake();
       });
       this.init();
+      if (this.flightButton) this.flightButton.disabled = !this.available;
       this.events();
+      this.flightEvents();
       this.observer = new ResizeObserver(() => this.resize());
       this.observer.observe(canvas);
       this.resize();
@@ -168,8 +314,186 @@
       this.canvas.height = Math.round(rect.height * dpr);
       this.wake();
     }
+    setPilot(active) {
+      if (active === Boolean(this.flight) || (active && (!this.available || this.lost))) return;
+      this.stopFlightInput();
+      this.destination = null;
+      this.nearby = null;
+      if (active) {
+        this.focusId = null;
+        this.callbacks.overview?.();
+        const b = this.basis(), c = this.camera;
+        this.flight = new Flight(c.target.map((v, i) => v + b.eye[i] * Math.max(12, c.distance - 34)), c.yaw, c.pitch);
+        this.updateFlight(0);
+      } else {
+        this.camera.target = [...this.flight.position];
+        this.camera.distance = 90;
+        this.flight = null;
+      }
+      this.reindex();
+      this.last = 0;
+      this.canvas.dataset.piloting = String(active);
+      document.getElementById('universe')?.classList.toggle('piloting', active);
+      if (this.flightHud) this.flightHud.hidden = !active;
+      if (this.flightButton) {
+        this.flightButton.setAttribute('aria-pressed', String(active));
+        this.flightButton.textContent = active ? 'Exit flight' : 'Pilot';
+      }
+      this.updateFlightHud(true);
+      if (active) this.canvas.focus({ preventScroll: true });
+      this.wake();
+    }
+    stopFlightInput() {
+      this.keys.clear();
+      this.pointers.clear();
+      this.start = null;
+      this.flightPointers?.clear();
+      this.flightControls?.clear();
+      this.flight?.halt();
+      for (const button of document.querySelectorAll('[data-flight-key]')) button.classList.remove('held');
+      if (this.flight) this.updateFlightHud(true);
+    }
+    flightEvents() {
+      const canvas = this.canvas;
+      this.flightButton?.addEventListener('click', () => this.setPilot(!this.flight));
+      document.getElementById('pilot-inspect')?.addEventListener('click', () => this.inspectNearby());
+      canvas.addEventListener('keydown', e => {
+        if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+        const key = e.key.toLowerCase();
+        if (key === 'f' && !e.repeat) { e.preventDefault(); this.setPilot(!this.flight); return; }
+        if (!this.flight) return;
+        if (key === 'escape') {
+          e.preventDefault(); this.setPilot(false); this.flightButton?.focus(); return;
+        }
+        if (key === 'h') { e.preventDefault(); this.home(); return; }
+        if (key === 'enter' && !e.repeat) { e.preventDefault(); this.inspectNearby(); return; }
+        if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift'].includes(key)) {
+          e.preventDefault(); this.keys.add(key); this.wake();
+        }
+      });
+      window.addEventListener('keyup', e => { this.keys.delete(e.key.toLowerCase()); });
+      window.addEventListener('blur', () => { this.stopFlightInput(); this.last = 0; });
+      window.addEventListener('pagehide', () => {
+        this.stopFlightInput(); this.last = 0;
+        cancelAnimationFrame(this.frame); this.frame = 0;
+      });
+      document.addEventListener('focusin', e => {
+        if (this.flight && e.target !== canvas) this.stopFlightInput();
+      });
+      canvas.addEventListener('pointerdown', e => {
+        if (!this.flight || e.button !== 0) return;
+        e.preventDefault(); canvas.focus({ preventScroll: true });
+        canvas.setPointerCapture(e.pointerId);
+        this.flightPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      });
+      canvas.addEventListener('pointermove', e => {
+        const previous = this.flightPointers.get(e.pointerId);
+        if (!this.flight || !previous) return;
+        this.flight.yaw -= (e.clientX - previous.x) * .004;
+        this.flight.pitch = clamp(this.flight.pitch + (e.clientY - previous.y) * .003, -1.35, 1.35);
+        this.flightPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        this.wake();
+      });
+      for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+        canvas.addEventListener(type, e => {
+          const held = this.flightPointers.has(e.pointerId);
+          this.flightPointers.delete(e.pointerId);
+          if (type === 'pointercancel' || (type === 'lostpointercapture' && held)) this.stopFlightInput();
+        });
+      }
+      for (const button of document.querySelectorAll('[data-flight-key]')) {
+        const key = button.dataset.flightKey;
+        const press = (id) => { this.flightControls.set(id, key); button.classList.add('held'); this.wake(); };
+        const release = (id) => {
+          this.flightControls.delete(id);
+          if (![...this.flightControls.values()].includes(key)) button.classList.remove('held');
+          this.wake();
+        };
+        button.addEventListener('pointerdown', e => {
+          if (!this.flight || e.button !== 0) return;
+          e.preventDefault(); canvas.focus({ preventScroll: true });
+          button.setPointerCapture(e.pointerId); press(e.pointerId);
+        });
+        for (const type of ['pointerup', 'pointercancel', 'lostpointercapture'])
+          button.addEventListener(type, e => {
+            const held = this.flightControls.has(e.pointerId);
+            release(e.pointerId);
+            if (type === 'pointercancel' || (type === 'lostpointercapture' && held)) this.stopFlightInput();
+          });
+        button.addEventListener('keydown', e => {
+          if (this.flight && [' ', 'Enter'].includes(e.key)) { e.preventDefault(); press('keyboard:' + key); }
+        });
+        button.addEventListener('keyup', e => {
+          if ([' ', 'Enter'].includes(e.key)) { e.preventDefault(); release('keyboard:' + key); }
+        });
+        button.addEventListener('blur', () => release('keyboard:' + key));
+      }
+    }
+    updateFlight(dt) {
+      const flight = this.flight, now = this.callbacks.now?.() ?? Date.now();
+      const bodies = this.graph.nodes.filter(node => node.kind === 'user' || node.kind === 'private')
+        .map(node => ({ node, position: node.position, radius: M.appearance(node, now).radius * 1.07 }));
+      const keys = new Set([...this.keys, ...this.flightControls.values()]);
+      flight.step(dt, keys, bodies, this.reduced.matches);
+      const smoothing = this.paused || this.reduced.matches || !dt ? 1 : 1 - Math.exp(-dt * 9);
+      // Interpolate angles across the wrap boundary, never via a full rotation.
+      const angle = Math.atan2(Math.sin(flight.yaw - this.camera.yaw), Math.cos(flight.yaw - this.camera.yaw));
+      this.camera.yaw += angle * smoothing;
+      this.camera.pitch = mix(this.camera.pitch, flight.pitch, smoothing);
+      const basis = this.basis();
+      this.camera.target = flight.position.map((v, i) => v - basis.eye[i] * 8 + basis.up[i] * 4);
+      this.camera.distance = this.reduced.matches ? 34 : mix(this.camera.distance, flight.boost ? 38 : 34, smoothing);
+      this.nearby = null;
+      let nearest = 40;
+      for (const body of bodies) {
+        const distance = Math.hypot(...flight.position.map((v, i) => v - body.position[i])) - body.radius;
+        if (distance < nearest) { nearest = distance; this.nearby = body.node; }
+      }
+      this.hudTime += dt;
+      if (this.hudTime > .1 || !dt) { this.updateFlightHud(); this.hudTime = 0; }
+    }
+    updateFlightHud(clear = false) {
+      const speed = document.getElementById('pilot-speed'), approach = document.getElementById('pilot-inspect');
+      if (speed) speed.textContent = this.flight ? Math.round(this.flight.speed).toString().padStart(3, '0') : '000';
+      if (!approach) return;
+      const node = !clear && this.flight && this.nearby;
+      approach.disabled = !node;
+      approach.textContent = node ? 'Inspect ' + M.handle(node.name || node.title || 'Signal') + ' ↗' : 'Approach a star';
+    }
+    inspectNearby() {
+      // Re-resolve from the current authorized graph; no stale private selection.
+      const node = this.flight && this.nearby && this.graph.nodes.find(n => n.id === this.nearby.id);
+      if (!node) return;
+      this.setPilot(false);
+      this.callbacks.select?.(node);
+    }
+    shipGeometry(geometry) {
+      const flight = this.flight, b = flightBasis(flight.yaw, flight.pitch), { lines, points, solids } = geometry;
+      const bank = flight.bank, right = b.right.map((v, i) => v * Math.cos(bank) + b.up[i] * Math.sin(bank));
+      const up = b.up.map((v, i) => v * Math.cos(bank) - b.right[i] * Math.sin(bank));
+      const at = ([x, y, z]) => flight.position.map((v, i) => v + right[i] * x + up[i] * y + b.eye[i] * z);
+      const vertices = [[0, 0, -3.8], [-2.7, -.35, 2], [2.7, -.35, 2], [0, .85, .7], [0, -.55, 1.7], [0, .1, 2.1]].map(at);
+      const face = (indices, light) => { for (const i of indices) solids.push(...vertices[i], light, light, light, 1, 1); };
+      face([0, 1, 3], .56); face([0, 3, 2], .84); face([1, 2, 4], .2);
+      face([0, 4, 1], .28); face([0, 2, 4], .35); face([1, 5, 3], .48); face([3, 5, 2], .62);
+      for (const [a, z] of [[0, 1], [0, 2], [0, 3], [1, 3], [2, 3]])
+        lines.push(...vertices[a], .9, .9, .9, .35, 1, ...vertices[z], .9, .9, .9, .35, 1);
+      const nozzle = at([0, 0, 2.15]);
+      points.push(...nozzle, .9, .93, 1, .75, flight.thrust > 0 ? 1.7 : .6);
+      if (!this.reduced.matches && flight.thrust > 0) {
+        const tail = at([0, 0, flight.boost ? 10 : 5.5]);
+        lines.push(...nozzle, .95, .97, 1, .7, 1, ...tail, .85, .9, 1, .02, 1);
+      }
+      for (let i = 1; i < flight.trail.length; i++) {
+        const previous = flight.trail[i - 1], sample = flight.trail[i];
+        const alpha = .22 * (1 - sample.age / 1.4);
+        lines.push(...previous.position, .88, .9, .95, alpha, 1, ...sample.position, .88, .9, .95, alpha, 1);
+      }
+    }
     setGraph(graph) {
       this.graph = graph;
+      this.nearby = null;
+      if (this.flight) this.updateFlightHud(true);
       this.satellites = graph.nodes.filter(n => n.orbitCenter);
       this.signals = graph.nodes.filter(n => n.kind !== 'user' && n.kind !== 'private');
       this.reindex();
@@ -204,6 +528,7 @@
       this.canvas.dataset.loadedNodes = String(this.graph.nodes.length);
     }
     setFocus(id) {
+      if (this.flight && id !== this.focusId) this.setPilot(false);
       this.focusId = id;
       this.reindex();
       this.wake();
@@ -215,6 +540,7 @@
       this.travel(node.position, distance);
     }
     travel(target, distance) {
+      if (this.flight) this.setPilot(false);
       this.destination = { target: [...target], distance };
       if (this.reduced.matches) {
         this.camera.target = [...target];
@@ -230,6 +556,7 @@
       this.callbacks.overview?.();
     }
     pause(value) {
+      if (value && this.flight) this.setPilot(false);
       this.paused = value;
       this.wake();
     }
@@ -252,7 +579,7 @@
     }
     verticalShift() {
       // Leave the selected star above the mobile inspector, not underneath it.
-      return this.width < 600 && this.focusId ? .5 : 0;
+      return !this.flight && this.width < 600 && this.focusId ? .5 : 0;
     }
     project(p) {
       const b = this.basis(),
@@ -287,6 +614,7 @@
       const c = this.canvas;
       c.addEventListener("contextmenu", (e) => e.preventDefault());
       c.addEventListener("pointerdown", (e) => {
+        if (this.flight) return;
         if (e.button !== 0 && e.button !== 2) return;
         c.focus({ preventScroll: true });
         c.setPointerCapture(e.pointerId);
@@ -301,6 +629,7 @@
         this.wake();
       });
       c.addEventListener("pointermove", (e) => {
+        if (this.flight) return;
         const old = this.pointers.get(e.pointerId);
         if (!old) {
           const r = c.getBoundingClientRect();
@@ -342,6 +671,7 @@
         this.wake();
       });
       const release = (e) => {
+        if (this.flight) return;
         const start = this.start;
         this.pointers.delete(e.pointerId);
         if (
@@ -368,6 +698,7 @@
         "wheel",
         (e) => {
           e.preventDefault();
+          if (this.flight) return;
           this.destination = null;
           this.camera.distance = clamp(
             this.camera.distance *
@@ -380,6 +711,7 @@
         { passive: false },
       );
       c.addEventListener("keydown", (e) => {
+        if (this.flight || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
         const key = e.key.toLowerCase();
         if (
           [
@@ -403,8 +735,9 @@
         }
       });
       c.addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
-      c.addEventListener("blur", () => this.keys.clear());
+      c.addEventListener("blur", () => this.stopFlightInput());
       document.addEventListener("visibilitychange", () => {
+        this.stopFlightInput();
         this.keys.clear();
         this.pointers.clear();
         this.last = 0;
@@ -432,7 +765,7 @@
       const c = this.camera;
       if (!this.paused) {
         this.clock += dt;
-        if (!this.pointers.size && !this.keys.size && !this.destination)
+        if (!this.flight && !this.pointers.size && !this.keys.size && !this.destination)
           c.yaw += dt * 0.008;
       }
       if (this.destination) {
@@ -449,7 +782,8 @@
         )
           this.destination = null;
       }
-      if (this.keys.size) {
+      if (this.flight) this.updateFlight(dt);
+      else if (this.keys.size) {
         this.destination = null;
         const s = dt * c.distance * 0.45;
         this.pan(
@@ -482,7 +816,7 @@
         b = this.basis(),
         u = this.uniforms;
       gl.viewport(0, 0, this.canvas.width, this.canvas.height);
-      gl.clear(gl.COLOR_BUFFER_BIT);
+      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
       gl.useProgram(this.program);
       gl.uniform3fv(u.uTarget, c.target);
       gl.uniform3fv(u.uRight, b.right);
@@ -496,18 +830,24 @@
       );
       gl.uniform1f(u.uHeight, this.canvas.height);
       gl.uniform1f(u.uShift, this.verticalShift());
-      const draw = (vertices, mode, tokenDust = false) => {
+      const draw = (vertices, mode, pointKind = 0) => {
         if (!vertices.length) return;
         gl.bufferData(
           gl.ARRAY_BUFFER,
-          new Float32Array(vertices),
+          vertices instanceof Float32Array ? vertices : new Float32Array(vertices),
           gl.DYNAMIC_DRAW,
         );
-        gl.uniform1f(u.uPoints, tokenDust ? 2 : mode === gl.POINTS ? 1 : 0);
+        gl.uniform1f(u.uPoints, pointKind || (mode === gl.POINTS ? 1 : 0));
         gl.drawArrays(mode, 0, vertices.length / 8);
       };
-      draw(this.dust, gl.POINTS, true);
+      draw(this.clouds, gl.POINTS, 3);
+      draw(this.dust, gl.POINTS, 2);
       const geometry = this.geometry();
+      gl.enable(gl.DEPTH_TEST);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      draw(geometry.solids, gl.TRIANGLES);
+      gl.disable(gl.DEPTH_TEST);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
       draw(geometry.triangles, gl.TRIANGLES);
       draw(geometry.lines, gl.LINES);
       draw(geometry.points, gl.POINTS);
@@ -518,11 +858,12 @@
       this.updateTokens();
       this.callbacks.camera?.(this.camera.target);
       this.dirty = false;
-      if (!this.paused || this.destination || this.keys.size)
+      if (!this.paused || this.destination || this.keys.size || this.flightControls.size ||
+          (this.flight && (this.flight.speed > .01 || this.flight.trail.length)))
         this.frame = requestAnimationFrame((t) => this.render(t));
     }
     geometry() {
-      const lines = [], points = [], triangles = [], b = this.basis();
+      const lines = [], points = [], triangles = [], solids = [], b = this.basis();
       const now = this.callbacks.now?.() ?? Date.now();
       const vertex = (p, col, alpha, size = 1) => [...p, ...col, alpha, size];
       const line = (a, z, col, alpha) => lines.push(...vertex(a, col, alpha), ...vertex(z, col, alpha));
@@ -563,26 +904,30 @@
         let traits = this.visualTraits.get(node);
         if (!traits) {
           const rng = M.random('shape:' + node.id);
-          traits = { phase: rng() * M.TAU, speed: .025 + rng() * .085, tilt: .8 + rng() * .6 };
+          traits = { phase: rng() * M.TAU, speed: .025 + rng() * .085, tilt: .8 + rng() * .6, mesh: planetMesh(node.id) };
           this.visualTraits.set(node, traits);
         }
         const pulse = 1 + (this.paused ? 0 : Math.sin(this.clock * (1 + traits.speed * 8) + traits.phase) * style.pulse);
-        points.push(...vertex(p, col, light * pulse, style.root ? 23 : isStar ? 5.5 : 2.2));
+        points.push(...vertex(p, col, light * pulse * (isStar ? .38 : 1), style.root ? 25 : isStar ? 5.5 : 2.2));
         const projected = this.project(p);
-        if (!selected && !hovered && !style.root && (!projected || projected.scale * style.radius < 3 || detailed >= 96)) continue;
+        if (!selected && !hovered && !style.root && (!projected || projected.scale * style.radius < 3 || detailed >= (this.software ? 24 : 64))) continue;
         detailed++;
         if (isStar) {
           const r = style.radius, rotation = this.clock * traits.speed + traits.phase;
-          const corners = [[0, r * 1.4 * traits.tilt, 0], [r, 0, 0], [0, 0, r], [-r, 0, 0], [0, 0, -r], [0, -r * 1.4 * traits.tilt, 0]].map(v => [
-            p[0] + v[0] * Math.cos(rotation) - v[2] * Math.sin(rotation), p[1] + v[1],
-            p[2] + v[0] * Math.sin(rotation) + v[2] * Math.cos(rotation)]);
-          for (let j = 1; j <= 4; j++) {
-            const k = j === 4 ? 1 : j + 1;
-            line(corners[0], corners[j], col, light * .9);
-            line(corners[5], corners[j], col, light * .55);
-            line(corners[j], corners[k], col, light * .6);
-            for (const apex of [0, 5]) triangles.push(...vertex(corners[apex], col, light * (style.root ? .20 : .10)),
-              ...vertex(corners[j], col, light * .14), ...vertex(corners[k], col, light * .08));
+          const rotate = v => [v[0] * Math.cos(rotation) - v[2] * Math.sin(rotation), v[1],
+            v[0] * Math.sin(rotation) + v[2] * Math.cos(rotation)];
+          const cameraPosition = this.camera.target.map((v, i) => v + b.eye[i] * this.camera.distance);
+          const towardEye = unit(cameraPosition.map((v, i) => v - p[i]));
+          const sun = style.root ? towardEye : unit(p.map(v => -v));
+          for (const face of traits.mesh) {
+            const local = face.map(rotate), normal = unit(local[0].map((v, i) => v + local[1][i] + local[2][i]));
+            if (dot(normal, towardEye) < -.12) continue;
+            const diffuse = Math.max(0, dot(normal, sun));
+            const rimLight = (1 - Math.max(0, dot(normal, towardEye))) ** 3;
+            const terrain = .90 + .1 * Math.sin(normal[1] * 19 + traits.phase);
+            const shade = style.root ? .72 + .26 * diffuse : (.14 + .62 * diffuse + .18 * rimLight) * terrain;
+            const faceColor = col.map(v => v * shade * (.35 + light * .65));
+            for (const v of local) solids.push(...vertex(v.map((n, i) => p[i] + n * r), faceColor, 1));
           }
           if (style.root) {
             // The trust anchor has a white core, three thin coronas and a cross.
@@ -623,12 +968,24 @@
           }
         }
       }
-      return { lines, points, triangles };
+      if (this.flight) this.shipGeometry({ lines, points, solids });
+      return { lines, points, triangles, solids };
     }
     renderSoftware() {
       const ctx = this.context, dpr = this.canvas.width / Math.max(this.width, 1);
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, this.width, this.height);
+      for (let i = 0; i < this.clouds.length; i += this.width < 600 ? 16 : 8) {
+        const p = this.project(this.clouds.slice(i, i + 3));
+        if (!p) continue;
+        const radius = clamp(p.scale * this.clouds[i + 7], 2, 140);
+        if (p.x + radius < 0 || p.x - radius > this.width || p.y + radius < 0 || p.y - radius > this.height) continue;
+        const fog = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
+        fog.addColorStop(0, `rgba(168,168,168,${this.clouds[i + 6]})`);
+        fog.addColorStop(.45, `rgba(168,168,168,${this.clouds[i + 6] * .48})`);
+        fog.addColorStop(1, 'rgba(168,168,168,0)');
+        ctx.fillStyle = fog; ctx.fillRect(p.x - radius, p.y - radius, radius * 2, radius * 2);
+      }
       for (let i = 0; i < this.dust.length; i += 8) {
         const p = this.project(this.dust.slice(i, i + 3));
         if (!p || p.x < 0 || p.x > this.width || p.y < 0 || p.y > this.height) continue;
@@ -638,15 +995,23 @@
       }
       const geometry = this.geometry();
       const color = (array, offset) => `rgba(${array.slice(offset + 3, offset + 6).map(v => Math.round(v * 255)).join(',')},${clamp(array[offset + 6], 0, 1)})`;
-      for (const [type, width] of [['triangles', 24], ['lines', 16]]) {
-        const array = geometry[type];
+      for (const [type, width] of [['solids', 24], ['triangles', 24], ['lines', 16]]) {
+        let array = geometry[type];
+        if (type === 'solids') {
+          const faces = [];
+          for (let i = 0; i < array.length; i += 24) {
+            const depth = [0, 8, 16].map(j => this.project(array.slice(i + j, i + j + 3))?.depth ?? -1);
+            if (depth.every(d => d > 0)) faces.push({ vertices: array.slice(i, i + 24), depth: depth.reduce((a, b) => a + b, 0) });
+          }
+          array = faces.sort((a, b) => b.depth - a.depth).flatMap(face => face.vertices);
+        }
         for (let i = 0; i < array.length; i += width) {
           const vertices = [];
           for (let j = 0; j < width; j += 8) vertices.push(this.project(array.slice(i + j, i + j + 3)));
           if (vertices.some(p => !p)) continue;
           ctx.beginPath(); ctx.moveTo(vertices[0].x, vertices[0].y);
           for (const p of vertices.slice(1)) ctx.lineTo(p.x, p.y);
-          if (type === 'triangles') { ctx.closePath(); ctx.fillStyle = color(array, i); ctx.fill(); }
+          if (type !== 'lines') { ctx.closePath(); ctx.fillStyle = color(array, i); ctx.fill(); }
           else { ctx.strokeStyle = color(array, i); ctx.lineWidth = 1; ctx.stroke(); }
         }
       }
@@ -679,7 +1044,7 @@
           this.tokenField.append(token); this.tokenNodes.set(i, token);
         }
         token.style.transform = `translate(${Math.round(p.x)}px,${Math.round(p.y)}px)`;
-        token.style.fontSize = clamp(p.scale * 4.5, 7, 12) + 'px';
+        token.style.fontSize = clamp(p.scale * 4.5, 7, this.flight ? 17 : 12) + 'px';
         token.style.opacity = clamp(.12 + p.scale * .025, .12, .25);
       }
       for (const [id, token] of this.tokenNodes) if (!visible.has(id)) { token.remove(); this.tokenNodes.delete(id); }
@@ -742,5 +1107,6 @@
         }
     }
   }
+  globalThis.MSGUniverseFlight = Object.freeze({ Flight, flightBasis, tokenNebula, planetMesh });
   globalThis.MSGUniverseRenderer = UniverseRenderer;
 })();
