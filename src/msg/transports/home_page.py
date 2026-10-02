@@ -7,6 +7,7 @@ from string import punctuation
 from urllib.parse import quote, urljoin
 from zoneinfo import ZoneInfo
 
+from msg.transports.attachment_views import ATTACHMENT_CSS, attachments_html
 from msg.transports.board_page import CSS as BOARD_CSS, header_html as board_header_html
 from msg.transports.browser_style import (
     BRAND_LINK,
@@ -40,7 +41,7 @@ from msg.transports.wiki_actions import WIKI_HASH, WIKI_SCRIPT
 HOME_BROWSER_HEADERS = {
     **BASE_HEADERS,
     'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}'; "
-    "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; "
+    "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'",
 }
 
@@ -303,6 +304,7 @@ def document_html(
         body = re.sub(r'<h1(?:\s[^>]*)?>.*?</h1>\s*', '', body, count=1, flags=re.DOTALL)
         body = board_header_html(resource) + body
     body, outline = outline_html(body) if not is_profile and not is_board else (body, '')
+    attachments = attachments_html(resource)
     raw_url = escape(
         quote(raw_path, safe='/@*&') + '?' + (raw_query + '&' if raw_query else '') + 'format=raw',
         quote=True,
@@ -313,7 +315,7 @@ def document_html(
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{escape(title)}</title><link rel="icon" href="/favicon.png">'
         '<link rel="search" type="application/opensearchdescription+xml" title="MSG" href="/opensearch.xml">'
-        f'<style>{THEME_CSS}{BOARD_CSS if is_board else ""}{OUTLINE_CSS if outline else ""}{PROFILE_CSS if is_profile else ""}{POST_ACTIONS_CSS if post_actions or wiki_actions else ""}</style></head><body class="page-document{" has-outline" if outline else ""}">'
+        f'<style>{THEME_CSS}{BOARD_CSS if is_board else ""}{OUTLINE_CSS if outline else ""}{PROFILE_CSS if is_profile else ""}{POST_ACTIONS_CSS if post_actions or wiki_actions else ""}{ATTACHMENT_CSS if attachments else ""}</style></head><body class="page-document{" has-outline" if outline else ""}">'
         + SKIP_LINK
         + '<header class="site-header">'
         + BRAND_LINK
@@ -327,7 +329,7 @@ def document_html(
         + f'<a class="raw-link" href="{raw_url}">raw</a></div>'
         '</div></header><main><p id="msg-document-status" class="document-status" role="status" aria-live="polite"></p>'
         f'<textarea id="msg-document-source" aria-label="Markdown source" readonly hidden>{escape(markdown)}</textarea>'
-        f'<div id="content" class="prose" tabindex="-1">{controls}{metadata}{body}</div>{wiki_actions}{post_actions}</main>'
+        f'<div id="content" class="prose" tabindex="-1">{controls}{metadata}{body}{attachments}</div>{wiki_actions}{post_actions}</main>'
         + outline
         + (f'<script>{OUTLINE_SCRIPT}</script>' if outline else '')
         + (f'<script>{PROFILE_SCRIPT}</script>' if is_profile or is_board else '')
