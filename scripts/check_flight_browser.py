@@ -521,7 +521,8 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
         assert second.locator('#region-map-status').is_visible()
         assert '断开' in second.locator('#region-map-status').inner_text()
         assert '实时玩家未连接' in second.locator('#region-map-status').inner_text()
-        assert second.locator('#region-map-actions button:not(:disabled)').count() == 0
+        assert second.locator('.region-map-regions button').count() == 19
+        assert second.locator('.region-map-regions button:not(:disabled)').count() == 0
         second.screenshot(path=str(ARTIFACTS / 'actual-map-disconnected-mobile.png'))
         checks.append('paused map shows lost connection inside the map and disables region requests')
         second.locator('#space').focus()
