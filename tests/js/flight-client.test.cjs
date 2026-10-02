@@ -163,6 +163,13 @@ test('inputs are limited to controls at 20Hz and sequence starts above the serve
   assert.deepEqual(frames[0].actions, ['laser']);
 });
 
+test('a newly joined server ship acknowledges -1 and its first valid control sequence is zero', () => {
+  const b = browser(), ws = b.join(hello({ self: ship({ ack_seq: -1 }) }));
+  ws.receive(snapshot({ players: [ship({ ack_seq: -1 })] }));
+  assert.equal(b.client.connected, true);
+  b.clock.advance(50); assert.equal(ws.sent.at(-1).seq, 0);
+});
+
 test('physics, identity, nonfinite inputs and unknown combat actions cannot cross the wire', () => {
   for (const value of [{ position: [3, 4, 5] }, { hp: 0 }, { damage: 999 }, { subject_id: 'root' },
     { throttle: NaN }, { yaw: Infinity }, { actions: ['admin'] }, { actions: 'laser' }, { brake: 1 }]) {
@@ -300,6 +307,11 @@ test('policy rejection forgets only the game ticket and never loops an invalid r
   assert.deepEqual(next.sent[0], { v: 1, type: 'join' });
 });
 
+test('expired browser identity cannot reconnect forever with a stale authenticated game ticket', () => {
+  const b = browser(), ws = b.join(); ws.remoteClose(4013); b.clock.advance(10000);
+  assert.equal(b.sockets.length, 1); assert.equal(b.stored.size, 0); assert.equal(b.statuses.at(-1)[0], 'failed');
+});
+
 test('handshake timeout reconnects and excessive send backlog never queues more controls', () => {
   const b = browser(); b.client.connect(); const ws = b.sockets[0]; ws.open();
   b.clock.advance(8000); assert.equal(ws.closed.code, 1000); b.clock.advance(500);
@@ -431,10 +443,20 @@ test('malformed private home and region counts cannot reach the renderer', () =>
 
 test('acknowledgements and authoritative timestamps cannot move backwards or acknowledge unsent controls', () => {
   for (const changes of [{ players: [ship({ ack_seq: 2 })] },
-    { players: [ship({ ack_seq: 100 })] }, { server_time_ms: BASE_TIME - 1 }, { total_players: 2 }]) {
+    { players: [ship({ ack_seq: 100 })] }, { server_time_ms: BASE_TIME - 1001 }, { total_players: 2 }]) {
     const b = browser(), ws = b.join(); ws.receive(snapshot(changes));
     assert.equal(b.client.connected, false); assert.equal(b.client.self, null);
   }
+});
+
+test('actual server event ids and code-only recoverable errors are accepted without exposing raw frames', () => {
+  const b = browser(), ws = b.join();
+  ws.receive(snapshot({ events: [{ id: 'evt_1', type: 'laser', player_id: SELF_ID,
+    region: 0, position: [1, 2, 3], end: [1, 2, -57], at_ms: BASE_TIME }] }));
+  assert.equal(b.client.snapshot.events[0].id, 'evt_1');
+  ws.receive({ v: 1, type: 'error', code: 'region_unavailable' });
+  assert.equal(b.client.connected, true); assert.equal(b.errors.length, 1);
+  assert.ok(b.errors[0].includes('燃料'));
 });
 
 test('view callback exceptions do not turn a good server frame into a protocol failure', () => {
