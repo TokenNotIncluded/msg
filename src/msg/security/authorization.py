@@ -445,11 +445,14 @@ class AuthorizationService:
             )
             for ancestor in chain[:-1]:
                 readable = allows(ancestor, principal.subject, memberships, 'traverse')
-                override = await self.has(
-                    principal, 'resource.read_override', operation, ancestor.id, session
-                )
                 minimal_tool = tool_access and ancestor.id == TOOLS_SPACE
-                require(readable or override or minimal_tool or shared_read, 'permission_denied')
+                # Independent traversal sources do not need a certificate override.
+                # Authentication still validates every attached certificate first.
+                if not (readable or minimal_tool or shared_read):
+                    readable = await self.has(
+                        principal, 'resource.read_override', operation, ancestor.id, session
+                    )
+                require(readable or minimal_tool or shared_read, 'permission_denied')
                 require(ancestor.state == 'active', 'ancestor_inactive')
             if check.check in _WRITE_CHECKS:
                 require(principal.subject is not None, 'authentication_required')
