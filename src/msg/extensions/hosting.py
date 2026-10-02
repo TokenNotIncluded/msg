@@ -317,7 +317,7 @@ def hosted_headers(site_id, file_path, blob_digest):
             for script in scripts
         )
         headers['Content-Security-Policy'] = (
-            "sandbox allow-scripts; default-src 'none'; script-src "
+            "sandbox allow-scripts allow-pointer-lock; default-src 'none'; script-src "
             + hashes
             + "; script-src-attr 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; "
             "connect-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; "

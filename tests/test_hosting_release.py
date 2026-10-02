@@ -61,7 +61,7 @@ def test_release_pin_is_bound_to_packaged_bytes_site_and_path(approved_ascii):
     csp = approved['Content-Security-Policy']
     script = APPROVED.split(b'<script>')[1].split(b'</script>')[0]
     script_hash = base64.b64encode(hashlib.sha256(script).digest()).decode('ascii')
-    assert csp.startswith("sandbox allow-scripts; default-src 'none';")
+    assert csp.startswith("sandbox allow-scripts allow-pointer-lock; default-src 'none';")
     assert "script-src 'sha256-" + script_hash + "'" in csp
     assert "script-src-attr 'none'" in csp
     for directive in ('connect-src', 'frame-src', 'object-src', 'worker-src', 'form-action'):
@@ -204,7 +204,9 @@ async def test_pg_public_bundle_preview_and_unapproved_routes(
             },
         )
         assert approved.status_code == 200 and approved.content == APPROVED
-        assert approved.headers['content-security-policy'].startswith('sandbox allow-scripts;')
+        assert approved.headers['content-security-policy'].startswith(
+            'sandbox allow-scripts allow-pointer-lock;'
+        )
         assert 'allow-same-origin' not in approved.headers['content-security-policy']
         assert 'must-not-leak' not in approved.text
         assert 'set-cookie' not in approved.headers
@@ -390,5 +392,78 @@ async def test_real_chromium_executes_local_interaction_with_opaque_origin(
             for path in ('/web/other.html', '/web/tampered.html', '/ordinary/index.html'):
                 await page.goto(url + '/@ascii-release-owner' + path)
                 assert await page.evaluate('document.documentElement.dataset.booted') is None
+        finally:
+            await browser.close()
+
+
+@pytest.mark.asyncio
+async def test_real_pointer_lock_requires_exact_pin_and_allows_relative_mouse(
+    installed, approved_ascii, monkeypatch
+):
+    from playwright.async_api import async_playwright
+
+    body = b"""<!doctype html><style>#world{width:320px;height:240px}</style>
+    <div id="world">Click to look</div><script>
+    const world = document.querySelector('#world');
+    world.dataset.yaw = '0';
+    world.addEventListener('click', async () => {
+      try { await world.requestPointerLock(); }
+      catch (error) { world.dataset.error = error.name; }
+    });
+    document.addEventListener('mousemove', event => {
+      if (document.pointerLockElement === world)
+        world.dataset.yaw = String(Number(world.dataset.yaw) + event.movementX);
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape') document.exitPointerLock();
+    });
+    </script>"""
+    monkeypatch.setitem(globals(), 'APPROVED', body)
+    approved_ascii.write_bytes(body)
+    monkeypatch.setattr(hosted_release, 'ASCII_RELEASE_DIGEST', digest(body))
+    hosted_release.ascii_release.cache_clear()
+    app, _ = installed
+    await publish_fixture(app, monkeypatch)
+    async with browser_server(app) as (url, _requests), async_playwright() as tool:
+        browser = await tool.chromium.launch(
+            executable_path=os.environ.get('MSG_BROWSER_PATH') or shutil.which('chromium')
+        )
+        try:
+            page = await browser.new_page()
+
+            async def wait_state(predicate):
+                # Read native state through the debugger without Playwright's
+                # string predicate eval inside this deliberately strict CSP.
+                async with asyncio.timeout(5):
+                    while not await page.evaluate(predicate):
+                        await asyncio.sleep(0.02)
+
+            response = await page.goto(url + '/@ascii-release-owner/web/index.html')
+            assert 'allow-pointer-lock' in response.headers['content-security-policy']
+            assert await page.evaluate('window.origin') == 'null'
+            await page.locator('#world').click()
+            await wait_state(
+                '() => document.pointerLockElement === document.querySelector("#world")'
+            )
+            await page.mouse.move(30, 20)
+            await wait_state('() => document.querySelector("#world").dataset.yaw !== "0"')
+            await page.keyboard.press('Escape')
+            await wait_state('() => document.pointerLockElement === null')
+            for path in ('/ordinary/index.html', '/web/other.html', '/web/tampered.html'):
+                response = await page.goto(url + '/@ascii-release-owner' + path)
+                assert 'allow-pointer-lock' not in response.headers['content-security-policy']
+                # Unapproved page callbacks are inert. After a real click,
+                # request the native API through the debugger to verify that
+                # its distinct sandbox flag also rejects Pointer Lock.
+                await page.locator('#world').click()
+                assert (
+                    await page.evaluate("""async () => {
+                  try { await document.querySelector('#world').requestPointerLock();
+                        return 'allowed'; }
+                  catch (error) { return error.name; }
+                }""")
+                    == 'SecurityError'
+                )
+                assert await page.evaluate('document.pointerLockElement') is None
         finally:
             await browser.close()
