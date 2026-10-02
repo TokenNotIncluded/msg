@@ -12,6 +12,7 @@ import httpx
 import pytest
 from test_service import NOW
 
+from msg.atomic_file import durable_write
 from msg.client import ClientState, MsgClient
 from msg.client_backup_remote import discover_backup, fetch_backup, publish_backup
 from msg.client_subagents_remote import RemoteAgents
@@ -222,6 +223,55 @@ async def test_publish_updates_manifest_with_expected_generation_preserves_old_c
         assert after['generation'] == before['generation'] + 1
         assert (await meta(client, first['file']['path']))['revision'] == old_cipher['revision']
         assert await discover_backup(client.state.server, 'backup-update', http=http) == second
+    finally:
+        await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_publish_uses_signature_despite_saved_token_api_key_and_oauth(
+    installed, tmp_path, age_cipher
+):
+    app, _ = installed
+    packets = []
+    client, http = await client_for(
+        app, tmp_path / 'owner', 'backup-signing-proof', requests=packets
+    )
+    encrypt, _, _ = age_cipher
+    try:
+        for auth in ('token', 'api_key', 'oauth'):
+            client.state.data.pop('token', None)
+            client.state.data.pop('api_key', None)
+            client.state.file('oauth-session.json').unlink(missing_ok=True)
+            if auth in {'token', 'api_key'}:
+                client.state.data[auth] = {
+                    'credential_id': 't_fixture_invalid_' + auth,
+                    'value': b64(b'fixture token that has never been authorized'),
+                }
+            else:
+                durable_write(
+                    client.state.file('oauth-session.json'),
+                    canonical({
+                        'server': client.state.server,
+                        'client_id': 'msg-cli',
+                        'subject_id': client.state.subject,
+                        'access_token': 't_oauth_fixture.' + b64(b'x' * 32),
+                        'expires_at': '2026-01-01T00:00:00Z',
+                    }),
+                    mode=0o600,
+                )
+            source, _ = encrypt('signature-' + auth)
+            packets.clear()
+            await publish_backup(
+                client, source, metadata(client, source), request_id='signed-' + auth
+            )
+            assert packets and any(packet['operation'] == 'file.create' for packet in packets)
+            if auth != 'token':
+                assert any(packet['operation'] == 'file.write' for packet in packets)
+            for packet in packets:
+                assert packet['subject'] == client.state.subject
+                assert set(packet['proof']) == {'signature', 'certificates'}
+                assert packet['proof']['signature']['key_id'] == client.state.signer.key_id
+                assert 'token' not in packet['proof']
     finally:
         await http.aclose()
 

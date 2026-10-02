@@ -271,7 +271,7 @@ def detect_encryption(data):
 def _read_ciphertext(path):
     path = Path(path).expanduser().absolute()
     try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
         with os.fdopen(descriptor, 'rb') as stream:
             before = os.fstat(stream.fileno())
             require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1, 'unsafe_backup_file')
@@ -293,7 +293,9 @@ def _read_ciphertext(path):
 
 
 async def _call(client, operation, args, **kwargs):
-    return client.checked(await client.call(operation, args, **kwargs)).data
+    signer = client.signer_override or client.state.signer
+    require(signer is not None, 'signing_identity_required')
+    return client.checked(await client.call(operation, args, signer=signer, **kwargs)).data
 
 
 async def _meta(client, path):
@@ -372,6 +374,7 @@ async def publish_backup(client, ciphertext_path, metadata, *, recovery_hint=Non
                 'data': b64(data),
                 'media_type': 'application/octet-stream',
             },
+            signer=key,
             request_id=request_id + '-cipher',
         )
         if result.status == 'error' and result.error.code == 'constraint_conflict':
