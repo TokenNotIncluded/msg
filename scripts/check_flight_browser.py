@@ -1,9 +1,10 @@
-"""Actual-app Inspect regression plus offline renderer integration fixtures.
+"""Verify offline rendering or the complete app against a real disposable world.
 
-Run: python scripts/check_flight_browser.py
-Requires Playwright and Chromium. MSG_BROWSER_PATH overrides the browser path.
-Only a disposable loopback HTTP fixture is used. No external requests, signing
-key, real account, WebSocket game session or database is used.
+Default: python scripts/check_flight_browser.py (synthetic renderer only).
+Set MSG_FLIGHT_TEST_URL and MSG_FLIGHT_ACCOUNTS_FILE for real app,
+CSP, WebSocket, physics and two generated fixture identities. The URL must be
+loopback; no production combat or user credentials are used. Playwright and
+Chromium are required; MSG_BROWSER_PATH selects an installed browser.
 """
 
 from __future__ import annotations
@@ -13,10 +14,8 @@ import hashlib
 import json
 import os
 import re
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
@@ -101,74 +100,280 @@ def assemble() -> str:
     )
 
 
-def check_actual_app_inspect(browser) -> None:
-    """Use the real app callback and native pointer focus/click ordering."""
-    from msg.bootstrap import ROOT_WEB_SAMPLE
-    from msg.core.codec import digest
-    from msg.extensions.hosting import hosted_headers
+def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = None) -> list:
+    """Real packaged app, real WS/physics and two isolated fixture identities.
 
-    root = {'id': 'u_root', 'name': 'root', 'path': '/@root'}
+    The supplied service must be the disposable loopback fixture. This never
+    runs combat against a public deployment or accepts client-reported state.
+    """
+    ARTIFACTS.mkdir(parents=True, exist_ok=True)
+    parsed = urlsplit(base_url)
+    assert parsed.hostname in {'127.0.0.1', 'localhost', '::1'}, 'Loopback fixture required'
+    assert accounts_file, 'Full app checks require two generated loopback OAuth accounts'
+    path = Path(accounts_file)
+    assert path.stat().st_mode & 0o077 == 0, 'Fixture account file must be private'
+    fixture_accounts = json.loads(path.read_text())
+    assert fixture_accounts.get('scope') == 'disposable loopback TestRoot only'
+    accounts = fixture_accounts['accounts'][:2]
+    assert len(accounts) == 2
+    contexts, pages, errors, checks = [], [], [], []
+    controls = [[], []]
+    wire = [[], []]
+    probe = """window.__flightTransportEvents=[];
+    const Socket=window.WebSocket;
+    window.WebSocket=class extends Socket {constructor(...args) {super(...args);
+      this.addEventListener('close', event => {
+        window.__flightTransportEvents.push({code:event.code,reason:event.reason});
+        window.__flightTransportEvents.splice(0,window.__flightTransportEvents.length-4);
+      });
+    }};
+    Object.defineProperty(window, 'MSGUniverseRenderer', {
+      configurable:true, set(Renderer) {
+        Object.defineProperty(window, 'MSGUniverseRenderer', {configurable:true,
+          value:class extends Renderer {constructor(...args) {super(...args); window.__renderer=this;}}
+        });
+      }
+    });"""
 
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *_args):
-            pass
+    def wait(page, expression, **kwargs):
+        # Function predicates avoid Playwright's string eval under real CSP.
+        if not expression.lstrip().startswith('() =>'):
+            expression = '() => (' + expression + ')'
+        try:
+            return page.wait_for_function(expression, **kwargs)
+        except Exception:
+            # Bounded diagnostics exclude cookies, resume tickets and account bodies.
+            print(
+                json.dumps(
+                    page.evaluate("""() => ({
+                      available:window.__renderer?.available,
+                      flight:!!window.__renderer?.flight,
+                      state:window.__renderer?.network?.state,
+                      connected:window.__renderer?.network?.connected,
+                      players:window.__renderer?.network?.snapshot?.players.length,
+                      connection:document.getElementById('game-connection')?.textContent,
+                      status:document.getElementById('status')?.textContent
+                      ,closes:window.__flightTransportEvents
+                    })"""),
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            print(json.dumps(wire, ensure_ascii=False), flush=True)
+            print(json.dumps(errors, ensure_ascii=False), flush=True)
+            raise
 
-        def do_GET(self):
-            parsed = urlsplit(self.path)
-            if parsed.path == '/':
-                body = ROOT_WEB_SAMPLE
-                headers = hosted_headers('w_root_web', 'index.html', digest(body))
-                content_type = 'text/html'
-            else:
-                kind = parse_qs(parsed.query).get('kind', ['users'])[0]
-                body = json.dumps({
-                    'version': 1,
-                    'kind': kind,
-                    'items': [root] if kind == 'users' else [],
-                    'cursor': None,
-                    'service': {'url': f'http://127.0.0.1:{self.server.server_port}'},
-                }).encode()
-                headers = {}
-                content_type = 'application/json'
-            self.send_response(200)
-            self.send_header('Content-Type', content_type)
-            self.send_header('Content-Length', str(len(body)))
-            for key, value in headers.items():
-                self.send_header(key, value)
-            self.end_headers()
-            self.wfile.write(body)
-
-    server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        for viewport in ({'width': 1280, 'height': 800}, {'width': 390, 'height': 844}):
-            context = browser.new_context(viewport=viewport)
-            # Expose the actual renderer instance, retaining all real callbacks.
-            context.add_init_script("""Object.defineProperty(window, 'MSGUniverseRenderer', {
-              configurable: true, set(Renderer) {
-                Object.defineProperty(window, 'MSGUniverseRenderer', {configurable:true,
-                  value:class extends Renderer {constructor(...args) {super(...args); window.__renderer=this;}}
-                });
-              }
-            });""")
+        for index, viewport in enumerate((
+            {'width': 1280, 'height': 800},
+            {'width': 390, 'height': 844},
+        )):
+            context = browser.new_context(
+                viewport=viewport, has_touch=index == 1, is_mobile=index == 1
+            )
+            contexts.append(context)
+            # Generated local OAuth cookies only; do not print or trace them.
+            context.add_cookies(accounts[index]['cookies'])
+            context.add_init_script(probe)
             page = context.new_page()
-            page.goto(f'http://127.0.0.1:{server.server_port}/')
-            page.wait_for_function("window.__renderer?.graph.nodes.some(n => n.id === 'u_root')")
+            pages.append(page)
+            page.set_default_timeout(15000)
+            page.on('pageerror', lambda error: errors.append(str(error)))
+
+            def capture_control(message, captured=controls[index]):
+                packet = json.loads(message)
+                if packet.get('type') == 'input':
+                    # Keep only non-secret control fields, never join/resume.
+                    captured.append({key: packet[key] for key in ('seq', 'throttle', 'actions')})
+                    del captured[:-256]
+
+            page.on(
+                'websocket', lambda socket, capture=capture_control: socket.on('framesent', capture)
+            )
+
+            def capture_server(message, captured=wire[index]):
+                packet = json.loads(message)
+                safe = {key: packet[key] for key in ('type', 'tick', 'code') if key in packet}
+                if packet.get('type') == 'hello':
+                    safe['self_ack'] = packet.get('self', {}).get('ack_seq')
+                if packet.get('type') == 'snapshot':
+                    safe['ships'] = [
+                        {key: ship.get(key) for key in ('ack_seq', 'hp', 'fuel', 'region', 'score')}
+                        for ship in packet.get('players', [])
+                    ]
+                    safe['events'] = [
+                        {key: event.get(key) for key in ('id', 'type', 'at_ms')}
+                        for event in packet.get('events', [])
+                    ]
+                captured.append(safe)
+                del captured[:-3]
+
+            page.on(
+                'websocket',
+                lambda socket, capture=capture_server: socket.on('framereceived', capture),
+            )
+            page.goto(base_url.rstrip('/') + '/@root/web/')
+            page.evaluate(
+                '(subject) => {window.__peerSubject=subject;}', accounts[1 - index]['subject_id']
+            )
+            wait(page, 'window.__renderer?.available && __renderer.graph.nodes.length > 0')
             page.locator('#pilot-toggle').click()
+            wait(
+                page,
+                '__renderer.network?.connected && __renderer.flight && __renderer.network.snapshot',
+            )
+        first, second = pages
+        for page in pages:
+            wait(
+                page,
+                '__renderer.network.snapshot.players.some(p => p.subject_id === window.__peerSubject)',
+            )
+        for index, page in enumerate(pages):
+            assert (
+                page.evaluate('__renderer.network.self.subject_id') == accounts[index]['subject_id']
+            )
+            assert page.evaluate("""() => {
+                  const r=__renderer, self=r.network.self, node=r.graph.nodes.find(n => n.id===self.subject_id);
+                  return !!node && self.home_position && MSGUniverse.starPosition(node)
+                    .every((value,i) => Math.abs(value-self.home_position[i])<1e-6);
+                }""")
+        checks.append('two real identities, WS/CSP connection and server spawn')
+
+        # Aim is ordinary orientation input. Positions/HP are never overwritten.
+        def aim(page):
+            page.locator('#space').focus()
             page.evaluate("""() => {
-              __renderer.flight.position = [0, 0, 16]; __renderer.flight.yaw = 0;
-              __renderer.flight.pitch = 0; __renderer.updateFlight(0); __renderer.wake();
+              const r=__renderer, self=r.network.self;
+              const other=r.network.snapshot.players.find(ship => ship.subject_id===window.__peerSubject);
+              const d=other.position.map((value,i) => value-self.position[i]);
+              r.flight.yaw=-Math.atan2(d[0],-d[2]);
+              r.flight.pitch=-Math.atan2(d[1],Math.hypot(d[0],d[2]));
+              r.network.resume(); r.sendFlightInput(); r.wake();
             }""")
-            page.wait_for_function("!document.getElementById('pilot-inspect').disabled")
-            page.locator('#pilot-inspect').click()
-            page.wait_for_function("!document.getElementById('inspector').hidden")
-            assert page.locator('#detail-title').inner_text() == '@root'
-            assert page.evaluate('__renderer.flight === null')
-            assert page.locator('#detail-body .identity-facts').count() == 1
-            context.close()
+
+        aim(first)
+        distance = first.evaluate("""() => {const n=__renderer.network, peer=n.snapshot.players.find(p=>p.subject_id===window.__peerSubject);
+          return Math.hypot(...peer.position.map((v,i)=>v-n.self.position[i]));} """)
+        if distance > 42:
+            first.keyboard.down('w')
+            wait(
+                first,
+                """() => {const n=__renderer.network, peer=n.snapshot.players.find(p=>p.subject_id===window.__peerSubject);
+              return Math.hypot(...peer.position.map((v,i)=>v-n.self.position[i])) < 38;}""",
+                timeout=8000,
+            )
+            first.keyboard.up('w')
+            first.keyboard.down('b')
+            wait(first, 'Math.hypot(...__renderer.network.self.velocity) < .1')
+            first.keyboard.up('b')
+        aim(first)
+        first.keyboard.down(' ')
+        wait(
+            first,
+            '__renderer.network.snapshot.players.some(p => p.subject_id === window.__peerSubject && p.hp < 100)',
+        )
+        first.keyboard.up(' ')
+        wait(second, '__renderer.network.self.hp < 100')
+        assert first.locator('#ship-labels .ship-label').count() >= 1
+        checks.append('Space fires actual server laser and peer health decreases')
+        first.keyboard.down(' ')
+        wait(
+            first,
+            '__renderer.network.snapshot.players.some(p => p.subject_id === window.__peerSubject && p.hp === 0)',
+        )
+        first.keyboard.up(' ')
+        wait(second, '__renderer.network.self.hp === 0')
+        wait(second, 'document.getElementById("game-respawn").textContent.includes("重生")')
+        wait(
+            second,
+            '__renderer.network.self.hp === 100 && __renderer.network.self.respawn_at_ms === 0',
+        )
+        assert first.evaluate('__renderer.network.self.score') >= 1
+        checks.append('server death, respawn countdown and automatic recovery preserve the session')
+        for action, field in (
+            ('shield', 'shield_until_ms'),
+            ('dash', 'dash_ready_ms'),
+            ('fire', 'laser_ready_ms'),
+        ):
+            second.locator(f'[data-game-action="{action}"]').click()
+            wait(second, f'__renderer.network.self.{field} > __renderer.network.serverNow')
+            wait(
+                second,
+                f'document.querySelector(\'[data-game-action="{action}"] .game-cooldown\').textContent !== "就绪"',
+            )
+        checks.append('mobile laser, shield and dash buttons use server cooldowns')
+        # A keyboard-accessible touch control must resume and release neutral.
+        second.locator('[data-flight-key="w"]').focus()
+        second.keyboard.down('Enter')
+        wait(second, '__renderer.network._input.throttle === 1')
+        second.wait_for_timeout(100)
+        assert controls[1][-1]['throttle'] == 1
+        second.keyboard.up('Enter')
+        wait(second, '__renderer.network._input.throttle === 0')
+        second.wait_for_timeout(100)
+        assert controls[1][-1]['throttle'] == 0
+        checks.append('keyboard thrust button resumes and releases neutral input')
+        for index, page in enumerate(pages):
+            page.evaluate("""() => {const badge=document.createElement('p'); badge.textContent='隔离联机测试 / 真实测试服务器 / 非生产';
+              badge.style.cssText='position:fixed;right:12px;bottom:4px;font:10px monospace;color:#aaa;z-index:30;pointer-events:none';document.body.append(badge);} """)
+            page.screenshot(
+                path=str(ARTIFACTS / ('actual-mobile.png' if index else 'actual-desktop.png'))
+            )
+        # Disconnect all combat and clear stale peers, then resume the same ship.
+        saved = second.evaluate(
+            '({id:__renderer.network.self.id,shield:__renderer.network.self.shield_ready_ms})'
+        )
+        contexts[1].set_offline(True)
+        wait(second, '!__renderer.network.connected', timeout=10000)
+        second.locator('#space').focus()
+        before_offline_attack = len(controls[1])
+        second.keyboard.press(' ')
+        second.wait_for_timeout(100)
+        assert not any('laser' in frame['actions'] for frame in controls[1][before_offline_attack:])
+        assert second.evaluate('__renderer.remoteShips.size') == 0
+        assert second.locator('[data-game-action="fire"]').is_disabled()
+        contexts[1].set_offline(False)
+        second.locator('#space').click(position={'x': 180, 'y': 400})
+        wait(second, '__renderer.network.connected && __renderer.network.self', timeout=15000)
+        assert second.evaluate('__renderer.network.self.id') == saved['id']
+        assert second.evaluate('__renderer.network.self.shield_ready_ms') == saved['shield']
+        checks.append('disconnect stops combat; reconnect retains server identity and cooldown')
+        region = (second.evaluate('__renderer.network.self.region') + 1) % 19
+        # Real pointerdown focus used to expand the status label and move this
+        # button by 201px on phone, so pointerup never reached its click handler.
+        region_button = second.locator('#game-region')
+        before_box = region_button.bounding_box()
+        second.mouse.move(
+            before_box['x'] + before_box['width'] / 2,
+            before_box['y'] + before_box['height'] / 2,
+        )
+        second.mouse.down()
+        second.wait_for_timeout(50)
+        paused_box = region_button.bounding_box()
+        assert abs(paused_box['x'] - before_box['x']) < 0.1
+        assert abs(paused_box['y'] - before_box['y']) < 0.1
+        second.mouse.up()
+        wait(second, '!document.getElementById("region-map").hidden')
+        second.locator(f'#region-map-actions button[title="sector-{region:02d}"]').click()
+        wait(second, '__renderer.network.self.region === ' + str(region))
+        assert second.locator('#region-map').is_hidden()
+        checks.append('paused map selection moves only after server accepts the region')
+        # Actual app selection, not the old synthetic renderer callback.
+        first.locator('#space').focus()
+        wait(first, '!document.getElementById("pilot-inspect").disabled')
+        inspected_id = first.evaluate('__renderer.nearby.id')
+        first.locator('#pilot-inspect').click()
+        wait(first, '!document.getElementById("inspector").hidden')
+        first.locator('#detail-body .identity-facts').wait_for(state='attached')
+        assert first.locator('#detail-body .identity-facts').count() == 1
+        assert first.evaluate('__renderer.focusId') == inspected_id
+        assert first.evaluate('__renderer.flight === null')
+        checks.append('native pointer Inspect opens the actual authorized app inspector')
+        assert not errors, errors
+        return checks
     finally:
-        server.shutdown()
-        server.server_close()
+        for context in contexts:
+            context.close()
 
 
 def run() -> None:
@@ -180,7 +385,25 @@ def run() -> None:
         if executable:
             options['executable_path'] = executable
         browser = pw.chromium.launch(**options)
-        check_actual_app_inspect(browser)
+        service_url = os.environ.get('MSG_FLIGHT_TEST_URL')
+        if service_url:
+            checks = check_multiplayer_app(
+                browser, service_url, os.environ.get('MSG_FLIGHT_ACCOUNTS_FILE')
+            )
+            browser.close()
+            (ARTIFACTS / 'actual-results.json').write_text(
+                json.dumps(
+                    {
+                        'checks': checks,
+                        'scope': 'real disposable loopback HTTP/WS/physics; not production',
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+                + '\n'
+            )
+            print(json.dumps(checks, ensure_ascii=False, indent=2))
+            return
         for label, width, height, reduced, software in (
             ('desktop', 1440, 900, False, False),
             ('mobile', 390, 844, False, False),
@@ -272,7 +495,7 @@ def run() -> None:
             page.locator('#pilot-toggle').click()
             page.evaluate('__renderer.setGraph({nodes: [], links: []})')
             assert page.locator('#pilot-inspect').is_disabled()
-            assert page.locator('#pilot-inspect').inner_text() == 'Approach a star'
+            assert page.locator('#pilot-inspect').inner_text() == '靠近星球查看'
             page.locator('#space').focus()
             page.keyboard.press('h')
             assert page.evaluate('__renderer.flight === null')
