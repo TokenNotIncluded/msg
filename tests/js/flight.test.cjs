@@ -71,7 +71,36 @@ test('camera basis is orthonormal at steep pitch', () => {
 });
 test('steering clamps pitch and keeps heading finite', () => {
   const f = advance(new Flight([0, 0, 0]), 20, keys('arrowup', 'arrowright'));
-  close(f.pitch, 1.35); assert.ok(Number.isFinite(f.yaw)); assert.ok(Math.abs(f.bank) <= .5);
+  close(f.pitch, -1.35); assert.ok(Number.isFinite(f.yaw)); assert.equal(f.bank, 0);
+});
+test('steering accelerates toward a bounded rate, reverses continuously and settles on release', () => {
+  const f = new Flight([0, 0, 0]); f.steer(1 / 60, {yaw:1, pitch:1});
+  assert.ok(f.yawRate < 0 && f.yawRate > -1.15); assert.ok(Math.abs(f.yaw) < 1.15 / 60);
+  for (let i = 0; i < 60; i++) f.steer(1 / 60, {yaw:1, pitch:0});
+  const previous = f.yawRate; f.steer(1 / 60, {yaw:-1});
+  assert.ok(f.yawRate > previous && f.yawRate < 0, 'reversing changes acceleration without snapping angular velocity');
+  for (let i = 0; i < 60; i++) f.steer(1 / 60, {yaw:-1});
+  assert.ok(f.yawRate > 1); const heading = f.yaw;
+  for (let i = 0; i < 120; i++) f.steer(1 / 60, {});
+  assert.ok(f.yaw > heading, 'attitude stabilization decays rotation instead of locking instantly');
+  assert.ok(Math.abs(f.yawRate) < .000001); close(f.pitchRate, 0);
+});
+test('analog steering has the same physical heading at 30, 60 and 120 Hz', () => {
+  const run = hz => {
+    const f = new Flight([0, 0, 0]);
+    for (const input of [{yaw:.35, pitch:.5}, {yaw:-.8, pitch:-.3}, {}])
+      for (let i = 0; i < hz; i++) f.steer(1 / hz, input);
+    return f;
+  };
+  const baseline = run(60);
+  for (const hz of [30, 120]) { const f = run(hz); close(f.yaw, baseline.yaw); close(f.pitch, baseline.pitch); close(f.yawRate, baseline.yawRate); }
+});
+test('ArrowUp points actual thrust upward, and turning cannot rotate existing translational inertia', () => {
+  const f = new Flight([0, 0, 0]);
+  advance(f, .6, keys('arrowup')); advance(f, .5, keys('w'));
+  assert.ok(f.position[1] > 0); assert.ok(f.velocity[1] > 0);
+  const before = [...f.velocity]; f.steer(.04, {yaw:1});
+  assert.deepEqual(f.velocity, before); assert.equal(f.bank, 0);
 });
 test('world bounds stop outward velocity', () => {
   const f = advance(new Flight([1199.99, 0, 0]), 1, keys('d'));
