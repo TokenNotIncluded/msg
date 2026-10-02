@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import stat
 import subprocess
 import tempfile
 from pathlib import Path
@@ -17,6 +18,22 @@ from pathlib import Path
 
 def run(*args, **kwargs):
     subprocess.run(args, check=True, **kwargs)
+
+
+def normalize_payload_modes(payload):
+    """Make public installed code readable independently of the builder's umask."""
+    if not stat.S_ISDIR(payload.lstat().st_mode):
+        raise ValueError('Native payload root must be a directory')
+    for path in (payload, *payload.rglob('*', recurse_symlinks=False)):
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            continue
+        if stat.S_ISDIR(mode):
+            path.chmod(0o755, follow_symlinks=False)
+        elif stat.S_ISREG(mode):
+            path.chmod(0o755 if mode & 0o111 else 0o644, follow_symlinks=False)
+        else:
+            raise ValueError(f'Unexpected native payload file type: {path}')
 
 
 def main():
@@ -147,6 +164,9 @@ def main():
             'automatic_initialization': False,
         }
         (docs / 'build.json').write_text(json.dumps(manifest, indent=2) + '\n')
+        # This tree contains only package-managed code and public resources.
+        # A private build directory must not make installed code owner-only.
+        normalize_payload_modes(root / 'usr')
         archive = work / 'payload.tar.gz'
         run(
             'tar',
