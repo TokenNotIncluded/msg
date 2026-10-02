@@ -1822,7 +1822,14 @@
           if (vertices.some(p => !p)) continue;
           ctx.beginPath(); ctx.moveTo(vertices[0].x, vertices[0].y);
           for (const p of vertices.slice(1)) ctx.lineTo(p.x, p.y);
-          if (type !== 'lines') { ctx.closePath(); ctx.fillStyle = color(array, i); ctx.fill(); }
+          if (type !== 'lines') {
+            ctx.closePath(); ctx.fillStyle = color(array, i); ctx.fill();
+            // Same-color coverage closes Canvas antialias gaps between opaque faces.
+            // Transparent cloud faces and line geometry retain their original alpha.
+            if (type === 'solids' && [6, 14, 22].every(offset => array[i + offset] >= 1)) {
+              ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = .6; ctx.lineJoin = 'round'; ctx.stroke();
+            }
+          }
           else { ctx.strokeStyle = color(array, i); ctx.lineWidth = 1; ctx.stroke(); }
         }
       }
