@@ -310,6 +310,26 @@ def test_partial_install_failure_removes_only_new_account(local, tmp_path, monke
     assert existing.path.read_bytes() == marker
 
 
+def test_new_directory_open_failure_cleans_account_root(local, tmp_path, monkeypatch):
+    from msg import client_account_backup as module
+
+    state, recovery, _ = local
+    ciphertext, _ = save(local, tmp_path)
+    environment(monkeypatch, tmp_path / 'after')
+    real_open = module.os.open
+
+    def fail_new_root(name, flags, *args, **kwargs):
+        if name == 'recovered' and kwargs.get('dir_fd') is not None:
+            raise OSError('injected directory open failure')
+        return real_open(name, flags, *args, **kwargs)
+
+    monkeypatch.setattr(module.os, 'open', fail_new_root)
+    with pytest.raises(OSError, match='injected directory open failure'):
+        restore_account(SERVER, 'recovered', ciphertext, [recovery], expected_subject=state.subject)
+    paths = ClientPaths.discover(server=SERVER, account='recovered')
+    assert not any(p.exists() for p in (paths.config, paths.data, paths.state))
+
+
 def test_yubikey_descriptor_is_backed_up_without_exporting_or_touching_hardware(
     local, tmp_path, monkeypatch
 ):
@@ -347,6 +367,40 @@ def test_opaque_plugin_recipient_is_passed_to_age_not_parsed_as_x25519(
     monkeypatch.setattr(module, '_age', plugin)
     backup_account(SERVER, state.account, ['age1yubikey1opaque'], tmp_path / 'opaque.age')
     assert seen == ['--encrypt', '--recipient', 'age1yubikey1opaque']
+
+
+def test_real_age_ascii_armor_is_accepted(local, tmp_path):
+    from msg import client_account_backup as module
+
+    state, recovery, recipient = local
+    ciphertext, _ = save(local, tmp_path)
+    plaintext = module._age(['--decrypt', '--identity', str(recovery)], ciphertext.read_bytes())
+    armored = module._age(['--encrypt', '--armor', '--recipient', recipient], plaintext)
+    assert armored.startswith(b'-----BEGIN AGE ENCRYPTED FILE-----\n')
+    durable_write(ciphertext, armored)
+    restore_account(SERVER, 'from-armor', ciphertext, [recovery], expected_subject=state.subject)
+    assert ClientState(server=SERVER, account='from-armor').signer.key_id == state.signer.key_id
+
+
+async def test_backup_external_signer_and_missing_output_are_explicit_errors(local, tmp_path):
+    state, _, recipient = local
+    for flags, expected in [
+        ([], 'account_backup_output_required'),
+        (['--key', str(state.key_path)], 'account_backup_external_signer_not_supported'),
+    ]:
+        parsed = cli.parser().parse_args([
+            '--server',
+            SERVER,
+            '--account',
+            state.account,
+            *flags,
+            'account',
+            'backup',
+            '--recipient',
+            recipient,
+        ])
+        with pytest.raises(Failure, match=expected):
+            await cli.run(parsed)
 
 
 @pytest.mark.parametrize(
