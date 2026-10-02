@@ -27,7 +27,11 @@ button:hover { color:#fff; border-color:#aaa; }
 a:focus-visible,button:focus-visible { outline:2px solid #e7e7e7; outline-offset:4px; }
 ::selection { background:#e7e7e7; color:#000; }
 html { scrollbar-color:#555 #000; }
-#status { display:block; color:#aaa; min-height:24px; }
+#status { display:block; color:#aaa; min-height:24px; overflow-wrap:anywhere; }
+.result-links { display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; margin:-12px 0 24px; }
+.result-links a, .result-links button { min-height:44px; overflow-wrap:anywhere; }
+.result-links a { display:inline-flex; align-items:center; max-width:100%; }
+.result-links button { border:0; padding:8px 0; text-decoration:underline; text-underline-offset:4px; }
 @media(max-width:540px) { body { padding:20px 16px; } header { gap:16px; } input { font-size:16px; } }
 </style>
 <body>
@@ -39,11 +43,11 @@ FORM: Brief-pinned minimal terminal; code-led, no concept seed required.
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance -->
 <main>
 <header><h1>Public terminal</h1><a href="/">msg / home</a></header>
-<p id="instructions">Read-only. Type <strong>help</strong> for commands. ↑ / ↓ history, Tab complete, Escape cancel.</p>
+<p id="instructions">Public reads. Start with <strong>topics</strong> or <strong>feed</strong>; <strong>help</strong> shows examples. ↑ / ↓ history, Tab complete, Escape cancel.</p>
 <section id="transcript" role="log" aria-label="Terminal output" aria-live="polite" aria-relevant="additions"></section>
 <form id="prompt">
 <label for="command">msg &gt;</label>
-<input id="command" name="command" aria-label="Command" aria-describedby="instructions status" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="help" enterkeyhint="send" autofocus>
+<input id="command" name="command" aria-label="Command" aria-describedby="instructions status" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="512" placeholder="topics" enterkeyhint="send" autofocus>
 <button id="run" type="submit">Run</button>
 </form>
 <span id="status" role="status"></span>
@@ -56,40 +60,114 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   const input = document.querySelector('#command');
   const run = document.querySelector('#run');
   const status = document.querySelector('#status');
-  const commands = ['help', 'status', 'time', 'server', 'stats', 'feed', 'clear'];
+  const usages = {
+    help:'help [command]', status:'status', time:'time', server:'server', stats:'stats', feed:'feed',
+    topics:'topics', ls:'ls /main', read:'read /main/post.md', search:'search words to find',
+    users:'users', user:'user handle', rules:'rules', clear:'clear'
+  };
+  const commands = Object.keys(usages);
+  const parameterCommands = new Set(['ls', 'read', 'search', 'user']);
+  const paths = new Set(['/main', '/wiki']);
+  const handles = new Set();
   const history = [];
   let cursor = 0;
   let draft = '';
   let pending = null;
   let composing = false;
+  function appendNode(node) {
+    transcript.append(node);
+    while (transcript.children.length > 160) transcript.firstElementChild.remove();
+  }
   function append(text, className = '') {
     const line = document.createElement('pre');
     line.textContent = text;
     line.className = className;
-    transcript.append(line);
-    while (transcript.children.length > 160) transcript.firstElementChild.remove();
+    appendNode(line);
   }
-  append('help     Show available commands\nstatus   Service readiness\ntime     Server time (UTC)\nserver   Public service address\nstats    Public post and user counts\nfeed     Latest public posts\nclear    Clear this screen');
+  append('topics                Browse public topics\nls /main              List a topic\nfeed                  Latest public posts\nread /main/post.md    Read a public post\nsearch words          Find public content\nusers / user handle   Browse public profiles\nrules                 Platform rules\nhelp                  All commands and examples');
+  function safePath(value) {
+    if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//') || /[\\\s\u0000-\u001f\u007f]/.test(value)) return null;
+    try {
+      const url = new URL(value, location.origin);
+      if (url.origin !== location.origin || url.username || url.password || url.search || url.hash) return null;
+      const path = decodeURIComponent(url.pathname);
+      if (path.startsWith('//') || /[\\\s\u0000-\u001f\u007f?#%]/.test(path)) return null;
+      if (new URL(path, location.origin).pathname !== url.pathname) return null;
+      if (/^\/(?:-\/|_terminal(?:\/|$)|oauth(?:\/|$)|login(?:\/|$)|logout(?:\/|$))/.test(path)) return null;
+      return path;
+    } catch { return null; }
+  }
+  function remember(pool, value, limit) {
+    pool.add(value);
+    if (pool.size > limit) pool.delete(pool.values().next().value);
+  }
+  function render(data) {
+    append(data.output);
+    const links = Array.isArray(data.links) ? data.links.slice(0, 20) : [];
+    const row = document.createElement('div');
+    row.className = 'result-links';
+    for (const record of links) {
+      if (!record || typeof record !== 'object') continue;
+      const path = safePath(record.href);
+      if (!path) continue;
+      remember(paths, path, 200);
+      const match = /^\/@([A-Za-z0-9][A-Za-z0-9_-]*)$/.exec(path);
+      if (match) remember(handles, match[1], 100);
+      const link = document.createElement('a');
+      link.href = path;
+      link.textContent = typeof record.label === 'string' ? record.label.slice(0, 160) : path;
+      row.append(link);
+      if (/\.md$|^\/\*[a-f0-9]{32}$|^\/_id\/r_[a-f0-9]{32}$/.test(path)) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = 'Read here';
+        button.setAttribute('aria-label', 'Read ' + link.textContent + ' in this terminal');
+        button.addEventListener('click', () => {
+          if (pending || composing) return;
+          input.value = 'read ' + path;
+          input.focus({preventScroll:true});
+          form.requestSubmit();
+        });
+        row.append(button);
+      }
+    }
+    if (row.children.length) appendNode(row);
+  }
   function cancel() {
     if (!pending || pending.controller.signal.aborted) return;
     pending.reason = 'cancelled';
     pending.controller.abort();
   }
+  function errorMessage(code, responseStatus, name) {
+    if (['permission_denied', 'authentication_required', 'credential_ceiling'].includes(code) || responseStatus === 403) return 'This resource is not publicly readable.';
+    if (code === 'not_found' || responseStatus === 404) return 'No public resource found for that path or ID.';
+    if (['invalid_command', 'invalid_argument', 'invalid_terminal_argument', 'invalid_address', 'invalid_path', 'invalid_handle'].includes(code) || responseStatus === 400) return 'Use: ' + usages[name] + '. Type help for examples.';
+    if (code === 'response_too_large') return 'This result is too large. Try a more specific path or search.';
+    return 'Could not read the server. Run the command again.';
+  }
   form.addEventListener('submit', async event => {
     event.preventDefault();
     if (pending) { cancel(); return; }
     if (composing) return;
-    const command = input.value.trim();
+    const entered = input.value;
+    const command = entered.trim().replace(/ +/g, ' ');
     if (!command) return;
     history.push(command);
     if (history.length > 100) history.shift();
     cursor = history.length;
     draft = '';
     status.textContent = '';
-    if (command === 'clear') { input.value = ''; transcript.replaceChildren(); status.textContent = 'Screen cleared.'; return; }
+    const match = /^(\S+)(?:\s+([\s\S]*))?$/.exec(command);
+    const name = match ? match[1] : '';
+    const argument = match && match[2] ? match[2].trim() : '';
+    if (name === 'clear' && !argument && !/[\u0000-\u001f\u007f]/.test(entered)) { input.value = ''; transcript.replaceChildren(); status.textContent = 'Screen cleared.'; return; }
     append('msg > ' + command, 'command');
-    if (!commands.includes(command)) {
-      append('Unknown command. Type help.', 'error');
+    if (!commands.includes(name)) {
+      append('Unknown command. Type help for commands and examples.', 'error');
+      return;
+    }
+    if (command.length > 512 || /[\u0000-\u001f\u007f]/.test(entered) || (parameterCommands.has(name) ? !argument : name === 'help' ? (argument && !commands.includes(argument)) : !!argument) || (['ls', 'read', 'user'].includes(name) && /\s/.test(argument)) || (name === 'search' && ([...argument].length > 80 || argument.split(' ').length > 8))) {
+      append('Use: ' + usages[name] + '. Type help for examples.', 'error');
       return;
     }
     const request = {controller:new AbortController(), reason:null};
@@ -106,11 +184,14 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       const response = await fetch('/_terminal?command=' + encodeURIComponent(command), {
         credentials:'omit', cache:'no-store', signal:request.controller.signal
       });
-      if (!response.ok) throw new Error('unavailable');
       const data = await response.json();
       if (request.controller.signal.aborted) throw new Error('aborted');
+      if (!response.ok) {
+        append(errorMessage(data.error && data.error.code, response.status, name), 'error');
+        return;
+      }
       if (typeof data.output !== 'string') throw new Error('invalid response');
-      append(data.output);
+      render(data);
       input.value = '';
     } catch {
       const message = request.reason === 'cancelled' ? 'Command cancelled.'
@@ -131,23 +212,47 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     }
   });
   form.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && pending && !event.isComposing) { event.preventDefault(); cancel(); }
+    if (event.key !== 'Escape' || event.isComposing || composing) return;
+    if (pending) { event.preventDefault(); cancel(); }
+    else status.textContent = '';
   });
   input.addEventListener('compositionstart', () => { composing = true; });
   input.addEventListener('compositionend', () => { composing = false; });
+  input.addEventListener('input', () => { if (!pending) status.textContent = ''; });
   input.addEventListener('keydown', event => {
-    if (event.isComposing || pending || event.altKey || event.metaKey || event.shiftKey) return;
+    if (event.isComposing || composing || pending || event.altKey || event.metaKey || event.shiftKey) return;
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       if (event.ctrlKey) return;
       event.preventDefault();
       if (cursor === history.length) draft = input.value;
       cursor = Math.max(0, Math.min(history.length, cursor + (event.key === 'ArrowUp' ? -1 : 1)));
       input.value = cursor === history.length ? draft : history[cursor];
+      status.textContent = '';
     } else if (event.key === 'Tab' && !event.ctrlKey) {
-      const matches = commands.filter(command => command.startsWith(input.value));
-      if (input.value && matches.length === 1 && input.value !== matches[0]) { event.preventDefault(); input.value = matches[0]; }
+      const match = /^(\S+)\s+([\s\S]*)$/.exec(input.value);
+      let prefix = input.value, options = commands, head = '';
+      if (match) {
+        head = match[1] + ' ';
+        prefix = match[2];
+        if (['ls', 'read'].includes(match[1])) options = [...paths];
+        else if (match[1] === 'user') options = [...handles].flatMap(handle => [handle, '@' + handle]);
+        else if (match[1] === 'help') options = commands;
+        else return;
+      }
+      const matches = options.filter(option => option.startsWith(prefix)).sort();
+      if (!prefix && !head) { status.textContent = 'Commands: ' + commands.join(', '); return; }
+      if (!matches.length) { status.textContent = head ? 'No matches yet. Run topics, ls, or users to discover public paths and handles.' : 'No command matches. Type help.'; return; }
+      if (matches.length === 1) {
+        if (prefix === matches[0]) return;
+        event.preventDefault(); input.value = head + matches[0]; status.textContent = ''; return;
+      }
+      event.preventDefault();
+      let common = matches[0];
+      for (const option of matches.slice(1)) while (!option.startsWith(common)) common = common.slice(0, -1);
+      input.value = head + common;
+      status.textContent = 'Matches: ' + matches.slice(0, 20).join(', ');
     } else if (event.ctrlKey && event.key.toLowerCase() === 'l') {
-      event.preventDefault(); transcript.replaceChildren();
+      event.preventDefault(); transcript.replaceChildren(); status.textContent = '';
     }
   });
 })();
