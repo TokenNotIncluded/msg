@@ -10,7 +10,7 @@ WIKI_SCRIPT = r"""(() => {
   const panel = document.getElementById('wiki-actions');
   if (!panel) return;
   const form = panel.querySelector('form'), status = panel.querySelector('[role=status]');
-  const text = (en, zh) => document.documentElement.lang.startsWith('zh') ? zh : en;
+  const text = (en, zh) => globalThis.msgText?.(en, zh) ?? (document.documentElement.lang.startsWith('zh') ? zh : en);
   panel.querySelector('[data-open]').addEventListener('click', () => {
     if (panel.dataset.signedIn !== 'true') { location.assign('/login'); return; }
     form.hidden = !form.hidden;
