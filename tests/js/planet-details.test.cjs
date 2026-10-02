@@ -40,6 +40,21 @@ test('same geometry serves GPU and software with rotation and day/night shade',(
   const day=first.filter((_,i)=>i%8===3).reduce((a,b)=>a+b,0),dark=night.filter((_,i)=>i%8===3).reduce((a,b)=>a+b,0);
   assert.ok(day>dark);
 });
+test('near crater rims are closed annuli with bounded geometry inside the original collider',()=>{
+  const body=P.surface('u_e9ee0fdafccb77bb55dbd49106b921f6',70,{mobile:true});
+  assert.equal(body.traits.mode,2);
+  const rims=body.faces.filter(face=>face.rim);
+  assert.ok(rims.length>0&&rims.length<=P.BUDGET.rimFaces);
+  const first=rims.slice(0,P.BUDGET.rimSegments*2),edges=new Map();
+  for(const face of first)for(let i=0;i<3;i++) {
+    const a=face.vertices[i],b=face.vertices[(i+1)%3],key=[a.join(','),b.join(',')].sort().join('|');
+    edges.set(key,(edges.get(key)||0)+1);
+    assert.ok(Math.hypot(...a)>=P.BUDGET.surfaceMin&&Math.hypot(...a)<=1+1e-10);
+  }
+  assert.ok([...edges.values()].every(count=>count===1||count===2),'no torn or multiply covered edges');
+  assert.equal([...edges.values()].filter(count=>count===1).length,P.BUDGET.rimSegments*2,'only the two closed circular boundaries remain');
+  assert.equal(P.surface('u_e9ee0fdafccb77bb55dbd49106b921f6',32).faces.filter(face=>face.rim).length,0,'mid-distance work stays bounded');
+});
 test('renderer starts with cached low LOD and builds higher detail in bounded idle chunks',()=>{
   P.clearSurfaceCache();const original=globalThis.requestIdleCallback,cancel=globalThis.cancelIdleCallback,jobs=[];let woke=0;
   globalThis.requestIdleCallback=fn=>{jobs.push(fn);return jobs.length;};globalThis.cancelIdleCallback=()=>{};

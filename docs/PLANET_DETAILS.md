@@ -17,6 +17,8 @@ surfaces during idle time, with at most four pending jobs and up to 64 faces or
 reach 2,048 solid triangles on desktop, mobile and software; intermediate views
 use 512. Cloud shells follow the same detail level, with at most 512 sparse,
 lightly transparent triangles so they do not cover the underlying geology.
+Near rocky and icy bodies also use up to 432 triangles for closed crater rims;
+these follow the sampled ground and remain inside the same collision radius.
 The cache keeps at most 32 identities, with one detail level each. The renderer
 also caps the number of detailed visible bodies; distant identities remain small
 points. These are geometry budgets, not a promise of a particular frame rate.
