@@ -2,6 +2,8 @@
 
 import os
 import shutil
+import sys
+import time
 
 import httpx
 import pytest
@@ -401,6 +403,46 @@ async def test_backup_external_signer_and_missing_output_are_explicit_errors(loc
         ])
         with pytest.raises(Failure, match=expected):
             await cli.run(parsed)
+
+
+@pytest.mark.parametrize('channel', ['stdout', 'stderr', 'timeout'])
+def test_age_subprocess_output_caps_and_timeout_kill_and_reap(tmp_path, monkeypatch, channel):
+    from msg import client_account_backup as module
+
+    executable = tmp_path / 'fake-age'
+    command = (
+        'import time; time.sleep(60)'
+        if channel == 'timeout'
+        else f'import os; os.write({1 if channel == "stdout" else 2}, b"x" * 65536)'
+    )
+    executable.write_text(f'#!{sys.executable}\n{command}\n')
+    executable.chmod(0o700)
+    monkeypatch.setattr(module.shutil, 'which', lambda name: str(executable))
+    monkeypatch.setattr(module, 'MAX_ENVELOPE', 1024)
+    monkeypatch.setattr(module, 'MAX_AGE_STDERR', 1024)
+    monkeypatch.setattr(module, 'AGE_TIMEOUT', 0.2 if channel == 'timeout' else 5)
+    spawned = []
+    real_popen = module.subprocess.Popen
+
+    def spawn(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(module.subprocess, 'Popen', spawn)
+    started = time.monotonic()
+    with pytest.raises(Failure) as raised:
+        module._age(['--encrypt'], b'not-a-real-key')
+    assert (
+        raised.value.code
+        == {
+            'stdout': 'account_backup_too_large',
+            'stderr': 'age_output_limit_exceeded',
+            'timeout': 'age_operation_failed',
+        }[channel]
+    )
+    assert time.monotonic() - started < 3
+    assert len(spawned) == 1 and spawned[0].returncode is not None
 
 
 @pytest.mark.parametrize(

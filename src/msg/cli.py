@@ -123,18 +123,47 @@ def parser():
     importing.add_argument('directory', type=Path)
     account_backup = accounts.add_parser('backup', help='Offline encrypted named-account backup.')
     account_backup.add_argument('--recipient', action='append', required=True)
-    account_backup.add_argument('--output', type=Path, required=True)
+    account_backup.add_argument('--output', type=Path)
+    account_backup.add_argument(
+        '--publish',
+        action='store_true',
+        help='Publish only ciphertext and recovery metadata on your public profile.',
+    )
+    account_backup.add_argument(
+        '--recovery-hint', help='Optional public plain-text recovery hint. Never include secrets.'
+    )
     account_restore = accounts.add_parser(
         'restore', help='Offline restore into a new local account.'
     )
     account_restore.add_argument('name')
-    account_restore.add_argument('--input', type=Path, required=True)
+    account_source = account_restore.add_mutually_exclusive_group(required=True)
+    account_source.add_argument('--input', type=Path)
+    account_source.add_argument(
+        '--from',
+        dest='from_profile',
+        help='Find the standard backup on @USER without the old account key.',
+    )
     account_restore.add_argument('--identity', type=Path, action='append', required=True)
-    account_restore.add_argument('--expected-subject', required=True)
+    account_restore.add_argument('--expected-subject')
     account_restore.add_argument('--expected-key-id')
     account_restore.add_argument(
         '--expected-sha256', help='Pin the ciphertext digest from a separate receipt.'
     )
+    account_publish = accounts.add_parser(
+        'publish', help='Publish an existing encrypted backup on your public profile.'
+    )
+    account_publish.add_argument('--input', type=Path, required=True)
+    account_publish.add_argument('--encryption', choices=('age', 'gpg'), required=True)
+    account_publish.add_argument(
+        '--archive-format', choices=('external', 'msg.account-backup/1'), default='external'
+    )
+    account_publish.add_argument('--recovery-hint')
+    account_fetch = accounts.add_parser(
+        'fetch', help='Download a profile backup anonymously, without decrypting it.'
+    )
+    account_fetch.add_argument('--from', dest='from_profile', required=True)
+    account_fetch.add_argument('--output', type=Path, required=True)
+    account_fetch.add_argument('--expected-sha256')
     commands.add_parser('logout')
     auth = commands.add_parser('auth').add_subparsers(dest='action', required=True)
     auth.add_parser('status')
@@ -563,12 +592,22 @@ async def run(args):
         state = local_state(args)
         return await run_local(state, args)
     if args.command == 'account':
-        from msg.client_accounts import run_command
+        from msg.client_accounts import run_backup_command, run_command
+
+        remote_backup = args.action == 'backup' and args.publish
+        remote_restore = args.action == 'restore' and args.from_profile is not None
+        value = (
+            await run_backup_command(
+                args, transport_factory=TRANSPORTS[args.transport], client_factory=MsgClient
+            )
+            if remote_backup or remote_restore or args.action in {'publish', 'fetch'}
+            else run_command(args)
+        )
 
         print_result(
-            run_command(args),
+            value,
             args,
-            context=None if args.action in {'backup', 'restore'} else 'account',
+            context=None if args.action in {'backup', 'restore', 'publish', 'fetch'} else 'account',
         )
         return 0
     signer_override = private_identity_key(args.key) if args.key else None
