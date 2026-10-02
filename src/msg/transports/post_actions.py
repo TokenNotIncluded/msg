@@ -64,7 +64,7 @@ POST_ACTIONS_CSS = """
 POST_ACTIONS_SCRIPT = r"""(() => {
   const panel = document.getElementById('post-actions');
   if (!panel) return;
-  const text = (en, zh) => document.documentElement.lang.startsWith('zh') ? zh : en;
+  const text = (en, zh) => globalThis.msgText?.(en, zh) ?? (document.documentElement.lang.startsWith('zh') ? zh : en);
   const status = panel.querySelector('[role=status]');
   const buttons = [...panel.querySelectorAll('[data-action]')];
   let ready = false, writing = false, countsAvailable = false, proofsKnown = false, proofWritten = false;
