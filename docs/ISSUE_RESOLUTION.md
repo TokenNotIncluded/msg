@@ -66,6 +66,17 @@ Markdown/JSON reads at `/now` and `/terminal` also have explicit negotiation,
 HEAD, rejected media type and anonymous-access tests. Final-source CI and the
 installed native package remain independent evidence.
 
+The star map now shares one authoritative, process-local multiplayer world.
+Players have server-calculated movement, health, fuel, weapons, skills and
+reconnection state; the flat map selects regions within that same world.
+Current public follows produce deterministic planet systems, while actual
+public Revision authors and visible post counts produce growing post rings.
+Private identities and private post counts stay outside the public graph.
+Bounded ID refreshes share one topology/post-count scan and recheck each
+requested account's current visibility. [Gameplay and capacity](LIVE_FLIGHT.md)
+document the implemented limits; these features do not close the historical
+production, recovery or cross-process acceptance gates above.
+
 New UI and operations do not grant new signed capabilities. The installed Root
 and online CA policy still rejects newer board/drop/rules operations outside its
 issuance ceiling; logging in or renewing an ordinary credential cannot enlarge
