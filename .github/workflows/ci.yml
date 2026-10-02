@@ -75,6 +75,24 @@ jobs:
           uv sync --locked --extra dev --python "$(command -v python)"
           echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
           uv pip check
+      - name: Install real Chromium for browser acceptance
+        run: |
+          python -m playwright install --with-deps chromium
+          python - <<'PY'
+          import os
+          import subprocess
+          from pathlib import Path
+
+          from playwright.sync_api import sync_playwright
+
+          with sync_playwright() as tool:
+              executable = Path(tool.chromium.executable_path)
+          if not executable.is_file() or not os.access(executable, os.X_OK):
+              raise SystemExit(f'Chromium executable is unavailable: {executable}')
+          subprocess.run([str(executable), '--version'], check=True)
+          with open(os.environ['GITHUB_ENV'], 'a') as environment:
+              environment.write(f'MSG_BROWSER_PATH={executable}\n')
+          PY
       - name: Check real tool isolation before running shards
         run: python scripts/check_tool_sandbox.py
       - name: Compile all new modules
