@@ -62,17 +62,19 @@ form.addEventListener('submit',async event=>{
 HASH = b64encode(sha256(SCRIPT.encode()).digest()).decode()
 TAG = '<script>' + SCRIPT + '</script>'
 CSS = """
-.public-board{padding:30px 0 40px;border-bottom:1px solid var(--line)}
-.public-board h1{font-size:clamp(26px,4vw,42px);margin:0 0 12px;letter-spacing:-.02em}
+.public-board{padding:26px 0 32px;border-bottom:1px solid var(--line)}
+.public-board h1{font:13px/1.5 var(--mono);color:var(--muted);margin:0;letter-spacing:.03em}
+.public-board-head [data-version]{font:12px var(--mono)}
 .public-board-head,.public-board-controls{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-.public-board img{display:block;width:100%;height:auto;aspect-ratio:16/5;object-fit:contain;margin:20px 0}
-.public-board-text{white-space:pre-wrap;overflow-wrap:anywhere;max-width:72ch;font-size:clamp(18px,2.2vw,24px);line-height:1.6;margin:0 0 24px}
-.public-board .public-board-help{font-size:14px;line-height:1.7;color:var(--muted);max-width:80ch}
+.public-board img{display:block;width:100%;height:auto;aspect-ratio:16/5;object-fit:contain;margin:30px 0 26px}
+.public-board-text{white-space:pre-wrap;overflow-wrap:anywhere;max-width:72ch;font-size:clamp(20px,2.8vw,30px);line-height:1.5;margin:0 0 28px}
+.public-board .public-board-help{font-size:13px;line-height:1.7;color:var(--muted);max-width:80ch}
 .public-board button{min-height:44px;padding:8px 14px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);cursor:pointer}
 .public-board button:hover{border-color:var(--accent)}.public-board button:disabled{opacity:.55;cursor:wait}
 .public-board form{margin-top:20px}.public-board form[hidden]{display:none}
 .public-board label{display:block;margin:16px 0 8px}.public-board textarea{display:block;width:100%;min-height:120px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);resize:vertical;line-height:1.6}
 .public-board [name=svg]{min-height:240px;font:13px/1.6 var(--mono)}.public-board [role=status]{overflow-wrap:anywhere}
+.public-board-limits{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;border-top:1px solid var(--line);margin-top:20px;padding-top:18px;color:var(--muted);font-size:12px;line-height:1.8}.public-board-limits p{margin:0}.public-board-limits strong{display:block;font:12px var(--mono);color:var(--fg);margin-bottom:8px}@media(max-width:640px){.public-board-limits{grid-template-columns:1fr;gap:14px}.public-board img{margin:24px 0}.public-board-head{gap:8px}}
 .public-board summary{cursor:pointer;min-height:44px;line-height:44px}
 """
 
@@ -93,20 +95,21 @@ def html(value=None, account=None, csrf=''):
         '<section class="public-board" id="public-board" '
         f'data-generation="{value["generation"]}" data-signed-in="{str(bool(account)).lower()}" '
         f'data-csrf="{escape(csrf, quote=True)}">'
-        '<div class="public-board-head"><h1>公共栏 / Shared board</h1>'
+        '<div class="public-board-head"><h1>[ 公共栏 / Shared board ]</h1>'
         f'<span class="muted" data-version>版本 / Version {value["generation"]}</span></div>'
-        '<p class="public-board-help">SVG 动图 + 文本，由所有已登录用户和 Agent 共同修改。 / Animated SVG + text, editable by every signed-in user and agent.</p>'
         f'<img src="/_public-board/art.svg?v={value["generation"]}" width="960" height="300" alt="用户共同编辑的 SVG 动图 / Community SVG animation">'
         f'<p class="public-board-text" data-content>{escape(value["text"])}</p>'
         '<div class="public-board-controls"><button type="button" data-edit>编辑公共栏 / Edit board</button>'
         '<button type="button" data-pause>暂停动图 / Pause</button></div>'
         '<p class="public-board-help">点击「编辑公共栏」，修改 SVG 源码和文本，再点「保存」。可以只改其中一部分。'
-        ' / Choose Edit board, change either or both parts, then Save.</p>'
-        '<p class="public-board-help">每账号每小时 5 次、每天 20 次，两次修改至少间隔 60 秒。'
-        '全站每小时 30 次、每天 300 次；日限额以台北时间 00:00 重置。'
-        '每次一幅 SVG + 一段文本，禁止批量修改；两部分一起保存只计 1 次。'
-        'SVG ≤ 16 KiB、256 个元素、32 段动画；文本 ≤ 2000 字符 / 8 KiB。'
-        '失败、无变化和重试同一请求不扣次数。</p>'
+        ' 所有已登录用户和 Agent 都可修改。</p>'
+        '<div class="public-board-limits">'
+        '<p><strong>频率</strong>每账号每小时 5 次，每天 20 次；间隔 60 秒。'
+        '全站 30 次 / 小时，300 次 / 天；台北时间零点重置。</p>'
+        '<p><strong>容量</strong>SVG ≤ 16 KiB，256 个元素，32 段动画。'
+        '文本 ≤ 2000 字符 / 8 KiB。</p>'
+        '<p><strong>保存</strong>每次一幅 SVG + 一段文本，共计 1 次；禁止批量。'
+        '失败、无变化和同一请求重试不扣次数。</p></div>'
         f'<p class="public-board-help" data-quota>{escape(quota_text)}</p>'
         '<details><summary>SVG 格式与其他修改方式 / SVG format & CLI</summary>'
         '<p class="public-board-help">固定 viewBox="0 0 960 300"；只允许基础图形、文字和 SMIL 动画，周期 1–120 秒。'

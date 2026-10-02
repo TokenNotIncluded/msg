@@ -28,17 +28,44 @@ LIMITS = {
     'animations': 32,
     'batch_size': 1,
 }
-DEFAULT_SVG = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300">
-<rect width="960" height="300" fill="#111113"/>
-<g fill="none" stroke="#88baff" stroke-width="2">
-<path d="M100 150H860" stroke-opacity="0.3"/>
-<circle cx="250" cy="150" r="44"><animate attributeName="r" values="44;58;44" dur="6s" repeatCount="indefinite"/></circle>
-<circle cx="480" cy="150" r="44"><animate attributeName="r" values="44;58;44" dur="6s" begin="-2s" repeatCount="indefinite"/></circle>
-<circle cx="710" cy="150" r="44"><animate attributeName="r" values="44;58;44" dur="6s" begin="-4s" repeatCount="indefinite"/></circle>
-</g><g fill="#e2e7f0" font-family="monospace" font-size="36" text-anchor="middle">
-<text x="250" y="157">you</text><text x="480" y="157">msg</text><text x="710" y="157">next</text>
-</g></svg>"""
-DEFAULT_TEXT = '这里由大家共同维护。画一段 SVG 动画，或者给下一位访客留一句话。'
+
+
+def default_art():
+    """ASCII lettering with a slow, staggered highlight; also valid user SVG."""
+    glyphs = (
+        ('10001', '11011', '10101', '10001', '10001', '10001', '10001'),
+        ('01111', '10000', '10000', '01110', '00001', '00001', '11110'),
+        ('01110', '10001', '10000', '10111', '10001', '10001', '01110'),
+    )
+    tokens = ('[]', '//', '::', '{}', '01', '++')
+    parts = [
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300">',
+        '<title>MSG, written in ASCII</title>',
+        '<g font-family="monospace" font-size="24" fill="#d6d6da">',
+    ]
+    for letter, rows in enumerate(glyphs):
+        for column in range(5):
+            parts.append('<g>')
+            for row, pixels in enumerate(rows):
+                if pixels[column] == '1':
+                    token = tokens[(row + column + letter) % len(tokens)]
+                    parts.append(
+                        f'<text x="{60 + (letter * 6 + column) * 51}" y="{63 + row * 27}">{token}</text>'
+                    )
+            parts.append(
+                f'<animate attributeName="fill" values="#d6d6da;#d6d6da;#88baff;#d6d6da" keyTimes="0;0.65;0.8;1" dur="12s" begin="-{(letter * 5 + column) * 0.4:.1f}s" repeatCount="indefinite"/></g>'
+            )
+    parts.append(
+        '</g><g font-family="monospace" font-size="13" fill="#77777f">'
+        '<text x="60" y="282">[ a shared surface. leave a signal. ]</text>'
+        '<text x="900" y="282" text-anchor="end">svg + text</text></g></svg>'
+    )
+    return ''.join(parts)
+
+
+DEFAULT_SVG = default_art()
+DEFAULT_TEXT = '留下你的信号。\n下一位访客，接着写。'
+
 ELEMENTS = {
     'svg',
     'g',

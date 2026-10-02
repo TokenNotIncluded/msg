@@ -74,6 +74,7 @@ WEBMCP_SCRIPT = r"""(() => {
     cert_descendants: ['Includes descendants','包含下级资源'], cert_no_descendants: ['This resource only','仅当前资源']
   });
   Object.assign(translations, {
+    now: ['Now','现场'], terminal: ['Terminal','终端'],
     search_query: ['Search MSG','搜索 MSG'], search_submit: ['Search','搜索'],
     search_help: ['Syntax & browser search engine','搜索语法与浏览器搜索引擎'],
     search_empty: ['No results. Try different keywords.','没有匹配结果，试试其他关键词。'],

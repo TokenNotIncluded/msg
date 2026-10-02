@@ -17,14 +17,16 @@ from msg.transports.oauth_http import csrf
     'svg',
     [
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300"><script>alert(1)</script></svg>',
-        DEFAULT_SVG.replace('<g fill="none"', '<g onload="alert(1)" fill="none"', 1),
-        DEFAULT_SVG.replace('<g fill="none"', '<g style="fill:red" fill="none"', 1),
-        DEFAULT_SVG.replace('<g fill="none"', '<g href="https://outside.invalid" fill="none"', 1),
-        DEFAULT_SVG.replace('attributeName="r"', 'attributeName="href"', 1),
-        DEFAULT_SVG.replace('dur="6s"', 'dur="0.001s"', 1),
+        DEFAULT_SVG.replace('<g ', '<g onload="alert(1)" ', 1),
+        DEFAULT_SVG.replace('<g ', '<g style="fill:red" ', 1),
+        DEFAULT_SVG.replace('<g ', '<g href="https://outside.invalid" ', 1),
+        DEFAULT_SVG.replace('attributeName="fill"', 'attributeName="href"', 1),
+        DEFAULT_SVG.replace('dur="12s"', 'dur="0.001s"', 1),
         DEFAULT_SVG.replace('viewBox="0 0 960 300"', 'viewBox="0 0 1000000 1000000"', 1),
         '<!DOCTYPE svg [<!ENTITY a "a">]>' + DEFAULT_SVG,
-        DEFAULT_SVG.replace('values="44;58;44"', 'values="url(https://outside.invalid)"', 1),
+        DEFAULT_SVG.replace(
+            'values="#d6d6da;#d6d6da;#88baff;#d6d6da"', 'values="url(https://outside.invalid)"', 1
+        ),
     ],
 )
 def test_svg_rejects_active_or_unbounded_content(svg):
@@ -171,7 +173,10 @@ async def test_batch_size_and_payload_limits_cannot_bypass_gate(installed):
     invalid = await call(
         app,
         'content.public_board_update',
-        {'generation': 0, 'svg': DEFAULT_SVG.replace('attributeName="r"', 'attributeName="href"')},
+        {
+            'generation': 0,
+            'svg': DEFAULT_SVG.replace('attributeName="fill"', 'attributeName="href"'),
+        },
         key=key,
         subject=user,
     )
