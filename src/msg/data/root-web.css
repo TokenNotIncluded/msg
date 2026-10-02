@@ -999,6 +999,14 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 .game-meter::-moz-progress-bar { background: currentColor; }
 #game-score, #game-collected, #game-respawn { font-variant-numeric: tabular-nums; }
 #game-pickup { display: block; min-height: 20px; margin-top: 6px; color: var(--hud-signal); font-size: 11px; }
+#game-combat { display: block; min-height: 20px; color: var(--hud-text); font-size: 11px; overflow-wrap: anywhere; }
+#game-combat:is([data-state="empty"], [data-state="cooldown"]) { color: var(--hud-muted); }
+.pilot-reticle[data-combat]:not([data-combat="ready"]) { opacity: 1; }
+.pilot-reticle:is([data-combat="fired"], [data-combat="intent"])::before { width: 20px; left: -2px; }
+.pilot-reticle:is([data-combat="fired"], [data-combat="intent"])::after { height: 20px; top: -2px; }
+.pilot-reticle:is([data-combat="hit"], [data-combat="kill"])::before { width: 18px; left: -1px; transform: rotate(45deg); }
+.pilot-reticle:is([data-combat="hit"], [data-combat="kill"])::after { height: 18px; top: -1px; transform: rotate(45deg); }
+.pilot-reticle:is([data-combat="damaged"], [data-combat="destroyed"]) { outline: 1px solid var(--hud-text); outline-offset: 6px; }
 #game-respawn { margin-top: 12px; color: var(--hud-warning); }
 #game-actions { position: absolute; z-index: 5; left: 50%; bottom: max(86px, calc(env(safe-area-inset-bottom) + 72px)); transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; font-family: var(--mono); }
 .game-action { position: relative; display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 4px 12px; min-width: 92px; min-height: 48px; padding: 10px 12px; border: 1px solid var(--hud-line); border-radius: 2px; background: var(--hud-surface); color: var(--hud-text); text-align: left; font: 12px/1.5 var(--mono); touch-action: manipulation; }

@@ -320,6 +320,11 @@
       this.remoteShips = new Map();
       this.shipLabels = new Map();
       this.shotEvents = new Map();
+      this.combatEvents = new Map();
+      this.combatSeen = new Map();
+      this.localShot = null;
+      this.localLaserAt = -Infinity;
+      this.combatStatus = null;
       this.collectEvents = new Map();
       this.motionEvents = new Map();
       this.collectibles = null;
@@ -543,6 +548,7 @@
         }
         if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift', 'b'].includes(key)) {
           if (!e.repeat) this.network?.resume();
+          if (key === ' ' && !e.repeat) this.previewLaser();
           e.preventDefault(); this.keys.add(key); this.wake();
         }
       });
@@ -620,7 +626,74 @@
     }
     queueGameAction(action) {
       if (!this.network?.connected || !this.flight || this.network.self?.hp <= 0) return;
+      if (action === 'laser') this.previewLaser();
       this.gameActions.add(action); this.wake();
+    }
+    combatMessage(text, kind = 'ready', until = this.network.serverNow + 1300) {
+      this.combatStatus = {text, kind, until};
+      this.updateCombatHud(); this.wake();
+    }
+    actionFuel(action) {
+      return this.network?.limits?.[action + '_fuel'] ?? ({laser:1, shield:12, dash:18}[action] ?? 0);
+    }
+    previewLaser(notify = true) {
+      const ship = this.network?.connected && this.network.self, now = this.network?.serverNow ?? 0;
+      if (!ship || !this.flight || ship.hp <= 0) return false;
+      if (ship.fuel < this.actionFuel('laser')) {
+        if (notify) this.combatMessage('燃料不足 · 靠近字符补充', 'empty');
+        return false;
+      }
+      const cooldown = (this.network.limits?.laser_cooldown_ms ?? 400);
+      const ready = Math.max(ship.laser_ready_ms, (this.localLaserAt ?? -Infinity) + cooldown);
+      if (now < ready) {
+        if (notify) this.combatMessage('激光冷却 ' + ((ready - now) / 1000).toFixed(1) + 's', 'cooldown', ready);
+        return false;
+      }
+      const b = flightBasis(this.flight.yaw, this.flight.pitch);
+      const position = this.flight.position.map((v, i) => v - b.eye[i] * 3.2);
+      this.localShot = {position, end:position.map((v, i) => v - b.eye[i] * 60), at_ms:now, intent:true};
+      this.localLaserAt = now;
+      this.combatMessage('开火请求', 'intent', now + 700);
+      return true;
+    }
+    updateCombatHud() {
+      const now = this.network?.serverNow ?? 0;
+      const active = this.network?.connected && this.flight && this.combatStatus?.until > now;
+      const status = document.getElementById('game-combat');
+      if (status) {
+        const text = active ? this.combatStatus.text : '';
+        if (status.textContent !== text) status.textContent = text;
+        status.dataset.state = active ? this.combatStatus.kind : 'ready';
+      }
+      const reticle = document.getElementById('pilot-reticle');
+      if (reticle) reticle.dataset.combat = active ? this.combatStatus.kind : 'ready';
+    }
+    receiveCombatEvents(events, now) {
+      this.combatEvents ??= new Map(); this.combatSeen ??= new Map();
+      for (const [id, at] of this.combatSeen) if (now - at > 8500) this.combatSeen.delete(id);
+      for (const [id, event] of this.combatEvents) if (now - event.at_ms >= 900) this.combatEvents.delete(id);
+      for (const event of events) {
+        const age = now - event.at_ms;
+        if (!['laser', 'hit', 'death'].includes(event.type) || age < 0 || age >= 900 ||
+            event.at_ms < (this.combatSince ?? 0) || event.region !== undefined && event.region !== this.network.self?.region ||
+            this.combatSeen.has(event.id)) continue;
+        this.combatSeen.set(event.id, event.at_ms);
+        if (this.combatSeen.size > 512) this.combatSeen.delete(this.combatSeen.keys().next().value);
+        const own = this.network.self?.id;
+        if (event.type === 'laser') {
+          if (event.position && event.end && age < 400) this.shotEvents.set(event.id, event);
+          if (this.shotEvents.size > 48) this.shotEvents.delete(this.shotEvents.keys().next().value);
+          if (event.player_id === own) {
+            this.localShot = null;
+            this.combatMessage('已发射', 'fired', event.at_ms + 700);
+          }
+        } else {
+          if (event.position) this.combatEvents.set(event.id, event);
+          if (this.combatEvents.size > 48) this.combatEvents.delete(this.combatEvents.keys().next().value);
+          if (event.player_id === own) this.combatMessage(event.type === 'death' ? '飞船被击毁' : '受到攻击', event.type === 'death' ? 'destroyed' : 'damaged', event.at_ms + 1400);
+          else if (event.target_id === own) this.combatMessage(event.type === 'death' ? '击毁确认' : '命中确认', event.type === 'death' ? 'kill' : 'hit', event.at_ms + 1400);
+        }
+      }
     }
     flightIntent(controlled = true) {
       const keys = new Set([...this.keys, ...this.flightControls.values()]);
@@ -633,6 +706,7 @@
       const keys = new Set([...this.keys, ...this.flightControls.values()]);
       const actions = [...this.gameActions];
       if (keys.has(' ')) actions.push('laser');
+      if (actions.includes('laser')) this.previewLaser(false);
       this.network.setInput({...this.flightIntent(), actions:[...new Set(actions)]});
       this.gameActions.clear();
     }
@@ -656,6 +730,11 @@
     }
     glyphTaken(id) { return Boolean(this.collectibles?.mask[id >> 3] & (1 << (id & 7))); }
     receiveFlightHello(hello) {
+      if (this.combatSelfId !== hello.self.id) {
+        this.combatSeen?.clear(); this.combatSince = hello.server_time_ms ?? this.network.serverNow;
+        this.combatSelfId = hello.self.id;
+      }
+      this.localShot = null; this.combatEvents?.clear(); this.shotEvents.clear(); this.combatStatus = null;
       this.syncCollectibles(hello.collectibles);
       this.homeBody = hello.self.home_body?.private ? hello.self.home_body : null;
       this.homeMesh = this.homeBody ? planetMesh(this.homeBody.id) : null;
@@ -694,14 +773,18 @@
       for (const event of snapshot.events) if (event.type === 'collect' && now - event.at_ms < 800 && !this.collectEvents.has(event.id))
         this.collectEvents.set(event.id, event);
       for (const [id, event] of this.collectEvents) if (now - event.at_ms >= 800) this.collectEvents.delete(id);
-      for (const event of snapshot.events) if (event.type === 'laser' && event.position && event.end && now - event.at_ms < 400)
-        this.shotEvents.set(event.id, event);
+      this.receiveCombatEvents(snapshot.events, now);
+      for (const [id, event] of this.combatEvents) if (event.region !== undefined && event.region !== this.network.self?.region) this.combatEvents.delete(id);
+      for (const [id, event] of this.shotEvents) if (event.region !== undefined && event.region !== this.network.self?.region) this.shotEvents.delete(id);
       for (const [id, event] of this.shotEvents) if (now - event.at_ms > 400) this.shotEvents.delete(id);
       this.wake();
     }
     clearRemoteShips() {
       this.remoteShips.clear(); this.shotEvents.clear();
       this.collectEvents?.clear(); this.motionEvents?.clear();
+      this.combatEvents?.clear();
+      this.localShot = null; this.localLaserAt = -Infinity; this.combatStatus = null;
+      this.updateCombatHud();
       for (const label of this.shipLabels.values()) label.remove();
       this.shipLabels.clear(); this.wake();
     }
@@ -783,12 +866,14 @@
       if (respawn) { respawn.hidden = !ship || ship.hp > 0; respawn.textContent = ship && ship.hp <= 0 ? '重生倒计时 ' + Math.max(0, (ship.respawn_at_ms - now) / 1000).toFixed(1) + 's' : ''; }
       const region = document.getElementById('game-region');
       if (region) region.textContent = ship ? '区域 ' + String(ship.region).padStart(2, '0') + ' / 地图' : '区域地图';
+      this.updateCombatHud();
       for (const button of document.querySelectorAll('[data-game-action]')) {
         const action = button.dataset.gameAction === 'fire' ? 'laser' : button.dataset.gameAction;
         const remaining = ship ? Math.max(0, (ship[action + '_ready_ms'] - now) / 1000) : Infinity;
-        button.disabled = !ship || ship.hp <= 0 || remaining > 0;
+        const lowFuel = ship && ship.fuel < this.actionFuel(action);
+        button.disabled = !ship || ship.hp <= 0 || remaining > 0 || lowFuel;
         button.dataset.active = String(action === 'shield' && ship && ship.shield_until_ms > now);
-        button.querySelector('.game-cooldown').textContent = ship ? remaining > 0 ? remaining.toFixed(1) + 's' : '就绪' : '—';
+        button.querySelector('.game-cooldown').textContent = ship ? ship.hp <= 0 ? '等待重生' : lowFuel ? '燃料不足' : remaining > 0 ? remaining.toFixed(1) + 's' : '就绪' : '—';
       }
     }
     inspectNearby() {
@@ -1191,7 +1276,8 @@
       this.callbacks.camera?.(this.camera.target);
       this.dirty = false;
       if (!this.paused || this.destination || this.keys.size || this.flightControls.size ||
-          (this.flight && (this.flight.speed > .01 || this.flight.trail.length)))
+          (this.flight && (this.flight.speed > .01 || this.flight.trail.length || this.localShot ||
+            this.shotEvents.size || this.combatEvents?.size || this.combatStatus?.until > this.network?.serverNow)))
         this.frame = requestAnimationFrame((t) => this.render(t));
     }
     geometry() {
@@ -1331,13 +1417,54 @@
         }
         const own = this.network.self;
         if (own?.shield_until_ms > serverNow) ring(this.flight.position, 4.5, [.6, .87, .95], .6, {tilt:.4, sides:32});
-        for (const [id, event] of this.shotEvents) {
-          const age = serverNow - event.at_ms;
-          if (age > 400) { this.shotEvents.delete(id); continue; }
-          line(event.position, event.end, [.98, .66, .46], clamp(1 - age / 400, 0, 1));
-        }
+        this.combatGeometry({lines, points, triangles}, b);
       }
       return { lines, points, triangles, solids };
+    }
+    combatGeometry({lines, points, triangles}, basis) {
+      const now = this.network.serverNow, reduced = this.reduced.matches;
+      const vertex = (p, alpha, size = 1) => [...p, .96, .96, .94, alpha, size];
+      const line = (a, b, alpha) => lines.push(...vertex(a, alpha), ...vertex(b, alpha));
+      const beam = event => {
+        const lifetime = event.intent ? 250 : 400, age = now - event.at_ms;
+        if (age < 0 || age >= lifetime) return;
+        const alpha = (event.intent ? .6 : .95) * (1 - age / lifetime);
+        const direction = unit(event.end.map((v, i) => v - event.position[i]));
+        const length = Math.hypot(...event.end.map((v, i) => v - event.position[i]));
+        const start = event.position.map((v, i) => v + direction[i] * Math.min(3.2, length / 4));
+        const end = reduced ? event.end : event.position.map((v, i) => mix(v, event.end[i], clamp(.18 + age / 150, 0, 1)));
+        const width = event.intent ? .09 : .16;
+        const corners = [start, end].flatMap(p => [-1, 1].map(sign => p.map((v, i) => v + basis.right[i] * width * sign)));
+        for (const index of [0, 1, 2, 1, 3, 2]) triangles.push(...vertex(corners[index], alpha));
+        line(start, end, alpha);
+        points.push(...vertex(start, alpha, age < 120 ? 2.6 : .7), ...vertex(end, alpha, 1.0));
+        if (age < 130) for (const axis of [basis.right, basis.up]) {
+          const radius = reduced ? .7 : 1.2 * (1 - age / 130);
+          line(start.map((v, i) => v - axis[i] * radius), start.map((v, i) => v + axis[i] * radius), alpha);
+        }
+      };
+      if (this.localShot) {
+        if (now - this.localShot.at_ms >= 250) this.localShot = null;
+        else beam(this.localShot);
+      }
+      for (const [id, event] of this.shotEvents) {
+        if (now - event.at_ms >= 400) this.shotEvents.delete(id);
+        else beam(event);
+      }
+      for (const [id, event] of this.combatEvents ?? []) {
+        const lifetime = event.type === 'death' ? 900 : 550, age = now - event.at_ms;
+        if (age < 0 || age >= lifetime) { this.combatEvents.delete(id); continue; }
+        const progress = age / lifetime, death = event.type === 'death';
+        const count = reduced ? 4 : death ? 16 : 8, radius = reduced ? 3 : (death ? 9 : 4) * (.2 + progress);
+        const alpha = .9 * (1 - progress);
+        for (let i = 0; i < count; i++) {
+          const angle = i / count * M.TAU, direction = basis.right.map((v, k) => v * Math.cos(angle) + basis.up[k] * Math.sin(angle));
+          const tip = event.position.map((v, k) => v + direction[k] * radius);
+          const tail = event.position.map((v, k) => v + direction[k] * radius * .55);
+          line(tail, tip, alpha); points.push(...vertex(tip, alpha, death ? .45 : .3));
+        }
+        points.push(...vertex(event.position, alpha * .7, death ? 3.2 : 1.4));
+      }
     }
     absorptionGlyphs() {
       if (!this.flight || !this.network?.connected || this.reduced.matches) return [];
@@ -1417,8 +1544,9 @@
       if (!this.tokenField) return;
       const occupied = this.view.nodes.map(n => this.project(n.position)).filter(Boolean);
       const visible = new Set();
-      const maximum = this.width < 600 ? 20 : 40;
-      for (let i = 0; i < this.dust.length && visible.size < maximum; i += 8 * 17) {
+      const flying = Boolean(this.flight), small = this.width < 600;
+      const maximum = flying ? this.reduced.matches ? small ? 28 : 56 : small ? 44 : 84 : small ? 20 : 40;
+      for (let i = 0; i < this.dust.length && visible.size < maximum; i += 8 * (flying ? 7 : 17)) {
         if (this.glyphTaken(i / 8)) continue;
         const p = this.project(this.dust.slice(i, i + 3));
         if (!p || p.x < 50 || p.x > this.width - 50 || p.y < 115 || p.y > this.height - 130 ||
@@ -1432,7 +1560,7 @@
         }
         token.style.transform = `translate(${p.x.toFixed(2)}px,${p.y.toFixed(2)}px)`;
         token.style.fontSize = clamp(p.scale * 4.5, 7, this.flight ? 17 : 12) + 'px';
-        token.style.opacity = clamp(.12 + p.scale * .025, .12, .25);
+        token.style.opacity = flying ? clamp(.22 + p.scale * .035, .22, .42) : clamp(.12 + p.scale * .025, .12, .25);
       }
       for (const effect of this.absorptionGlyphs()) {
         const p = this.project(effect.position);
