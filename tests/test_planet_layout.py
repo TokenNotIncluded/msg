@@ -88,3 +88,45 @@ def test_largest_bounded_scc_has_room_for_root_and_certified_planets():
     assert closest > 8  # Root radius 5.4 plus a certified planet radius 2.05.
     assert layout['u_root']['position'] == [0, 0, 0]
     assert all(math.hypot(*item['position']) <= 400.00001 for item in layout.values())
+
+
+def test_full_default_field_separates_independent_planet_entities():
+    nodes = ['u_root', *[f'u_test_4_{index}' for index in range(255)]]
+    links = [edge(node, 'u_root', 'default') for node in nodes[1:]]
+    layout = planet_layout(nodes, links)
+    assert layout == planet_layout(list(reversed(nodes)), list(reversed(links)))
+    assert layout['u_root']['position'] == [0, 0, 0]
+    assert (
+        min(
+            math.dist(layout[first]['position'], layout[second]['position'])
+            for index, first in enumerate(nodes)
+            for second in nodes[index + 1 :]
+        )
+        >= 8
+    )
+    assert all(math.hypot(*item['position']) <= 400.00001 for item in layout.values())
+
+
+def test_full_binary_field_keeps_system_centers_and_offsets_during_separation():
+    nodes = ['u_root', *[f'u_pair_{index}' for index in range(254)]]
+    links = [edge(node, 'u_root', 'default') for node in nodes[1:]]
+    pairs = list(zip(nodes[1::2], nodes[2::2], strict=True))
+    for first, second in pairs:
+        links.extend([edge(first, second), edge(second, first)])
+    layout = planet_layout(nodes, links)
+    for first, second in pairs:
+        center = layout[first]['orbit']['center']
+        assert center == layout[second]['orbit']['center']
+        assert math.isclose(math.dist(layout[first]['position'], center), 32, abs_tol=1e-5)
+        assert math.isclose(
+            math.dist(layout[first]['position'], layout[second]['position']), 64, abs_tol=1e-5
+        )
+    assert (
+        min(
+            math.dist(layout[first]['position'], layout[second]['position'])
+            for index, first in enumerate(nodes)
+            for second in nodes[index + 1 :]
+        )
+        >= 8
+    )
+    assert all(math.hypot(*item['position']) <= 400.00001 for item in layout.values())
