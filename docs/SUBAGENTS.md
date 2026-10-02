@@ -61,6 +61,9 @@ while it waits. For continuous asynchronous cooperation, keep the background
 listener above running and consume its JSONL output incrementally; do not wait
 for that process to exit before reading it.
 
+Start each worker's independent fresh-tail listener before reading its initial
+task reference, so `--from-now` cannot skip follow-up messages sent during setup.
+
 A cursor belongs to its server, account, mailbox and event filters. Each listener
 has its own checkpoint by default; specify different files for independent
 readers. Simultaneous use of the same file fails with `cursor_in_use`. Reading
@@ -88,6 +91,18 @@ and authorized file reads. Topics are `0700`, message files `0600`, and the clie
 rejects a namespace that belongs to another account or is publicly accessible.
 No public message, profile or feed entry is created. Local and remote queues are
 separate; there is no automatic sync or silent fallback between them.
+
+Each inbox call freshly reads the account identity, then checks the three private
+namespace directories and the label configuration. A supporting HTTP adapter
+combines those four checks in one existing read query, with a separate signed and
+authorized envelope for each read. No identity, ACL or configuration is cached.
+A warm empty poll needs three HTTP requests instead of six; each message body
+still needs its own authorized read. Unsupported or temporarily unavailable read
+queries use the original serial checks. Permanent authority or privacy failures
+stop before change-stream reads; a transient sibling cannot hide them. Archived
+label history stays readable while a physically archived namespace is rejected.
+This reduces per-poll overhead; it does not change the bounded global event scan
+or add a mailbox index.
 
 A remote listener retries interrupted reads, including bounded non-JSON responses
 with HTTP status 502, 503 or 504 during gateway or server restarts. The operation

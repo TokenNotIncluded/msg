@@ -76,13 +76,13 @@ async def test_remote_mailbox_round_trips(installed, tmp_path):
         calls.clear()
         tail = await agents.inbox('recipient', tail=True)
         assert tail['items'] == []
-        assert len(calls) == 6
+        assert calls == ['discovery.get', 'graphql.reads', 'communication.changes']
         await agents.send('sender', 'recipient', 'after tail', message_id='later')
         calls.clear()
         assert [
             item['id'] for item in (await agents.inbox('recipient', cursor=tail['cursor']))['items']
         ] == ['later']
-        assert len(calls) == 7
+        assert calls == ['discovery.get', 'graphql.reads', 'communication.changes', 'file.read']
         # A large internal page must leave later messages unread when the user
         # requests one. An unrelated first event forces that larger second page.
         start_page = await agents.inbox('recipient', tail=True)
