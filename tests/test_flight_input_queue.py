@@ -137,11 +137,15 @@ async def test_a_fenced_tick_uses_waiting_input_before_advancing_physics():
         assert ship.ack_seq == -1 and ship.position == initial
         clock[0] += 1 / 15
 
+    async def geometry():
+        pass
+
     def deliver(_, body):
         snapshots.append(body)
         hub.closed = True
 
     hub._validate = gate
+    hub._refresh_geometry = geometry
     hub._enqueue = deliver
     hub._queue_controls(peer, packet(0, throttle=1))
     await hub._run()

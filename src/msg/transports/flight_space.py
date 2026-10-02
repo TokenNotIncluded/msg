@@ -57,6 +57,7 @@ MAX_PENDING_COMMANDS = 8
 TICK_HZ = 15
 SNAPSHOT_HZ = 5
 REVALIDATE_SECONDS = 2.0
+GEOMETRY_READ_SECONDS = 0.5
 JOIN_TIMEOUT = 5.0
 SEND_TIMEOUT = 1.0
 
@@ -100,6 +101,22 @@ class FlightHub:
         self.geometry_initialized = False
 
     async def _refresh_geometry(self):
+        """Keep topology reads, including lock waits, below the snapshot deadline."""
+        from msg.transports.flight_collectibles import CollectibleField
+
+        try:
+            async with asyncio.timeout(GEOMETRY_READ_SECONDS):
+                await self._read_geometry()
+        except TimeoutError as exc:
+            # Stale public ACL facts cannot survive a failed verification. Join
+            # rejects this failure; the runner closes the room through its fence.
+            self.world.set_gravity_wells([])
+            self.world.collectibles = CollectibleField()
+            self.geometry_initialized = False
+            self.next_geometry_check = 0.0
+            raise Failure('server_busy') from exc
+
+    async def _read_geometry(self):
         """Freeze one public room layout, rebuilding on an ACL removal or empty room.
 
         Geometry uses an anonymous existing read projection; private home points
@@ -146,10 +163,13 @@ class FlightHub:
                     }
                     for rid in sorted(layout, key=lambda rid: (rid != ROOT_SUBJECT, rid))[:256]
                 ]
+                # Deliver cancellation after the bounded synchronous layout pass
+                # before replacing either half of the shared geometry.
+                await asyncio.sleep(0)
                 self.world.set_gravity_wells(records)
                 self.world.collectibles = CollectibleField(anchors=records[:64])
             self.geometry_initialized = True
-            self.next_geometry_check = now + REVALIDATE_SECONDS
+            self.next_geometry_check = time.monotonic() + REVALIDATE_SECONDS
 
     def _reserve(self, websocket):
         require(not self.closed and len(self.peers) < MAX_CLIENTS, 'server_busy')
@@ -584,8 +604,9 @@ class FlightHub:
         except asyncio.CancelledError:
             raise
         except Exception:
-            for peer in tuple(self.peers.values()):
-                await self._drop(peer, close=True, code=1013)
+            await asyncio.gather(
+                *(self._drop(peer, close=True, code=1013) for peer in tuple(self.peers.values()))
+            )
         finally:
             self.runner = None
 

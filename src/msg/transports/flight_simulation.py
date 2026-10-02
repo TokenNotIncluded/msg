@@ -278,6 +278,49 @@ def planet_contact(start, end, velocity, wells):
             corrected = True
         if not corrected:
             break
+    if any(
+        math.dist(end, well.position) < well.radius + SHIP_RADIUS + SURFACE_MARGIN - 1e-9
+        for well in wells
+    ):
+        # Alternating projections can bounce between overlapping spheres. Exit
+        # their union along the shortest of six deterministic axis rays instead.
+        # Merging the intervals containing zero guarantees clearance from every
+        # nearby body, with at most six passes through the bounded well set.
+        best = None
+        for axis in range(3):
+            for sign in (-1, 1):
+                intervals = []
+                for well in wells:
+                    offset = [end[index] - well.position[index] for index in range(3)]
+                    along = offset[axis] * sign
+                    boundary = well.radius + SHIP_RADIUS + SURFACE_MARGIN
+                    discriminant = boundary**2 - (sum(value * value for value in offset) - along**2)
+                    if discriminant < 0:
+                        continue
+                    half = math.sqrt(discriminant)
+                    enter, leave = -along - half, -along + half
+                    if leave >= 0:
+                        intervals.append((enter, leave))
+                distance = 0.0
+                for enter, leave in sorted(intervals):
+                    if enter > distance + 1e-9:
+                        break
+                    if leave >= distance:
+                        distance = leave + 1e-6
+                if best is None or distance < best[0]:
+                    best = distance, axis, sign
+        distance, axis, sign = best
+        end = list(end)
+        end[axis] += sign * distance
+        for well in wells:
+            offset = [end[index] - well.position[index] for index in range(3)]
+            distance = math.hypot(*offset)
+            if distance > well.radius + SHIP_RADIUS + SURFACE_MARGIN + 2e-6:
+                continue
+            normal = [value / max(distance, 1e-8) for value in offset]
+            inward = sum(velocity[index] * normal[index] for index in range(3))
+            if inward < 0:
+                velocity = [velocity[index] - normal[index] * inward for index in range(3)]
     return end, velocity
 
 
@@ -392,6 +435,7 @@ class FlightWorld:
         self.collectibles = CollectibleField() if collectibles is None else collectibles
         self.gravity_wells: tuple[GravityWell, ...] = ()
         self._gravity_cells = {}
+        self._gravity_order = {}
         self._gravity_ready = False
 
     def set_gravity_wells(self, records):
@@ -420,6 +464,7 @@ class FlightWorld:
             cells.setdefault(key, []).append(well)
         self.gravity_wells = tuple(wells)
         self._gravity_cells = cells
+        self._gravity_order = {well.id: index for index, well in enumerate(wells)}
         self._gravity_ready = True
 
     def _near_wells(self, ship):
@@ -429,6 +474,9 @@ class FlightWorld:
             for y in range(cell[1] - 1, cell[1] + 2):
                 for z in range(cell[2] - 1, cell[2] + 2):
                     wells.extend(self._gravity_cells.get((x, y, z), ()))
+        # Match the descriptor/JS order even when the spatial index visits a
+        # different cell first; overlapping surface projection is order-sensitive.
+        wells.sort(key=lambda well: self._gravity_order[well.id])
         if self._gravity_ready and ship.subject_id and ship.public_subject_id is None:
             home = list(ship.spawn_position)
             home[1] -= 7
@@ -456,6 +504,7 @@ class FlightWorld:
         self.collectibles.clear()
         self.gravity_wells = ()
         self._gravity_cells.clear()
+        self._gravity_order.clear()
         self._gravity_ready = False
 
     def _ms(self, now):
