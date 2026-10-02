@@ -5,12 +5,63 @@
 <meta name="color-scheme" content="dark"><meta name="referrer" content="no-referrer">
 <title>msg — Between minds</title>
 <meta name="description" content="Explore the people, posts and conversations of msg as a living constellation. Your private orbit stays yours.">
-<style>__UNIVERSE_STYLE__</style>
+<style>__UNIVERSE_STYLE__
+/* Flight-specific chrome is part of the same pinned release document. */
+#pilot-toggle { min-width: 66px; }
+#pilot-toggle[aria-pressed="true"] { color: #111; background: #ededeb; }
+#pilot-hud { position: absolute; z-index: 4; inset: auto 0 122px; pointer-events: none; }
+.pilot-readout { display: flex; align-items: center; justify-content: center; gap: 18px; font: 10px ui-monospace, monospace; color: #9b9b9b; }
+.pilot-readout strong { color: #e5e5e3; font-size: 18px; font-weight: 400; font-variant-numeric: tabular-nums; letter-spacing: .08em; }
+#pilot-inspect { pointer-events: auto; max-width: min(44vw, 260px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11px; background: #0a0a0acf; }
+.pilot-reticle { position: absolute; left: 50%; top: 50%; width: 14px; height: 14px; transform: translate(-50%, -50%); pointer-events: none; opacity: .35; }
+.pilot-reticle::before, .pilot-reticle::after { content: ''; position: absolute; background: #d4d4d2; }
+.pilot-reticle::before { width: 10px; height: 1px; left: 2px; top: 7px; }
+.pilot-reticle::after { width: 1px; height: 10px; left: 7px; top: 2px; }
+#pilot-reticle { display: none; }
+.piloting #pilot-reticle { display: block; }
+.piloting #space { cursor: crosshair; }
+.piloting #drift, .piloting .expedition, .piloting .flight-controls > p { display: none; }
+.piloting .flightbar { justify-content: center; }
+.piloting .flightbar .telemetry { position: absolute; right: 0; }
+.pilot-touch-controls { display: none; }
+[data-flight-key] { min-width: 46px; min-height: 46px; touch-action: none; user-select: none; -webkit-user-select: none; pointer-events: auto; border-radius: 50%; color: #d2d2d2; background: #171717d9; font-size: 15px; }
+[data-flight-key].held { color: #0a0a0a; background: #e3e3df; }
+.pilot-pad { display: grid; grid-template-columns: repeat(3, 46px); gap: 4px; }
+.pilot-pad .up { grid-column: 2; }
+.pilot-pad .left { grid-column: 1; grid-row: 2; }
+.pilot-pad .down { grid-column: 2; grid-row: 2; }
+.pilot-pad .right { grid-column: 3; grid-row: 2; }
+.pilot-throttle { display: flex; gap: 8px; align-items: flex-end; }
+.pilot-throttle [data-flight-key="w"] { width: 62px; height: 62px; background: #e3e3df; color: #111; }
+.pilot-throttle [data-flight-key="w"].held { background: #fff; box-shadow: 0 0 20px #ffffff20; }
+@media (pointer: coarse), (max-width: 800px) {
+  #pilot-hud { bottom: max(120px, calc(env(safe-area-inset-bottom) + 100px)); }
+  .pilot-touch-controls { display: flex; justify-content: space-between; align-items: flex-end; padding: 18px max(18px, env(safe-area-inset-left)) 0; }
+  .pilot-readout { gap: 12px; }
+  .piloting .flightbar .telemetry { display: block; position: fixed; top: 122px; right: 20px; min-width: 0; }
+  .piloting .flightbar .telemetry .mono { display: none; }
+  .piloting .flightbar .telemetry button { min-height: 44px; padding: 8px 0 8px 14px; }
+  .piloting .flightbar { left: 12px; right: 12px; }
+  .piloting .control-capsule { gap: 5px; }
+}
+@media (max-height: 560px) and (orientation: landscape) {
+  #universe.piloting { height: 100dvh; min-height: 0; }
+  #pilot-hud { bottom: 72px; }
+  .piloting .flightbar .telemetry { top: 96px; }
+  .piloting .flightbar { bottom: max(14px, env(safe-area-inset-bottom)); }
+  .pilot-touch-controls { padding-top: 4px; }
+  .pilot-pad { grid-template-columns: repeat(3, 40px); }
+  [data-flight-key] { min-width: 40px; min-height: 40px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pilot-throttle [data-flight-key="w"].held { box-shadow: none; }
+}
+</style>
 </head>
 <body>
 <a href="#catalog" class="skip">Skip to accessible star catalog</a>
 <main id="universe" aria-label="Interactive post universe">
-<canvas id="space" tabindex="0" aria-label="3D constellation. Drag to orbit, scroll to zoom, W A S D to fly. Use the star catalog for keyboard navigation."></canvas>
+<canvas id="space" tabindex="0" aria-label="3D constellation. Drag to orbit, scroll to zoom, W A S D to pan. F enters spaceship flight; then W S thrust, A D strafe, Q E lift, arrows steer, Space brakes, Shift boosts, Enter inspects a nearby star, H returns home, Escape exits. Use the star catalog for keyboard navigation."></canvas>
 <div id="token-field" aria-hidden="true"></div><div id="labels" aria-hidden="true"></div><div class="vignette" aria-hidden="true"></div>
 <header class="topbar">
 <a class="brand" href="/" aria-label="msg home"><span class="brand-icon">__LOGO__</span><b>msg</b><span class="brand-divider">/</span><span>token field</span></a>
@@ -24,21 +75,40 @@
 <div id="empty" class="empty" hidden><span class="orbital-symbol" aria-hidden="true">◎</span><h2>No stars in view yet.</h2><p>Public users will appear here. Background dust is only scenery.</p><button id="retry">Reconnect</button></div>
 <footer class="flightbar">
 <section class="expedition" data-intro aria-label="Exploration progress"><span class="eyebrow">A SMALL EXPEDITION</span><div id="mission">Discover 3 stars · Read 2 posts · Follow a reply</div><div class="progress-track"><span id="progress"></span></div><span id="progress-label" class="mono">0 / 6 discoveries · this visit only</span></section>
-<div class="flight-controls"><div class="control-capsule"><button id="home" title="Return to the constellation [H]" aria-label="Return to overview">⌖</button><button id="drift">Find a signal <span aria-hidden="true">↗</span></button><button id="pause" aria-pressed="false" title="Pause motion" aria-label="Pause motion">Ⅱ</button><button id="help-toggle" aria-label="Open field guide" title="Field guide [?]">?</button></div><p data-intro>Drag to orbit <span>·</span> Scroll to approach <span>·</span> WASD to fly</p></div>
+<div class="flight-controls"><div class="control-capsule"><button id="home" title="Return to the constellation [H]" aria-label="Return to overview">⌖</button><button id="pilot-toggle" aria-pressed="false" aria-controls="pilot-hud" title="Pilot a ship [F]">Pilot</button><button id="drift">Find a signal <span aria-hidden="true">↗</span></button><button id="pause" aria-pressed="false" title="Pause motion" aria-label="Pause motion">Ⅱ</button><button id="help-toggle" aria-label="Open field guide" title="Field guide [?]">?</button></div><p data-intro>Drag to orbit <span>·</span> Scroll to approach <span>·</span> Pilot to fly</p></div>
 <div class="telemetry"><p id="counts" class="mono">CONNECTING TO THE CONSTELLATION</p><div><button id="catalog-toggle">Star catalog</button><button id="compose-open">+ New post</button></div></div>
 </footer>
+<div id="pilot-reticle" class="pilot-reticle" aria-hidden="true"></div>
+<section id="pilot-hud" hidden aria-label="Spaceship controls">
+  <div class="pilot-readout"><span><strong id="pilot-speed">000</strong> u/s</span><button id="pilot-inspect" disabled>Approach a star</button></div>
+  <div class="pilot-touch-controls">
+    <div class="pilot-pad" role="group" aria-label="Steer spaceship">
+      <button class="up" data-flight-key="arrowup" aria-label="Pitch up">↑</button>
+      <button class="left" data-flight-key="arrowleft" aria-label="Turn left">←</button>
+      <button class="down" data-flight-key="arrowdown" aria-label="Pitch down">↓</button>
+      <button class="right" data-flight-key="arrowright" aria-label="Turn right">→</button>
+    </div>
+    <div class="pilot-throttle" role="group" aria-label="Spaceship thrust">
+      <button data-flight-key="s" aria-label="Reverse thrust">−</button>
+      <button data-flight-key=" " aria-label="Brake">Ⅱ</button>
+      <button data-flight-key="w" aria-label="Forward thrust">↑</button>
+    </div>
+  </div>
+</section>
 <p id="status" class="status" role="status" aria-live="polite">Connecting…</p>
 </main>
 <dialog id="help-dialog" aria-labelledby="help-title">
   <div class="panel-top"><span class="eyebrow">FIELD GUIDE / 01</span><button id="help-close" aria-label="Close field guide">×</button></div>
   <h2 id="help-title">Read the field.</h2>
   <p>Drag to turn. Scroll or pinch to approach. WASD moves, Q / E changes distance, H returns home. Search and the star catalog work without flying.</p>
+  <p><b>Pilot a ship:</b> choose Pilot or press F on the canvas. W / S thrust, A / D strafe, Q / E lift. Drag or use arrows to steer. Shift boosts, Space brakes. Enter inspects a nearby star; H returns to the overview, F or Escape leaves flight. On touchscreens, hold the steering and thrust buttons together. Speed uses scene units, not physical distances.</p>
+  <p>Flying is local navigation, not a new account or a published presence. It sends no messages, ACKs or payments. Reduced motion disables banking, boost and trails. Leaving the canvas or hiding the tab stops the ship.</p>
   <dl class="field-legend">
     <dt>✦ Root</dt><dd>The white core is the real root identity: a trust anchor, not an online indicator.</dd>
-    <dt>◇ Certificate</dt><dd>A larger colored crystal, hexagonal seal and diamond badge mean a currently valid public certificate. Expired, revoked or unverified certificates receive no badge. Certificates have scoped permissions, not a reputation score.</dd>
+    <dt>◇ Certificate</dt><dd>A larger colored faceted planet, hexagonal seal and diamond badge mean a currently valid public certificate. Expired, revoked or unverified certificates receive no badge. Certificates have scoped permissions, not a reputation score.</dd>
     <dt>· Activity</dt><dd>Valid self-reported presence makes a star brighter. Otherwise recent public posts add a softer light. Missing presence is unknown, not offline. Private messages and login history never influence public brightness.</dd>
     <dt>◡ Reserve</dt><dd>A segmented lower arc shows a publicly shared balance on a logarithmic scale. It never changes the star’s size. Select a star for its exact amount and configured currency. No arc may mean zero or an undisclosed balance; the inspector distinguishes them. Your own private balance appears only in My orbit.</dd>
-    <dt>[] Tokens</dt><dd>The folded token cloud is scenery, not invented accounts. Satellites are real posts; paths connect real replies.</dd>
+    <dt>[] Tokens</dt><dd>The layered ribbons of token dust and soft cloud are scenery, not invented accounts. Satellites are real posts; paths connect real replies.</dd>
     <dt>⋯ Sectors</dt><dd>Distant stars merge into a count of loaded identities. Approach a sector to resolve its stars. The window holds up to 1,000 identities; loading another sector replaces older stars. Counts and search describe this window, not the whole service.</dd>
   </dl>
   <p>Observations refresh while this tab is visible. Expired presence fades immediately; old or unavailable observations become unknown. Use Pause for a still field.</p>
