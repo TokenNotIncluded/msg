@@ -6,7 +6,9 @@ import httpx
 import pytest
 from test_service import NOW, call, register
 
+from msg.client_content import signed_patch_arguments
 from msg.core.codec import b64, canonical, digest, wire
+from msg.core.models import ResourceRef
 from msg.core.requests import request_for
 from msg.transports.http import create_app
 
@@ -290,19 +292,53 @@ async def test_v5_revision_and_source_version_filters_use_current_readable_revis
 @pytest.mark.asyncio
 async def test_v5_source_version_cursor_preserves_contract_and_rejects_downgrade(installed):
     app, _ = installed
+    key, subject, _ = await register(app, 'search-v5-cursor-owner')
+    patched_ids = set()
+    # Published rule versions change; create two real source-versioned revisions instead.
+    for index in range(3):
+        created = await call(
+            app,
+            'content.post_create',
+            {'parent': '/main', 'body': f'v5sourcecursorneedle original {index}'},
+            key=key,
+            subject=subject,
+        )
+        assert created.status == 'ok', wire(created)
+        if index == 2:
+            continue  # A matching unversioned revision must not enter either page.
+        async with app.metadata.transaction(write=False) as tx:
+            resource = await tx.resource(created.resources[0].id)
+            previous = await tx.revision(ResourceRef(id=resource.id))
+        source = (await app.contents.read_bytes(previous.content)).decode('utf-8')
+        patch = {'kind': 'exact', 'exact': 'original', 'replacement': 'patched'}
+        patched = await call(
+            app,
+            'content.post_patch',
+            signed_patch_arguments(
+                key, resource, previous, source, patch, subject=subject, created_at=NOW
+            ),
+            key=key,
+            subject=subject,
+            expected=((resource.id, resource.generation),),
+            contract_version=2,
+        )
+        assert patched.status == 'ok', wire(patched)
+        patched_ids.add(resource.id)
     first = await call(
         app,
         'discovery.lexical_search',
         {
-            'scope': '/_rules',
-            'terms': 'identity',
-            'source_kind': 'release',
+            'scope': '/main',
+            'terms': 'v5sourcecursorneedle',
+            'source_kind': 'user',
             'source_version': 1,
             'limit': 1,
         },
         contract_version=5,
     )
     assert first.status == 'ok' and first.data['cursor'], wire(first)
+    first_ids = {item['id'] for item in first.data['items']}
+    assert len(first_ids) == 1 and first_ids <= patched_ids
     downgraded = await call(
         app, 'discovery.lexical_search', {'cursor': first.data['cursor']}, contract_version=4
     )
@@ -312,10 +348,17 @@ async def test_v5_source_version_cursor_preserves_contract_and_rejects_downgrade
     ) as http:
         next_page = await http.get(first.data['next'])
         assert next_page.status_code == 200, next_page.text
-        query = await http.get('/_search?scope=%2F_rules&terms=identity&source_version=1')
-        path = await http.get('/_s/q/5/s/%2F_rules/t/identity/sv/1')
+        next_ids = {item['id'] for item in next_page.json()['items']}
+        assert len(next_ids) == 1 and not first_ids & next_ids
+        assert first_ids | next_ids == patched_ids
+        assert 'cursor' not in next_page.json()
+        query = await http.get(
+            '/_search?scope=%2Fmain&terms=v5sourcecursorneedle&source_kind=user&source_version=1'
+        )
+        path = await http.get('/_s/q/5/s/%2Fmain/t/v5sourcecursorneedle/sk/user/sv/1')
         assert query.status_code == path.status_code == 200, (query.text, path.text)
         assert query.content == path.content
+        assert {item['id'] for item in query.json()['items']} == patched_ids
 
 
 @pytest.mark.asyncio
