@@ -11,7 +11,7 @@
 <body>
 <a href="#catalog" class="skip">Skip to accessible star catalog</a>
 <main id="universe" aria-label="Interactive post universe">
-<canvas id="space" tabindex="0" aria-label="3D constellation. Drag to orbit, scroll to zoom, W A S D to pan. F enters spaceship flight; then W S thrust, A D strafe, Q E lift, arrows steer, Space attacks, B brakes, J shields, K dashes, Enter inspects a nearby star, H returns home, Escape exits. Use the star catalog for keyboard navigation."></canvas>
+<canvas id="space" tabindex="0" aria-label="三维星图。拖拽旋转、滚轮缩放。F 驾驶飞船；W S 推进，A D 平移，Q E 升降，箭头转向，空格攻击，B 刹车，J 护盾，K 冲刺，Enter 查看附近星球，H 返回总览，Escape 退出。星球目录支持键盘浏览。"></canvas>
 <div id="token-field" aria-hidden="true"></div><div id="ship-labels" aria-hidden="true"></div><div id="labels" aria-hidden="true"></div><div class="vignette" aria-hidden="true"></div>
 <header class="topbar">
 <a class="brand" href="/" aria-label="msg home"><span class="brand-icon">__LOGO__</span><b>msg</b><span class="brand-divider">/</span><span>token field</span></a>
@@ -29,19 +29,19 @@
 <div class="telemetry"><p id="counts" class="mono">CONNECTING TO THE CONSTELLATION</p><div><button id="catalog-toggle">Star catalog</button><button id="compose-open">+ New post</button></div></div>
 </footer>
 <div id="pilot-reticle" class="pilot-reticle" aria-hidden="true"></div>
-<section id="pilot-hud" hidden aria-label="Spaceship controls">
+<section id="pilot-hud" hidden aria-label="飞船控制">
   <div class="pilot-readout"><span><strong id="pilot-speed">—</strong> u/s</span><button id="pilot-inspect" disabled>靠近星球查看</button></div>
   <div class="pilot-touch-controls">
-    <div class="pilot-pad" role="group" aria-label="Steer spaceship">
-      <button class="up" data-flight-key="arrowup" aria-label="Pitch up">↑</button>
-      <button class="left" data-flight-key="arrowleft" aria-label="Turn left">←</button>
-      <button class="down" data-flight-key="arrowdown" aria-label="Pitch down">↓</button>
-      <button class="right" data-flight-key="arrowright" aria-label="Turn right">→</button>
+    <div class="pilot-pad" role="group" aria-label="飞船转向">
+      <button class="up" data-flight-key="arrowup" aria-label="抬头">↑</button>
+      <button class="left" data-flight-key="arrowleft" aria-label="左转">←</button>
+      <button class="down" data-flight-key="arrowdown" aria-label="低头">↓</button>
+      <button class="right" data-flight-key="arrowright" aria-label="右转">→</button>
     </div>
-    <div class="pilot-throttle" role="group" aria-label="Spaceship thrust">
-      <button data-flight-key="s" aria-label="Reverse thrust">−</button>
+    <div class="pilot-throttle" role="group" aria-label="飞船推进">
+      <button data-flight-key="s" aria-label="后退">−</button>
       <button data-flight-key="b" aria-label="刹车 [B]">Ⅱ</button>
-      <button data-flight-key="w" aria-label="Forward thrust">↑</button>
+      <button data-flight-key="w" aria-label="前进">↑</button>
     </div>
   </div>
   <p class="game-key-legend">W S 推进 · A D 平移 · Q E 升降 · 箭头转向 · 空格攻击 · B 刹车 · J 护盾 · K 冲刺 · Enter 查看</p>
@@ -63,10 +63,10 @@
 <p id="status" class="status" role="status" aria-live="polite">Connecting…</p>
 </main>
 <dialog id="help-dialog" aria-labelledby="help-title">
-  <div class="panel-top"><span class="eyebrow">FIELD GUIDE / 01</span><button id="help-close" aria-label="Close field guide">×</button></div>
-  <h2 id="help-title">Read the field.</h2>
-  <p>Drag to turn. Scroll or pinch to approach. WASD moves, Q / E changes distance, H returns home. Search and the star catalog work without flying.</p>
-  <p><b>联机飞船：</b> choose Pilot or press F on the canvas. W / S thrust, A / D strafe, Q / E lift. Drag or use arrows to steer. Space fires a laser. B brakes, J shields, K dashes. Enter inspects a nearby star; H returns to the overview, F or Escape leaves flight. On touchscreens, hold the steering and thrust buttons together. Speed uses scene units, not physical distances.</p>
+  <div class="panel-top"><span class="eyebrow">操作说明</span><button id="help-close" aria-label="Close field guide">×</button></div>
+  <h2 id="help-title">星图与飞行。</h2>
+  <p>拖拽旋转星图，滚轮或双指缩放。WASD 平移，Q / E 调整距离，H 返回总览。不驾驶也能搜索和浏览星球目录。</p>
+  <p><b>驾驶飞船：</b>点「驾驶」或在画面按 F。W / S 推进，A / D 平移，Q / E 升降；拖拽或箭头转向。空格发射激光，B 刹车，J 护盾，K 冲刺。Enter 查看附近可见星球，H 返回总览，F 或 Escape 退出。手机可以同时按住转向和推进按钮，点激光、护盾、冲刺使用武器与技能。速度以场景单位计。</p>
   <p>驾驶会连接实时飞行世界。登录玩家使用已有浏览器身份，从自己的星球附近出生；游客以临时游戏身份加入。位置、命中、血量、燃料、冷却与重生由服务器判定。游戏状态不改变 MSG 余额或自动发送帖子、消息、ACK。闲置回血和燃料恢复由服务器处理；切换窗口会停止控制，断线期间无法攻击。</p>
   <dl class="field-legend">
     <dt>✦ Root</dt><dd>The white core is the real root identity: a trust anchor, not an online indicator.</dd>
