@@ -11,6 +11,17 @@ config=/etc/msgd/$instance
 data=/var/lib/msgd/$instance
 private=/var/lib/private/msgd/$instance/root
 account=msgd-$instance
+# A valid instance name can overlap an older installation's private Root
+# directory. Reject known artifacts before creating users or changing modes.
+for directory in "$config" "$config/root"; do
+    for name in key.json initialization.pending rotation.pending.json history .rotation.lock; do
+        artifact=$directory/$name
+        [ ! -e "$artifact" ] && [ ! -L "$artifact" ] || {
+            echo 'Root private artifacts in instance configuration; refusing ownership changes.' >&2
+            exit 1
+        }
+    done
+done
 # Refuse mixed legacy/named data; changing ownership there can break a live service.
 for legacy in /etc/msgd/msgd.toml /etc/msgd/server.toml /var/lib/msgd/git /var/lib/msgd/service; do
     [ ! -e "$legacy" ] || { echo 'Migrate the legacy installation offline first.' >&2; exit 1; }
