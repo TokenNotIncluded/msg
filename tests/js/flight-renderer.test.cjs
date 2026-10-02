@@ -92,9 +92,13 @@ test('remote ship geometry exists only for current living server peers', () => {
   r.remoteShips.get('peer').state.hp = 0; assert.equal(r.geometry().solids.length, alone);
   r.network.connected = false; assert.equal(r.geometry().solids.length, 0);
 });
-test('only received server laser events create beam geometry', () => {
+test('local fire intent draws a beam without creating an authoritative laser or hit', () => {
   const r = renderer(); const baseline = r.geometry().lines.length;
-  r.keys.add(' '); r.queueGameAction('laser'); assert.equal(r.geometry().lines.length, baseline);
+  r.keys.add(' '); r.queueGameAction('laser');
+  assert.equal(r.shotEvents.size, 0); assert.equal(r.combatEvents?.size ?? 0, 0);
+  assert.equal(r.localShot.intent, true); assert.ok(r.geometry().lines.length > baseline);
+  assert.equal(r.network.self.hp, 100); assert.equal(r.network.self.fuel, 80);
+  r.localShot = null;
   r.shotEvents.set(1, {at_ms:900,position:[0,0,0],end:[10,0,0]});
   assert.ok(r.geometry().lines.length > baseline);
   r.network.serverNow = 1600; assert.equal(r.geometry().lines.length, baseline);
@@ -127,4 +131,61 @@ test('absorption animation only follows confirmed events and stops immediately o
   const effects=r.absorptionGlyphs(); assert.equal(effects.length,1); assert.equal(effects[0].id,0);
   r.network.connected=false; assert.deepEqual(r.absorptionGlyphs(),[]);
   r.clearRemoteShips(); assert.equal(r.collectEvents.size,0);
+});
+
+test('repeated snapshots never replay an expired authoritative impact or change ship values', () => {
+  const frozen = Object.freeze({...self(), position:Object.freeze([0,0,16]), velocity:Object.freeze([0,0,0])});
+  const r=renderer(frozen), event={id:'evt_1',type:'hit',player_id:'peer',target_id:frozen.id,position:[0,0,10],at_ms:900,region:0};
+  r.receiveCombatEvents([event],1000); const message=r.combatStatus;
+  assert.equal(message.text,'命中确认'); assert.equal(r.combatEvents.size,1);
+  r.combatEvents.clear(); r.receiveCombatEvents([event],1100);
+  assert.equal(r.combatEvents.size,0); assert.equal(r.combatStatus,message);
+  assert.equal(frozen.hp,100); assert.equal(frozen.fuel,80); assert.equal(frozen.laser_ready_ms,0);
+  r.receiveCombatEvents([{...event,id:'evt_future',at_ms:2000},{...event,id:'evt_old',at_ms:0}],1000);
+  assert.equal(r.combatEvents.size,0);
+});
+
+test('victim and shooter fields distinguish damage, hit and destruction confirmations', () => {
+  const r=renderer(), base={position:[0,0,16],at_ms:1000,region:0};
+  r.receiveCombatEvents([{...base,id:1,type:'laser',player_id:r.network.self.id,target_id:'peer',end:[0,0,-20]}],1000);
+  assert.equal(r.combatStatus.text,'已发射'); assert.equal(r.combatEvents.size,0);
+  r.receiveCombatEvents([{...base,id:2,type:'hit',player_id:r.network.self.id,target_id:'peer'}],1000);
+  assert.equal(r.combatStatus.text,'受到攻击');
+  r.receiveCombatEvents([{...base,id:3,type:'death',player_id:'peer',target_id:r.network.self.id}],1000);
+  assert.equal(r.combatStatus.text,'击毁确认');
+  r.receiveCombatEvents([{...base,id:4,type:'death',player_id:r.network.self.id,target_id:'peer'}],1000);
+  assert.equal(r.combatStatus.text,'飞船被击毁'); assert.equal(r.network.self.hp,100);
+});
+
+test('fire intent explains fuel and cooldown, expires without a snapshot, and reduced motion keeps static feedback', () => {
+  const r=renderer(); r.network.self.fuel=0;
+  assert.equal(r.previewLaser(),false); assert.match(r.combatStatus.text,/燃料不足/); assert.equal(r.localShot,undefined);
+  r.network.self.fuel=80; r.network.self.laser_ready_ms=1500;
+  assert.equal(r.previewLaser(),false); assert.match(r.combatStatus.text,/冷却 0.5s/);
+  r.network.serverNow=1600; assert.equal(r.previewLaser(),true);
+  const first=r.localShot; assert.equal(r.previewLaser(false),false); assert.equal(r.localShot,first);
+  r.reduced.matches=true; assert.ok(r.geometry().triangles.length>0);
+  r.network.serverNow=2000; r.geometry(); assert.equal(r.localShot,null);
+});
+
+test('combat dedup survives same-player reconnection but new hello clears old-world IDs', () => {
+  const r=renderer(), event={id:1,type:'hit',player_id:r.network.self.id,position:[0,0,16],at_ms:1000};
+  r.receiveFlightHello({self:r.network.self,server_time_ms:1000});
+  r.receiveCombatEvents([event],1000); assert.equal(r.combatSeen.size,1);
+  r.clearRemoteShips(); assert.equal(r.combatSeen.size,1); assert.equal(r.combatEvents.size,0);
+  r.receiveFlightHello({self:r.network.self,server_time_ms:1100});
+  r.receiveCombatEvents([event],1100); assert.equal(r.combatEvents.size,0);
+  const fresh={...self(),id:'new-own'}; r.network.self=fresh;
+  r.receiveFlightHello({self:fresh,server_time_ms:1200}); assert.equal(r.combatSeen.size,0);
+  r.receiveCombatEvents([{...event,player_id:fresh.id,at_ms:1200}],1200); assert.equal(r.combatEvents.size,1);
+});
+
+test('combat geometry and caches stay bounded, omit other regions and reduce spatial debris', () => {
+  const r=renderer(), events=Array.from({length:600},(_,id)=>({id,type:'death',player_id:'peer',position:[0,0,10],at_ms:900,region:0}));
+  r.receiveCombatEvents(events,1000); assert.equal(r.combatSeen.size,512); assert.equal(r.combatEvents.size,48);
+  const full=r.geometry().lines.length; r.reduced.matches=true;
+  assert.ok(r.geometry().lines.length<full);
+  r.network.serverNow=2000; r.geometry(); assert.equal(r.combatEvents.size,0);
+  r.receiveCombatEvents([{id:700,type:'death',player_id:'peer',position:[0,0,10],at_ms:2000,region:1}],2000);
+  assert.equal(r.combatEvents.size,0);
 });
