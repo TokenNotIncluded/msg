@@ -2375,6 +2375,15 @@ def install(app):
         require(variants == 1, 'invalid_diff_range')
         if args.get('previous'):
             current = await tx.revision(ResourceRef(id=rid, revision=resource.revision))
+            if not current.parents:
+                return HandlerOutput(
+                    data={
+                        'from': None,
+                        'to': wire(ResourceRef(id=rid, revision=current.id)),
+                        'diff': '',
+                        'reason': 'no_previous_revision',
+                    }
+                )
             require(len(current.parents) == 1, 'previous_revision_not_found')
             old, new = current.parents[0], current.id
         elif args.get('known_revision'):
