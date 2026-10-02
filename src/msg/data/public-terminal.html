@@ -18,18 +18,17 @@ pre { font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; margin:0 0 24p
 .error { color:#ffb4aa; }
 form { display:flex; align-items:center; gap:12px; padding:8px 0; }
 label { flex:none; }
-input { min-width:0; flex:1; border:0; background:transparent; color:inherit; font:inherit; padding:8px 0; caret-color:#fff; border-radius:0; }
+input { min-width:0; min-height:44px; flex:1; border:0; background:transparent; color:inherit; font:inherit; padding:8px 0; caret-color:#fff; border-radius:0; }
 input:focus-visible { outline:none; box-shadow:0 1px #aaa; }
-input:disabled { color:#aaa; }
+input:read-only { color:#aaa; }
 input::placeholder { color:#aaa; }
-button { font:inherit; color:#aaa; background:none; border:1px solid #454545; padding:8px 12px; cursor:pointer; }
+button { min-height:44px; font:inherit; color:#aaa; background:none; border:1px solid #454545; padding:8px 12px; cursor:pointer; }
 button:hover { color:#fff; border-color:#aaa; }
-button:disabled { cursor:wait; color:#aaa; }
 a:focus-visible,button:focus-visible { outline:2px solid #e7e7e7; outline-offset:4px; }
 ::selection { background:#e7e7e7; color:#000; }
 html { scrollbar-color:#555 #000; }
 #status { display:block; color:#aaa; min-height:24px; }
-@media(max-width:540px) { body { padding:20px 16px; } header { gap:16px; } }
+@media(max-width:540px) { body { padding:20px 16px; } header { gap:16px; } input { font-size:16px; } }
 </style>
 <body>
 <!-- THESIS: One public prompt, fixed read commands.
@@ -40,11 +39,11 @@ FORM: Brief-pinned minimal terminal; code-led, no concept seed required.
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance -->
 <main>
 <header><h1>Public terminal</h1><a href="/">msg / home</a></header>
-<p>Read-only. Type <strong>help</strong> for commands.</p>
+<p id="instructions">Read-only. Type <strong>help</strong> for commands. ↑ / ↓ history, Tab complete, Escape cancel.</p>
 <section id="transcript" role="log" aria-label="Terminal output" aria-live="polite" aria-relevant="additions"></section>
 <form id="prompt">
 <label for="command">msg &gt;</label>
-<input id="command" name="command" aria-label="Command" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="help" autofocus>
+<input id="command" name="command" aria-label="Command" aria-describedby="instructions status" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32" placeholder="help" enterkeyhint="send" autofocus>
 <button id="run" type="submit">Run</button>
 </form>
 <span id="status" role="status"></span>
@@ -61,6 +60,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
   const history = [];
   let cursor = 0;
   let draft = '';
+  let pending = null;
+  let composing = false;
   function append(text, className = '') {
     const line = document.createElement('pre');
     line.textContent = text;
@@ -69,50 +70,82 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     while (transcript.children.length > 160) transcript.firstElementChild.remove();
   }
   append('help     Show available commands\nstatus   Service readiness\ntime     Server time (UTC)\nserver   Public service address\nstats    Public post and user counts\nfeed     Latest public posts\nclear    Clear this screen');
+  function cancel() {
+    if (!pending || pending.controller.signal.aborted) return;
+    pending.reason = 'cancelled';
+    pending.controller.abort();
+  }
   form.addEventListener('submit', async event => {
     event.preventDefault();
-    if (input.disabled) return;
+    if (pending) { cancel(); return; }
+    if (composing) return;
     const command = input.value.trim();
     if (!command) return;
     history.push(command);
     if (history.length > 100) history.shift();
     cursor = history.length;
     draft = '';
-    input.value = '';
-    if (command === 'clear') { transcript.replaceChildren(); return; }
+    status.textContent = '';
+    if (command === 'clear') { input.value = ''; transcript.replaceChildren(); status.textContent = 'Screen cleared.'; return; }
     append('msg > ' + command, 'command');
     if (!commands.includes(command)) {
       append('Unknown command. Type help.', 'error');
       return;
     }
-    input.disabled = run.disabled = true;
-    status.textContent = 'Reading…';
+    const request = {controller:new AbortController(), reason:null};
+    pending = request;
+    input.readOnly = true;
+    run.textContent = 'Cancel';
+    form.setAttribute('aria-busy', 'true');
+    status.textContent = 'Reading… press Escape or Cancel to stop.';
+    const timeout = setTimeout(() => {
+      request.reason = 'timeout';
+      request.controller.abort();
+    }, 15000);
     try {
       const response = await fetch('/_terminal?command=' + encodeURIComponent(command), {
-        credentials:'omit', cache:'no-store', signal:AbortSignal.timeout(15000)
+        credentials:'omit', cache:'no-store', signal:request.controller.signal
       });
       if (!response.ok) throw new Error('unavailable');
       const data = await response.json();
+      if (request.controller.signal.aborted) throw new Error('aborted');
       if (typeof data.output !== 'string') throw new Error('invalid response');
       append(data.output);
+      input.value = '';
     } catch {
-      append('Could not read the server. Run the command again.', 'error');
+      const message = request.reason === 'cancelled' ? 'Command cancelled.'
+        : request.reason === 'timeout' ? 'The server did not respond within 15 seconds. Run the command again.'
+        : 'Could not read the server. Run the command again.';
+      append(message, request.reason === 'cancelled' ? '' : 'error');
     } finally {
-      input.disabled = run.disabled = false;
+      clearTimeout(timeout);
+      pending = null;
+      input.readOnly = false;
+      run.textContent = 'Run';
+      form.setAttribute('aria-busy', 'false');
       status.textContent = '';
-      input.focus({preventScroll:true});
-      form.scrollIntoView({block:'nearest'});
+      if (document.activeElement === input || document.activeElement === run) {
+        input.focus({preventScroll:true});
+        form.scrollIntoView({block:'nearest'});
+      }
     }
   });
+  form.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && pending && !event.isComposing) { event.preventDefault(); cancel(); }
+  });
+  input.addEventListener('compositionstart', () => { composing = true; });
+  input.addEventListener('compositionend', () => { composing = false; });
   input.addEventListener('keydown', event => {
+    if (event.isComposing || pending || event.altKey || event.metaKey || event.shiftKey) return;
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      if (event.ctrlKey) return;
       event.preventDefault();
       if (cursor === history.length) draft = input.value;
       cursor = Math.max(0, Math.min(history.length, cursor + (event.key === 'ArrowUp' ? -1 : 1)));
       input.value = cursor === history.length ? draft : history[cursor];
-    } else if (event.key === 'Tab') {
+    } else if (event.key === 'Tab' && !event.ctrlKey) {
       const matches = commands.filter(command => command.startsWith(input.value));
-      if (input.value && matches.length === 1) { event.preventDefault(); input.value = matches[0]; }
+      if (input.value && matches.length === 1 && input.value !== matches[0]) { event.preventDefault(); input.value = matches[0]; }
     } else if (event.ctrlKey && event.key.toLowerCase() === 'l') {
       event.preventDefault(); transcript.replaceChildren();
     }
