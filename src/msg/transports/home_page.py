@@ -47,10 +47,18 @@ HOME_BROWSER_HEADERS = {
 
 def account_navigation(account, *, compact=False):
     if not account:
-        return (
+        links = (
             '<a href="/login" data-i18n="login">Sign in</a> '
             '<a href="/register" data-i18n="register">Register</a>'
         )
+        if compact:
+            return (
+                '<details class="account-menu">'
+                '<summary><span class="account-menu-label" data-i18n="account_menu">Account</span>'
+                '<span aria-hidden="true"> ▾</span></summary>'
+                f'<div class="account-menu-links">{links}</div></details>'
+            )
+        return links
     name = escape(account['name'])
     path = escape(quote('/' + account['name'], safe='/@'), quote=True)
     links = (
@@ -60,13 +68,14 @@ def account_navigation(account, *, compact=False):
         f'<a href="{path}/follows" data-i18n="follows">Following</a> '
         f'<a href="{path}/followers" data-i18n="followers">Followers</a> '
         f'<a href="{path}/bal" data-i18n="wallet">Wallet</a> '
-        '<a href="/bookmarks">Saved / 收藏</a> '
+        '<a href="/bookmarks" data-i18n="saved">Saved</a> '
         '<a href="/oauth/logout" data-i18n="logout">Sign out</a>'
     )
     if compact:
         return (
             '<details class="account-menu">'
-            f'<summary>{name}<span aria-hidden="true"> ▾</span></summary>'
+            f'<summary title="{name}"><span class="account-menu-label">{name}</span>'
+            '<span aria-hidden="true"> ▾</span></summary>'
             f'<div class="account-menu-links">{links}</div></details>'
         )
     return links
@@ -114,7 +123,7 @@ def home_html(
     ]
     if account:
         path = '/' + account['name']
-        parts.extend([link(account['name'], path), link('Sign out', '/oauth/logout')])
+        parts.append(account_navigation(account, compact=True))
     elif login_enabled:
         parts.append('<a class="login" href="/login" data-i18n="login">Sign in</a>')
     parts.append(
@@ -131,7 +140,7 @@ def home_html(
             '</p>',
             *(
                 [
-                    '<details class="account-groups"><summary>User groups / 用户分类</summary><ul>',
+                    '<details class="account-groups"><summary data-i18n="user_groups">User groups</summary><ul>',
                     *(
                         f'<li>{link(group["name"], group["path"])}</li>'
                         for group in account['groups']
@@ -196,9 +205,9 @@ def home_html(
         parts.append('</section>')
         if data.get('channels'):
             parts.append(
-                '<section><h2 id="channels" data-i18n="channels">Channels</h2><p class="muted" data-i18n="channel_hint">Only channels you can read are listed. Sign in to include your private channels. '
+                '<section><h2 id="channels" data-i18n="channels">Channels</h2><p class="muted"><span data-i18n="channel_hint">Only channels you can read are listed. Sign in to include your private channels. '
                 'Post counts include readable replies. Writes require identity and current authorization; +cert adds a scoped certificate. '
-                '<a href="/help/permissions">Permission bits explained / 权限位说明</a></p>'
+                '</span><a href="/help/permissions" data-i18n="permission_bits">Permission bits explained</a></p>'
                 '<p id="channels-scroll" class="scroll-hint" data-i18n="scroll_table">'
                 '[&lt; &gt;] Scroll to see permissions</p>'
                 '<div class="table-scroll" role="region" aria-describedby="channels-scroll" aria-labelledby="channels" tabindex="0"><table><thead><tr><th scope="col" data-i18n="channel">Channel</th><th scope="col" data-i18n="about">About</th>'

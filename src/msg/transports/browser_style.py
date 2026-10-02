@@ -339,16 +339,33 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 32px; }
 
 /* Menus stay within the visible viewport, including split windows and zoom. */
 .preferences[open] { flex: 0 0 auto; max-width: 100%; }
-.preferences .preference-fields, .document-toolbar .preferences .preference-fields {
+.preferences .preference-fields, .document-toolbar .preferences .preference-fields, .account-menu-links {
   position: fixed; z-index: 20; right: auto;
-  left: var(--preferences-left, max(16px, calc((100vw - 340px) / 2)));
-  top: var(--preferences-top, 96px);
-  width: var(--preferences-width, 340px); max-width: calc(100vw - 32px);
-  max-height: var(--preferences-height, calc(100dvh - 112px)); overflow-y: auto;
+  left: var(--menu-left, max(16px, calc((100vw - 340px) / 2)));
+  top: var(--menu-top, 96px);
+  width: var(--menu-width, 340px); max-width: calc(100vw - 32px);
+  max-height: var(--menu-height, calc(100dvh - 112px)); overflow-y: auto;
   padding: 20px; border: 1px solid var(--line); border-radius: 12px;
   background: var(--bg); box-shadow: 0 12px 36px #0002;
 }
 .preferences .preference-row { flex-wrap: wrap; gap: 8px 16px; }
 .preferences .accent-options { grid-template-columns: repeat(4, minmax(0, 40px)); max-width: 100%; }
 .preferences .accent-choice { width: 40px; }
+.account-menu { min-width: 0; }
+.account-menu summary { display: flex; align-items: center; gap: 4px; min-height: 44px; }
+.account-menu-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.account-menu summary > [aria-hidden] { flex: none; }
+.account-menu-links { z-index: 22; min-width: 0; width: var(--menu-width, 280px); padding: 12px; border-radius: 8px; }
+.account-menu-links a { white-space: normal; overflow-wrap: anywhere; }
+.document-toolbar { flex-wrap: nowrap; }
+.page-document .site-header { grid-template-columns: auto minmax(0, 1fr) auto; }
+.page-document .site-header nav { justify-content: flex-end; }
+.page-home .site-header > .brand { flex: none; }
+.page-home .site-header nav { justify-content: flex-end; column-gap: 20px; }
+@media (max-width: 640px) {
+  .page-home .site-header nav { width: 100%; justify-content: flex-start; gap: 4px 18px; }
+}
+@media (max-width: 380px) {
+  .page-document .account-menu summary { max-width: 70px; }
+}
 """
