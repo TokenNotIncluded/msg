@@ -237,12 +237,11 @@ class MountBackend:
         if size < 0 or offset < 0:
             raise io_error(errno.EINVAL)
         length = min(size, READ_BYTES, max(0, node.size - offset))
-        if node.projection is not None:
-            # Reauthorize even a previously opened revisionless JSON snapshot.
+        if node.projection is not None or length == 0:
+            # Cached JSON, empty files and EOF still pass the current ACL.
+            # A zero-byte read must not keep accepting a revoked open handle.
             await self.query('file.stat', {'id': node.metadata['id']})
-            return node.projection[offset : offset + length]
-        if length == 0:
-            return b''
+            return node.projection[offset : offset + length] if node.projection is not None else b''
         from msg.client_oauth import read_session, refresh
 
         client = self.client

@@ -60,9 +60,14 @@ async def test_mount_reads_raw_bytes_and_rechecks_revoked_access(installed, tmp_
             expected=((rid, changed.data['generation']),),
         )
         assert private.status == 'ok', wire(private)
-        for action in (mount.node(path), mount.read(pinned, 10, 0)):
+        for action in (
+            lambda: mount.node(path),
+            lambda: mount.read(pinned, 10, 0),
+            lambda: mount.read(pinned, 0, 0),
+            lambda: mount.read(pinned, 10, pinned.size),
+        ):
             with pytest.raises(OSError) as exc:
-                await action
+                await action()
             assert exc.value.errno == errno.EACCES
         assert path.rsplit('/', 1)[-1] not in await mount.directory('/main')
         own = MountBackend(owner)
@@ -72,6 +77,42 @@ async def test_mount_reads_raw_bytes_and_rechecks_revoked_access(installed, tmp_
             assert tx.one('SELECT COUNT(*) FROM reactions')[0] == 0
             assert tx.one('SELECT COUNT(*) FROM agent_follows')[0] == 0
             assert tx.one('SELECT COUNT(*) FROM watches')[0] == 0
+
+
+@pytest.mark.asyncio
+async def test_mount_empty_file_reads_recheck_current_access(installed, tmp_path):
+    app, _ = installed
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        owner = MsgClient(
+            ClientState(tmp_path / 'owner', server=app.settings.service_url),
+            HTTPTransport(app.settings.service_url, http=http),
+            clock=lambda: NOW,
+        )
+        assert (await owner.register('mount-empty')).status == 'ok'
+        guest = MsgClient(
+            ClientState(tmp_path / 'guest', server=app.settings.service_url),
+            HTTPTransport(app.settings.service_url, http=http),
+            clock=lambda: NOW,
+        )
+        created = await owner.call(
+            'file.create', {'parent': '/main', 'name': 'empty.txt', 'data': b64(b'')}
+        )
+        assert created.status == 'ok', wire(created)
+        rid = created.resources[0].id
+        backend = MountBackend(guest)
+        pinned = await backend.node(resource_id=rid)
+        assert pinned.size == 0 and await backend.read(pinned, 65536, 0) == b''
+        private = await owner.call(
+            'content.chmod',
+            {'id': rid, 'mode': '0600'},
+            expected=((rid, created.data['generation']),),
+        )
+        assert private.status == 'ok', wire(private)
+        with pytest.raises(OSError) as exc:
+            await backend.read(pinned, 65536, 0)
+        assert exc.value.errno == errno.EACCES
 
 
 @pytest.mark.asyncio
