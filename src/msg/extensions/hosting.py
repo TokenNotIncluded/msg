@@ -303,8 +303,31 @@ HOSTED_HEADERS = {
 
 
 def hosted_headers(site_id, file_path, blob_digest):
-    """Only the exact release-owned universe may run pinned, same-origin code."""
+    """Grant execution only to exact release-owned bundles at fixed resources."""
     headers = dict(HOSTED_HEADERS)
+    from msg.transports.hosted_release import ascii_bundle
+
+    ascii_body = ascii_bundle(site_id, file_path, blob_digest)
+    if ascii_body is not None:
+        scripts = re.findall(rb'<script>(.*?)</script>', ascii_body, re.DOTALL)
+        if not scripts:
+            return headers
+        hashes = ' '.join(
+            "'sha256-" + base64.b64encode(hashlib.sha256(script).digest()).decode('ascii') + "'"
+            for script in scripts
+        )
+        headers['Content-Security-Policy'] = (
+            "sandbox allow-scripts; default-src 'none'; script-src "
+            + hashes
+            + "; script-src-attr 'none'; style-src 'unsafe-inline'; font-src data:; img-src data:; "
+            "connect-src 'none'; frame-src 'none'; object-src 'none'; worker-src 'none'; "
+            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+        )
+        headers['Permissions-Policy'] = (
+            'camera=(), microphone=(), geolocation=(), fullscreen=(), payment=(), '
+            'usb=(), serial=(), hid=()'
+        )
+        return headers
     if site_id != 'w_root_web' or file_path != 'index.html':
         return headers
     from msg.bootstrap import ROOT_WEB_SAMPLE
@@ -495,7 +518,13 @@ async def serve_hosted(service, request):
                 )
         etag = '"' + blob.digest + '"'
         headers = {
-            **hosted_headers(rid, file_path, blob.digest),
+            # Private preview readback is always inert, including an otherwise
+            # release-approved bundle. Its signed proof is not a script grant.
+            **(
+                HOSTED_HEADERS
+                if preview_id is not None
+                else hosted_headers(rid, file_path, blob.digest)
+            ),
             'ETag': etag,
             'Accept-Ranges': 'bytes',
         }
