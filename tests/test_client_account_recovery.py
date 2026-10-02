@@ -62,6 +62,58 @@ def test_missing_selection_requires_explicit_choice_without_writes(home, account
     assert ClientState().signer.public_key == states[-1].signer.public_key
 
 
+@pytest.mark.parametrize('old_handle', ['alice', 'bob'])
+def test_missing_selection_with_legacy_and_restored_identity_requires_choice(home, old_handle):
+    restored = registered('alice')
+    legacy = ClientState(paths=ClientPaths.discover(server=SERVER), server=SERVER)
+    legacy.save_signer(Ed25519Signer.generate())
+    legacy.data.update(handle=old_handle, subject_id=legacy.signer.key_id)
+    legacy._save()
+    assert legacy.subject != restored.subject
+    before = snapshot(home)
+    with pytest.raises(Failure, match='local_account_selection_required'):
+        ClientState()
+    assert snapshot(home) == before
+    run_command(args('use', name='alice'))
+    assert ClientState().subject == restored.subject
+    assert ClientState().signer.public_key == restored.signer.public_key
+    assert legacy.key_path.exists()
+
+
+def test_matching_legacy_copy_can_complete_selection_with_original_identity(home):
+    restored = registered('alice')
+    legacy = ClientState(paths=ClientPaths.discover(server=SERVER), server=SERVER)
+    legacy.save_signer(restored.signer)
+    legacy.data.update(restored.data)
+    legacy._save()
+    assert ClientState().subject == restored.subject
+    assert ClientState().signer.public_key == restored.signer.public_key
+
+
+@pytest.mark.parametrize(
+    'configuration',
+    ['identity.key', 'hardware-signer.json', 'oauth-session.json', 'token', 'api_key'],
+)
+def test_legacy_identity_does_not_hide_a_partially_restored_account(home, configuration):
+    restored = ClientState(account='restored')
+    if configuration in {'token', 'api_key'}:
+        restored.data[configuration] = {
+            'credential_id': 'restored-credential',
+            'value': 'test-value',
+        }
+        restored._save()
+    else:
+        durable_write(restored.file(configuration), b'partial-restored-material', mode=0o600)
+    legacy = ClientState(paths=ClientPaths.discover(server=SERVER), server=SERVER)
+    legacy.save_signer(Ed25519Signer.generate())
+    legacy.data.update(handle='alice', subject_id=legacy.signer.key_id)
+    legacy._save()
+    before = snapshot(home)
+    with pytest.raises(Failure, match='local_account_selection_required'):
+        ClientState()
+    assert snapshot(home) == before
+
+
 def test_account_list_on_fresh_service_creates_no_files(home):
     assert run_command(args()) == {'server': SERVER, 'accounts': []}
     assert list(home.iterdir()) == []

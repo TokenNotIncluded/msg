@@ -10,6 +10,31 @@ from msg.paths import ClientPaths, private_directory
 from msg.service_origin import service_origin
 
 
+def identity_status(state, *, signer_override=None):
+    """Report configured request credentials without opening sessions or contacting hardware."""
+    session = state.file('oauth-session.json')
+    if signer_override is not None:
+        auth = 'signature'
+    elif session.exists() or session.is_symlink():
+        auth = 'oauth'
+    elif state.data.get('token'):
+        auth = 'token'
+    elif state.data.get('api_key'):
+        auth = 'api-key'
+    else:
+        auth = 'signature' if state.signer is not None else 'none'
+    signer = signer_override or state.signer
+    return {
+        'account': state.account,
+        'handle': state.data.get('handle'),
+        'subject_id': state.subject,
+        'key_id': signer.key_id if signer is not None else None,
+        'server': state.server,
+        'certificates': state.certificates,
+        'auth': auth,
+    }
+
+
 def selected_service(args):
     previous = ClientPaths.discover(profile=args.profile)
     selection = private_client_json(previous.config / 'service.json')
