@@ -173,3 +173,67 @@ async def test_public_author_count_is_unknown_when_scan_budget_is_incomplete(
     result = await call(app, 'discovery.get', {'id': author, 'fields': ['star']})
     assert result.status == 'ok', result.error
     assert result.data['star']['post_count'] == {'public': None, 'exact': False, 'scanned': 1}
+
+
+async def test_refresh_ids_shares_one_scan_and_intersects_current_read_checks(
+    installed, monkeypatch
+):
+    from msg.plugins import star_projection
+
+    app, _ = installed
+    key, subject, _ = await register(app, 'planet-batch')
+    other_key, other, _ = await register(app, 'planet-batch-hidden')
+    for signer, author in ((key, subject), (other_key, other)):
+        posted = await call(
+            app,
+            'content.post_create',
+            {'parent': '/main', 'body': 'batch count'},
+            key=signer,
+            subject=author,
+        )
+        assert posted.status == 'ok', posted.error
+    signed = await call(
+        app, 'discovery.get', {'id': subject, 'fields': ['star_batch']}, key=key, subject=subject
+    )
+    assert signed.error.code == 'public_star_summary_only'
+    scans = {'posts': 0, 'layout': 0}
+    original_counts, original_layout = star_projection.post_counts, star_projection.public_layout
+
+    async def counts(app, ctx, request, tx):
+        if ctx.principal.subject not in getattr(tx, '_planet_post_counts', {}):
+            scans['posts'] += 1
+        return await original_counts(app, ctx, request, tx)
+
+    async def layout(app, ctx, request, tx):
+        if getattr(tx, '_planet_public_layout', None) is None:
+            scans['layout'] += 1
+        return await original_layout(app, ctx, request, tx)
+
+    monkeypatch.setattr(star_projection, 'post_counts', counts)
+    monkeypatch.setattr(star_projection, 'public_layout', layout)
+    execute = app.executor.execute
+
+    async def hide_after_batch(request, **kwargs):
+        result = await execute(request, **kwargs)
+        if 'star_batch' in request.arguments.get('fields', ()) and result.error is None:
+            async with app.metadata.transaction(write=True) as tx:
+                resource = await tx.resource(other)
+                await tx.replace(
+                    replace(resource, mode=0o600, generation=resource.generation + 1),
+                    resource.generation,
+                )
+        return result
+
+    monkeypatch.setattr(app.executor, 'execute', hide_after_batch)
+    ids = ','.join([subject, other, *[f'u_absent_{index}' for index in range(98)]])
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        response = await http.get('/_universe', params={'kind': 'users', 'ids': ids})
+    assert response.status_code == 200, response.text
+    assert scans == {'posts': 1, 'layout': 1}
+    page = response.json()
+    assert [item['id'] for item in page['items']] == [subject]
+    assert page['items'][0]['star']['post_count']['public'] == 1
+    assert page['items'][0]['star']['layout']['version'] == 4
+    assert other not in response.text
