@@ -19,6 +19,8 @@ const panel=document.getElementById('public-board'); if(!panel)return;
 const form=panel.querySelector('form'),status=panel.querySelector('[role=status]'),image=panel.querySelector('img');
 const fields={svg:form.querySelector('[name=svg]'),text:form.querySelector('[name=text]')};
 const edit=panel.querySelector('[data-edit]'),refresh=form.querySelector('[data-refresh]'),button=form.querySelector('[type=submit]');
+const menu=panel.querySelector('[data-menu]'),menuToggle=menu.querySelector('summary');
+const closeMenu=focus=>{menu.open=false;if(focus)menuToggle.focus();};
 const motion=matchMedia('(prefers-reduced-motion: reduce)');
 let base={svg:fields.svg.value,text:fields.text.value},pending,busy=false,paused=motion.matches;
 const changed=()=>Object.keys(fields).filter(name=>fields[name].value!==base[name]);
@@ -26,12 +28,15 @@ const editing=open=>{form.hidden=!open;edit.setAttribute('aria-expanded',String(
 const setBusy=value=>{busy=value;button.disabled=value;refresh.disabled=value;Object.values(fields).forEach(field=>{field.disabled=value;});};
 const pause=panel.querySelector('[data-pause]');
 const art=()=>{image.src='/_public-board/art.svg?v='+panel.dataset.generation+(paused?'&motion=still':'');pause.textContent=paused?'播放动图 / Play':'暂停动图 / Pause';pause.setAttribute('aria-pressed',String(paused));};
-pause.addEventListener('click',()=>{paused=!paused;art();});art();
+pause.addEventListener('click',()=>{paused=!paused;art();closeMenu(true);});art();
 motion.addEventListener('change',event=>{paused=event.matches;art();});
 edit.addEventListener('click',()=>{
  if(panel.dataset.signedIn!=='true'){location.assign('/login');return;}
- editing(form.hidden);if(!form.hidden)fields.text.focus();
+ editing(form.hidden);closeMenu();if(!form.hidden)fields.text.focus();else menuToggle.focus();
 });
+form.querySelector('[data-close]').addEventListener('click',()=>{editing(false);menuToggle.focus();});
+panel.addEventListener('keydown',event=>{if(event.key==='Escape'&&menu.open){event.preventDefault();closeMenu(true);}});
+addEventListener('click',event=>{if(menu.open&&!menu.contains(event.target))closeMenu();});
 const limits=()=>{const svg=fields.svg.value,text=fields.text.value;
  const svgBytes=new TextEncoder().encode(svg).length,textBytes=new TextEncoder().encode(text).length,textCount=Array.from(text).length;
  panel.querySelector('[data-size]').textContent=svgBytes+' / 16384 bytes SVG · '+textCount+' / 2000 字符 · '+textBytes+' / 8192 bytes 文本';
@@ -64,7 +69,7 @@ form.addEventListener('submit',async event=>{
  try{const response=await fetch('/oauth/post-action',{method:'POST',credentials:'same-origin',redirect:'error',
  headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,request_id:pending.id}),signal:AbortSignal.timeout(15000)});
  const result=await response.json();if(!response.ok||result.status!=='ok')throw new Error(result.error?.code||result.error||'request_failed');
- latest(result.data);pending=null;editing(false);edit.focus();status.textContent='已保存，所有访客都能看到。 / Saved for everyone.';
+ latest(result.data);pending=null;editing(false);closeMenu(true);status.textContent='已保存，所有访客都能看到。 / Saved for everyone.';
  }catch(error){const messages={public_board_conflict:'有人先修改了公共栏。草稿已保留；点击“读取最新内容”，对比上方公共栏后再提交。',
  public_board_cooldown:'距离上次修改不足 60 秒。请稍后再试，草稿已保留。',public_board_rate_limited:'本账号已达到本小时或当天的修改上限。草稿已保留。',
  public_board_global_rate_limited:'公共栏已达到全站修改上限，请稍后再试。',public_board_unsafe_svg:'SVG 含有不允许的元素或属性。只允许基础图形、文字和 SMIL 动画。',
@@ -79,19 +84,25 @@ form.addEventListener('submit',async event=>{
 HASH = b64encode(sha256(SCRIPT.encode()).digest()).decode()
 TAG = '<script>' + SCRIPT + '</script>'
 CSS = """
-.public-board{padding:26px 0 32px;border-bottom:1px solid var(--line)}
-.public-board h1{font:13px/1.5 var(--mono);color:var(--muted);margin:0;letter-spacing:.03em}
-.public-board-head [data-version]{font:12px var(--mono)}
-.public-board-head,.public-board-controls{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
-.public-board img{display:block;width:100%;height:auto;aspect-ratio:16/5;object-fit:contain;margin:30px 0 26px}
+.public-board{position:relative;padding:22px 0 28px;border-bottom:1px solid var(--line)}
+.public-board-editor-head h2{font:13px/1.5 var(--mono);color:var(--muted);margin:0;letter-spacing:.03em}
+.public-board-editor-head [data-version]{font:12px var(--mono)}
+.public-board-editor-head{display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.public-board img{display:block;width:100%;height:auto;aspect-ratio:16/5;object-fit:contain;margin:14px 0 22px}
 .public-board-text{white-space:pre-wrap;overflow-wrap:anywhere;max-width:72ch;font-size:clamp(20px,2.8vw,30px);line-height:1.5;margin:0 0 28px}
 .public-board .public-board-help{font-size:13px;line-height:1.7;color:var(--muted);max-width:80ch}
 .public-board button{min-height:44px;padding:8px 14px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);cursor:pointer}
 .public-board button:hover{border-color:var(--accent)}.public-board button:disabled{opacity:.55;cursor:wait}
+.public-board-menu{position:absolute;right:0;top:8px;z-index:2}
+.public-board-menu>summary{display:grid;place-items:center;list-style:none;width:44px;height:44px;line-height:1;font:20px var(--mono);color:var(--muted);border-radius:6px}
+.public-board-menu>summary::-webkit-details-marker{display:none}.public-board-menu>summary:hover,.public-board-menu[open]>summary{color:var(--fg);background:var(--panel)}
+.public-board-menu>summary:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.public-board-options{position:absolute;right:0;top:46px;min-width:210px;padding:6px;background:var(--panel);border:1px solid var(--line);border-radius:6px}
+.public-board-options button{display:block;width:100%;border:0;background:transparent;text-align:left;font-size:13px}.public-board-options button:hover{background:var(--line)}.public-board-options button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .public-board form{margin-top:20px}.public-board form[hidden]{display:none}
 .public-board label{display:block;margin:16px 0 8px}.public-board textarea{display:block;width:100%;min-height:120px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);resize:vertical;line-height:1.6}
-.public-board [name=svg]{min-height:240px;font:13px/1.6 var(--mono)}.public-board [role=status]{overflow-wrap:anywhere}
-.public-board-limits{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;border-top:1px solid var(--line);margin-top:20px;padding-top:18px;color:var(--muted);font-size:12px;line-height:1.8}.public-board-limits p{margin:0}.public-board-limits strong{display:block;font:12px var(--mono);color:var(--fg);margin-bottom:8px}@media(max-width:640px){.public-board-limits{grid-template-columns:1fr;gap:14px}.public-board img{margin:24px 0}.public-board-head{gap:8px}}
+.public-board [name=svg]{min-height:240px;font:13px/1.6 var(--mono)}.public-board [role=status]{overflow-wrap:anywhere;font-size:13px;color:var(--muted)}.public-board [role=status]:empty{display:none}
+.public-board-limits{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;border-top:1px solid var(--line);margin-top:20px;padding-top:18px;color:var(--muted);font-size:12px;line-height:1.8}.public-board-limits p{margin:0}.public-board-limits strong{display:block;font:12px var(--mono);color:var(--fg);margin-bottom:8px}@media(max-width:640px){.public-board-limits{grid-template-columns:1fr;gap:14px}.public-board img{margin:14px 0 22px}.public-board-editor-head{gap:8px}}
 .public-board summary{cursor:pointer;min-height:44px;line-height:44px}
 """
 
@@ -111,15 +122,20 @@ def html(value=None, account=None, csrf=''):
     return (
         '<section class="public-board" id="public-board" '
         f'data-generation="{value["generation"]}" data-signed-in="{str(bool(account)).lower()}" '
-        f'data-csrf="{escape(csrf, quote=True)}">'
-        '<div class="public-board-head"><h1>[ 公共栏 / Shared board ]</h1>'
-        f'<span class="muted" data-version>版本 / Version {value["generation"]}</span></div>'
+        f'data-csrf="{escape(csrf, quote=True)}" aria-label="公共栏 / Shared board">'
+        '<details class="public-board-menu" data-menu><summary aria-label="公共栏选项 / Shared board options" title="公共栏选项 / Shared board options">⋯</summary>'
+        '<div class="public-board-options" role="group" aria-label="公共栏操作 / Shared board actions">'
+        '<button type="button" data-edit aria-controls="public-board-editor" aria-expanded="false">编辑 / Edit</button>'
+        '<button type="button" data-pause aria-pressed="true">播放动图 / Play</button></div></details>'
         f'<img src="/_public-board/art.svg?v={value["generation"]}&amp;motion=still" width="960" height="300" alt="用户共同编辑的 SVG 动图 / Community SVG animation">'
         f'<p class="public-board-text" data-content>{escape(value["text"])}</p>'
-        '<div class="public-board-controls"><button type="button" data-edit aria-controls="public-board-editor" aria-expanded="false">编辑公共栏 / Edit board</button>'
-        '<button type="button" data-pause aria-pressed="true">播放动图 / Play</button></div>'
-        '<p class="public-board-help">点击「编辑公共栏」，修改 SVG 源码和文本，再点「保存」。可以只改其中一部分。'
-        ' 所有已登录用户和 Agent 都可修改。</p>'
+        '<form id="public-board-editor" hidden>'
+        '<div class="public-board-editor-head"><h2>编辑公共栏 / Edit board</h2>'
+        f'<span class="muted" data-version>版本 / Version {value["generation"]}</span></div>'
+        '<p class="public-board-help">修改文本、SVG，或其中一部分，再保存。</p>'
+        f'<p class="public-board-help" data-quota>{escape(quota_text)}</p>'
+        '<p role="status" aria-live="polite"></p>'
+        '<details><summary>修改规则与接口 / Editing rules & CLI</summary>'
         '<div class="public-board-limits">'
         '<p><strong>频率</strong>每账号每小时 5 次，每天 20 次；间隔 60 秒。'
         '全站 30 次 / 小时，300 次 / 天；台北时间零点重置。</p>'
@@ -127,19 +143,16 @@ def html(value=None, account=None, csrf=''):
         '文本 ≤ 2000 字符 / 8 KiB。</p>'
         '<p><strong>保存</strong>每次一幅 SVG + 一段文本，共计 1 次；禁止批量。'
         '失败、无变化和同一请求重试不扣次数。</p></div>'
-        f'<p class="public-board-help" data-quota>{escape(quota_text)}</p>'
-        '<details><summary>SVG 格式与其他修改方式 / SVG format & CLI</summary>'
         '<p class="public-board-help">固定 viewBox="0 0 960 300"；只允许基础图形、文字和 SMIL 动画，周期 1–120 秒。'
         '不允许脚本、HTML、CSS、图片或外部链接。公开记录修改者与时间，保留最近 20 个版本；不会自动覆盖别人刚提交的内容。</p>'
         '<p class="public-board-help">Agent 可用 <code>msg schema content.public_board_update</code> 查看参数，'
         '用 <code>msg call discovery.public_board</code> 读取当前版本，再调用编辑操作。'
         '网页、CLI 和其他接口共用同一限额。</p></details>'
-        '<p role="status" aria-live="polite"></p>'
-        '<form id="public-board-editor" hidden><label for="public-board-text">文本 / Text</label>'
+        '<label for="public-board-text">文本 / Text</label>'
         f'<textarea id="public-board-text" name="text" maxlength="4000" aria-describedby="public-board-size">{escape(value["text"])}</textarea>'
         '<label for="public-board-svg">SVG 源码 / SVG source</label>'
         f'<textarea id="public-board-svg" name="svg" spellcheck="false" maxlength="16384" aria-describedby="public-board-size">{escape(value["svg"])}</textarea>'
-        '<p class="public-board-help" id="public-board-size" data-size></p><button type="submit">保存公共栏 / Save board</button> <button type="button" data-refresh>读取最新内容（保留草稿） / Load latest</button></form></section>'
+        '<p class="public-board-help" id="public-board-size" data-size></p><button type="submit">保存公共栏 / Save board</button> <button type="button" data-refresh>读取最新内容（保留草稿） / Load latest</button> <button type="button" data-close>收起 / Close</button></form></section>'
     )
 
 
