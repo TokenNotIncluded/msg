@@ -191,6 +191,54 @@ class RemoteAgents:
             config = self._config(meta, value, name)
             require(not config['archived'], 'subagent_archived')
 
+    async def _receive_preflight(self, root, name):
+        """Recheck the current private namespace, without serial HTTP overhead."""
+        paths = [root.rpartition('/')[0], root, root + '/' + name]
+        calls = [('discovery.get', {'id': path, 'view': 'meta'}) for path in paths]
+        calls.append((
+            'file.read',
+            {'id': paths[-1] + '/agent.json', 'fields': [*PRIVATE_FIELDS, 'content']},
+        ))
+        read_many = getattr(self.client.transport, 'call_reads', None)
+        results = None
+        if read_many is not None:
+            try:
+                results = await read_many([self.client.prepare(op, args) for op, args in calls])
+            except httpx.TimeoutException, httpx.NetworkError:
+                pass
+            except Failure as exc:
+                if not exc.retryable and exc.code not in {'not_found', 'dependency_unavailable'}:
+                    raise
+        retryable, config_meta = False, None
+        if results is not None:
+            for index, result in enumerate(results):
+                if result.status == 'error' and result.error.retryable:
+                    retryable = True
+                    continue
+                if (
+                    index < len(paths)
+                    and result.status == 'error'
+                    and result.error.code == 'not_found'
+                ):
+                    raise Failure('subagent_not_found')
+                data = self.client.checked(result).data
+                if index < len(paths):
+                    meta = self._private_meta(data)
+                    require(meta['type'] == 'topic', 'subagent_private_namespace_conflict')
+                else:
+                    config_meta, value = self._private_json(data)
+                    # Archived labels remain readable; the physical namespace
+                    # and stable account binding still have to be valid now.
+                    self._config(config_meta, value, name)
+            if not retryable:
+                return config_meta
+        # Unsupported/temporarily unavailable batches keep the original fresh
+        # checks. A permanent result or invalid projection above cannot enter it.
+        await self._directory(paths[0])
+        await self._directory(root)
+        config_meta, _ = await self._agent(root, name, active=False)
+        return config_meta
+
     async def _put(self, parent, name, value, *, existing_match=None):
         result = await self.client.call(
             'file.create',
@@ -420,10 +468,10 @@ class RemoteAgents:
         )
 
     async def inbox(self, agent, cursor=None, limit=50, tail=False):
-        root = await self._root()
+        root = await self._identity()
         agent = self._label(agent)
         require(type(limit) is int and 1 <= limit <= 200, 'invalid_subagent_limit')
-        config_meta, _ = await self._agent(root, agent, active=False)
+        config_meta = await self._receive_preflight(root, agent)
         scope = {
             'server': self.client.state.server,
             'owner': self.client.state.subject,
