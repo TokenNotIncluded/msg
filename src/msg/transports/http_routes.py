@@ -178,9 +178,10 @@ def home_markdown(
         lines.append('| --- | --- | ---: | --- | --- |')
         for channel in data['channels']:
             path = quote(channel['path'], safe='/@&*')
-            name = re.sub(r'([\\`*_{}\[\]<>!|&])', r'\\\1', channel['name'])
+            name = re.sub(r'([\\`*_{}\[\]<>!|&])', r'\\\1', ' '.join(channel['name'].split()))
+            about = re.sub(r'([\\`*_{}\[\]<>!|&])', r'\\\1', ' '.join(channel['about'].split()))
             lines.append(
-                f'| [{name}]({path}) | {channel["about"]} | {channel["posts"]} | [{channel["mode"]}]({path}/meta) | {channel["posting"]} |'
+                f'| [{name}]({path}) | {about} | {channel["posts"]} | [{channel["mode"]}]({path}/meta) | {channel["posting"]} |'
             )
     lines.append(
         '\nUsers: [/@lightjunction](/@lightjunction); organizations: [/&public](/&public). Replace the name to view another profile.\n'
