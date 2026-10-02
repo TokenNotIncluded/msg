@@ -46,6 +46,17 @@ PROFILE_CSS = """
 .profile-art-editor pre { white-space:pre-wrap; overflow-wrap:anywhere; }
 .profile-art-actions { display:flex; flex-wrap:wrap; gap:16px; align-items:center; margin-top:16px; }
 .profile-art-status { min-height:2em; color:var(--muted); }
+.profile-backup p { max-width:65ch; font-size:13px; }
+.profile-backup dl { display:grid; grid-template-columns:max-content minmax(0,1fr); gap:10px 20px; margin:20px 0; font:12px/1.8 var(--mono); }
+.profile-backup dt { color:var(--muted); }
+.profile-backup dd { margin:0; min-width:0; overflow-wrap:anywhere; }
+.profile-backup dd code { white-space:normal; overflow-wrap:anywhere; }
+.profile-backup-actions { display:flex; align-items:center; flex-wrap:wrap; gap:16px; }
+.profile-backup button { min-height:44px; border:1px solid var(--line); background:var(--bg); color:var(--fg); padding:8px; font:12px/1.5 var(--mono); border-radius:0; }
+.profile-backup button:disabled { color:var(--muted); cursor:wait; }
+.profile-backup :focus-visible { outline:2px solid var(--fg); outline-offset:3px; }
+.profile-backup summary { min-height:44px; display:flex; align-items:center; cursor:pointer; font:12px/1.5 var(--mono); }
+.profile-backup pre { white-space:pre-wrap; overflow-wrap:anywhere; }
 @media(max-width:640px) {
  .profile-heading { padding:24px 0; min-height:188px; }
  .profile-copy { width:calc(100% - 100px); }
@@ -61,6 +72,7 @@ PROFILE_CSS = """
 """
 
 PROFILE_SCRIPT = r"""(() => {
+ const shellQuote=value=>"'"+value.replaceAll("'","'\\''")+"'";
  const reduced=matchMedia('(prefers-reduced-motion: reduce)');
  document.querySelectorAll('.profile-heading,.profile-ocean,.board-heading').forEach(root=>{
    const images=[...root.querySelectorAll('[data-motion-src]')];
@@ -75,6 +87,68 @@ PROFILE_SCRIPT = r"""(() => {
    if('IntersectionObserver' in window)new IntersectionObserver(entries=>{visible=entries[0].isIntersecting;sync()}).observe(root);
    sync();
  });
+ const backup=document.querySelector('.profile-backup');
+ if(backup){
+   const status=backup.querySelector('.profile-backup-status'),record=backup.querySelector('.profile-backup-record');
+   const retry=backup.querySelector('.profile-backup-retry'),download=backup.querySelector('.profile-backup-download');
+   const copy=backup.querySelector('.profile-backup-copy'),command=backup.querySelector('.profile-backup-command');
+   const commandView=backup.querySelector('.profile-backup-command-view'),hint=backup.querySelector('.profile-backup-hint');
+   const account=document.querySelector('a.current-account');
+   backup.querySelector('.profile-backup-owner').hidden=!account||account.getAttribute('href')!==backup.dataset.profilePath;
+   const object=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
+   const keys=(value,required,optional=[])=>object(value)&&required.every(key=>Object.hasOwn(value,key))&&Object.keys(value).every(key=>[...required,...optional].includes(key));
+   function validateManifest(value){
+     if(!keys(value,['schema','server','subject_id','key_id','created_at','encryption','archive_format','file'],['recovery_hint'])
+       ||value.schema!=='msg.identity-backup/1'||value.server!==location.origin
+       ||typeof value.subject_id!=='string'||!/^[A-Za-z0-9_.:-]{1,160}$/.test(value.subject_id)||value.subject_id!==backup.dataset.subjectId
+       ||typeof value.key_id!=='string'||!/^[A-Za-z0-9_.:-]{1,160}$/.test(value.key_id)
+       ||typeof value.created_at!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$/.test(value.created_at)
+       ||Number(value.created_at.slice(0,4))<1||!Number.isFinite(Date.parse(value.created_at))||new Date(value.created_at).toISOString().slice(0,19)!==value.created_at.slice(0,19)
+       ||!keys(value.encryption,['format'])||!['age','gpg'].includes(value.encryption.format)
+       ||!['msg.account-backup/1','external'].includes(value.archive_format)
+       ||!keys(value.file,['path','sha256','size'])||typeof value.file.sha256!=='string'||!/^[a-f0-9]{64}$/.test(value.file.sha256)
+       ||!Number.isSafeInteger(value.file.size)||value.file.size<1||value.file.size>8388608
+       ||value.file.path!==backup.dataset.profilePath+'/BACKUP-'+value.file.sha256.slice(0,16)+'.'+value.encryption.format
+       ||(Object.hasOwn(value,'recovery_hint')&&(typeof value.recovery_hint!=='string'||Array.from(value.recovery_hint).length>500||/[\u0000-\u001f\u007f]/.test(value.recovery_hint))))throw Error('invalid backup metadata');
+     return value;
+   }
+   async function manifestBytes(response){
+     const reader=response.body?.getReader(),parts=[];let size=0;
+     if(!reader){const bytes=new Uint8Array(await response.arrayBuffer());if(bytes.length>16384)throw Error('backup metadata too large');return bytes}
+     try{while(true){const {value,done}=await reader.read();if(done)break;size+=value.length;if(size>16384)throw Error('backup metadata too large');parts.push(value)}}
+     finally{await reader.cancel()}
+     const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length}return bytes;
+   }
+   let version=0;
+   async function loadBackup(){
+     const current=++version,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),10000);
+     record.hidden=true;download.removeAttribute('href');copy.hidden=true;commandView.hidden=true;command.textContent='';hint.hidden=true;
+     retry.hidden=true;retry.disabled=true;backup.setAttribute('aria-busy','true');status.textContent='正在读取备份信息… / Reading backup information…';
+     try{
+       const response=await fetch(backup.dataset.profilePath+'/BACKUP.json/raw',{credentials:'omit',cache:'no-store',redirect:'error',signal:controller.signal,headers:{Accept:'application/json'}});
+       if(current!==version)return;
+       if(response.status===404){status.textContent='尚未登记备份。 / No backup registered.';return}
+       if(!response.ok)throw Error('backup discovery failed');
+       const value=validateManifest(JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await manifestBytes(response))));
+       if(current!==version)return;
+       for(const [field,text] of Object.entries({created_at:value.created_at.replace('T',' ').replace('Z',' UTC'),format:value.encryption.format,size:value.file.size.toLocaleString()+' 字节 / bytes',sha256:value.file.sha256}))backup.querySelector('[data-backup-field='+field+']').textContent=text;
+       hint.textContent=value.recovery_hint?'发布者的恢复备注 / Publisher note: '+value.recovery_hint:'';hint.hidden=!value.recovery_hint;
+       download.href=value.file.path+'/raw';download.download=value.file.path.split('/').at(-1);
+       const automatic=value.encryption.format==='age'&&value.archive_format==='msg.account-backup/1';
+       copy.hidden=commandView.hidden=!automatic;
+       backup.querySelector('.profile-backup-restore-note').textContent=automatic?'替换命令中的本机解密钥路径后执行；恢复时会检查摘要和大小。 / Replace the local decryption-key path before running; restore checks the checksum and size.':'这是外部格式备份，请下载后用自己的本机工具解密。 / Download and decrypt this backup with your local tools.';
+       if(automatic)command.textContent='msg --server '+shellQuote(location.origin)+' account restore restored-account --from '+shellQuote(backup.dataset.profilePath.slice(1))+' --identity '+shellQuote('/path/to/identity.txt');
+       record.hidden=false;status.textContent='已登记加密备份。 / Encrypted backup registered.';
+     }catch{if(current===version){status.textContent='读取备份失败，请重试。 / Could not read backup information; retry.';retry.hidden=false}}
+     finally{clearTimeout(timer);if(current===version){retry.disabled=false;backup.setAttribute('aria-busy','false')}}
+   }
+   retry.addEventListener('click',loadBackup);
+   copy.addEventListener('click',async()=>{
+     try{await navigator.clipboard.writeText(command.textContent);status.textContent='恢复命令已复制；解密和恢复在自己的终端完成。 / Restore command copied; decrypt and restore in your own terminal.'}
+     catch{commandView.open=true;status.textContent='请选择并复制下方恢复命令。 / Select and copy the restore command below.'}
+   });
+   loadBackup();
+ }
  const editor=document.querySelector('.profile-art-editor');
  if(!editor)return;
  const account=document.querySelector('a.current-account');
@@ -87,7 +161,6 @@ PROFILE_SCRIPT = r"""(() => {
  const preview=editor.querySelector('.profile-art-preview'),status=editor.querySelector('[role=status]');
  const prepared=editor.querySelector('.profile-art-prepared'),command=editor.querySelector('.profile-art-command');
  const fileCommand=editor.querySelector('.profile-art-file-command');
- const shellQuote=value=>"'"+value.replaceAll("'","'\\''")+"'";
  let downloadUrl=null,version=0;
  const namespace='http://www.w3.org/2000/svg';
  const tags=new Set(['svg','g','defs','title','desc','text','tspan','rect','circle','ellipse','path','line','polyline','polygon','style','animate','animateTransform','animateMotion','set']);
@@ -195,6 +268,37 @@ def artwork_editor_html(path):
     )
 
 
+def backup_panel_html(value, path):
+    """Public ciphertext discovery does not depend on an owner's browser session."""
+    return (
+        '<section class="profile-backup" id="identity-backup" '
+        f'data-profile-path="{escape(path, quote=True)}" '
+        f'data-subject-id="{escape(value.get("id", ""), quote=True)}">'
+        '<h2>身份备份 / Identity backup</h2>'
+        '<p>这里只登记加密后的备份，公开提供下载。解密钥由你自己保管。'
+        '建议使用 age；其他已登记的加密格式也可下载。 / Only encrypted backups belong here. '
+        'Downloads are public; keep the decryption key yourself. age is recommended.</p>'
+        '<p class="profile-backup-status" role="status" aria-live="polite">'
+        '正在读取备份信息… / Reading backup information…</p>'
+        '<button class="profile-backup-retry" type="button" hidden>重新读取 / Retry</button>'
+        '<div class="profile-backup-record" hidden><dl>'
+        '<dt>日期 / Date</dt><dd data-backup-field="created_at"></dd>'
+        '<dt>格式 / Format</dt><dd data-backup-field="format"></dd>'
+        '<dt>密文大小 / Size</dt><dd data-backup-field="size"></dd>'
+        '<dt>SHA-256</dt><dd><code data-backup-field="sha256"></code></dd></dl>'
+        '<p class="profile-backup-hint" hidden></p><div class="profile-backup-actions">'
+        '<a class="profile-backup-download">下载加密备份 / Download encrypted backup</a>'
+        '<button class="profile-backup-copy" type="button" hidden>复制恢复命令 / Copy restore command</button>'
+        '</div><p class="profile-backup-restore-note"></p>'
+        '<details class="profile-backup-command-view" hidden><summary>查看恢复命令 / Show restore command</summary>'
+        '<pre><code class="profile-backup-command"></code></pre></details></div>'
+        '<p class="profile-backup-owner" hidden>'
+        '<a href="https://github.com/TokenNotIncluded/msg/blob/main/docs/IDENTITY_BACKUP.md">'
+        '登记或更新我的备份 / Register or update my backup</a></p>'
+        '</section>'
+    )
+
+
 def profile_body(value):
     """Browser layout over the same already-authorized profile projection."""
     from msg.transports.home_page import display_time
@@ -240,7 +344,8 @@ def profile_body(value):
         body += f'<a class="profile-bio-source" href="{escape(path + "/BIO.md", quote=True)}">BIO.md</a>'
     else:
         body += '<a class="profile-bio-source" href="https://github.com/TokenNotIncluded/msg/blob/main/docs/PROFILES.md">填写简介 / Add a bio</a>'
-    body += '</section><section class="profile-posts"><h2>最近帖子 / Latest posts</h2><ul>'
+    body += '</section>' + backup_panel_html(value, path)
+    body += '<section class="profile-posts"><h2>最近帖子 / Latest posts</h2><ul>'
     for item in activity['latest_posts']:
         target = quote(item['path'], safe='/@*&')
         body += (
