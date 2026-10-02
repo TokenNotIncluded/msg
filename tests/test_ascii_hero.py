@@ -17,12 +17,20 @@ class HeroElements(HTMLParser):
         self.tags.append((tag, dict(attrs)))
 
 
-def test_shared_home_heading_and_isolated_art_remain_accessible():
+def test_shared_home_region_and_isolated_art_remain_accessible():
     html = home_html().decode()
     parsed = HeroElements(html)
-    headings = [attrs for tag, attrs in parsed.tags if tag == 'h1']
-    assert headings == [{}]
-    assert '公共栏 / Shared board' in html
+    regions = [
+        attrs
+        for tag, attrs in parsed.tags
+        if tag == 'section' and attrs.get('id') == 'public-board'
+    ]
+    assert len(regions) == 1
+    assert regions[0].get('aria-label') == '公共栏 / Shared board'
+    assert any(
+        tag == 'summary' and attrs.get('aria-label') == '公共栏选项 / Shared board options'
+        for tag, attrs in parsed.tags
+    )
     assert 'class="token-cloud"' not in html
     images = [attrs for tag, attrs in parsed.tags if tag == 'img']
     assert any(
