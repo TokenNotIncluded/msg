@@ -137,18 +137,72 @@ async def public_page(service, query):
             'not_found',
         )
 
+    batch = None
     if ids is not None:
+        # The first current readable account authorizes one bounded anonymous
+        # batch. Individual current reads below intersect its summaries, so a
+        # newly hidden account never survives from that earlier snapshot.
+        for rid in ids:
+            if await read('discovery.get', {'id': rid, 'fields': ['id']}, optional=True):
+                value = await read(
+                    'discovery.get', {'id': rid, 'fields': ['star_batch']}, optional=True
+                )
+                batch = value['star_batch'] if value else None
+                break
         semaphore = asyncio.Semaphore(4)
 
         async def refresh(rid):
             async with semaphore:
                 data = await read(
-                    'discovery.get', {'id': rid, 'fields': PAGE_FIELDS['users']}, optional=True
+                    'discovery.get', {'id': rid, 'fields': ['id', 'name', 'path']}, optional=True
                 )
                 return data
 
         refreshed = await asyncio.gather(*(refresh(rid) for rid in ids))
         page = {'items': [item for item in refreshed if item]}
+        graph = (
+            batch['topology']
+            if batch
+            else {'version': 1, 'nodes': [], 'edges': [], 'bounded': True, 'scanned': 0}
+        )
+        hidden = set(ids) - {item['id'] for item in page['items']}
+        graph = {
+            **graph,
+            'nodes': [rid for rid in graph['nodes'] if rid not in hidden],
+            'edges': [
+                edge
+                for edge in graph['edges']
+                if edge['source'] not in hidden and edge['target'] not in hidden
+            ],
+        }
+        graph['scanned'] = len(graph['nodes']) + len(graph['edges'])
+        positions = planet_layout(graph['nodes'], graph['edges'])
+        for item in page['items']:
+            summary = batch['stars'].get(item['id']) if batch else None
+            if summary is not None and item['id'] in positions:
+                summary = {**summary, 'layout': positions[item['id']]}
+            item['star'] = summary or {
+                'role': 'root' if item['id'] == ROOT_SUBJECT else 'user',
+                'certificate': {'state': 'unknown'},
+                'presence': {'state': 'unknown'},
+                'last_public_post_at': None,
+                'post_count': {'public': None, 'exact': False, 'scanned': 0},
+                'layout': positions.get(item['id'])
+                or {
+                    'version': 4,
+                    'position': fallback_position(item['id']),
+                    'orbit': {
+                        'kind': 'isolated',
+                        'source_type': None,
+                        'parent_id': None,
+                        'members': [],
+                    },
+                    'bounded': True,
+                },
+                'balance': {'visibility': 'unknown'},
+                'checked_at': batch['checked_at'] if batch else wire(service.clock()),
+                'bounded': True,
+            }
     else:
         if shuffle:
             # Random keyset seek, not ORDER BY RANDOM() or an OFFSET scan.
@@ -213,8 +267,8 @@ async def public_page(service, query):
             'reply_to': reply_to,
             **preview,
         })
-    topology = None
-    if kind == 'users':
+    topology = graph if ids is not None else None
+    if kind == 'users' and ids is None:
         readable = anchor or next(iter(items), None)
         if readable is not None:
             graph = await read(

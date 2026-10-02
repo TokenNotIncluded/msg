@@ -11,7 +11,7 @@ import time
 from dataclasses import replace
 
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import loads, wire
+from msg.core.codec import canonical, loads, wire
 from msg.core.errors import Failure, require
 from msg.core.models import Principal
 from msg.core.planet_layout import fallback_position, planet_layout
@@ -35,6 +35,52 @@ async def public_layout(app, ctx, request, tx):
         }
         tx._planet_public_layout = value
     return value
+
+
+async def public_star_batch(app, ctx, request, tx):
+    """One bounded anonymous snapshot; every summary still checks current ACL."""
+    require(ctx.principal.subject is None, 'public_star_summary_only')
+    projection = await public_layout(app, ctx, request, tx)
+    summaries = {}
+    bounded = projection['topology']['bounded']
+    output_bytes = len(canonical(projection['topology']))
+    output_limit = app.settings.server.limits.max_response_bytes // 2
+    require(output_bytes < output_limit, 'response_too_large')
+    for rid in projection['topology']['nodes']:
+        if time.monotonic() + 0.02 >= ctx.deadline_monotonic:
+            bounded = True
+            break
+        try:
+            summary = await star_projection(app, ctx, request, tx, rid)
+        except Failure as exc:
+            if exc.code == 'query_cost_exceeded':
+                bounded = True
+                break
+            if exc.code in {
+                'permission_denied',
+                'authentication_required',
+                'not_found',
+                'resource_purged',
+                'local_only',
+                'ancestor_inactive',
+                'certificate_gate',
+                'credential_ceiling',
+            }:
+                bounded = True
+                continue
+            raise
+        size = len(canonical({rid: summary}))
+        if output_bytes + size > output_limit:
+            bounded = True
+            break
+        output_bytes += size
+        summaries[rid] = summary
+    return {
+        'topology': projection['topology'],
+        'stars': summaries,
+        'bounded': bounded,
+        'checked_at': wire(ctx.now),
+    }
 
 
 async def post_counts(app, ctx, request, tx):

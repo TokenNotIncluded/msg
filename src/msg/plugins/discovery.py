@@ -412,6 +412,10 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
 
             require(ctx.principal.subject is None, 'public_star_summary_only')
             meta['star_topology'] = (await public_layout(app, ctx, request, tx))['topology']
+        if 'star_batch' in fields:
+            from msg.plugins.star_projection import public_star_batch
+
+            meta['star_batch'] = await public_star_batch(app, ctx, request, tx)
         if ctx.principal.subject == rid and (not fields or 'groups' in fields):
             meta['groups'] = []
             for membership in await tx.memberships(rid):
