@@ -6,34 +6,40 @@ from html import escape
 from urllib.parse import quote
 
 PROFILE_CSS = """
-.profile-surface { margin-top:40px; }
-.profile-heading { position:relative; isolation:isolate; overflow:hidden; min-height:280px; padding:40px 28px; background:#0c1018; color:#f5f5f7; }
-.profile-copy { position:relative; z-index:1; width:calc(100% - 220px); }
-.prose .profile-heading h1 { font-size:clamp(30px,4vw,48px); line-height:1.2; margin:0 0 16px; letter-spacing:-.03em; }
-.prose p.profile-meta { color:#bbc3d0; font-size:13px; margin:0; }
-.profile-social { gap:24px; margin-top:24px; }
-.profile-social a { color:#f5f5f7; font-size:14px; }
+.profile-surface { margin-top:24px; }
+.profile-heading { position:relative; isolation:isolate; overflow:hidden; min-height:216px; padding:32px 0; border-block:1px solid var(--line); background:var(--bg); color:var(--fg); }
+.profile-copy { position:relative; z-index:1; width:calc(100% - 190px); }
+.prose .profile-heading h1 { font:600 clamp(26px,3.5vw,36px)/1.25 var(--mono); margin:0 0 16px; letter-spacing:-.025em; }
+.prose p.profile-meta { color:var(--muted); font:12px/1.8 var(--mono); margin:0; }
+.profile-social { gap:24px; margin-top:18px; }
+.profile-social a { color:var(--fg); font:13px/1.5 var(--mono); }
 .profile-social span { margin-left:6px; font-variant-numeric:tabular-nums; }
 .profile-background { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; z-index:-2; }
-.profile-heading::after { content:""; position:absolute; inset:0; z-index:-1; background:linear-gradient(90deg,#0c1018ed,#0c101866 65%,#0c101822); pointer-events:none; }
-.profile-avatar { position:absolute; right:24px; top:24px; width:210px; height:224px; object-fit:contain; }
-.profile-layout { display:grid; grid-template-columns:minmax(0,1fr) 180px; gap:40px; padding-top:32px; }
+.profile-heading::after { content:""; position:absolute; inset:0; z-index:-1; background:var(--bg); opacity:.78; pointer-events:none; }
+.profile-avatar { position:absolute; right:0; top:16px; width:180px; height:184px; object-fit:contain; }
+.profile-layout { display:grid; grid-template-columns:minmax(0,1fr) 180px; gap:40px; padding-top:8px; }
 .profile-main,.profile-details { min-width:0; }
 .profile-main section { margin:0 0 40px; }
 .profile-posts ul,.profile-details ul { padding:0; list-style:none; }
-.profile-posts li { margin:0 0 24px; }
+.profile-posts li { margin:0; padding:18px 0; border-bottom:1px solid var(--line); }
+.profile-posts li:first-child { padding-top:0; }
 .profile-posts h3 { margin:0 0 8px; font-size:18px; }
 .profile-posts p { color:var(--muted); margin:8px 0; }
-.profile-bio-source,.profile-details { font-size:13px; }
-.profile-ocean { position:relative; margin-top:56px; padding:0; overflow:hidden; background:transparent; }
-.profile-footer { display:block; width:100%; height:200px; object-fit:cover; }
+.profile-bio-source,.profile-details { font:12px/1.8 var(--mono); }
+.profile-details { padding-top:40px; }
+.profile-details details + details { margin-top:20px; }
+.profile-details summary { min-height:44px; display:flex; align-items:center; cursor:pointer; }
+.profile-ocean { position:relative; margin-top:40px; padding:0; overflow:hidden; background:transparent; border-top:1px solid var(--line); }
+.profile-footer { display:block; width:100%; height:120px; object-fit:cover; opacity:.7; }
 @media(max-width:640px) {
- .profile-heading { padding:28px 20px 64px; min-height:260px; }
+ .profile-heading { padding:24px 0; min-height:188px; }
  .profile-copy { width:calc(100% - 100px); }
- .profile-avatar { width:110px; height:150px; right:4px; top:18px; }
+ .profile-avatar { width:100px; height:148px; right:-6px; top:14px; }
  .prose .profile-heading h1 { font-size:clamp(23px,6vw,32px); }
  .profile-social { gap:8px 20px; flex-direction:column; align-items:flex-start; }
- .profile-layout { grid-template-columns:1fr; gap:16px; }
+ .profile-layout { grid-template-columns:1fr; gap:0; }
+ .profile-details { padding-top:0; border-top:1px solid var(--line); }
+ .profile-footer { height:88px; }
 }
 """
 
