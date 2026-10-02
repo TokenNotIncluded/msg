@@ -51,14 +51,20 @@ const latest=value=>{
  base={svg:value.svg,text:value.text};panel.dataset.generation=String(value.generation);
  panel.querySelector('[data-content]').textContent=value.text;panel.querySelector('[data-version]').textContent='版本 / Version '+value.generation;
  if(value.quota)panel.querySelector('[data-quota]').textContent='本小时已用 '+value.quota.hour_count+'/5；今天已用 '+value.quota.day_count+'/20。';
+ else if(panel.dataset.signedIn==='true')panel.querySelector('[data-quota]').textContent='当前会话未能读取个人修改次数，不代表额度已用完；保存时仍会检查限额。';
  art();limits();
 };
 addEventListener('beforeunload',event=>{if(changed().length){event.preventDefault();event.returnValue='';}});
 refresh.addEventListener('click',async()=>{
  if(busy)return;setBusy(true);
  try{const response=await fetch('/_public-board',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(15000)});
- if(!response.ok)throw new Error();latest(await response.json());pending=null;
- status.textContent='已读取最新内容，未修改的部分已同步。你修改过的草稿已保留，请对比上方公共栏后再保存。';
+ if(!response.ok){const result=await response.json();throw new Error(result.error?.code||'request_failed');}
+ const value=await response.json();
+ if(typeof value.svg!=='string'||typeof value.text!=='string'||!Number.isSafeInteger(value.generation)||value.generation<0)throw new Error('invalid_response');
+ latest(value);pending=null;
+ status.textContent=response.headers?.get?.('X-Msg-Public-Fallback')==='credential-ceiling'?
+ '已读取公共内容，草稿已保留。当前会话无权读取个人修改次数，不代表额度已用完。':
+ '已读取最新内容，未修改的部分已同步。你修改过的草稿已保留，请对比上方公共栏后再保存。';
  }catch{status.textContent='读取失败，草稿未变。请稍后再试。';}finally{setBusy(false);}
 });
 
@@ -118,7 +124,7 @@ def html(value=None, account=None, csrf=''):
         f'本小时已用 {own["hour_count"]}/5；今天已用 {own["day_count"]}/20。'
         if own
         else (
-            '本账号的次数暂不可用，保存时仍会检查限额。 / Usage unavailable.'
+            '当前会话未能读取个人修改次数，不代表额度已用完；保存时仍会检查限额。 / Usage unavailable.'
             if account
             else '登录后可编辑；修改次数按账号计算。 / Sign in to edit.'
         )
@@ -164,7 +170,7 @@ def html(value=None, account=None, csrf=''):
 async def response(service, request, execute_packet):
     require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
     require(
-        not request.headers.get('authorization') and not request.headers.get('x-msg-request'),
+        'authorization' not in request.headers and 'x-msg-request' not in request.headers,
         'ambiguous_credentials',
     )
     image = request.url.path.endswith('.svg')
@@ -181,6 +187,17 @@ async def response(service, request, execute_packet):
         'discovery.public_board', {}, service.settings.service_url, source='manual'
     )
     result = await (service.executor.execute(packet) if image else execute_packet(packet))
+    public_fallback = False
+    if (
+        not image
+        and result.error
+        and result.error.code == 'credential_ceiling'
+        and request.scope.get('state', {}).get('msg_browser_credentials')
+    ):
+        # The board is public, but personal quota still requires the original
+        # credential. Re-run the read anonymously without granting new authority.
+        result = await service.executor.execute(packet, entry='network')
+        public_fallback = True
     if result.error:
         raise Failure(result.error.code)
     value = wire(result.data)
@@ -200,5 +217,6 @@ async def response(service, request, execute_packet):
             'Cache-Control': 'private, no-store',
             'Vary': 'Cookie',
             'Content-Length': str(len(body)),
+            **({'X-Msg-Public-Fallback': 'credential-ceiling'} if public_fallback else {}),
         },
     )
