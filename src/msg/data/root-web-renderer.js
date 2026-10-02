@@ -270,6 +270,8 @@
       this.velocity = [0, 0, 0];
       this.yaw = yaw;
       this.pitch = pitch;
+      this.yawRate = 0;
+      this.pitchRate = 0;
       this.bank = 0;
       this.thrust = 0;
       this.boost = false;
@@ -277,21 +279,37 @@
       this.trailClock = 0;
     }
     get speed() { return Math.hypot(...this.velocity); }
-    halt() { this.velocity.fill(0); this.thrust = 0; this.boost = false; this.trail.length = 0; }
-    step(seconds, keys, obstacles = [], reduced = false) {
+    neutral() { this.yawRate = 0; this.pitchRate = 0; this.thrust = 0; this.boost = false; }
+    halt() { this.neutral(); this.velocity.fill(0); this.trail.length = 0; }
+    steer(seconds, input = {}) {
+      const dt = Number.isFinite(seconds) ? clamp(seconds, 0, .04) : 0;
+      if (!dt) return;
+      // Bounded angular acceleration, with attitude stabilization on release.
+      // Integrate each rate analytically once; wire v1 still carries absolute angles.
+      const response = 8, decay = Math.exp(-response * dt);
+      for (const [angle, rate, maxRate] of [['yaw', 'yawRate', 1.15], ['pitch', 'pitchRate', 1]]) {
+        const value = Number.isFinite(input[angle]) ? clamp(input[angle], -1, 1) : 0;
+        const target = -value * maxRate, previous = this[rate];
+        this[angle] += target * dt + (previous - target) * (1 - decay) / response;
+        this[rate] = target + (previous - target) * decay;
+      }
+      this.yaw %= M.TAU;
+      const pitch = clamp(this.pitch, -1.35, 1.35);
+      if (pitch !== this.pitch) this.pitchRate = 0;
+      this.pitch = pitch;
+    }
+    step(seconds, keys, obstacles = [], reduced = false, steering = null) {
       const dt = Number.isFinite(seconds) ? clamp(seconds, 0, .04) : 0;
       if (!dt) return;
       const axis = (positive, negative) => Number(keys.has(positive)) - Number(keys.has(negative));
-      const turn = axis('arrowright', 'arrowleft');
-      this.yaw = (this.yaw - turn * dt * 1.15) % M.TAU;
-      this.pitch = clamp(this.pitch + axis('arrowup', 'arrowdown') * dt, -1.35, 1.35);
+      this.steer(dt, steering || {yaw:axis('arrowright', 'arrowleft'), pitch:axis('arrowup', 'arrowdown')});
       const b = flightBasis(this.yaw, this.pitch);
       const local = [axis('d', 'a'), axis('e', 'q'), -axis('w', 's')];
       const length = Math.max(1, Math.hypot(...local));
       const braking = keys.has(' ') || (reduced && !local.some(Boolean));
       this.boost = !reduced && !braking && keys.has('shift') && local[2] < 0;
       this.thrust = braking ? 0 : -local[2];
-      this.bank = mix(this.bank, reduced ? 0 : clamp(-turn * .4 - local[0] * .18, -.5, .5), 1 - Math.exp(-dt * 7));
+      this.bank = 0;
       const drag = braking ? 12 : .65, damping = Math.exp(-drag * dt);
       const acceleration = braking ? 0 : this.boost ? 115 : 42;
       const limit = this.boost ? 155 : Math.max(65, this.speed * damping);
@@ -433,6 +451,86 @@
       return v.map(n => n * (1 + height));
     }));
   }
+  // Each single-axis stick owns its pointer, so both thumbs can steer together.
+  class FlightStick {
+    constructor(element, {enabled, engage, change, cancel}) {
+      this.element = element; this.axis = element.dataset.flightAxis;
+      this.enabled = enabled; this.engage = engage; this.change = change; this.cancel = cancel;
+      this.pointerId = null; this.keyboard = new Set(); this.value = 0; this.display = 0; this.velocity = 0; this.feedback = 0;
+      element.addEventListener('pointerdown', e => {
+        if (!enabled() || e.button !== 0 || this.pointerId !== null) return;
+        e.preventDefault(); engage(true);
+        const rect = element.getBoundingClientRect(), vertical = this.axis === 'pitch';
+        this.center = vertical ? rect.top + rect.height / 2 : rect.left + rect.width / 2;
+        this.travel = Math.max(1, (vertical ? rect.height : rect.width) / 2 - 23);
+        const coordinate = vertical ? e.clientY : e.clientX;
+        this.grabOffset = e.target.closest?.('[data-stick-thumb]') ? coordinate - (this.center + this.display * this.travel) : 0;
+        this.pointerId = e.pointerId; element.setPointerCapture(e.pointerId);
+        this.move(e);
+      });
+      element.addEventListener('pointermove', e => { if (e.pointerId === this.pointerId) this.move(e); });
+      element.addEventListener('pointerup', e => {
+        if (e.pointerId !== this.pointerId) return;
+        const id = this.pointerId; this.pointerId = null;
+        this.value = 0; this.feedback = 0; change(); this.paint();
+        if (element.hasPointerCapture(id)) element.releasePointerCapture(id);
+      });
+      for (const type of ['pointercancel', 'lostpointercapture']) element.addEventListener(type, e => {
+        if (e.pointerId !== this.pointerId) return;
+        this.reset(); cancel();
+      });
+      element.addEventListener('keydown', e => {
+        if (!enabled() || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+        const key = e.key.toLowerCase(), valid = this.axis === 'pitch' ? ['arrowup', 'arrowdown'] : ['arrowleft', 'arrowright'];
+        if (!valid.includes(key)) return;
+        e.preventDefault(); engage(false); this.keyboard.add(key);
+        this.value = this.keyValue(); change(); this.paint();
+      });
+      element.addEventListener('keyup', e => {
+        if (!this.keyboard.delete(e.key.toLowerCase())) return;
+        e.preventDefault(); this.value = this.keyValue(); change(); this.paint();
+      });
+      element.addEventListener('blur', () => { if (this.keyboard.size) { this.reset(); cancel(); } });
+      this.paint();
+    }
+    get active() { return this.pointerId !== null || this.keyboard.size > 0; }
+    keyValue() {
+      return this.axis === 'pitch' ? Number(this.keyboard.has('arrowup')) - Number(this.keyboard.has('arrowdown'))
+        : Number(this.keyboard.has('arrowright')) - Number(this.keyboard.has('arrowleft'));
+    }
+    move(e) {
+      const coordinate = this.axis === 'pitch' ? e.clientY : e.clientX;
+      this.value = clamp((coordinate - this.center - this.grabOffset) / this.travel, -1, 1);
+      this.display = this.value; this.velocity = 0;
+      this.paint(); this.change();
+    }
+    frame(seconds, keyboardValue = 0) {
+      if (this.pointerId !== null) return;
+      const target = this.keyboard.size ? this.value : keyboardValue, dt = clamp(seconds || 0, 0, .04);
+      this.feedback = target;
+      const error = this.display - target, rate = this.velocity + 18 * error, decay = Math.exp(-18 * dt);
+      this.display = target + (error + rate * dt) * decay;
+      this.velocity = (this.velocity - 18 * rate * dt) * decay;
+      if (Math.abs(this.display - target) < .001 && Math.abs(this.velocity) < .001) { this.display = target; this.velocity = 0; }
+      this.paint();
+    }
+    paint() {
+      this.element.style.setProperty('--stick-position', String(clamp(this.display, -1, 1)));
+      const percent = Math.round((this.active ? this.value : this.feedback) * 100);
+      this.element.classList.toggle('held', this.active || percent !== 0);
+      this.element.setAttribute('aria-valuenow', String(percent));
+      const direction = this.axis === 'pitch' ? (percent > 0 ? '抬头' : '低头') : (percent > 0 ? '右转' : '左转');
+      this.element.setAttribute('aria-valuetext', percent ? direction + ' ' + Math.abs(percent) + '%' : '回中');
+      const output = this.element.parentElement.querySelector('[data-stick-value]');
+      if (output) output.textContent = percent ? direction + ' ' + Math.abs(percent) + '%' : '回中';
+    }
+    reset() {
+      const id = this.pointerId; this.pointerId = null; this.keyboard.clear(); this.value = 0; this.feedback = 0;
+      this.display = 0; this.velocity = 0;
+      if (id !== null && this.element.hasPointerCapture(id)) this.element.releasePointerCapture(id);
+      this.paint();
+    }
+  }
   class UniverseRenderer {
     constructor(canvas, labels, callbacks = {}) {
       this.canvas = canvas;
@@ -453,6 +551,7 @@
       this.keys = new Set();
       this.pointers = new Map();
       this.labelNodes = new Map();
+      this.avatars = globalThis.MSGUniversePlanets?.AvatarLayer ? new globalThis.MSGUniversePlanets.AvatarLayer(labels, {wake:() => this.wake(), now:() => this.callbacks.now?.() ?? Date.now()}) : null;
       this.dirty = true;
       this.reduced = matchMedia("(prefers-reduced-motion: reduce)");
       this.paused = this.reduced.matches;
@@ -485,6 +584,7 @@
       this.homeMesh = null;
       this.flightPointers = new Map();
       this.flightControls = new Map();
+      this.flightSticks = [];
       this.flightHud = document.getElementById('pilot-hud');
       this.flightButton = document.getElementById('pilot-toggle');
       this.nearby = null;
@@ -666,14 +766,15 @@
     }
     stopFlightInput(notifyNetwork = true) {
       this.keys.clear();
-      this.pointers.clear();
+      this.pointers?.clear();
       this.start = null;
       this.flightPointers?.clear();
       this.flightControls?.clear();
-      if (!this.network) this.flight?.halt();
+      for (const stick of this.flightSticks || []) stick.reset();
+      this.flight?.neutral();
       this.gameActions.clear();
       if (notifyNetwork) this.network?.suspend();
-      for (const button of document.querySelectorAll('[data-flight-key]')) button.classList.remove('held');
+      for (const button of document.querySelectorAll?.('[data-flight-key]') || []) button.classList.remove('held');
       // Focusing Inspect must not disable that button between pointerdown and
       // click. Re-resolve its identity when clicked; input cancellation alone
       // does not invalidate the current nearby star.
@@ -710,31 +811,20 @@
         cancelAnimationFrame(this.frame); this.frame = 0;
       });
       document.addEventListener('focusin', e => {
-        if (this.flight && e.target !== canvas) this.stopFlightInput();
+        if (this.flight && e.target !== canvas && !e.target.closest?.('[data-flight-axis]')) this.stopFlightInput();
       });
       canvas.addEventListener('focus', () => { if (this.flight && !document.hidden) this.network?.resume(); });
       canvas.addEventListener('pointerdown', e => {
         if (!this.flight || e.button !== 0) return;
         e.preventDefault(); canvas.focus({ preventScroll: true });
         this.network?.resume();
-        canvas.setPointerCapture(e.pointerId);
-        this.flightPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       });
-      canvas.addEventListener('pointermove', e => {
-        const previous = this.flightPointers.get(e.pointerId);
-        if (!this.flight || !previous) return;
-        this.flight.yaw -= (e.clientX - previous.x) * .004;
-        this.flight.pitch = clamp(this.flight.pitch + (e.clientY - previous.y) * .003, -1.35, 1.35);
-        this.flightPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        this.wake();
-      });
-      for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
-        canvas.addEventListener(type, e => {
-          const held = this.flightPointers.has(e.pointerId);
-          this.flightPointers.delete(e.pointerId);
-          if (type === 'pointercancel' || (type === 'lostpointercapture' && held)) this.stopFlightInput();
-        });
-      }
+      this.flightSticks = [...document.querySelectorAll('[data-flight-axis]')].map(element => new FlightStick(element, {
+        enabled: () => Boolean(this.flight && !document.hidden && (!this.network || this.network.connected && this.network.self?.hp > 0) && !document.querySelector('dialog[open]')),
+        engage: pointer => { if (pointer) canvas.focus({preventScroll:true}); this.network?.resume(); },
+        change: () => { this.sendFlightInput(); this.wake(); },
+        cancel: () => this.stopFlightInput(),
+      }));
       for (const button of document.querySelectorAll('[data-flight-key]')) {
         const key = button.dataset.flightKey;
         const press = (id) => {
@@ -853,13 +943,25 @@
       return { throttle:axis('w', 's'), strafe:axis('d', 'a'), lift:axis('e', 'q'),
         yaw:-this.flight.yaw, pitch:-this.flight.pitch, brake:controlled && keys.has('b') };
     }
+    flightControlled() {
+      return !document.hidden && !document.querySelector?.('dialog[open]') &&
+        (document.activeElement === this.canvas || this.flightControls.size > 0 || this.flightSticks?.some(stick => stick.active));
+    }
+    flightSteering(controlled = true) {
+      const keys = new Set([...this.keys, ...this.flightControls.values()]);
+      const axis = (positive, negative) => Number(keys.has(positive)) - Number(keys.has(negative));
+      const value = name => (this.flightSticks || []).filter(stick => stick.axis === name).reduce((sum, stick) => sum + stick.value, 0);
+      return controlled ? {yaw:clamp(axis('arrowright', 'arrowleft') + value('yaw'), -1, 1),
+        pitch:clamp(axis('arrowup', 'arrowdown') + value('pitch'), -1, 1)} : {yaw:0, pitch:0};
+    }
     sendFlightInput() {
-      if (!this.network?.connected || !this.flight) return;
+      if (!this.network?.connected || !this.flight || this.network.self?.hp <= 0) return;
+      const controlled = this.flightControlled();
       const keys = new Set([...this.keys, ...this.flightControls.values()]);
       const actions = [...this.gameActions];
       if (keys.has(' ')) actions.push('laser');
-      if (actions.includes('laser')) this.previewLaser(false);
-      this.network.setInput({...this.flightIntent(), actions:[...new Set(actions)]});
+      if (controlled && actions.includes('laser')) this.previewLaser(false);
+      this.network.setInput({...this.flightIntent(controlled), actions:controlled ? [...new Set(actions)] : []});
       this.gameActions.clear();
     }
     syncCollectibles(field) {
@@ -896,8 +998,10 @@
       this.homeBody = hello.self.home_body?.private ? hello.self.home_body : null;
       this.homeMesh = this.homeBody ? planetMesh(this.homeBody.id) : null;
       if (this.flight) {
+        this.stopFlightInput(false);
         this.flight.position = [...hello.self.position]; this.flight.velocity = [...hello.self.velocity];
         this.flight.yaw = -hello.self.yaw; this.flight.pitch = -hello.self.pitch;
+        this.flight.neutral();
         this.prediction = new FlightPrediction(hello.self);
       }
       if (this.wantFlight) this.setPilot(true);
@@ -922,8 +1026,14 @@
       if (this.flight && this.network?.self) {
         const ship = this.network.self;
         this.prediction ??= new FlightPrediction(ship);
-        const controlled = document.activeElement === this.canvas || this.flightControls.size > 0;
-        this.prediction.reconcile(ship, reset.has(ship.id), (now - time) / 1000, this.flightIntent(controlled), this.network.limits, now, this.network.gravity);
+        const correction = reset.has(ship.id) || ship.region !== this.prediction.state.region || (ship.hp <= 0) !== (this.prediction.state.hp <= 0);
+        if (correction) {
+          this.stopFlightInput(false);
+          this.flight.yaw = -ship.yaw; this.flight.pitch = -ship.pitch;
+          this.sendFlightInput();
+        }
+        const controlled = this.flightControlled() && ship.hp > 0;
+        this.prediction.reconcile(ship, correction, (now - time) / 1000, this.flightIntent(controlled), this.network.limits, now, this.network.gravity);
         this.flight.position = [...this.prediction.position];
       }
       this.syncCollectibles(snapshot.collectibles);
@@ -948,30 +1058,29 @@
       const bodies = this.graph.nodes.filter(node => node.kind === 'user' || node.kind === 'private')
         .map(node => ({ node, position: node.position, radius: M.appearance(node, now).radius * 1.07 }));
       const keys = new Set([...this.keys, ...this.flightControls.values()]);
+      const controlled = this.flightControlled();
+      const steering = this.flightSteering(controlled);
+      for (const stick of this.flightSticks || []) stick.frame(dt, steering[stick.axis]);
       if (this.network) {
         const ship = this.network.connected && this.network.self;
         if (ship) {
-          const controlled = document.activeElement === this.canvas || this.flightControls.size > 0;
           if (controlled && ship.hp > 0) {
-            flight.yaw -= (Number(keys.has('arrowright')) - Number(keys.has('arrowleft'))) * dt * 1.15;
-            flight.pitch = clamp(flight.pitch - (Number(keys.has('arrowup')) - Number(keys.has('arrowdown'))) * dt, -1.35, 1.35);
+            flight.steer(dt, steering);
             this.sendFlightInput();
-          }
+          } else flight.neutral();
           this.prediction ??= new FlightPrediction(ship);
           if (!dt) this.prediction.reset(ship);
           flight.position = [...this.prediction.step(dt, this.flightIntent(controlled), this.network.limits, this.network.serverNow, this.reduced.matches, this.network.gravity)];
           flight.velocity = [...this.prediction.state.velocity];
           flight.thrust = controlled && ship.hp > 0 ? Number(keys.has('w')) - Number(keys.has('s')) : 0;
           flight.boost = false;
-          const bank = controlled ? -(Number(keys.has('arrowright')) - Number(keys.has('arrowleft'))) * .25 -
-            (Number(keys.has('d')) - Number(keys.has('a'))) * .16 : 0;
-          flight.bank = this.reduced.matches ? 0 : mix(flight.bank, bank, 1 - Math.exp(-dt * 7));
-        } else { flight.thrust = 0; flight.boost = false; }
+          flight.bank = 0;
+        } else { flight.neutral(); }
         for (const remote of this.remoteShips.values()) {
           const sample = remote.track?.sample(this.network.serverNow - 240);
           if (sample) { remote.position = sample.position; remote.yaw = sample.yaw; remote.pitch = sample.pitch; }
         }
-      } else flight.step(dt, keys, bodies, this.reduced.matches);
+      } else flight.step(dt, controlled ? keys : new Set(), bodies, this.reduced.matches, steering);
       const smoothing = this.paused || this.reduced.matches || !dt ? 1 : 1 - Math.exp(-dt * 9);
       // Interpolate angles across the wrap boundary, never via a full rotation.
       const angle = Math.atan2(Math.sin(flight.yaw - this.camera.yaw), Math.cos(flight.yaw - this.camera.yaw));
@@ -1313,6 +1422,7 @@
         this.pointers.clear();
         this.last = 0;
         if (document.hidden) {
+          this.avatars?.clear();
           cancelAnimationFrame(this.frame);
           this.frame = 0;
         } else this.wake();
@@ -1501,7 +1611,7 @@
         const pulse = 1 + (this.paused ? 0 : Math.sin(this.clock * (1 + traits.speed * 8) + traits.phase) * style.pulse);
         points.push(...vertex(p, col, light * pulse * (isStar ? .38 : 1), style.root ? 25 : isStar ? 5.5 : 2.2));
         const projected = this.project(p);
-        if (!selected && !hovered && !style.root && (!projected || projected.scale * style.radius < 3 || detailed >= (this.software ? 24 : 64))) continue;
+        if (!selected && !hovered && !style.root && (!projected || projected.scale * style.radius < 3 || detailed >= (globalThis.MSGUniversePlanets ? this.software || this.width < 700 ? 12 : 24 : this.software ? 24 : 64))) continue;
         detailed++;
         if (isStar) {
           const postRing = node.post_ring;
@@ -1521,7 +1631,11 @@
           const cameraPosition = this.camera.target.map((v, i) => v + b.eye[i] * this.camera.distance);
           const towardEye = unit(cameraPosition.map((v, i) => v - p[i]));
           const sun = style.root ? towardEye : unit(p.map(v => -v));
-          for (const face of traits.mesh) {
+          if (globalThis.MSGUniversePlanets?.appendSurface) globalThis.MSGUniversePlanets.appendSurface(solids, {
+            node, style, clock:this.clock, towardEye, sun, pixelRadius:(projected?.scale ?? 0) * style.radius,
+            software:this.software, mobile:this.width < 700, wake:() => this.wake(),
+          });
+          else for (const face of traits.mesh) {
             const local = face.map(rotate), normal = unit(local[0].map((v, i) => v + local[1][i] + local[2][i]));
             if (dot(normal, towardEye) < -.12) continue;
             const diffuse = Math.max(0, dot(normal, sun));
@@ -1812,6 +1926,8 @@
           el.remove();
           this.labelNodes.delete(id);
         }
+      this.avatars?.update({nodes:this.view.nodes, project:p => this.project(p), width:this.width, height:this.height,
+        focusId:this.focusId, software:this.software, hidden:document.hidden});
     }
     updateShipLabels() {
       const container = document.getElementById('ship-labels');
@@ -1843,6 +1959,6 @@
       for (const [id, label] of this.shipLabels) if (!visible.has(id)) { label.remove(); this.shipLabels.delete(id); }
     }
   }
-  globalThis.MSGUniverseFlight = Object.freeze({ Flight, flightBasis, tokenNebula, tokenLanes, lanePoint, planetMesh, MotionTrack, FlightPrediction, integrateFlight, inertialSegment, gravityAcceleration, planetContact });
+  globalThis.MSGUniverseFlight = Object.freeze({ Flight, FlightStick, flightBasis, tokenNebula, tokenLanes, lanePoint, planetMesh, MotionTrack, FlightPrediction, integrateFlight, inertialSegment, gravityAcceleration, planetContact });
   globalThis.MSGUniverseRenderer = UniverseRenderer;
 })();

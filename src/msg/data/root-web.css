@@ -952,13 +952,14 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 .piloting .switcher { background: transparent; padding: 0; border-radius: 2px; }
 .piloting .switcher button { border-radius: 2px; min-height: 44px; }
 .piloting .topbar, .piloting .flightbar { font-family: var(--mono); }
+.piloting #universe, #universe.piloting { height: 100dvh; min-height: 0; }
 .piloting .topbar .brand b { letter-spacing: -.03em; }
 .piloting #space { cursor: crosshair; }
 .piloting .flightbar { justify-content: center; align-items: center; bottom: max(20px, env(safe-area-inset-bottom)); }
 .piloting .control-capsule { border-radius: 2px; gap: 4px; padding: 4px; border: 1px solid var(--hud-line); background: var(--hud-surface); }
 .piloting .control-capsule button { min-width: 44px; min-height: 44px; border-radius: 2px; font: 12px/1.5 var(--mono); }
 .piloting .status { bottom: max(84px, calc(env(safe-area-inset-bottom) + 72px)); border-radius: 2px; font: 12px/1.7 var(--mono); }
-#pilot-hud { position: absolute; z-index: 4; inset: auto 0 154px; pointer-events: none; color: var(--hud-text); font-family: var(--mono); }
+#pilot-hud { position: absolute; z-index: 4; inset: auto 0 max(80px, calc(env(safe-area-inset-bottom) + 66px)); pointer-events: none; color: var(--hud-text); font-family: var(--mono); }
 .pilot-readout { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 18px; font: 12px/1.5 var(--mono); color: var(--hud-muted); }
 .pilot-readout strong { color: var(--hud-text); font-size: 20px; font-weight: 400; font-variant-numeric: tabular-nums; }
 #pilot-inspect { pointer-events: auto; max-width: min(44vw, 260px); min-height: 44px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 12px var(--mono); background: var(--hud-surface); border-radius: 2px; }
@@ -968,17 +969,34 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 .pilot-reticle::after { width: 1px; height: 12px; left: 8px; top: 2px; }
 #pilot-reticle { display: none; }
 .piloting #pilot-reticle { display: block; }
-.pilot-touch-controls { display: none; }
-[data-flight-key] { min-width: 44px; min-height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; pointer-events: auto; border: 1px solid var(--hud-line); border-radius: 2px; color: var(--hud-text); background: var(--hud-surface); font: 16px var(--mono); padding: 8px; }
+.pilot-touch-controls { display: grid; grid-template-columns: 112px 52px 176px; justify-content: center; align-items: end; gap: 28px; padding: 12px 16px 0; }
+[data-flight-key] { min-width: 44px; min-height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; pointer-events: auto; border: 1px solid var(--hud-line); border-radius: 2px; color: var(--hud-text); background: var(--hud-surface); font: 11px var(--mono); padding: 8px; }
 [data-flight-key].held { color: #111; background: var(--hud-text); }
-.pilot-pad { display: grid; grid-template-columns: repeat(3, 44px); gap: 4px; }
-.pilot-pad .up { grid-column: 2; }
-.pilot-pad .left { grid-column: 1; grid-row: 2; }
-.pilot-pad .down { grid-column: 2; grid-row: 2; }
-.pilot-pad .right { grid-column: 3; grid-row: 2; }
-.pilot-throttle { display: flex; gap: 6px; align-items: flex-end; }
+.pilot-axis { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
+.pilot-axis-label { display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--hud-text); font: 11px/1.4 var(--mono); white-space: nowrap; }
+.pilot-axis-label output, .pilot-axis-direction { color: var(--hud-muted); font: 10px/1.4 var(--mono); font-variant-numeric: tabular-nums; }
+.pilot-axis-label output { min-width: 78px; text-align: center; }
+.pilot-stick { --stick-position: 0; position: relative; display: block; flex: none; padding: 0; color: var(--hud-text); background: var(--hud-surface); border: 1px solid var(--hud-line); border-radius: 8px; pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; }
+.pilot-stick.held { cursor: grabbing; border-color: var(--hud-text); }
+.pilot-stick:focus-visible { outline: 2px solid var(--hud-text); outline-offset: 4px; }
+.pilot-pitch .pilot-stick { width: 58px; height: 132px; }
+.pilot-yaw .pilot-stick { width: 176px; height: 58px; }
+.pilot-stick-rail { position: absolute; background: var(--hud-line); pointer-events: none; }
+.pilot-pitch .pilot-stick-rail { width: 1px; height: calc(100% - 24px); top: 12px; left: 50%; }
+.pilot-yaw .pilot-stick-rail { height: 1px; width: calc(100% - 24px); left: 12px; top: 50%; }
+.pilot-stick-rail::after { content: ''; position: absolute; border: 1px solid var(--hud-muted); width: 8px; height: 8px; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; }
+.pilot-stick-thumb { position: absolute; left: calc(50% - 21px); top: calc(50% - 21px); display: grid; place-items: center; width: 42px; height: 42px; border-radius: 5px; border: 1px solid var(--hud-muted); background: #272b2a; color: var(--hud-text); box-shadow: 0 3px 8px #0006; will-change: transform; }
+.pilot-stick.held .pilot-stick-thumb { background: var(--hud-text); color: #111; border-color: var(--hud-text); }
+.pilot-pitch .pilot-stick-thumb { transform: translateY(calc(var(--stick-position) * 43px)); }
+.pilot-yaw .pilot-stick-thumb { transform: translateX(calc(var(--stick-position) * 65px)); }
+.pilot-stick-thumb svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.pilot-yaw-directions { display: flex; justify-content: space-between; width: 100%; padding-inline: 8px; }
+.pilot-yaw { padding-bottom: 15px; }
+.pilot-throttle { display: flex; flex-direction: column; gap: 5px; align-items: stretch; padding-bottom: 18px; }
+.pilot-throttle > .pilot-axis-label { margin-bottom: 5px; }
 .pilot-throttle [data-flight-key="w"] { background: var(--hud-text); color: #111; }
 .pilot-throttle [data-flight-key="w"].held { background: #fff; }
+.pilot-steering-note { margin: 10px 12px 0; text-align: center; color: var(--hud-muted); font: 10px/1.5 var(--mono); }
 
 #game-hud { position: absolute; z-index: 4; top: 100px; left: var(--hud-edge); width: min(410px, calc(100% - 48px)); color: var(--hud-text); font: 12px/1.7 var(--mono); pointer-events: none; }
 .game-session { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-bottom: 12px; }
@@ -1008,7 +1026,7 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 .pilot-reticle:is([data-combat="hit"], [data-combat="kill"])::after { height: 18px; top: -1px; transform: rotate(45deg); }
 .pilot-reticle:is([data-combat="damaged"], [data-combat="destroyed"]) { outline: 1px solid var(--hud-text); outline-offset: 6px; }
 #game-respawn { margin-top: 12px; color: var(--hud-warning); }
-#game-actions { position: absolute; z-index: 5; left: 50%; bottom: max(86px, calc(env(safe-area-inset-bottom) + 72px)); transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; font-family: var(--mono); }
+#game-actions { position: absolute; z-index: 5; left: auto; right: max(32px, env(safe-area-inset-right)); top: 116px; display: flex; gap: 8px; pointer-events: auto; font-family: var(--mono); }
 .game-action { position: relative; display: grid; grid-template-columns: auto auto; align-items: baseline; gap: 4px 12px; min-width: 92px; min-height: 48px; padding: 10px 12px; border: 1px solid var(--hud-line); border-radius: 2px; background: var(--hud-surface); color: var(--hud-text); text-align: left; font: 12px/1.5 var(--mono); touch-action: manipulation; }
 .game-action:hover:not(:disabled):not([data-active="true"]), .game-action:focus-visible { background: #202020; }
 .game-action:disabled { opacity: 1; color: var(--hud-muted); cursor: default; border-color: #303030; }
@@ -1043,7 +1061,7 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
   #game-hud { top: 122px; width: calc(100% - 32px); }
   .game-session { justify-content: space-between; gap: 4px 12px; margin-bottom: 8px; }
   .game-vitals { max-width: 260px; gap: 8px 24px; }
-  #game-actions { left: auto; right: max(16px, env(safe-area-inset-right)); bottom: max(238px, calc(env(safe-area-inset-bottom) + 222px)); transform: none; gap: 6px; }
+  #game-actions { left: auto; top: auto; right: max(16px, env(safe-area-inset-right)); bottom: max(352px, calc(env(safe-area-inset-bottom) + 338px)); transform: none; gap: 6px; }
   .game-action { min-width: 62px; min-height: 48px; padding: 8px; grid-template-columns: 1fr; gap: 2px; text-align: center; }
   .game-action kbd { display: none; }
   .game-combat-controls { gap: 6px; }
@@ -1051,7 +1069,9 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
   .pilot-readout { justify-content: flex-start; padding-inline: 16px; gap: 12px; }
   .pilot-readout strong { font-size: 16px; }
   #pilot-inspect { max-width: calc(100% - 110px); background: transparent; padding-inline: 0; }
-  .pilot-touch-controls { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; padding: 10px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+  .pilot-touch-controls { grid-template-columns: minmax(64px, 1fr) 44px minmax(122px, 1fr); gap: 12px; justify-content: stretch; padding: 10px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+  .pilot-yaw .pilot-stick { width: 122px; }
+  .pilot-yaw .pilot-stick-thumb { transform: translateX(calc(var(--stick-position) * 38px)); }
   .game-key-legend { display: none; }
   .piloting .flightbar { left: 16px; right: 16px; bottom: max(16px, env(safe-area-inset-bottom)); display: flex; gap: 0; }
   .piloting .control-capsule { gap: 2px; }
@@ -1076,7 +1096,14 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
   .piloting .status { top: 206px; }
   #pilot-hud { bottom: max(64px, calc(env(safe-area-inset-bottom) + 50px)); }
   .pilot-readout { justify-content: flex-end; padding-right: 18px; }
-  .pilot-touch-controls { padding-top: 4px; }
+  .pilot-touch-controls { grid-template-columns: 112px 156px 176px; justify-content: space-between; align-items: end; padding-top: 4px; }
+  .pilot-pitch .pilot-stick { height: 96px; }
+  .pilot-pitch .pilot-stick-thumb { transform: translateY(calc(var(--stick-position) * 25px)); }
+  .pilot-yaw .pilot-stick { width: 176px; }
+  .pilot-yaw .pilot-stick-thumb { transform: translateX(calc(var(--stick-position) * 65px)); }
+  .pilot-throttle { display: grid; grid-template-columns: repeat(3, 44px); gap: 5px; padding-bottom: 32px; }
+  .pilot-throttle > .pilot-axis-label { grid-column: 1 / -1; }
+  .pilot-steering-note { display: none; }
   #game-actions { bottom: auto; top: 72px; right: 16px; }
   .piloting .flightbar { bottom: max(8px, env(safe-area-inset-bottom)); }
   #region-map { top: 16px; bottom: 16px; max-width: 720px; }

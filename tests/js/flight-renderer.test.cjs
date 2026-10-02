@@ -110,6 +110,38 @@ test('new hello reanchors an existing ship to server spawn and orientation', () 
   assert.deepEqual(r.flight.position, [200,50,10]); assert.equal(r.flight.yaw, -.7); assert.equal(r.flight.pitch, -.2);
   assert.equal(r.homeBody.private, true);
 });
+test('offline and online steering integrate once and send the same attitude through wire v1', () => {
+  const online = renderer(), offline = renderer(); offline.network = null;
+  online.keys.add('arrowup'); online.keys.add('arrowright');
+  offline.keys = new Set(online.keys);
+  globalThis.document.activeElement = online.canvas;
+  for (let i = 0; i < 60; i++) {
+    globalThis.document.activeElement = online.canvas; online.updateFlight(1 / 60);
+    globalThis.document.activeElement = offline.canvas; offline.updateFlight(1 / 60);
+  }
+  assert.equal(online.flight.yaw, offline.flight.yaw); assert.equal(online.flight.pitch, offline.flight.pitch);
+  assert.equal(online.network.input.yaw, -online.flight.yaw); assert.equal(online.network.input.pitch, -online.flight.pitch);
+  assert.equal(online.flight.bank, 0); assert.equal(offline.flight.bank, 0);
+});
+test('authoritative region or respawn resets attitude and held steering without integrating an old angle', () => {
+  const r = renderer(); r.updateFlight(0); r.keys.add('arrowright'); r.flight.steer(.04, {yaw:1});
+  r.pointers = new Map(); r.flightPointers = new Map(); r.flightSticks = [];
+  globalThis.document.querySelectorAll = () => [];
+  r.network.self = {...self(), position:[100,0,0], yaw:1.3, pitch:.4, region:2};
+  r.receiveFlightSnapshot({players:[r.network.self], events:[{id:'jump',type:'region',player_id:r.network.self.id,at_ms:1000}]});
+  assert.equal(r.flight.yaw, -1.3); assert.equal(r.flight.pitch, -.4); assert.equal(r.flight.yawRate, 0);
+  assert.equal(r.keys.size, 0); assert.equal(r.prediction.state.region, 2);
+});
+test('a modal neutralizes flight axes and fire without rotating or changing authoritative velocity', () => {
+  const r = renderer(); r.keys = new Set(['w','arrowup',' ']);
+  globalThis.document.querySelector = () => ({});
+  const yaw = r.flight.yaw, pitch = r.flight.pitch;
+  r.updateFlight(.02); r.sendFlightInput();
+  assert.equal(r.flight.yaw, yaw); assert.equal(r.flight.pitch, pitch); assert.equal(r.flight.thrust, 0);
+  assert.equal(r.network.input.throttle, 0); assert.deepEqual(r.network.input.actions, []);
+  assert.equal(r.localShot, undefined);
+  delete globalThis.document.querySelector;
+});
 
 test('shared bitmap removes every glyph from GPU/software dust only after confirmation and restores availability', () => {
   const r=renderer(); r.sceneSeed='preview'; r.tokenNodes=new Map();
