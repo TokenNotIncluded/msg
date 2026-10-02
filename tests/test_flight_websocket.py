@@ -302,6 +302,12 @@ async def test_network_private_identity_and_home_are_never_disclosed_to_peers(fl
         home['position'][1] + 7,
         home['position'][2],
     ])
+    assert len(secret['gravity']['wells']) <= 256
+    assert all(well['id'] not in {subject, home['id']} for well in secret['gravity']['wells'])
+    assert all(
+        anchor['id'] not in {subject, home['id']}
+        for anchor in secret['collectibles'].get('anchors', [])
+    )
     peer_view = await snapshot(guest, lambda body: player(body, secret['self']['id']) is not None)
     encoded = json.dumps(peer_view)
     assert subject not in encoded and 'oauth-owner' not in encoded
@@ -584,6 +590,7 @@ async def test_network_profile_visibility_changes_rekey_home_and_preserve_battle
     signed, public = await flight.join(cookie=cookie)
     guest, anonymous = await flight.join()
     signed_id, guest_id = public['self']['id'], anonymous['self']['id']
+    assert subject in {well['id'] for well in public['gravity']['wells']}
     sector = (public['self']['region'] + 1) % 19
     await signed.send_json({'v': 1, 'type': 'region', 'region': sector})
     if anonymous['self']['region'] != sector:
@@ -633,6 +640,10 @@ async def test_network_profile_visibility_changes_rekey_home_and_preserve_battle
     hidden = await snapshot(guest, lambda body: player(body, private_id) is not None)
     assert subject not in json.dumps(hidden) and 'oauth-owner' not in json.dumps(hidden)
     assert player(hidden, signed_id) is None
+    assert subject not in {well['id'] for well in hidden['gravity']['wells']}
+    assert subject not in {anchor['id'] for anchor in hidden['collectibles'].get('anchors', [])}
+    assert hidden['collectibles']['seed'] != public['collectibles']['seed']
+    assert hidden['collectibles']['revision'] == 0
     async with app.metadata.transaction(write=False) as tx:
         generation = (await tx.resource(subject)).generation
     restored = await call(

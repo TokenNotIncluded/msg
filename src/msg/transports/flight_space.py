@@ -17,9 +17,11 @@ from urllib.parse import urlsplit
 
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-from msg.core.codec import canonical, loads
+from msg.constants import ROOT_SUBJECT
+from msg.core.codec import canonical, loads, wire
 from msg.core.errors import Failure, require
 from msg.core.models import ExecutionContext, Principal
+from msg.core.planet_layout import planet_layout
 from msg.core.requests import request_for
 from msg.plugins.discovery import visible
 from msg.security.oauth import OAuthService
@@ -29,7 +31,14 @@ from msg.transports.flight_simulation import (
     COAST_DRAG,
     CRUISE_SPEED,
     DASH_ACCELERATION,
+    FUEL_BURN_RATE,
+    FUEL_EMERGENCY_REGEN_RATE,
+    FUEL_REGEN_RATE,
+    GRAVITY_MAX_ACCELERATION,
+    GRAVITY_SOFTENING,
+    GRAVITY_STRENGTH,
     MAX_SPEED,
+    SHIP_RADIUS,
     STOP_SPEED,
     THRUST_ACCELERATION,
     FlightWorld,
@@ -86,6 +95,61 @@ class FlightHub:
         self.closed = False
         self.next_auth_check = 0.0
         self.auth_slots = asyncio.Semaphore(8)
+        self.geometry_lock = asyncio.Lock()
+        self.next_geometry_check = 0.0
+        self.geometry_initialized = False
+
+    async def _refresh_geometry(self):
+        """Freeze one public room layout, rebuilding on an ACL removal or empty room.
+
+        Geometry uses an anonymous existing read projection; private home points
+        never become shared wells or token anchors. Rebuilds use a new field seed
+        and mask, so a collected glyph ID cannot migrate to another position.
+        """
+        from msg.transports.flight_collectibles import CollectibleField
+        from msg.transports.universe import HIDDEN
+
+        async with self.geometry_lock:
+            now = time.monotonic()
+            if (
+                self.geometry_initialized
+                and self.world.active_count
+                and now < self.next_geometry_check
+            ):
+                return
+            request = request_for(
+                'discovery.get',
+                {'id': ROOT_SUBJECT, 'fields': ['star_topology']},
+                self.service.settings.service_url,
+                source='manual',
+            )
+            result = await self.service.executor.execute(request)
+            if result.error:
+                if result.error.code not in HIDDEN:
+                    raise Failure(result.error.code)
+                graph = {'nodes': [], 'edges': []}
+            else:
+                graph = wire(result.data)['star_topology']
+            current_ids = set(graph['nodes'])
+            rebuild = (
+                not self.geometry_initialized
+                or not self.world.active_count
+                or any(well.id not in current_ids for well in self.world.gravity_wells)
+            )
+            if rebuild:
+                layout = planet_layout(graph['nodes'], graph['edges'])
+                records = [
+                    {
+                        'id': rid,
+                        'position': layout[rid]['position'],
+                        'radius': 5.4 if rid == ROOT_SUBJECT else 2.05,
+                    }
+                    for rid in sorted(layout, key=lambda rid: (rid != ROOT_SUBJECT, rid))[:256]
+                ]
+                self.world.set_gravity_wells(records)
+                self.world.collectibles = CollectibleField(anchors=records[:64])
+            self.geometry_initialized = True
+            self.next_geometry_check = now + REVALIDATE_SECONDS
 
     def _reserve(self, websocket):
         require(not self.closed and len(self.peers) < MAX_CLIENTS, 'server_busy')
@@ -277,6 +341,7 @@ class FlightHub:
                         await self._public_identity(tx, subject) == peer.public_identity,
                         'invalid_grant',
                     )
+            await self._refresh_geometry()
             ship, resume = self.world.join(identity, resume=resume if identity['guest'] else None)
             peer.ship_id = ship.id
             own = ship.wire()
@@ -305,6 +370,7 @@ class FlightHub:
                     'server_time_ms': snapshot['server_time_ms'],
                     'state_time_ms': snapshot['state_time_ms'],
                     'collectibles': self.world.collectibles.descriptor(self.world.clock()),
+                    'gravity': self.world.gravity_descriptor(),
                     'tick_hz': TICK_HZ,
                     'limits': {
                         'max_players': MAX_CLIENTS,
@@ -325,6 +391,13 @@ class FlightHub:
                         'stop_speed': STOP_SPEED,
                         'dash_seconds': 1,
                         'input_timeout_ms': 500,
+                        'fuel_burn_rate': FUEL_BURN_RATE,
+                        'fuel_regen_rate': FUEL_REGEN_RATE,
+                        'fuel_emergency_regen_rate': FUEL_EMERGENCY_REGEN_RATE,
+                        'gravity_strength': GRAVITY_STRENGTH,
+                        'gravity_softening': GRAVITY_SOFTENING,
+                        'gravity_max_acceleration': GRAVITY_MAX_ACCELERATION,
+                        'ship_radius': SHIP_RADIUS,
                     },
                 },
             )
@@ -492,6 +565,7 @@ class FlightHub:
                 # the clock; each socket has its own bounded writer queue.
                 await self._validate(identities=identities)
                 if identities:
+                    await self._refresh_geometry()
                     self.next_auth_check = now + REVALIDATE_SECONDS
                 for peer in tuple(self.peers.values()):
                     if peer.ship_id:

@@ -532,3 +532,36 @@ test('backpressure reconnect rebinds seed and bitmap without stale pickups or re
   assert.equal(b.hellos.at(-1).collectibles.seed,'1'.repeat(32)); assert.equal(b.client.self.collected,12);
   b.clock.advance(50); assert.equal('collected' in next.sent.at(-1),false);
 });
+
+const gravityFrame = () => ({version:1,wells:[{id:'u_root',position:[0,0,0],radius:5.4,influence:43.2}]});
+const highway = (changes = {}) => field({version:2,radius:8,layout_version:1,
+  anchors:[{id:'u_root',position:[0,0,0],radius:5.4},{id:'u_public',position:[100,0,0],radius:2.05}],...changes});
+test('public wells and highway geometry are bounded immutable records and follow a new field seed', () => {
+  const b=browser(),ws=b.join(hello({gravity:gravityFrame(),collectibles:highway({revision:9})}));
+  assert.equal(b.client.connected,true); assert.ok(Object.isFrozen(b.client.gravity.wells[0].position));
+  ws.receive(snapshot({gravity:gravityFrame(),collectibles:highway({seed:'1'.repeat(32)})}));
+  assert.equal(b.client.connected,true); assert.equal(b.client.snapshot.collectibles.revision,0);
+  assert.equal(b.client.snapshot.collectibles.seed,'1'.repeat(32));
+  assert.ok(Object.isFrozen(b.client.snapshot.collectibles.anchors[1].position));
+  ws.receive(snapshot({tick:2,server_time_ms:BASE_TIME+200,gravity:{version:1,wells:[]},
+    collectibles:field({seed:'2'.repeat(32),radius:8})}));
+  assert.equal(b.client.connected,true); assert.equal(b.client.gravity.wells.length,0);
+  assert.equal(b.client.snapshot.collectibles.version,1);
+});
+test('same-seed geometry migration and private metadata cannot enter shared wells or anchors', () => {
+  for (const bad of [highway({layout_version:2}),highway({anchors:Array(65).fill(highway().anchors[0])}),
+    highway({anchors:[...highway().anchors.slice(0,1),{...highway().anchors[1],private:true}]}),
+    highway({anchors:[{id:'u_root',position:[401,0,0],radius:5.4},highway().anchors[1]]})]) {
+    const b=browser(); b.join(hello({collectibles:bad})); assert.equal(b.client.connected,false);
+  }
+  for (const wells of [[{...gravityFrame().wells[0],private:true}],Array(257).fill(gravityFrame().wells[0]),
+    [{...gravityFrame().wells[0],influence:100}]]) {
+    const b=browser(); b.join(hello({gravity:{version:1,wells}})); assert.equal(b.client.connected,false);
+  }
+  const b=browser(),ws=b.join(hello({collectibles:highway()}));
+  ws.receive(snapshot({collectibles:highway({anchors:[highway().anchors[0],
+    {...highway().anchors[1],position:[101,0,0]}]})}));
+  assert.equal(b.client.connected,false);
+  const c=browser(),socket=c.join(hello({gravity:gravityFrame()}));
+  socket.receive(snapshot()); assert.equal(c.client.connected,false);
+});

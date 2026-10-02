@@ -12,7 +12,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 
-from msg.transports.flight_collectibles import CollectibleField
+from msg.transports.flight_collectibles import CELL_SIZE as COLLECTIBLE_CELL_SIZE, CollectibleField
 
 TICK_SECONDS = 1 / 15
 WORLD_RADIUS = 480.0
@@ -26,6 +26,16 @@ DASH_ACCELERATION = 96.0
 COAST_DRAG = 0.32
 BRAKE_ACCELERATION = 48.0
 STOP_SPEED = 0.12
+FUEL_BURN_RATE = 1.5
+FUEL_REGEN_RATE = 6.0
+FUEL_EMERGENCY_REGEN_RATE = 2.0
+GRAVITY_STRENGTH = 8.0
+GRAVITY_SOFTENING = 8.0
+GRAVITY_MAX_ACCELERATION = 8.0
+SHIP_RADIUS = 1.2
+MAX_GRAVITY_WELLS = 256
+GRAVITY_CELL_SIZE = 48.0
+SURFACE_MARGIN = 0.02
 _MASK = 0xFFFFFFFF
 _RANDOM = secrets.SystemRandom()
 
@@ -162,6 +172,115 @@ def _inertial_segment(velocity, delta, target=None, acceleration=0.0):
     return next_velocity, movement
 
 
+@dataclass(frozen=True, slots=True)
+class GravityWell:
+    id: str
+    position: tuple[float, float, float]
+    radius: float
+
+    @property
+    def influence(self):
+        return max(36.0, self.radius * 8)
+
+    def wire(self):
+        return {
+            'id': self.id,
+            'position': list(self.position),
+            'radius': self.radius,
+            'influence': self.influence,
+        }
+
+
+def gravity_acceleration(position, wells):
+    """Softened local attraction; a bounded sum cannot overpower normal thrust."""
+    acceleration = [0.0, 0.0, 0.0]
+    for well in wells:
+        offset = [well.position[axis] - position[axis] for axis in range(3)]
+        distance = math.hypot(*offset)
+        if distance < 1e-8 or distance >= well.influence:
+            continue
+        strength = (
+            min(
+                GRAVITY_STRENGTH,
+                GRAVITY_STRENGTH * (well.radius + GRAVITY_SOFTENING) ** 2 / max(distance**2, 0.01),
+            )
+            * (1 - distance / well.influence) ** 2
+        )
+        for axis in range(3):
+            acceleration[axis] += offset[axis] / distance * strength
+    magnitude = math.hypot(*acceleration)
+    if magnitude > GRAVITY_MAX_ACCELERATION:
+        acceleration = [value * GRAVITY_MAX_ACCELERATION / magnitude for value in acceleration]
+    return acceleration
+
+
+def planet_contact(start, end, velocity, wells):
+    """Sweep to the first surface and preserve tangential/outward escape motion."""
+    beginning = list(start)
+    for well in wells:
+        offset = [beginning[axis] - well.position[axis] for axis in range(3)]
+        distance = math.hypot(*offset)
+        boundary = well.radius + SHIP_RADIUS + SURFACE_MARGIN
+        if distance < boundary:
+            normal = [value / distance for value in offset] if distance > 1e-8 else [0.0, 1.0, 0.0]
+            correction = [
+                well.position[axis] + normal[axis] * boundary - beginning[axis] for axis in range(3)
+            ]
+            beginning = [beginning[axis] + correction[axis] for axis in range(3)]
+            end = [end[axis] + correction[axis] for axis in range(3)]
+            inward = sum(velocity[axis] * normal[axis] for axis in range(3))
+            if inward < 0:
+                velocity = [velocity[axis] - normal[axis] * inward for axis in range(3)]
+    movement = [end[axis] - beginning[axis] for axis in range(3)]
+    length_squared = sum(value * value for value in movement)
+    first = None
+    if length_squared > 1e-12:
+        for well in wells:
+            offset = [beginning[axis] - well.position[axis] for axis in range(3)]
+            along = sum(offset[axis] * movement[axis] for axis in range(3))
+            boundary = well.radius + SHIP_RADIUS
+            discriminant = along**2 - length_squared * (
+                sum(value * value for value in offset) - boundary**2
+            )
+            if along >= 0 or discriminant < 0:
+                continue
+            fraction = (-along - math.sqrt(discriminant)) / length_squared
+            if 0 <= fraction <= 1 and (first is None or fraction < first[0]):
+                first = (fraction, well)
+    if first is not None:
+        fraction, well = first
+        touch = [beginning[axis] + movement[axis] * fraction for axis in range(3)]
+        offset = [touch[axis] - well.position[axis] for axis in range(3)]
+        distance = math.hypot(*offset)
+        normal = [value / max(distance, 1e-8) for value in offset]
+        end = [
+            well.position[axis] + normal[axis] * (well.radius + SHIP_RADIUS + SURFACE_MARGIN)
+            for axis in range(3)
+        ]
+        inward = sum(velocity[axis] * normal[axis] for axis in range(3))
+        if inward < 0:
+            velocity = [velocity[axis] - normal[axis] * inward for axis in range(3)]
+    # Resolve the contact margin too: gravity cannot leave a parked ship sinking
+    # a fraction of a tick into the surface. Repeat for nearby overlapping bodies.
+    for _ in range(4):
+        corrected = False
+        for well in wells:
+            offset = [end[axis] - well.position[axis] for axis in range(3)]
+            distance = math.hypot(*offset)
+            boundary = well.radius + SHIP_RADIUS + SURFACE_MARGIN
+            if distance >= boundary - 1e-9:
+                continue
+            normal = [value / distance for value in offset] if distance > 1e-8 else [0.0, 1.0, 0.0]
+            end = [well.position[axis] + normal[axis] * boundary for axis in range(3)]
+            inward = sum(velocity[axis] * normal[axis] for axis in range(3))
+            if inward < 0:
+                velocity = [velocity[axis] - normal[axis] * inward for axis in range(3)]
+            corrected = True
+        if not corrected:
+            break
+    return end, velocity
+
+
 @dataclass(slots=True)
 class Ship:
     id: str
@@ -271,6 +390,53 @@ class FlightWorld:
         self.tick = 0
         self.regions = region_centers()
         self.collectibles = CollectibleField() if collectibles is None else collectibles
+        self.gravity_wells: tuple[GravityWell, ...] = ()
+        self._gravity_cells = {}
+        self._gravity_ready = False
+
+    def set_gravity_wells(self, records):
+        if not isinstance(records, (list, tuple)) or len(records) > MAX_GRAVITY_WELLS:
+            raise ValueError('invalid_gravity_wells')
+        wells = []
+        seen = set()
+        for value in records:
+            if (
+                not isinstance(value, dict)
+                or set(value) != {'id', 'position', 'radius'}
+                or not isinstance(value['id'], str)
+                or not 1 <= len(value['id']) <= 160
+                or value['id'] in seen
+                or not _vector(value['position'])
+                or math.hypot(*value['position']) > 400.000001
+                or not _number(value['radius'])
+                or not 1 <= value['radius'] <= 6
+            ):
+                raise ValueError('invalid_gravity_wells')
+            seen.add(value['id'])
+            wells.append(GravityWell(value['id'], tuple(value['position']), float(value['radius'])))
+        cells = {}
+        for well in wells:
+            key = tuple(math.floor(value / GRAVITY_CELL_SIZE) for value in well.position)
+            cells.setdefault(key, []).append(well)
+        self.gravity_wells = tuple(wells)
+        self._gravity_cells = cells
+        self._gravity_ready = True
+
+    def _near_wells(self, ship):
+        cell = [math.floor(value / GRAVITY_CELL_SIZE) for value in ship.position]
+        wells = []
+        for x in range(cell[0] - 1, cell[0] + 2):
+            for y in range(cell[1] - 1, cell[1] + 2):
+                for z in range(cell[2] - 1, cell[2] + 2):
+                    wells.extend(self._gravity_cells.get((x, y, z), ()))
+        if self._gravity_ready and ship.subject_id and ship.public_subject_id is None:
+            home = list(ship.spawn_position)
+            home[1] -= 7
+            wells.append(GravityWell('flight_home_' + ship.id, tuple(home), 3.0))
+        return wells
+
+    def gravity_descriptor(self):
+        return {'version': 1, 'wells': [well.wire() for well in self.gravity_wells]}
 
     @property
     def active_count(self):
@@ -288,6 +454,9 @@ class FlightWorld:
         self._last_step = float(self.clock())
         self._simulated_at = self._last_step
         self.collectibles.clear()
+        self.gravity_wells = ()
+        self._gravity_cells.clear()
+        self._gravity_ready = False
 
     def _ms(self, now):
         return int(self._epoch_offset_ms + now * 1000)
@@ -645,7 +814,6 @@ class FlightWorld:
                 now,
                 *(at for at in (ship._dash_until - 1, ship._dash_until) if start < at < now),
             })
-            movement = [0.0, 0.0, 0.0]
             for begin, end in zip(boundaries, boundaries[1:], strict=False):
                 duration = end - begin
                 dashing = ship._dash_until - 1 <= (begin + end) / 2 < ship._dash_until
@@ -654,8 +822,9 @@ class FlightWorld:
                     ship.velocity, travel = _inertial_segment(
                         ship.velocity, duration, [0.0, 0.0, 0.0], BRAKE_ACCELERATION
                     )
+                    ship.fuel = min(100.0, ship.fuel + FUEL_REGEN_RATE * duration)
                 elif thrust is not None and ship.fuel > 0:
-                    powered = min(duration, ship.fuel / 8)
+                    powered = min(duration, ship.fuel / FUEL_BURN_RATE)
                     magnitude = max(1.0, math.hypot(*thrust))
                     speed = MAX_SPEED if dashing else CRUISE_SPEED
                     target = [component / magnitude * speed for component in thrust]
@@ -665,15 +834,33 @@ class FlightWorld:
                         target,
                         DASH_ACCELERATION if dashing else THRUST_ACCELERATION,
                     )
-                    ship.fuel = max(0.0, ship.fuel - powered * 8)
+                    ship.fuel = max(0.0, ship.fuel - powered * FUEL_BURN_RATE)
                     ship._last_activity = now
                     if powered < duration:
                         ship.velocity, coast = _inertial_segment(ship.velocity, duration - powered)
                         travel = [travel[axis] + coast[axis] for axis in range(3)]
+                        ship.fuel = min(
+                            100.0, ship.fuel + FUEL_EMERGENCY_REGEN_RATE * (duration - powered)
+                        )
                 else:
                     ship.velocity, travel = _inertial_segment(ship.velocity, duration)
-                movement = [movement[axis] + travel[axis] for axis in range(3)]
-            ship.position = [ship.position[axis] + movement[axis] for axis in range(3)]
+                    rate = FUEL_EMERGENCY_REGEN_RATE if thrust is not None else FUEL_REGEN_RATE
+                    ship.fuel = min(100.0, ship.fuel + rate * duration)
+                wells = self._near_wells(ship)
+                if not brake:
+                    gravity = gravity_acceleration(ship.position, wells)
+                    travel = [travel[axis] + gravity[axis] * duration**2 / 2 for axis in range(3)]
+                    ship.velocity = [
+                        ship.velocity[axis] + gravity[axis] * duration for axis in range(3)
+                    ]
+                    speed = math.hypot(*ship.velocity)
+                    if speed > MAX_SPEED:
+                        ship.velocity = [value * MAX_SPEED / speed for value in ship.velocity]
+                target_position = [ship.position[axis] + travel[axis] for axis in range(3)]
+                target_position, ship.velocity = planet_contact(
+                    ship.position, target_position, ship.velocity, wells
+                )
+                ship.position = target_position
             radius = math.hypot(*ship.position)
             if radius > WORLD_RADIUS:
                 normal = [value / radius for value in ship.position]
@@ -691,8 +878,11 @@ class FlightWorld:
                 idle = max(ship._stationary_since, ship._last_activity)
                 if now - idle > 2:
                     ship.hp = min(100.0, ship.hp + 3 * delta)
-                    ship.fuel = min(100.0, ship.fuel + 8 * delta)
-            glyph_ids = self.collectibles.collect(old_position, ship.position, now)
+            glyph_ids = (
+                self.collectibles.collect(old_position, ship.position, now)
+                if math.dist(old_position, ship.position) <= COLLECTIBLE_CELL_SIZE
+                else []
+            )
             if glyph_ids:
                 fuel_added = min(100 - ship.fuel, 4 * len(glyph_ids))
                 ship.fuel += fuel_added
@@ -751,5 +941,6 @@ class FlightWorld:
             'events': [_event_wire(event) for _, _, event in list(self._events)[-64:]],
             'total_players': len(self.active),
             'region_counts': counts,
-            'collectibles': self.collectibles.snapshot(now, self._ms),
+            'collectibles': self.collectibles.descriptor(now, self._ms),
+            'gravity': self.gravity_descriptor(),
         }

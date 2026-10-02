@@ -44,16 +44,45 @@
         count % 8 && result.at(-1) >>> (count % 8)) return null;
     return Object.freeze(result);
   }
-  function collectibles(value, hello = false) {
-    if (!object(value) || value.version !== 1 || !integer(value.revision, 0)) return null;
+  function body(value, well = false) {
+    if (!object(value) || Object.keys(value).some(key => !['id', 'position', 'radius', ...(well ? ['influence'] : [])].includes(key)) ||
+        !text(value.id, 160) || !/^[A-Za-z0-9_-]+$/.test(value.id) || !vector(value.position, 400) ||
+        Math.hypot(...value.position) > 400.000001 || !finite(value.radius, 1, 6) ||
+        (well && value.influence !== Math.max(36, value.radius * 8))) return null;
+    return Object.freeze({ id: value.id, position: frozenVector(value.position), radius: value.radius,
+      ...(well ? { influence: value.influence } : {}) });
+  }
+  function gravity(value) {
+    if (!object(value) || value.version !== 1 || !Array.isArray(value.wells) || value.wells.length > 256) return null;
+    const wells = value.wells.map(item => body(item, true));
+    if (wells.some(item => !item) || new Set(wells.map(item => item.id)).size !== wells.length) return null;
+    return Object.freeze({ version: 1, wells: Object.freeze(wells) });
+  }
+  function fieldGeometry(value) {
+    return JSON.stringify([value.version, value.seed, value.count, value.radius, value.fuel,
+      value.respawn_ms, value.layout_version, value.anchors]);
+  }
+  function collectibles(value, hello = false, previous = null) {
+    if (!object(value) || ![1, 2].includes(value.version) || !integer(value.revision, 0)) return null;
     const mask = collectibleMask(value.taken);
     if (!mask) return null;
-    const result = { version: 1, revision: value.revision, mask };
-    if (hello) {
+    const result = { version: value.version, revision: value.revision, mask };
+    if (hello || value.version === 2 || value.seed !== undefined) {
       if (value.count !== 2300 || typeof value.seed !== 'string' || !/^[a-f0-9]{32}$/.test(value.seed) ||
           !finite(value.radius, .1, 12) || !finite(value.fuel, 0, 100) || !integer(value.respawn_ms, 1000, 3600000)) return null;
       Object.assign(result, { seed: value.seed, count: value.count, radius: value.radius, fuel: value.fuel, respawn_ms: value.respawn_ms });
+      if (value.version === 2) {
+        if (value.layout_version !== 1 || !Array.isArray(value.anchors) || value.anchors.length < 2 || value.anchors.length > 64) return null;
+        const anchors = value.anchors.map(item => body(item));
+        if (anchors.some(item => !item) || new Set(anchors.map(item => item.id)).size !== anchors.length) return null;
+        Object.assign(result, { layout_version: 1, anchors: Object.freeze(anchors) });
+      }
+    } else {
+      if (!previous || previous.version !== 1) return null;
+      Object.assign(result, { seed: previous.seed, count: previous.count, radius: previous.radius,
+        fuel: previous.fuel, respawn_ms: previous.respawn_ms });
     }
+    if (previous?.seed === result.seed && fieldGeometry(previous) !== fieldGeometry(result)) return null;
     return Object.freeze(result);
   }
 
@@ -154,6 +183,7 @@
     get self() { return this._self; }
     get limits() { return this._hello?.limits ?? {}; }
     get snapshot() { return this._snapshot; }
+    get gravity() { return this._snapshot?.gravity ?? this._hello?.gravity ?? null; }
     get serverNow() {
       return this._anchor ? this._anchor.server + Math.max(0, clock() - this._anchor.local) : Date.now();
     }
@@ -440,10 +470,13 @@
       }
       const field = value.collectibles === undefined ? null : collectibles(value.collectibles, true);
       if (value.collectibles !== undefined && !field) { this._badFrame(); return; }
+      const wells = value.gravity === undefined ? null : gravity(value.gravity);
+      if (value.gravity !== undefined && !wells) { this._badFrame(); return; }
       this._hello = Object.freeze({ v: VERSION, type: 'hello', self, resume: value.resume,
         server_time_ms: value.server_time_ms,
         tick_hz: value.tick_hz, region: value.region,
-        regions: Object.freeze(regions), limits: Object.freeze(limits), ...(field ? { collectibles: field } : {}) });
+        regions: Object.freeze(regions), limits: Object.freeze(limits), ...(field ? { collectibles: field } : {}),
+        ...(wells ? { gravity: wells } : {}) });
       this._self = self;
       this._anchor = { server: value.server_time_ms, local: clock() };
       this._seq = Math.max(this._seq, self.ack_seq);
@@ -497,11 +530,16 @@
         snapshot.state_time_ms = value.state_time_ms;
       }
       if (value.collectibles !== undefined || this._hello.collectibles) {
-        const field = collectibles(value.collectibles);
+        const field = collectibles(value.collectibles, false, this._snapshot?.collectibles ?? this._hello.collectibles);
         if (!this._hello.collectibles || !field) {
           this._badFrame(); return;
         }
         snapshot.collectibles = field;
+      }
+      if (value.gravity !== undefined || this._hello.gravity) {
+        const wells = gravity(value.gravity);
+        if (!wells) { this._badFrame(); return; }
+        snapshot.gravity = wells;
       }
       if (value.region_counts !== undefined) {
         if (!object(value.region_counts) || Object.keys(value.region_counts).length !== this._hello.regions.length ||
@@ -516,7 +554,8 @@
       if (this._snapshot && value.tick <= this._snapshot.tick) return;
       if (value.server_time_ms < (this._snapshot?.server_time_ms ?? this._hello.server_time_ms - 1000) ||
           snapshot.state_time_ms < (this._snapshot?.state_time_ms ?? 0) ||
-          snapshot.collectibles && snapshot.collectibles.revision < (this._snapshot?.collectibles?.revision ?? this._hello.collectibles.revision) ||
+          snapshot.collectibles && snapshot.collectibles.seed === (this._snapshot?.collectibles?.seed ?? this._hello.collectibles?.seed) &&
+            snapshot.collectibles.revision < (this._snapshot?.collectibles?.revision ?? this._hello.collectibles.revision) ||
           self.ack_seq < this._self.ack_seq || self.ack_seq > this._seq) { this._badFrame(); return; }
       this._snapshot = Object.freeze(snapshot);
       // Only hello may provide own private home metadata; never copy it to the world snapshot.

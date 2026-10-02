@@ -10,7 +10,12 @@ import pytest
 
 from msg.transports.flight_collectibles import CollectibleField
 from msg.transports.flight_simulation import (
+    MAX_GRAVITY_WELLS,
+    SHIP_RADIUS,
     FlightWorld,
+    GravityWell,
+    gravity_acceleration,
+    planet_contact,
     planet_position,
     region_centers,
     valid_input,
@@ -63,6 +68,122 @@ def combat(world):
     attacker, _ = world.join(identity('u_attacker', spawn_position=[0, 0, 0], spawn_region=0))
     target, _ = world.join(identity('u_target', spawn_position=[0, 0, -20], spawn_region=1))
     return attacker, target
+
+
+def test_full_tank_can_thrust_for_fifty_seconds_without_pickups(world):
+    ship, _ = world.join(identity('u_long_flight', spawn_position=[0, 0, 0], spawn_region=0))
+    advance(world, 50, ship, throttle=1)
+    assert ship.fuel == pytest.approx(25)
+    assert world.tick == 750 and ship.collected == 0
+
+
+def test_a_dry_stationary_ship_can_escape_and_recharge_while_coasting(world):
+    ship, _ = world.join(identity('u_dry', spawn_position=[0, 0, 0], spawn_region=0))
+    ship.fuel = 0
+    advance(world, 2, ship, throttle=1)
+    assert ship.position[2] < -5 and ship.velocity[2] < -5
+    fuel, position = ship.fuel, list(ship.position)
+    advance(world, 2, ship)
+    assert math.dist(ship.position, position) > 5
+    assert ship.fuel == pytest.approx(fuel + 12)
+
+
+def test_gravity_bends_nearby_flight_leaves_far_flight_free_and_brake_hovers(world):
+    world.set_gravity_wells([{'id': 'u_root', 'position': [0, 0, 0], 'radius': 5.4}])
+    near, _ = world.join(identity('u_near', spawn_position=[14, -7, 0], spawn_region=0))
+    far, _ = world.join(identity('u_far', spawn_position=[100, -7, 0], spawn_region=0))
+    near.velocity = far.velocity = [0, 0, 10]
+    advance(world, 1)
+    assert near.position[0] < 13 and near.velocity[0] < -2
+    assert far.position[0] == 100 and far.velocity[0] == 0
+    near.fuel = 20
+    advance(world, 1, near, brake=True)
+    assert near.velocity == [0, 0, 0]
+    point, fuel = list(near.position), near.fuel
+    advance(world, 2, near, brake=True)
+    assert near.position == point and near.fuel == pytest.approx(fuel + 12)
+
+
+def test_swept_planet_contact_blocks_dash_and_preserves_escape_velocity(world):
+    well = GravityWell('u_root', (0, 0, 0), 5.4)
+    point, velocity = planet_contact([10, 0, 0], [-10, 0, 0], [-60, 4, 0], [well])
+    assert point[0] >= well.radius + SHIP_RADIUS
+    assert velocity == [0, 4, 0]
+    point, velocity = planet_contact([0, 0, 0], [0, -1, 0], [0, -10, 0], [well])
+    assert math.hypot(*point) >= well.radius + SHIP_RADIUS
+    assert velocity == [0, 0, 0]
+    world.set_gravity_wells([
+        {'id': well.id, 'position': list(well.position), 'radius': well.radius}
+    ])
+    ship, _ = world.join(identity('u_escape', spawn_position=[6.62, -7, 0], spawn_region=0))
+    advance(world, 1, ship, throttle=1, yaw=math.pi / 2)
+    assert ship.position[0] > 15 and ship.velocity[0] > 15
+
+
+def test_gravity_is_bounded_and_private_home_is_only_used_for_its_own_ship(world):
+    world.set_gravity_wells([{'id': 'u_root', 'position': [0, 0, 0], 'radius': 5.4}])
+    hidden, _ = world.join(
+        identity('u_hidden', public_subject_id=None, spawn_position=[150, 0, 0], spawn_region=0)
+    )
+    other, _ = world.join(identity('u_other', spawn_position=[150, 0, 0], spawn_region=0))
+    assert gravity_acceleration(hidden.position, world._near_wells(hidden))[1] < -1
+    assert gravity_acceleration(other.position, world._near_wells(other)) == [0, 0, 0]
+    assert [item['id'] for item in world.snapshot(other.id)['gravity']['wells']] == ['u_root']
+    crowded = [GravityWell(str(index), (1, 0, 0), 5.4) for index in range(256)]
+    assert math.hypot(*gravity_acceleration([10, 0, 0], crowded)) == pytest.approx(8)
+    with pytest.raises(ValueError):
+        world.set_gravity_wells([
+            {'id': str(i), 'position': [0, 0, 0], 'radius': 3} for i in range(MAX_GRAVITY_WELLS + 1)
+        ])
+    world.clear()
+    assert world.gravity_descriptor() == {'version': 1, 'wells': []}
+    assert not world._gravity_cells
+
+
+def test_real_lane_flight_collects_enough_fuel_to_cover_continuous_thrust(world):
+    anchors = [
+        {'id': 'u_left', 'position': [-180, 0, 0], 'radius': 2.05},
+        {'id': 'u_right', 'position': [180, 0, 0], 'radius': 2.05},
+    ]
+    world.collectibles = CollectibleField(seed='real-fuel-highway', anchors=anchors)
+    world.set_gravity_wells(anchors)
+    ship, _ = world.join(identity('u_route', spawn_position=[-164, -7, 0], spawn_region=0))
+    ship.fuel = 20
+    minimum = ship.fuel
+    # Navigate from real authoritative positions toward the upcoming route, using
+    # only valid controls. The route points are goals, never submitted positions.
+    lane = world.collectibles.positions[:1840]
+    nearest = 0
+    for _ in range(15 * 15):
+        nearest = min(
+            range(nearest, min(len(lane), nearest + 100)),
+            key=lambda index: math.dist(ship.position, lane[index]),
+        )
+        goal = lane[min(len(lane) - 1, nearest + 60)]
+        direction = [goal[axis] - ship.position[axis] for axis in range(3)]
+        yaw = math.atan2(direction[0], -direction[2])
+        pitch = math.atan2(direction[1], math.hypot(direction[0], direction[2]))
+        advance(world, 1 / 15, ship, throttle=1, yaw=yaw, pitch=pitch)
+        minimum = min(minimum, ship.fuel)
+    assert ship.position[0] > 90 and ship.collected > 500
+    assert minimum >= 20 and ship.fuel > 90
+    assert world.collectibles.descriptor(world.clock())['radius'] == 8
+
+
+def test_authoritative_snapshot_keeps_geometry_when_a_room_returns_to_legacy_ribbons(world):
+    ship, _ = world.join(identity())
+    anchors = [
+        {'id': 'u_root', 'position': [0, 0, 0], 'radius': 5.4},
+        {'id': 'u_public', 'position': [100, 0, 0], 'radius': 2.05},
+    ]
+    world.collectibles = CollectibleField(seed='0' * 32, anchors=anchors)
+    old = world.snapshot(ship.id)['collectibles']
+    world.collectibles = CollectibleField(seed='1' * 32)
+    new = world.snapshot(ship.id)['collectibles']
+    assert old['version'] == 2 and new['version'] == 1
+    assert new['seed'] != old['seed'] and new['revision'] == 0
+    assert new['radius'] == 8 and new['count'] == 2300
+    assert 'anchors' not in new and new['taken'] == old['taken']
 
 
 def test_signed_spawn_matches_planet_and_server_layout_takes_precedence(world):
@@ -232,7 +353,7 @@ def test_ship_space_motion_normalizes_diagonals_and_uses_fuel(world):
     assert math.dist(other_start, diagonal.position) == pytest.approx(forward_distance)
     assert math.hypot(*forward.velocity) == pytest.approx(20)
     assert math.hypot(*diagonal.velocity) == pytest.approx(20)
-    assert forward.fuel == pytest.approx(92)
+    assert forward.fuel == pytest.approx(98.5)
     old = list(forward.velocity)
     advance(world, 1 / 15, forward, throttle=1, yaw=math.pi / 2)
     assert forward.velocity[0] > 0 and forward.velocity[2] < 0
@@ -241,7 +362,7 @@ def test_ship_space_motion_normalizes_diagonals_and_uses_fuel(world):
     assert forward.velocity == pytest.approx([20, 0, 0])
 
 
-def test_lost_input_clears_thrust_but_coasting_cannot_regenerate(world):
+def test_lost_input_clears_thrust_and_coasting_recovers_fuel_without_healing(world):
     ship, _ = world.join(identity())
     ship.hp, ship.fuel = 40, 50
     assert world.input(ship.id, packet(throttle=1))
@@ -250,12 +371,13 @@ def test_lost_input_clears_thrust_but_coasting_cannot_regenerate(world):
     coasting = list(ship.position)
     health, fuel = ship.hp, ship.fuel
     advance(world, 2.5)
-    assert ship.position != coasting and ship.hp == health and ship.fuel == fuel
+    assert ship.position != coasting and ship.hp == health
+    assert ship.fuel > fuel + 14
     advance(world, 1, ship, brake=True)
     assert ship.velocity == [0, 0, 0]
     stopped = list(ship.position)
     advance(world, 1, ship)
-    assert ship.hp == health and ship.fuel == fuel
+    assert ship.hp == health and ship.fuel > fuel
     advance(world, 2, ship)
     assert ship.position == stopped and ship.hp > health and ship.fuel > fuel
     attacker, target = combat(world)
@@ -265,17 +387,17 @@ def test_lost_input_clears_thrust_but_coasting_cannot_regenerate(world):
     assert target.hp == 65
 
 
-def test_exhaustion_preserves_momentum_and_brake_is_not_a_free_refill(world):
+def test_exhaustion_recovers_enough_to_move_and_brake_recovers_while_stopping(world):
     ship, _ = world.join(identity('u_fuel', spawn_position=[0, 0, 0], spawn_region=0))
     ship.fuel = 0.1
     advance(world, 1, ship, throttle=1)
     assert ship.position[2] < 0
-    assert math.hypot(*ship.velocity) > 0 and ship.fuel == 0
+    assert math.hypot(*ship.velocity) > 0 and 0 < ship.fuel < 0.2
     drifting = ship.position[2]
     advance(world, 1, ship, throttle=1)
-    assert ship.position[2] < drifting and ship.fuel == 0
+    assert ship.position[2] < drifting and ship.fuel > 0
     advance(world, 1, ship, throttle=1, brake=True)
-    assert ship.fuel == 0 and ship.velocity == [0, 0, 0]
+    assert ship.fuel >= 6 and ship.velocity == [0, 0, 0]
     stopped = list(ship.position)
     advance(world, 2.2, ship, brake=True)
     assert ship.fuel > 0
@@ -595,7 +717,7 @@ def test_dash_duration_is_independent_of_monotonic_clock_uptime(start):
         world.step()
     assert world.tick == 15
     assert ship.position[2] == pytest.approx(-41.25, abs=1e-7)
-    assert ship.fuel == pytest.approx(74)
+    assert ship.fuel == pytest.approx(80.5)
     assert ship.velocity == pytest.approx([0, 0, -60])
 
 
@@ -608,14 +730,14 @@ def test_neutral_turning_preserves_world_momentum_without_burning_fuel(world):
     assert ship.velocity[0] == ship.velocity[1] == 0
     assert 19 < -ship.velocity[2] < 20
     assert ship.position[0:2] == before[0:2] and ship.position[2] < before[2]
-    assert ship.fuel == fuel
-    # Exhaustion disables the engine rather than deleting existing momentum.
+    assert ship.fuel == pytest.approx(fuel + 0.4)
+    # A dry tank keeps momentum and recovers enough fuel to thrust in a new direction.
     ship.fuel = 0
     speed = math.hypot(*ship.velocity)
     advance(world, 1, ship, throttle=1, yaw=math.pi / 2)
-    assert ship.velocity[0] == ship.velocity[1] == 0
+    assert ship.velocity[0] > 0 and ship.velocity[1] == 0
     assert 0 < math.hypot(*ship.velocity) < speed
-    assert ship.fuel == 0
+    assert 0 < ship.fuel < 0.2
 
 
 def test_braking_is_gradual_cannot_reverse_and_expires_with_missing_input(world):
@@ -645,17 +767,18 @@ def test_dash_release_preserves_speed_and_neutral_drift_does_not_heal(world):
     assert 58 < math.hypot(*ship.velocity) < 60
     advance(world, 3, ship)
     assert math.hypot(*ship.velocity) > 15 and ship.hp == 40
-    assert ship.fuel == pytest.approx(fuel)
+    assert ship.fuel == pytest.approx(fuel + 6 * (3 + 1 / 15))
 
 
-def test_throttle_intent_prevents_idle_refill_even_when_directions_cancel(world):
+def test_throttle_intent_prevents_idle_healing_but_recovers_emergency_fuel(world):
     ship, _ = world.join(identity('u_cancel', spawn_position=[0, 0, 0], spawn_region=0))
     ship.hp, ship.fuel = 40, 0
     advance(world, 3, ship, throttle=1, lift=-1, pitch=math.pi / 2)
     assert ship.velocity == [0, 0, 0]
-    assert ship.hp == 40 and ship.fuel == 0
+    assert ship.hp == 40 and 0 < ship.fuel < 0.2
+    fuel = ship.fuel
     advance(world, 1.5, ship)
-    assert ship.hp == 40 and ship.fuel == 0
+    assert ship.hp == 40 and ship.fuel > fuel + 8
     advance(world, 1, ship)
     assert ship.hp > 40 and ship.fuel > 0
 
@@ -669,9 +792,10 @@ def test_reconnect_preserves_coasting_and_does_not_count_offline_time_as_idle(wo
     world.clock.now += 100
     resumed, _ = world.join(identity('u_reconnect_drift'))
     assert resumed is ship and resumed.velocity == velocity and resumed.position == position
+    assert resumed.fuel == fuel
     advance(world, 1 / 15, resumed)
     assert resumed.position[2] < position[2]
-    assert resumed.fuel == fuel
+    assert resumed.fuel == pytest.approx(fuel + 0.4)
 
 
 def test_collectibles_are_shared_and_credit_one_authoritative_player(world):
@@ -683,7 +807,7 @@ def test_collectibles_are_shared_and_credit_one_authoritative_player(world):
     first.fuel = second.fuel = 80
     advance(world, 1 / 15)
     assert first.collected + second.collected == 1
-    assert first.fuel + second.fuel == 164
+    assert first.fuel + second.fuel == pytest.approx(164.8)
     snapshot = world.snapshot(first.id)
     events = [event for event in snapshot['events'] if event['type'] == 'collect']
     assert len(events) == 1 and events[0]['glyph_ids'] == [0]
