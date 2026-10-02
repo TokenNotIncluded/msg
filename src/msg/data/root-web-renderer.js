@@ -171,6 +171,7 @@
       this.graph = { nodes: [], links: [] };
       this.view = this.graph;
       this.index = new M.SpatialIndex([]);
+      this.pinned = [];
       this.satellites = [];
       this.focusId = null;
       this.keys = new Set();
