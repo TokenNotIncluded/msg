@@ -6,7 +6,6 @@ from datetime import timedelta
 from msg.core.codec import wire
 from msg.core.errors import require
 from msg.core.models import HandlerOutput, ResourceRef
-from msg.plugins.common import check_access
 from msg.plugins.communication import presence_record
 from msg.plugins.discovery import visible
 from msg.plugins.schemas import obj
@@ -66,12 +65,15 @@ def install(app, op):
             budget()
             if not await visible(app, ctx, request, tx, rid):
                 continue
+            # A public post can be readable beneath a traverse-only topic.
+            # Its topic must also be readable before exposing board metadata.
+            if not await visible(app, ctx, request, tx, parent):
+                continue
             # A post's owner may change; activity belongs to its revision author.
             revision = await tx.revision(ResourceRef(id=rid))
             author = revision.author
             if not await node(author):
                 continue
-            await check_access(app, ctx, request, tx, parent, 'read')
             nodes[author]['last_public_activity_at'] = max(
                 nodes[author]['last_public_activity_at'] or '', created_at
             )
