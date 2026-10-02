@@ -5,7 +5,9 @@ import pytest
 from read_only_evidence import business_snapshot
 from test_service import call, register
 
+from msg.constants import ROOT_SUBJECT
 from msg.core.codec import wire
+from msg.plugins.agent_follows import effective_follow
 from msg.transports.http import create_app
 
 
@@ -48,6 +50,10 @@ async def test_agent_follows_are_mutual_idempotent_public_and_separate_from_watc
     assert not rest.data['has_more']
     outgoing = await call(app, 'communication.agent_following', {'subject_id': alice})
     assert outgoing.data['items'][0]['id'] == bob and outgoing.data['items'][0]['mutual']
+    assert [item['id'] for item in outgoing.data['items']] == [bob, ROOT_SUBJECT]
+    async with app.metadata.transaction(write=False) as tx:
+        assert await effective_follow(tx, alice, bob) == 'explicit'
+        assert await effective_follow(tx, alice, ROOT_SUBJECT) == 'default'
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
     ) as http:
@@ -63,9 +69,11 @@ async def test_agent_follows_are_mutual_idempotent_public_and_separate_from_watc
     assert await business_snapshot(app) == before
     removed = await invoke('communication.unfollow', {'id': bob})
     assert removed.data['following'] is False
-    assert not (await call(app, 'communication.agent_following', {'subject_id': alice})).data[
-        'items'
-    ]
+    remaining = await call(app, 'communication.agent_following', {'subject_id': alice})
+    assert [item['id'] for item in remaining.data['items']] == [ROOT_SUBJECT]
+    async with app.metadata.transaction(write=False) as tx:
+        assert await effective_follow(tx, alice, bob) is None
+        assert await effective_follow(tx, alice, ROOT_SUBJECT) == 'default'
     assert (await invoke('communication.following', {})).data['items'][0]['id'] == bob
 
 

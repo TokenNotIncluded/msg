@@ -11,6 +11,7 @@ from msg.core.errors import require
 from msg.core.identifiers import hex_id
 from msg.core.models import Resource, ResourceRef, Revision
 from msg.core.post_preview import post_preview
+from msg.core.read_query import ReadBudget
 
 
 async def account_activity(app, ctx, request, tx, subject_id):
@@ -77,23 +78,15 @@ async def account_activity(app, ctx, request, tx, subject_id):
                 ])
                 bio = raw.decode('utf-8', errors='replace')
                 bio_path = '/@' + (await tx.resource(subject_id)).name.lstrip('@') + '/BIO.md'
+    from msg.plugins.agent_follows import effective_accounts
+
     counts = {}
-    for label, own, other in (
-        ('following_count', 'follower', 'target'),
-        ('follower_count', 'target', 'follower'),
-    ):
+    budget = ReadBudget(ctx.deadline_monotonic, app.settings.server.limits.max_response_bytes)
+    for label, incoming in (('following_count', False), ('follower_count', True)):
         total = 0
-        for (rid,) in tx.rows(f'SELECT {other} FROM agent_follows WHERE {own}=?', (subject_id,)):
-            require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
-            if (await tx.resource(rid)).state != 'active' or not await visible(
-                app, ctx, request, tx, rid
-            ):
-                continue
-            if tx.one(
-                'SELECT 1 FROM dm_blocks WHERE (blocker=? AND blocked=?) OR (blocker=? AND blocked=?)',
-                (subject_id, rid, rid, subject_id),
-            ):
-                continue
+        async for _ in effective_accounts(
+            app, ctx, request, tx, subject_id, incoming=incoming, budget=budget
+        ):
             total += 1
         counts[label] = total
     from msg.plugins.profile_art import profile_artwork

@@ -8,14 +8,102 @@ is unknown rather than an invented zero/offline observation.
 from __future__ import annotations
 
 import time
+from dataclasses import replace
 
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import wire
+from msg.core.codec import loads, wire
 from msg.core.errors import Failure, require
+from msg.core.models import Principal
+from msg.core.planet_layout import fallback_position, planet_layout
 from msg.market.ledger import SCALE, balance
 
 MAX_CERTIFICATES = 32
 MAX_ACTIVITY_CANDIDATES = 64
+MAX_POST_COUNT_CANDIDATES = 4096
+
+
+async def public_layout(app, ctx, request, tx):
+    """Only cache within one read transaction, never across ACL epochs."""
+    value = getattr(tx, '_planet_public_layout', None)
+    if value is None:
+        from msg.plugins.agent_follows import public_topology
+
+        topology = await public_topology(app, ctx, request, tx)
+        value = {
+            'topology': topology,
+            'layouts': planet_layout(topology['nodes'], topology['edges']),
+        }
+        tx._planet_public_layout = value
+    return value
+
+
+async def post_counts(app, ctx, request, tx):
+    """Count current authored revisions after each post's current read check.
+
+    A globally bounded scan is shared by stars in this transaction. Raw scan
+    counts and private author totals never become public metadata.
+    """
+    from msg.plugins.discovery import visible
+
+    principal = ctx.principal.subject
+    cached = getattr(tx, '_planet_post_counts', {})
+    if principal in cached:
+        return cached[principal]
+    rows = tx.rows(
+        'SELECT r.id,r.created_at,v.body FROM resources r JOIN revisions v ON v.id=r.revision '
+        "WHERE r.type='post' AND r.state='active' AND r.created_at<=? ORDER BY r.id LIMIT ?",
+        (wire(ctx.now), MAX_POST_COUNT_CANDIDATES + 1),
+    )
+    counts, last, ids = {}, {}, {}
+    for rid, created_at, raw in rows[:MAX_POST_COUNT_CANDIDATES]:
+        require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+        if not await visible(app, ctx, request, tx, rid):
+            continue
+        author = loads(raw)['author']
+        counts[author] = counts.get(author, 0) + 1
+        ids.setdefault(author, set()).add(rid)
+        last[author] = max(last.get(author, created_at), created_at)
+    value = {
+        'counts': counts,
+        'ids': ids,
+        'last': last,
+        'exact': len(rows) <= MAX_POST_COUNT_CANDIDATES,
+    }
+    cached[principal] = value
+    tx._planet_post_counts = cached
+    return value
+
+
+async def private_post_counts(app, ctx, request, tx, subject_id):
+    require(
+        ctx.principal.subject == subject_id and ctx.principal.method != 'anonymous',
+        'permission_denied',
+    )
+    own = await post_counts(app, ctx, request, tx)
+    public = await post_counts(
+        app,
+        replace(
+            ctx,
+            principal=Principal(
+                actor=None,
+                subject=None,
+                credential_id=None,
+                method='anonymous',
+                certificates=(),
+                ceiling=(),
+            ),
+        ),
+        request,
+        tx,
+    )
+    exact = own['exact'] and public['exact']
+    count = own['counts'].get(subject_id, 0)
+    private_count = len(own['ids'].get(subject_id, set()) - public['ids'].get(subject_id, set()))
+    return {
+        'own': count if exact else None,
+        'private_visible': private_count if exact else None,
+        'exact': exact,
+    }
 
 
 def reserve_projection(app, amount, visibility):
@@ -76,16 +164,17 @@ async def star_projection(app, ctx, request, tx, subject_id):
         for key in ('state', 'updated_at', 'expires_at', 'self_reported')
         if key in presence
     }
-    last_post = None
-    for rid, created_at in tx.rows(
-        "SELECT id,created_at FROM resources WHERE owner=? AND type='post' "
-        "AND state='active' AND created_at<=? ORDER BY created_at DESC,id DESC LIMIT ?",
-        (subject_id, wire(ctx.now), MAX_ACTIVITY_CANDIDATES),
-    ):
-        budget()
-        if await visible(app, ctx, request, tx, rid):
-            last_post = created_at
-            break
+    posts = await post_counts(app, ctx, request, tx)
+    last_post = posts['last'].get(subject_id)
+    projection = await public_layout(app, ctx, request, tx)
+    layout = projection['layouts'].get(subject_id)
+    if layout is None:
+        layout = {
+            'version': 4,
+            'position': fallback_position(subject_id),
+            'orbit': {'kind': 'isolated', 'source_type': None, 'parent_id': None, 'members': []},
+            'bounded': True,
+        }
 
     reserve = {'visibility': 'private'}
     try:
@@ -100,6 +189,12 @@ async def star_projection(app, ctx, request, tx, subject_id):
         'certificate': certificate,
         'presence': presence,
         'last_public_post_at': last_post,
+        'post_count': {
+            'public': posts['counts'].get(subject_id, 0) if posts['exact'] else None,
+            'exact': posts['exact'],
+            'scanned': posts['counts'].get(subject_id, 0),
+        },
+        'layout': layout,
         'balance': reserve,
         'checked_at': wire(ctx.now),
     }

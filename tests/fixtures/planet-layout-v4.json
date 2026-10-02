@@ -1,0 +1,395 @@
+{
+  "version": 4,
+  "scenarios": [
+    {
+      "name": "default-root",
+      "nodes": [
+        "u_root",
+        "u_alice"
+      ],
+      "edges": [
+        {
+          "source": "u_alice",
+          "target": "u_root",
+          "source_type": "default"
+        }
+      ],
+      "layout": {
+        "u_alice": {
+          "version": 4,
+          "position": [
+            1.15638,
+            -122.507953,
+            -179.972073
+          ],
+          "orbit": {
+            "kind": "orbit",
+            "center": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "parent_id": "u_root",
+            "group_id": null,
+            "members": [],
+            "radius": 217.714223,
+            "phase": 0.03239,
+            "tilt": -0.464116,
+            "period": 263.955166,
+            "source_type": "default"
+          }
+        },
+        "u_root": {
+          "version": 4,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orbit": {
+            "kind": "root",
+            "center": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "parent_id": null,
+            "group_id": null,
+            "members": [],
+            "radius": 0,
+            "phase": 4.108135,
+            "tilt": 0.158597,
+            "period": 355.074472,
+            "source_type": null
+          }
+        }
+      }
+    },
+    {
+      "name": "mutual-pair",
+      "nodes": [
+        "u_root",
+        "u_alice",
+        "u_bob"
+      ],
+      "edges": [
+        {
+          "source": "u_alice",
+          "target": "u_bob",
+          "source_type": "explicit"
+        },
+        {
+          "source": "u_bob",
+          "target": "u_alice",
+          "source_type": "explicit"
+        },
+        {
+          "source": "u_alice",
+          "target": "u_root",
+          "source_type": "default"
+        },
+        {
+          "source": "u_bob",
+          "target": "u_root",
+          "source_type": "default"
+        }
+      ],
+      "layout": {
+        "u_alice": {
+          "version": 4,
+          "position": [
+            35.354749,
+            -103.566082,
+            24.605978
+          ],
+          "orbit": {
+            "kind": "binary",
+            "center": [
+              53.667345,
+              -110.122812,
+              -0.803825
+            ],
+            "parent_id": "u_root",
+            "group_id": "812f605dac76b386",
+            "members": [
+              "u_alice",
+              "u_bob"
+            ],
+            "radius": 32.0,
+            "phase": 2.180066,
+            "tilt": 0.252531,
+            "period": 184.120126,
+            "source_type": "default"
+          }
+        },
+        "u_bob": {
+          "version": 4,
+          "position": [
+            71.979942,
+            -116.679542,
+            -26.213628
+          ],
+          "orbit": {
+            "kind": "binary",
+            "center": [
+              53.667345,
+              -110.122812,
+              -0.803825
+            ],
+            "parent_id": "u_root",
+            "group_id": "812f605dac76b386",
+            "members": [
+              "u_alice",
+              "u_bob"
+            ],
+            "radius": 32.0,
+            "phase": 5.321659,
+            "tilt": 0.252531,
+            "period": 184.120126,
+            "source_type": "default"
+          }
+        },
+        "u_root": {
+          "version": 4,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orbit": {
+            "kind": "root",
+            "center": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "parent_id": null,
+            "group_id": null,
+            "members": [],
+            "radius": 0,
+            "phase": 4.108135,
+            "tilt": 0.158597,
+            "period": 355.074472,
+            "source_type": null
+          }
+        }
+      }
+    },
+    {
+      "name": "multiple-system",
+      "nodes": [
+        "u_root",
+        "u_alice",
+        "u_bob",
+        "u_carol"
+      ],
+      "edges": [
+        {
+          "source": "u_alice",
+          "target": "u_bob",
+          "source_type": "explicit"
+        },
+        {
+          "source": "u_bob",
+          "target": "u_carol",
+          "source_type": "explicit"
+        },
+        {
+          "source": "u_carol",
+          "target": "u_alice",
+          "source_type": "explicit"
+        },
+        {
+          "source": "u_alice",
+          "target": "u_root",
+          "source_type": "default"
+        }
+      ],
+      "layout": {
+        "u_alice": {
+          "version": 4,
+          "position": [
+            -79.22192,
+            7.841308,
+            -124.215101
+          ],
+          "orbit": {
+            "kind": "multi",
+            "center": [
+              -111.157875,
+              -33.459611,
+              -92.958203
+            ],
+            "parent_id": "u_root",
+            "group_id": "9d583d7370f6edcf",
+            "members": [
+              "u_alice",
+              "u_bob",
+              "u_carol"
+            ],
+            "radius": 60.849525,
+            "phase": 5.47756,
+            "tilt": -0.646269,
+            "period": 180.282821,
+            "source_type": "default"
+          }
+        },
+        "u_bob": {
+          "version": 4,
+          "position": [
+            -112.664417,
+            -33.459611,
+            -28.975938
+          ],
+          "orbit": {
+            "kind": "multi",
+            "center": [
+              -111.157875,
+              -33.459611,
+              -92.958203
+            ],
+            "parent_id": "u_root",
+            "group_id": "9d583d7370f6edcf",
+            "members": [
+              "u_alice",
+              "u_bob",
+              "u_carol"
+            ],
+            "radius": 64.0,
+            "phase": 7.571955,
+            "tilt": -0.646269,
+            "period": 180.282821,
+            "source_type": "default"
+          }
+        },
+        "u_carol": {
+          "version": 4,
+          "position": [
+            -141.587286,
+            -74.760531,
+            -125.683571
+          ],
+          "orbit": {
+            "kind": "multi",
+            "center": [
+              -111.157875,
+              -33.459611,
+              -92.958203
+            ],
+            "parent_id": "u_root",
+            "group_id": "9d583d7370f6edcf",
+            "members": [
+              "u_alice",
+              "u_bob",
+              "u_carol"
+            ],
+            "radius": 60.849525,
+            "phase": 9.666351,
+            "tilt": -0.646269,
+            "period": 180.282821,
+            "source_type": "default"
+          }
+        },
+        "u_root": {
+          "version": 4,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orbit": {
+            "kind": "root",
+            "center": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "parent_id": null,
+            "group_id": null,
+            "members": [],
+            "radius": 0,
+            "phase": 4.108135,
+            "tilt": 0.158597,
+            "period": 355.074472,
+            "source_type": null
+          }
+        }
+      }
+    },
+    {
+      "name": "root-binary",
+      "nodes": [
+        "u_root",
+        "u_alice"
+      ],
+      "edges": [
+        {
+          "source": "u_root",
+          "target": "u_alice",
+          "source_type": "explicit"
+        },
+        {
+          "source": "u_alice",
+          "target": "u_root",
+          "source_type": "explicit"
+        }
+      ],
+      "layout": {
+        "u_alice": {
+          "version": 4,
+          "position": [
+            43.236837,
+            -24.060112,
+            -40.59171
+          ],
+          "orbit": {
+            "kind": "binary",
+            "center": [
+              21.618419,
+              -12.030056,
+              -20.295855
+            ],
+            "parent_id": null,
+            "group_id": "aed0d6c75ab430fb",
+            "members": [
+              "u_alice",
+              "u_root"
+            ],
+            "radius": 32.0,
+            "phase": 5.454134,
+            "tilt": 0.53506,
+            "period": 272.772134,
+            "source_type": null
+          }
+        },
+        "u_root": {
+          "version": 4,
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "orbit": {
+            "kind": "root",
+            "center": [
+              21.618419,
+              -12.030056,
+              -20.295855
+            ],
+            "parent_id": null,
+            "group_id": "aed0d6c75ab430fb",
+            "members": [
+              "u_alice",
+              "u_root"
+            ],
+            "radius": 32.0,
+            "phase": 8.595727,
+            "tilt": 0.53506,
+            "period": 272.772134,
+            "source_type": null
+          }
+        }
+      }
+    }
+  ]
+}
