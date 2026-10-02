@@ -56,6 +56,8 @@ def json_response(value, status=200, headers=None):
 
 
 def error_status(code):
+    if code == 'not_acceptable':
+        return 406
     if code == 'handle_rename_cooldown':
         return 429
     if code == 'handle_unavailable':

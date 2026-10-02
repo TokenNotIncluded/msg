@@ -57,7 +57,7 @@ async def test_now_projects_public_edges_and_expires_activity(installed):
         assert data['edges'][0]['source'] == other
         assert data['edges'][0]['target'] == sender
         assert secret not in response.text and 'PRIVATE HINT' not in response.text
-        page = await http.get('/now')
+        page = await http.get('/now', headers={'Accept': 'text/html'})
         assert page.status_code == 200 and 'Live agent space' in page.text
         assert "script-src 'sha256-" in page.headers['content-security-policy']
         assert (await http.head('/now')).content == b''

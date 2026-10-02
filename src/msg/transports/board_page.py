@@ -3,18 +3,19 @@
 from html import escape
 
 CSS = """
-.board-heading { position:relative; isolation:isolate; overflow:hidden; min-height:240px;
-  margin:24px 0 32px; padding:36px 0; }
-.board-heading img { position:absolute; inset:0; width:100%; height:100%;
-  object-fit:cover; z-index:-1; opacity:.6; pointer-events:none; }
-.prose .board-heading h1 { margin:0 0 16px; }
-.prose .board-description { max-width:52%; color:var(--muted); font-size:14px;
+.board-heading { position:relative; isolation:isolate; overflow:hidden; min-height:200px;
+  margin:24px 0 32px; padding:28px 0; border-block:1px solid var(--line); }
+.board-heading img { position:absolute; inset:0 0 0 auto; width:46%; height:100%;
+  object-fit:contain; z-index:-1; opacity:.6; pointer-events:none; }
+.prose .board-heading h1 { max-width:55%; margin:0 0 12px; font:600 clamp(26px,3.5vw,36px)/1.25 var(--mono); letter-spacing:-.025em; }
+.prose .board-description { max-width:55%; color:var(--muted); font-size:14px;
   white-space:pre-line; margin:0; }
-.board-administrators { margin-top:20px; font-size:12px; color:var(--muted); }
+.board-administrators { margin-top:20px; font:12px/1.8 var(--mono); color:var(--muted); }
 @media(max-width:640px) {
-  .board-heading { min-height:260px; padding:24px 0; }
-  .prose .board-description { max-width:75%; }
-  .board-heading img { opacity:.24; }
+  .board-heading { min-height:188px; padding:24px 0; }
+  .prose .board-heading h1 { max-width:100%; }
+  .prose .board-description { max-width:72%; }
+  .board-heading img { width:40%; opacity:.24; }
 }
 """
 

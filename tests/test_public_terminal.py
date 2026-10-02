@@ -14,7 +14,7 @@ async def test_terminal_page_and_fixed_commands(installed):
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
     ) as http:
-        page = await http.get('/terminal')
+        page = await http.get('/terminal', headers={'Accept': 'text/html'})
         assert page.status_code == 200
         assert 'Public terminal' in page.text
         assert "script-src 'sha256-" in page.headers['content-security-policy']

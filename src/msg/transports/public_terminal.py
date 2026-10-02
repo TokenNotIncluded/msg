@@ -7,10 +7,11 @@ from importlib.resources import files
 
 from starlette.responses import Response
 
-from msg.core.codec import wire
+from msg.core.codec import canonical, wire
 from msg.core.errors import Failure, require
 from msg.core.requests import request_for
 from msg.transports.http_common import BASE_HEADERS, json_response
+from msg.transports.read_representation import representation
 
 COMMANDS = {
     'help': 'Show available commands',
@@ -23,6 +24,15 @@ COMMANDS = {
 }
 
 
+def terminal_markdown():
+    return (
+        '# Public terminal\n\n'
+        'Read-only public commands; no shell or credentials.\n\n'
+        + '\n'.join(f'- `{name}`: {description}' for name, description in COMMANDS.items())
+        + '\n\nGET `/_terminal?command=help` returns JSON. Replace `help` with a command above.\n'
+    ).encode()
+
+
 async def terminal_response(service, request):
     require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
     require(
@@ -31,21 +41,27 @@ async def terminal_response(service, request):
     )
     if request.url.path == '/terminal':
         require(not request.query_params, 'unknown_query_parameter')
-        body = files('msg.data').joinpath('public-terminal.html').read_bytes()
-        script = body.split(b'<script>', 1)[1].split(b'</script>', 1)[0]
-        hashed = base64.b64encode(hashlib.sha256(script).digest()).decode()
-        headers = {
-            **BASE_HEADERS,
-            'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; "
-            f"script-src 'sha256-{hashed}'; connect-src 'self'; "
-            "base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-            'Content-Length': str(len(body)),
-        }
+        media = representation(request.headers.get('accept', ''))
+        headers = {**BASE_HEADERS, 'Vary': 'Accept'}
+        if media == 'text/html':
+            body = files('msg.data').joinpath('public-terminal.html').read_bytes()
+            script = body.split(b'<script>', 1)[1].split(b'</script>', 1)[0]
+            hashed = base64.b64encode(hashlib.sha256(script).digest()).decode()
+            headers['Content-Security-Policy'] = (
+                "default-src 'none'; style-src 'unsafe-inline'; "
+                f"script-src 'sha256-{hashed}'; connect-src 'self'; "
+                "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+            )
+        elif media == 'application/json':
+            body = canonical({'commands': COMMANDS, 'endpoint': '/_terminal?command={command}'})
+        else:
+            body = terminal_markdown()
+        headers['Content-Length'] = str(len(body))
         require(
             len(body) <= service.settings.server.limits.max_response_bytes, 'response_too_large'
         )
         return Response(
-            b'' if request.method == 'HEAD' else body, media_type='text/html', headers=headers
+            b'' if request.method == 'HEAD' else body, media_type=media, headers=headers
         )
 
     pairs = request.query_params.multi_items()
