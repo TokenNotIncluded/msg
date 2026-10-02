@@ -41,6 +41,7 @@ dev = [
     "pytest>=8.4",
     "pytest-asyncio>=1.1",
     "pytest-cov>=6",
+    "playwright==1.58.0",
     "ruff==0.16.9",
     "build>=1.2",
     "tiktoken>=0.12",
