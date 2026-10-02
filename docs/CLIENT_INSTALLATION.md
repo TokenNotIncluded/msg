@@ -4,9 +4,9 @@ The base client installation needs no local database or server process. Python r
 
 ## Installation roles
 
-Install the client from source with `python -m pip install .` or `uv sync`, or install a built wheel with `python -m pip install /path/to/msgctl-<version>-py3-none-any.whl`. Its dependencies are cryptography, httpx, jsonschema, referencing, Yubico yubikey-manager and their transitive dependencies. Building pyscard requires PC/SC development headers and SWIG on Linux; hardware access also needs the PC/SC runtime. The signer backend is built in; see [YubiKey](YUBIKEY.md). It does not require Starlette, Uvicorn, psycopg, Valkey, aiohttp, dnspython or graphql-core.
+Install the client from source with `python -m pip install .` or `uv sync`, or install a built wheel with `python -m pip install /path/to/msgctl-<version>-py3-none-any.whl`. Its dependencies are cryptography, httpx, jsonschema, referencing and their transitive dependencies. Hardware signing is optional: install the `hardware` extra from the same source (`python -m pip install '.[hardware]'`) or its built wheel. Published releases are a separate installation path. Building pyscard requires PC/SC development headers and SWIG on Linux; hardware access also needs the PC/SC runtime. The signer backend is built in; see [YubiKey](YUBIKEY.md). It does not require Starlette, Uvicorn, psycopg, Valkey, aiohttp, dnspython or graphql-core.
 
-For a system server, install the native Arch/Debian/RPM package through the package manager; see [native packages](NATIVE_PACKAGES.md). Development/server Python installations require `python -m pip install '.[server]'`, `uv sync --extra server`, or a matching published `msgctl[server]` release. The `dev` extra includes server dependencies. Installing dependencies does not start services, initialize Root trust or grant certificate authority.
+For a system server, install the native Arch/Debian/RPM package through the package manager; see [native packages](NATIVE_PACKAGES.md). Development/server Python installations require `python -m pip install '.[server]'`, `uv sync --extra server`, or a matching published `msgctl[server]` release. The `dev` extra includes server and hardware dependencies. Installing dependencies does not start services, initialize Root trust or grant certificate authority.
 
 Both `msg` and `msgd` retain their command entry points. Help works without server dependencies. Running a server command in a client-only environment returns `server_dependencies_required` with installation guidance before creating service directories. System tools such as age, Git, git-lfs, OpenSSH and bubblewrap remain required by their applicable features.
 
@@ -68,11 +68,10 @@ CPython 3.15.0rc2. CPython is currently a release candidate because this project
 requires Python 3.15.
 
 The client source is the published GitHub commit
-`5a71e67094b5d48dac8e32c0074d3eab6f003833` (client 0.2.1), verified against its embedded SHA-256;
+`e43f2af987a21cc1fc0bf1a8a177cd9dc18bcc7c` (client 0.2.14 with identity backup commands), verified against its embedded SHA-256;
 there is no dependency on an unpublished MSG release asset. This pin is independent of
-the current PyPI release, msgctl 0.2.13. To use the latest PyPI client, run
-`uv tool install --python 3.15 --force msgctl==0.2.13`, or `uv tool upgrade msgctl` for an existing
-uv-managed installation. Client dependencies
+PyPI releases. Use this installer for the new backup, restore, publish and fetch commands;
+a matching version number alone does not identify these source additions. Client dependencies
 are pinned to the repository lockfile and hash-checked before installation.
 Only `msg` is exposed in `$HOME/.local/bin`; server dependencies and daemon
 services are not installed. Install data stays under
