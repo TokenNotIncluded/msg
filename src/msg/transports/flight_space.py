@@ -24,7 +24,18 @@ from msg.core.requests import request_for
 from msg.plugins.discovery import visible
 from msg.security.oauth import OAuthService
 from msg.security.quarantine import require_live_authority
-from msg.transports.flight_simulation import FlightWorld, region_centers, valid_input
+from msg.transports.flight_simulation import (
+    BRAKE_ACCELERATION,
+    COAST_DRAG,
+    CRUISE_SPEED,
+    DASH_ACCELERATION,
+    MAX_SPEED,
+    STOP_SPEED,
+    THRUST_ACCELERATION,
+    FlightWorld,
+    region_centers,
+    valid_input,
+)
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
 
 MAX_CLIENTS = 96
@@ -281,6 +292,7 @@ class FlightHub:
                     'private': True,
                     'title': '你的私有星球',
                 }
+            snapshot = self.world.snapshot(ship.id)
             await self._send(
                 websocket,
                 {
@@ -290,7 +302,9 @@ class FlightHub:
                     'resume': resume,
                     'region': ship.region,
                     'regions': region_centers(),
-                    'server_time_ms': self.world.snapshot(ship.id)['server_time_ms'],
+                    'server_time_ms': snapshot['server_time_ms'],
+                    'state_time_ms': snapshot['state_time_ms'],
+                    'collectibles': self.world.collectibles.descriptor(self.world.clock()),
                     'tick_hz': TICK_HZ,
                     'limits': {
                         'max_players': MAX_CLIENTS,
@@ -302,6 +316,15 @@ class FlightHub:
                         'world_extent': 480,
                         'laser_range': 60,
                         'laser_cooldown_ms': 400,
+                        'cruise_speed': CRUISE_SPEED,
+                        'max_speed': MAX_SPEED,
+                        'thrust_acceleration': THRUST_ACCELERATION,
+                        'dash_acceleration': DASH_ACCELERATION,
+                        'coast_drag': COAST_DRAG,
+                        'brake_deceleration': BRAKE_ACCELERATION,
+                        'stop_speed': STOP_SPEED,
+                        'dash_seconds': 1,
+                        'input_timeout_ms': 500,
                     },
                 },
             )
@@ -470,10 +493,13 @@ class FlightHub:
                 await self._validate(identities=identities)
                 if identities:
                     self.next_auth_check = now + REVALIDATE_SECONDS
-                self.world.step()
                 for peer in tuple(self.peers.values()):
                     if peer.ship_id:
                         self._drain_inputs(peer)
+                # Fresh controls can wait behind a legitimate authority read.
+                # Apply them after the fence and before this physics tick rather
+                # than first simulating an expired control for another frame.
+                self.world.step()
                 if now >= next_snapshot:
                     next_snapshot = now + 1 / SNAPSHOT_HZ
                     for peer in tuple(self.peers.values()):
