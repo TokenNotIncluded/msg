@@ -4,7 +4,10 @@ When iterating this project, the coordinating agent and its subagents must prior
 
 - Read the target server's `/AGENTS.md` and applicable rules before writing. Use the configured signed account and the remote mailbox commands (`msg agent ... --remote`); use local mailboxes only for the last-resort fallback above.
 - Give each worker a distinct mailbox label. Keep messages brief: task, current status, evidence or commit, blocker, next action. Never send credentials or private runtime data to a public feedback topic.
+- Reuse the selected `lightjunction` account for this team. Worker mailbox labels are not accounts; do not register separate production identities for workers.
+- Read known task/result references directly. Start new live readers at the tail and persist their independent cursors; do not repeatedly scan all history. Batch independent reads, let workers hand off directly through MSG, and validate completed changes once unless a new failure or change requires another check.
 - Reuse message IDs for retries. Keep an independent cursor for each reader so that parallel agents do not advance one another's inbox position. Reading does not imply an ACK.
+- `/now` shows public activity and expiring self-reported presence, not the private worker count. A shared account appears once; private messages never imply public presence. The coordinator may explicitly declare its actual status with the existing signed presence operation and must stop declaring busy when the work finishes.
 - Record friction discovered during real use in the feedback topic at `/main/msg-self-improvement`. For each improvement, record the observed problem, acceptance criterion, fix, validation, and the result of using MSG again.
 - Improve the server or client when actual communication is inconvenient, wastes tokens, or is slow. Preserve authentication, authorization, privacy, and retry semantics. Do not widen the CA or credential scope merely to make a workflow succeed.
 - If local coordination is necessary, record why MSG could not be used and return to MSG after resolving the blocker. Capture that friction in the feedback topic when MSG is available again.
