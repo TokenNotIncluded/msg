@@ -38,7 +38,7 @@
         !vector(value.position, extent) || !vector(value.velocity, 60.001) ||
         !finite(value.yaw, -Math.PI, Math.PI) || !finite(value.pitch, -Math.PI / 2, Math.PI / 2) ||
         !finite(value.hp, 0, 100) || !finite(value.fuel, 0, 100) || !region(value.region) ||
-        !integer(value.ack_seq, 0) ||
+        !integer(value.ack_seq, -1) ||
         !['shield_until_ms', 'laser_ready_ms', 'shield_ready_ms', 'dash_ready_ms', 'respawn_at_ms']
           .every(key => time(value[key])) ||
         (value.region_ready_ms !== undefined && !time(value.region_ready_ms)) ||
@@ -73,8 +73,12 @@
   }
 
   function event(value) {
-    if (!object(value) || !integer(value.id, 0) || !EVENT_TYPES.has(value.type) ||
+    const validId = object(value) && (integer(value.id, 0) ||
+      (typeof value.id === 'string' && /^evt_[1-9][0-9]{0,15}$/.test(value.id) &&
+        Number.isSafeInteger(Number(value.id.slice(4)))));
+    if (!validId || !EVENT_TYPES.has(value.type) ||
         !id(value.player_id) || !time(value.at_ms) ||
+        (value.region !== undefined && !region(value.region)) ||
         (value.target_id !== undefined && !id(value.target_id)) ||
         (value.position !== undefined && !vector(value.position, 100000)) ||
         (value.end !== undefined && !vector(value.end, 100000))) return null;
@@ -82,6 +86,7 @@
     if (value.target_id !== undefined) result.target_id = value.target_id;
     if (value.position !== undefined) result.position = frozenVector(value.position);
     if (value.end !== undefined) result.end = frozenVector(value.end);
+    if (value.region !== undefined) result.region = value.region;
     return Object.freeze(result);
   }
 
@@ -96,7 +101,7 @@
       this._snapshot = null;
       this._self = null;
       this._anchor = null;
-      this._seq = 0;
+      this._seq = -1;
       this._retryCount = 0;
       this._input = neutral();
       this._heldActions = new Set();
@@ -316,10 +321,11 @@
       if (socket !== this._socket) return;
       this._close(1000, 'Flight reconnect');
       if (!this._wanted) return;
-      if ([1002, 1003, 1008].includes(code)) {
+      if ([1002, 1003, 1008, 1009, 4013].includes(code)) {
         this._wanted = false;
-        if (code === 1008) this._forgetTicket();
-        this._status('failed', 'Flight connection was rejected. Re-enter flight to try again.');
+        if ([1008, 4013].includes(code)) this._forgetTicket();
+        this._status('failed', code === 4013 ? 'Your login expired. Sign in again to re-enter flight.' :
+          'Flight connection was rejected. Re-enter flight to try again.');
         return;
       }
       if (this._hidden() || this._suspended) {
@@ -359,6 +365,13 @@
       if (value.type === 'hello') this._receiveHello(value);
       else if (value.type === 'snapshot') this._receiveSnapshot(value);
       else if (value.type === 'error' && text(value.message, 512)) this._notify('onError', value.message);
+      else if (value.type === 'error' && typeof value.code === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(value.code)) {
+        const messages = {
+          region_unavailable: '区域暂不可用，请检查燃料、区域冷却和当前状态。',
+          invalid_input: 'Flight controls were rejected by the server.',
+        };
+        this._notify('onError', messages[value.code] ?? 'Flight request was rejected by the server.');
+      }
       else this._badFrame();
     }
 
@@ -451,7 +464,7 @@
       }
       // Duplicate/late valid snapshots must not rewind positions or cooldown clocks.
       if (this._snapshot && value.tick <= this._snapshot.tick) return;
-      if (value.server_time_ms < (this._snapshot?.server_time_ms ?? this._hello.server_time_ms) ||
+      if (value.server_time_ms < (this._snapshot?.server_time_ms ?? this._hello.server_time_ms - 1000) ||
           self.ack_seq < this._self.ack_seq || self.ack_seq > this._seq) { this._badFrame(); return; }
       this._snapshot = Object.freeze(snapshot);
       // Only hello may provide own private home metadata; never copy it to the world snapshot.
