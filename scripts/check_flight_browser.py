@@ -510,8 +510,17 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
         saved = second.evaluate(
             '({id:__renderer.network.self.id,shield:__renderer.network.self.shield_ready_ms})'
         )
+        second.locator('#game-region').click()
+        wait(second, '!document.getElementById("region-map").hidden')
         contexts[1].set_offline(True)
         wait(second, '!__renderer.network.connected', timeout=10000)
+        wait(second, 'document.getElementById("region-map-status").dataset.state === "disconnected"')
+        assert second.locator('#region-map-status').is_visible()
+        assert '断开' in second.locator('#region-map-status').inner_text()
+        assert '实时玩家未连接' in second.locator('#region-map-status').inner_text()
+        assert second.locator('#region-map-actions button:not(:disabled)').count() == 0
+        second.screenshot(path=str(ARTIFACTS / 'actual-map-disconnected-mobile.png'))
+        checks.append('paused map shows lost connection inside the map and disables region requests')
         second.locator('#space').focus()
         before_offline_attack = len(controls[1])
         second.keyboard.press(' ')
@@ -520,7 +529,7 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
         assert second.evaluate('__renderer.remoteShips.size') == 0
         assert second.locator('[data-game-action="fire"]').is_disabled()
         contexts[1].set_offline(False)
-        second.locator('#space').click(position={'x': 180, 'y': 400})
+        second.locator('#region-map-close').click()
         wait(second, '__renderer.network.connected && __renderer.network.self', timeout=15000)
         assert second.evaluate('__renderer.network.self.id') == saved['id']
         assert second.evaluate('__renderer.network.self.shield_ready_ms') == saved['shield']
