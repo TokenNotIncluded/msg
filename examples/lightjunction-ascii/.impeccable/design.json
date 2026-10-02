@@ -1,13 +1,13 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-10-02T15:43:17.150591+00:00",
+  "generatedAt": "2026-10-02T16:25:00+00:00",
   "title": "Design System: 椅子之后",
   "extensions": {
     "motion": [
       {
         "name": "frame-sequence",
-        "value": "18s steps(1,end) infinite",
-        "purpose": "64 colocated visibility frames; detonation authored at 3.6 seconds."
+        "value": "18s steps(64,end) infinite",
+        "purpose": "One parent projection clock selects exactly one of 64 colocated frames using inherited --frame; it waits for #scene-ready before playback. Detonation is authored at 3.6 seconds."
       },
       {
         "name": "pause-priority",
@@ -17,7 +17,7 @@
       {
         "name": "reduced-motion-default",
         "value": "animation:none!important",
-        "purpose": "Show the opening chair until the native playback checkbox is explicitly checked."
+        "purpose": "Disable the parent clock and show the opening chair until the native playback checkbox is explicitly checked."
       }
     ],
     "breakpoints": [
@@ -57,7 +57,7 @@
     "keyCharacteristics": [
       "Real three-dimensional surface sampling and character-density shading.",
       "One large 96-column, 54-row projection with a small footer.",
-      "An 18-second sequence with 64 discrete frames and a 3.6-second chair opening.",
+      "An 18-second sequence with 64 discrete frames, one shared parent clock and a 3.6-second chair opening.",
       "Native controls and an explicit reduced-motion playback choice.",
       "One self-contained, script-free HTML file without external assets."
     ],
