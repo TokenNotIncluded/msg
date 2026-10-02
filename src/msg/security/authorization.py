@@ -295,6 +295,7 @@ class AuthorizationService:
             if (
                 resource.type == 'topic'
                 and check.check == 'create'
+                and request is not None
                 and request.arguments.get('name') in FILES
             ):
                 presentation = resource
