@@ -1245,12 +1245,35 @@ def create_app(service):
                         if path == '/_post/proofs'
                         else {'id', 'after', 'limit'}
                     )
+                    human_view = (
+                        path != '/_post/state'
+                        and 'x-msg-request' not in request.headers
+                        and 'authorization' not in request.headers
+                    )
+                    html_view = (
+                        human_view
+                        and not raw_document
+                        and 'text/html' in request.headers.get('accept', '').casefold()
+                    )
+                    markdown_view = human_view and (
+                        raw_document
+                        or 'text/markdown' in request.headers.get('accept', '').casefold()
+                    )
+                    if human_view:
+                        allowed = allowed | {'format'}
                     require(
                         'id' in query and set(query) <= allowed,
                         'unknown_query_parameter',
                     )
+                    if 'format' in query:
+                        require(query.pop('format') == 'raw', 'unknown_query_parameter')
                     if 'limit' in query:
-                        require(query['limit'].isdigit(), 'invalid_limit')
+                        require(
+                            query['limit'].isascii()
+                            and query['limit'].isdecimal()
+                            and len(query['limit']) <= 3,
+                            'invalid_limit',
+                        )
                         query['limit'] = int(query['limit'])
                     operation = {
                         '/_post/state': 'discussion.state',
@@ -1260,11 +1283,73 @@ def create_app(service):
                     result = await execute_packet(
                         request_for(operation, query, service.settings.service_url, source='manual')
                     )
-                    response = json_response(
-                        result_wire(result),
-                        error_status(result.error.code) if result.error else 200,
-                        headers={'Cache-Control': 'private, no-store', 'Vary': 'Cookie'},
-                    )
+                    public_fallback = False
+                    if (
+                        result.error
+                        and result.error.code == 'credential_ceiling'
+                        and request.scope.get('state', {}).get('msg_browser_credentials')
+                        and 'x-msg-request' not in request.headers
+                        and 'authorization' not in request.headers
+                    ):
+                        # Ordinary browser reads may use already-public records.
+                        # Re-run every ACL as anonymous; never widen the credential.
+                        result = await service.executor.execute(
+                            request_for(
+                                operation, query, service.settings.service_url, source='manual'
+                            ),
+                            entry='network',
+                        )
+                        public_fallback = True
+                    status = error_status(result.error.code) if result.error else 200
+                    if html_view or markdown_view:
+                        from msg.transports.post_read_pages import post_read_markdown
+
+                        markdown = post_read_markdown(
+                            path,
+                            query,
+                            wire(result.data) if not result.error else None,
+                            public_fallback=public_fallback,
+                            error=result.error.code if result.error else None,
+                        )
+                        body = (
+                            document_html(
+                                markdown,
+                                title='Post records / 帖子记录',
+                                account=await browser_account(),
+                                raw_path=path,
+                                raw_query=urlencode(query),
+                                service_url=service.settings.service_url,
+                            )
+                            if html_view
+                            else markdown.encode()
+                        )
+                        require(len(body) <= limits.max_response_bytes, 'response_too_large')
+                        response = Response(
+                            body,
+                            status_code=status,
+                            media_type='text/html'
+                            if html_view
+                            else 'text/plain'
+                            if raw_document
+                            else 'text/markdown',
+                            headers={
+                                **(HOME_BROWSER_HEADERS if html_view else BASE_HEADERS),
+                                'Cache-Control': 'private, no-store',
+                                'Vary': 'Accept, Cookie',
+                            },
+                        )
+                    else:
+                        value = result_wire(result)
+                        if public_fallback and not result.error and path == '/_post/state':
+                            value['data']['personal_state_available'] = False
+                        response = json_response(
+                            value,
+                            status,
+                            headers={
+                                'Cache-Control': 'private, no-store',
+                                'Vary': 'Accept, Cookie',
+                            },
+                        )
                     if request.method == 'HEAD':
                         response.body = b''
                     return response
@@ -1281,23 +1366,42 @@ def create_app(service):
                             source='manual',
                         )
                     )
-                    require(
-                        result.error is None,
-                        result.error.code if result.error else 'permission_denied',
-                    )
-                    data = wire(result.data)
                     from msg.transports.home_page import markdown_text
 
-                    markdown = '# Saved posts / 收藏\n\n' + '\n'.join(
-                        f'- [{markdown_text(item["name"])}]({quote(item["path"], safe="/@*")})'
-                        for item in data['items']
-                    )
-                    if not data['items']:
-                        markdown += 'No saved posts yet. / 还没有收藏的帖子。\n'
-                    if data.get('after'):
-                        markdown += (
-                            '\n[More / 更多](/bookmarks?after=' + quote(data['after']) + ')\n'
+                    if result.error:
+                        if (
+                            'text/html' not in request.headers.get('accept', '').casefold()
+                            and not raw_document
+                            and 'text/markdown' not in request.headers.get('accept', '').casefold()
+                        ):
+                            response = json_response(
+                                result_wire(result),
+                                error_status(result.error.code),
+                                headers={
+                                    'Cache-Control': 'private, no-store',
+                                    'Vary': 'Accept, Cookie',
+                                },
+                            )
+                            if request.method == 'HEAD':
+                                response.body = b''
+                            return response
+                        markdown = '# Saved posts / 收藏\n\n' + (
+                            'Current authorization cannot read your saved posts. / 当前授权未包含读取本人收藏的操作。'
+                            if result.error.code == 'credential_ceiling'
+                            else 'Your saved posts could not be loaded. / 暂时无法读取本人收藏。'
                         )
+                    else:
+                        data = wire(result.data)
+                        markdown = '# Saved posts / 收藏\n\n' + '\n'.join(
+                            f'- [{markdown_text(item["name"])}]({quote(item["path"], safe="/@*")})'
+                            for item in data['items']
+                        )
+                        if not data['items']:
+                            markdown += 'No saved posts yet. / 还没有收藏的帖子。\n'
+                        if data.get('after'):
+                            markdown += (
+                                '\n[More / 更多](/bookmarks?after=' + quote(data['after']) + ')\n'
+                            )
                 html_view = (
                     not raw_document and 'text/html' in request.headers.get('accept', '').casefold()
                 )
@@ -1314,6 +1418,9 @@ def create_app(service):
                 )
                 return Response(
                     b'' if request.method == 'HEAD' else body,
+                    status_code=error_status(result.error.code)
+                    if account and result.error
+                    else 200,
                     media_type='text/html'
                     if html_view
                     else 'text/plain'
