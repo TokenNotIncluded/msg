@@ -224,13 +224,13 @@ def run() -> None:
                 forward = page.locator('[data-flight-key="w"]').bounding_box()
                 right = page.locator('[data-flight-key="arrowright"]').bounding_box()
                 points = [
-                    dict(
-                        x=box['x'] + box['width'] / 2,
-                        y=box['y'] + box['height'] / 2,
-                        id=i + 1,
-                        radiusX=3,
-                        radiusY=3,
-                    )
+                    {
+                        'x': box['x'] + box['width'] / 2,
+                        'y': box['y'] + box['height'] / 2,
+                        'id': i + 1,
+                        'radiusX': 3,
+                        'radiusY': 3,
+                    }
                     for i, box in enumerate((forward, right))
                 ]
                 yaw = page.evaluate('__renderer.flight.yaw')
