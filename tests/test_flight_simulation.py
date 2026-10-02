@@ -140,6 +140,44 @@ def test_gravity_is_bounded_and_private_home_is_only_used_for_its_own_ship(world
     assert not world._gravity_cells
 
 
+def test_nearby_wells_preserve_shared_order_across_cells_for_surface_collision(world):
+    records = [
+        {'id': 'u_root', 'position': [0, 0, 0], 'radius': 5.4},
+        {'id': 'u_left', 'position': [-8, 0, 0], 'radius': 2.05},
+        {'id': 'u_right', 'position': [8, 0, 0], 'radius': 2.05},
+    ]
+    world.set_gravity_wells(records)
+    ship, _ = world.join(identity('u_order', spawn_position=[-5, -7, 0], spawn_region=0))
+    nearby = world._near_wells(ship)
+    assert [well.id for well in nearby] == [record['id'] for record in records]
+    assert planet_contact(ship.position, [-7, 0, 0], [-10, 1, 0], nearby) == planet_contact(
+        ship.position, [-7, 0, 0], [-10, 1, 0], world.gravity_wells
+    )
+
+
+def test_overlapping_root_and_user_surfaces_clear_every_well_and_allow_flight(world):
+    world.set_gravity_wells([
+        {'id': 'u_root', 'position': [0, 0, 0], 'radius': 5.4},
+        {'id': 'u_neighbor', 'position': [-8, 0, 0], 'radius': 2.05},
+    ])
+    point, velocity = planet_contact([-6, 0, 0], [-6, 0, 0], [0, 0, 0], world.gravity_wells)
+    assert all(
+        math.dist(point, well.position) >= well.radius + SHIP_RADIUS + 0.02
+        for well in world.gravity_wells
+    )
+    assert point[0] == pytest.approx(-4.73) and point[1] < -4 and point[2] == 0
+    assert velocity == [0, 0, 0]
+    ship, _ = world.join(identity('u_overlap', spawn_position=[-6, -7, 0], spawn_region=0))
+    ship.position = point
+    for _ in range(30):
+        advance(world, 1 / 15, ship, throttle=1)
+        assert all(
+            math.dist(ship.position, well.position) >= well.radius + SHIP_RADIUS
+            for well in world.gravity_wells
+        )
+    assert ship.position[2] < -20 and math.hypot(*ship.velocity) > 15
+
+
 def test_real_lane_flight_collects_enough_fuel_to_cover_continuous_thrust(world):
     anchors = [
         {'id': 'u_left', 'position': [-180, 0, 0], 'radius': 2.05},
