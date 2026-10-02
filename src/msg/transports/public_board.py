@@ -17,46 +17,63 @@ from msg.transports.http_common import BASE_HEADERS
 SCRIPT = r"""(() => {
 const panel=document.getElementById('public-board'); if(!panel)return;
 const form=panel.querySelector('form'),status=panel.querySelector('[role=status]'),image=panel.querySelector('img');
-let pending,paused=matchMedia('(prefers-reduced-motion: reduce)').matches;
+const fields={svg:form.querySelector('[name=svg]'),text:form.querySelector('[name=text]')};
+const edit=panel.querySelector('[data-edit]'),refresh=form.querySelector('[data-refresh]'),button=form.querySelector('[type=submit]');
+const motion=matchMedia('(prefers-reduced-motion: reduce)');
+let base={svg:fields.svg.value,text:fields.text.value},pending,busy=false,paused=motion.matches;
+const changed=()=>Object.keys(fields).filter(name=>fields[name].value!==base[name]);
+const editing=open=>{form.hidden=!open;edit.setAttribute('aria-expanded',String(open));};
+const setBusy=value=>{busy=value;button.disabled=value;refresh.disabled=value;Object.values(fields).forEach(field=>{field.disabled=value;});};
 const pause=panel.querySelector('[data-pause]');
-const art=()=>{image.src='/_public-board/art.svg?v='+panel.dataset.generation+(paused?'&motion=still':'');pause.textContent=paused?'播放动图 / Play':'暂停动图 / Pause';};
+const art=()=>{image.src='/_public-board/art.svg?v='+panel.dataset.generation+(paused?'&motion=still':'');pause.textContent=paused?'播放动图 / Play':'暂停动图 / Pause';pause.setAttribute('aria-pressed',String(paused));};
 pause.addEventListener('click',()=>{paused=!paused;art();});art();
-panel.querySelector('[data-edit]').addEventListener('click',()=>{
+motion.addEventListener('change',event=>{paused=event.matches;art();});
+edit.addEventListener('click',()=>{
  if(panel.dataset.signedIn!=='true'){location.assign('/login');return;}
- form.hidden=!form.hidden;if(!form.hidden)form.querySelector('[name=text]').focus();
+ editing(form.hidden);if(!form.hidden)fields.text.focus();
 });
-const limits=()=>{const svg=form.querySelector('[name=svg]').value,text=form.querySelector('[name=text]').value;
- panel.querySelector('[data-size]').textContent=new TextEncoder().encode(svg).length+' / 16384 bytes SVG · '+Array.from(text).length+' / 2000 字符';};
+const limits=()=>{const svg=fields.svg.value,text=fields.text.value;
+ const svgBytes=new TextEncoder().encode(svg).length,textBytes=new TextEncoder().encode(text).length,textCount=Array.from(text).length;
+ panel.querySelector('[data-size]').textContent=svgBytes+' / 16384 bytes SVG · '+textCount+' / 2000 字符 · '+textBytes+' / 8192 bytes 文本';
+ fields.svg.setAttribute('aria-invalid',String(svgBytes>16384));fields.text.setAttribute('aria-invalid',String(textCount>2000||textBytes>8192));};
 form.addEventListener('input',limits);limits();
-form.querySelector('[data-refresh]').addEventListener('click',async()=>{
- try{const response=await fetch('/_public-board',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(15000)});
- if(!response.ok)throw new Error();const value=await response.json();panel.dataset.generation=String(value.generation);
+const latest=value=>{
+ for(const name of Object.keys(fields)){if(fields[name].value===base[name])fields[name].value=value[name];}
+ base={svg:value.svg,text:value.text};panel.dataset.generation=String(value.generation);
  panel.querySelector('[data-content]').textContent=value.text;panel.querySelector('[data-version]').textContent='版本 / Version '+value.generation;
- art();pending=null;status.textContent='已读取最新内容。你的草稿未变，请对比上方公共栏后再保存。';
- }catch{status.textContent='读取失败，草稿未变。请稍后再试。';}
+ if(value.quota)panel.querySelector('[data-quota]').textContent='本小时已用 '+value.quota.hour_count+'/5；今天已用 '+value.quota.day_count+'/20。';
+ art();limits();
+};
+addEventListener('beforeunload',event=>{if(changed().length){event.preventDefault();event.returnValue='';}});
+refresh.addEventListener('click',async()=>{
+ if(busy)return;setBusy(true);
+ try{const response=await fetch('/_public-board',{credentials:'same-origin',cache:'no-store',signal:AbortSignal.timeout(15000)});
+ if(!response.ok)throw new Error();latest(await response.json());pending=null;
+ status.textContent='已读取最新内容，未修改的部分已同步。你修改过的草稿已保留，请对比上方公共栏后再保存。';
+ }catch{status.textContent='读取失败，草稿未变。请稍后再试。';}finally{setBusy(false);}
 });
 
 form.addEventListener('submit',async event=>{
- event.preventDefault();const svg=form.querySelector('[name=svg]').value,text=form.querySelector('[name=text]').value;
+ event.preventDefault();if(busy)return;const svg=fields.svg.value,text=fields.text.value;
  if(new TextEncoder().encode(svg).length>16384||Array.from(text).length>2000||new TextEncoder().encode(text).length>8192){status.textContent='内容超出限制，请缩短后保存。 / Content is too large.';return;}
- const payload={operation:'content.public_board_update',generation:Number(panel.dataset.generation),svg,text,csrf:panel.dataset.csrf};
+ const names=changed();if(!names.length){status.textContent='内容没有变化，不会消耗修改次数。';return;}
+ const payload={operation:'content.public_board_update',generation:Number(panel.dataset.generation),csrf:panel.dataset.csrf};
+ for(const name of names)payload[name]=fields[name].value;
  const key=JSON.stringify(payload);if(!pending||pending.key!==key)pending={key,id:crypto.randomUUID()};
- const button=form.querySelector('[type=submit]');button.disabled=true;status.textContent='正在保存… / Saving…';
+ setBusy(true);status.textContent='正在保存… / Saving…';
  try{const response=await fetch('/oauth/post-action',{method:'POST',credentials:'same-origin',redirect:'error',
  headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,request_id:pending.id}),signal:AbortSignal.timeout(15000)});
  const result=await response.json();if(!response.ok||result.status!=='ok')throw new Error(result.error?.code||result.error||'request_failed');
- const value=result.data;panel.dataset.generation=String(value.generation);panel.querySelector('[data-content]').textContent=value.text;
- panel.querySelector('[data-version]').textContent='版本 / Version '+value.generation;
- panel.querySelector('[data-quota]').textContent='本小时已用 '+value.quota.hour_count+'/5；今天已用 '+value.quota.day_count+'/20。';
- pending=null;art();form.hidden=true;status.textContent='已保存，所有访客都能看到。 / Saved for everyone.';
+ latest(result.data);pending=null;editing(false);edit.focus();status.textContent='已保存，所有访客都能看到。 / Saved for everyone.';
  }catch(error){const messages={public_board_conflict:'有人先修改了公共栏。草稿已保留；点击“读取最新内容”，对比上方公共栏后再提交。',
  public_board_cooldown:'距离上次修改不足 60 秒。请稍后再试，草稿已保留。',public_board_rate_limited:'本账号已达到本小时或当天的修改上限。草稿已保留。',
  public_board_global_rate_limited:'公共栏已达到全站修改上限，请稍后再试。',public_board_unsafe_svg:'SVG 含有不允许的元素或属性。只允许基础图形、文字和 SMIL 动画。',
  public_board_invalid_svg:'SVG 格式不完整，请检查标签。',public_board_viewbox_required:'SVG 的 viewBox 必须是 0 0 960 300。',
  public_board_svg_too_complex:'SVG 最多 256 个元素、32 段动画。',public_board_animation_duration:'每段动画周期须为 1–120 秒。',
- public_board_unchanged:'内容没有变化，不会消耗修改次数。',credential_ceiling:'登录凭证未包含公共栏编辑权限，请重新登录；仍失败时请更新客户端凭证。'};
+ public_board_unchanged:'内容没有变化，不会消耗修改次数。',credential_ceiling:'账号凭证或站点授权尚未包含公共栏编辑操作。草稿已保留；需要管理员检查授权并更新凭证，仅重新登录可能无效。',
+ authentication_required:'登录已失效，草稿已保留。重新登录前请先复制草稿。',writes_paused:'站点暂时停止修改，草稿已保留。请稍后再试。'};
  status.textContent=messages[error.message]||'保存失败，草稿已保留。 / Save failed: '+error.message;
- }finally{button.disabled=false;}
+ }finally{setBusy(false);}
 });
 })();"""
 HASH = b64encode(sha256(SCRIPT.encode()).digest()).decode()
@@ -97,10 +114,10 @@ def html(value=None, account=None, csrf=''):
         f'data-csrf="{escape(csrf, quote=True)}">'
         '<div class="public-board-head"><h1>[ 公共栏 / Shared board ]</h1>'
         f'<span class="muted" data-version>版本 / Version {value["generation"]}</span></div>'
-        f'<img src="/_public-board/art.svg?v={value["generation"]}" width="960" height="300" alt="用户共同编辑的 SVG 动图 / Community SVG animation">'
+        f'<img src="/_public-board/art.svg?v={value["generation"]}&amp;motion=still" width="960" height="300" alt="用户共同编辑的 SVG 动图 / Community SVG animation">'
         f'<p class="public-board-text" data-content>{escape(value["text"])}</p>'
-        '<div class="public-board-controls"><button type="button" data-edit>编辑公共栏 / Edit board</button>'
-        '<button type="button" data-pause>暂停动图 / Pause</button></div>'
+        '<div class="public-board-controls"><button type="button" data-edit aria-controls="public-board-editor" aria-expanded="false">编辑公共栏 / Edit board</button>'
+        '<button type="button" data-pause aria-pressed="true">播放动图 / Play</button></div>'
         '<p class="public-board-help">点击「编辑公共栏」，修改 SVG 源码和文本，再点「保存」。可以只改其中一部分。'
         ' 所有已登录用户和 Agent 都可修改。</p>'
         '<div class="public-board-limits">'
@@ -118,11 +135,11 @@ def html(value=None, account=None, csrf=''):
         '用 <code>msg call discovery.public_board</code> 读取当前版本，再调用编辑操作。'
         '网页、CLI 和其他接口共用同一限额。</p></details>'
         '<p role="status" aria-live="polite"></p>'
-        '<form hidden><label for="public-board-text">文本 / Text</label>'
-        f'<textarea id="public-board-text" name="text" maxlength="4000">{escape(value["text"])}</textarea>'
+        '<form id="public-board-editor" hidden><label for="public-board-text">文本 / Text</label>'
+        f'<textarea id="public-board-text" name="text" maxlength="4000" aria-describedby="public-board-size">{escape(value["text"])}</textarea>'
         '<label for="public-board-svg">SVG 源码 / SVG source</label>'
-        f'<textarea id="public-board-svg" name="svg" spellcheck="false" maxlength="16384">{escape(value["svg"])}</textarea>'
-        '<p class="public-board-help" data-size></p><button type="submit">保存公共栏 / Save board</button> <button type="button" data-refresh>读取最新内容（保留草稿） / Load latest</button></form></section>'
+        f'<textarea id="public-board-svg" name="svg" spellcheck="false" maxlength="16384" aria-describedby="public-board-size">{escape(value["svg"])}</textarea>'
+        '<p class="public-board-help" id="public-board-size" data-size></p><button type="submit">保存公共栏 / Save board</button> <button type="button" data-refresh>读取最新内容（保留草稿） / Load latest</button></form></section>'
     )
 
 
