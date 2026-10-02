@@ -28,6 +28,8 @@ class NetworkFlight:
     client: aiohttp.ClientSession
     url: str
     peers: list
+    server: object
+    task: asyncio.Task
 
     async def connect(self, *, cookie=None, headers=None, query=''):
         values = {'Host': 'testserver', 'Origin': 'http://testserver'}
@@ -51,7 +53,7 @@ class NetworkFlight:
 
 
 @pytest.fixture
-async def flight_server(oauth):
+async def flight_server(oauth, request):
     service, _, _, _ = oauth
     service.settings = replace(service.settings, service_url='http://testserver')
     router = create_app(service)
@@ -66,7 +68,7 @@ async def flight_server(oauth):
             router,
             host='127.0.0.1',
             port=port,
-            lifespan='off',
+            lifespan=getattr(request, 'param', 'off'),
             loop='asyncio',
             ws='websockets-sansio',
             access_log=False,
@@ -83,7 +85,13 @@ async def flight_server(oauth):
                 await asyncio.sleep(0.01)
         async with aiohttp.ClientSession() as client:
             flight = NetworkFlight(
-                service, router.state.flight_hub, client, f'ws://127.0.0.1:{port}/_flight', []
+                service,
+                router.state.flight_hub,
+                client,
+                f'ws://127.0.0.1:{port}/_flight',
+                [],
+                server,
+                task,
             )
             try:
                 yield flight
@@ -103,6 +111,37 @@ async def flight_server(oauth):
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
             listener.close()
+
+
+@pytest.mark.parametrize('flight_server', ['on'], indirect=True)
+async def test_production_lifespan_cleans_connected_world(flight_server):
+    """A real Uvicorn shutdown must run the application's flight cleanup."""
+    flight = flight_server
+    peer, hello = await flight.join()
+    assert hello['self']['id'] in flight.hub.world.ships
+    assert flight.hub.world.active_count == 1
+    assert flight.hub.runner is not None
+
+    flight.server.should_exit = True
+    async with asyncio.timeout(5):
+        await flight.task
+
+    # Uvicorn owns the transport shutdown and may close it before the peer
+    # processes the restart frame. Application cleanup must work either way.
+    async with asyncio.timeout(3):
+        while True:
+            frame = await peer.receive()
+            if frame.type != aiohttp.WSMsgType.TEXT:
+                assert frame.type in {aiohttp.WSMsgType.CLOSE, aiohttp.WSMsgType.CLOSED}
+                assert peer.closed
+                break
+    assert flight.hub.closed
+    assert flight.hub.runner is None
+    assert flight.hub.world.active_count == 0
+    assert not flight.hub.world.ships
+    assert not flight.hub.peers
+    assert not flight.hub.addresses
+    assert not flight.hub.admissions
 
 
 def controls(seq, **changes):
