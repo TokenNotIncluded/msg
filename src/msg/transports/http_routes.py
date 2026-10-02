@@ -3677,6 +3677,7 @@ def create_app(service):
                             resource.parent == await tx.resolve(post_view['scope']), 'not_found'
                         )
             value = wire(result.data)
+            thread_items = value.get('items', []) if post_view and view == 'thread' else None
             if post_view and view == 'thread':
                 value['items'] = [
                     {
@@ -3722,6 +3723,21 @@ def create_app(service):
             browser_html = (
                 view == 'markdown' and 'text/html' in request.headers.get('accept', '').casefold()
             )
+            browser_thread = (
+                thread_items is not None
+                and 'text/html' in request.headers.get('accept', '').casefold()
+            )
+            if browser_thread:
+                from msg.transports.read_representation import representation
+
+                try:
+                    browser_thread = representation(request.headers['accept']) == 'text/html'
+                except Failure as exc:
+                    if exc.code != 'not_acceptable':
+                        raise
+                    browser_thread = False
+            browser_html = browser_html or browser_thread
+            thread_markup = None
             certificate_markup = None
             if browser_html and ('certificate' in value or 'certificates' in value):
                 certificate_markup = await certificate_browser_document(value, path)
@@ -3752,6 +3768,23 @@ def create_app(service):
             account = None
             if browser_html:
                 account = await browser_account()
+                if browser_thread:
+                    from msg.transports.post_read_pages import thread_read_html
+
+                    thread_markup = thread_read_html(
+                        thread_items,
+                        value,
+                        path=path,
+                        raw_query=request.url.query,
+                        account=account,
+                        service_url=service.settings.service_url,
+                    )
+                    etag = '"' + digest([value, thread_markup.decode(), account])[7:] + '"'
+                    headers.update({
+                        'ETag': etag,
+                        'Cache-Control': 'private, no-store',
+                        'Vary': 'Accept, Cookie',
+                    })
                 if value.get('type') == 'post' and value.get('state', 'active') == 'active':
                     from msg.transports.oauth_http import csrf
                     from msg.transports.post_actions import post_actions_html
@@ -3830,7 +3863,11 @@ def create_app(service):
                     headers=headers,
                 )
             body = (
-                document_html('', title=path, account=account, controls=wiki_history, raw_path=path)
+                thread_markup
+                if thread_markup is not None
+                else document_html(
+                    '', title=path, account=account, controls=wiki_history, raw_path=path
+                )
                 if wiki_history
                 else canonical(value)
                 if view in {'json', 'meta', 'history', 'diff', 'references', 'thread'}
@@ -3853,7 +3890,7 @@ def create_app(service):
             return Response(
                 b'' if request.method == 'HEAD' else body,
                 media_type='text/html'
-                if wiki_history
+                if wiki_history or thread_markup is not None
                 else 'text/plain'
                 if raw_document
                 else 'application/json'
