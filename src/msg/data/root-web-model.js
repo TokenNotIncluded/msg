@@ -2,6 +2,7 @@
 (() => {
   "use strict";
   const TAU = Math.PI * 2;
+  const LAYOUT_VERSION = 4, POST_SLOTS = 64, POST_NODE_LIMIT = 160;
   function handle(name) {
     return "@" + String(name || "").replace(/^\/?@+/, "");
   }
@@ -16,6 +17,7 @@
     };
   }
   function position(id) {
+    if (id && typeof id === 'object') return starPosition(id);
     if (id === 'u_root') return [0, 0, 0];
     const r = random('position:v3:' + id);
     // Uneven volumes, filaments and outliers, with no social meaning assigned
@@ -31,7 +33,53 @@
     const length = Math.hypot(...p);
     return length < 38 ? p.map(v => v * 38 / Math.max(length, .001)) : p;
   }
-  function satellite(id, center, time = 0) {
+  const point = value => Array.isArray(value) && value.length === 3 &&
+    value.every(v => Number.isFinite(v) && Math.abs(v) <= 480);
+  function starPosition(user) {
+    if (user?.id === 'u_root') return [0, 0, 0];
+    const layout = user?.star?.layout;
+    if (layout?.version === LAYOUT_VERSION && point(layout.position)) return [...layout.position];
+    return position(typeof user === 'string' ? user : user?.id || '');
+  }
+  function postRing(star, loadedCount = 0, { scope = 'public', subject = null } = {}) {
+    const facts = star?.star?.post_count;
+    const privateScope = scope === 'private';
+    const permitted = !privateScope || star?.kind === 'private' && subject === star.id;
+    const raw = permitted ? privateScope ? facts?.private_visible : facts?.public : null;
+    const known = facts?.exact === true && Number.isSafeInteger(raw) && raw >= 0;
+    const count = known ? raw : null;
+    // The size follows the current authorization-filtered total, never a page
+    // length. Unknown totals get a fixed compatibility ring, not an estimate.
+    const radius = known ? 8 + Math.min(16, 2.5 * Math.log2(1 + count)) : 8;
+    const rings = known ? Math.max(1, Math.min(4, 1 + Math.floor(Math.log2(Math.max(1, count) / 96)))) : 1;
+    const rng = random('post-plane:v4:' + scope + ':' + star.id);
+    const tilt = .18 + rng() * .36, azimuth = rng() * TAU;
+    const u = [Math.cos(azimuth), 0, Math.sin(azimuth)];
+    const v = [-Math.sin(azimuth) * Math.cos(tilt), Math.sin(tilt), Math.cos(azimuth) * Math.cos(tilt)];
+    const center = privateScope && point(star.position) ? [...star.position] : starPosition(star);
+    return { version: LAYOUT_VERSION, kind: 'post-ring', scope, center,
+      radius, count, known, normal: [Math.sin(azimuth) * Math.sin(tilt), Math.cos(tilt), -Math.cos(azimuth) * Math.sin(tilt)],
+      basis: [u, v], ring_radii: Array.from({ length: rings }, (_, i) => radius - i * 2),
+      loaded_count: Math.max(0, Math.floor(loadedCount) || 0), displayed_count: 0,
+      lod_limit: POST_NODE_LIMIT, visible: count > 0 || loadedCount > 0 };
+  }
+  const privateRing = (star, subject, loadedCount = 0) => postRing(star, loadedCount, { scope: 'private', subject });
+  function postOrbit(id, ring) {
+    const lane = Math.floor(random('post-lane:v4:' + id)() * ring.ring_radii.length);
+    const rng = random('post-slot:v4:' + id), slot = Math.floor(rng() * POST_SLOTS);
+    const phase = (slot + .5 + (rng() - .5) * .2) * TAU / POST_SLOTS;
+    return { version: LAYOUT_VERSION, kind: 'post-ring', scope: ring.scope, static: true,
+      center: [...ring.center], radius: ring.ring_radii[lane], normal: [...ring.normal],
+      basis: ring.basis.map(axis => [...axis]), lane, slot, phase };
+  }
+  function satellite(id, center, time = 0, orbit = null) {
+    if (orbit?.version === LAYOUT_VERSION && orbit.kind === 'post-ring' &&
+        point(orbit.center) && orbit.basis?.length === 2 && orbit.basis.every(point) &&
+        Number.isFinite(orbit.radius) && orbit.radius >= 0 && orbit.radius <= 24 && Number.isFinite(orbit.phase)) {
+      const phase = orbit.phase + (orbit.static ? 0 : time * (orbit.angular_speed || 0));
+      return orbit.center.map((value, i) => value + orbit.radius *
+        (Math.cos(phase) * orbit.basis[0][i] + Math.sin(phase) * orbit.basis[1][i]));
+    }
     const r = random(id),
       radius = 8 + r() * 19,
       angle = r() * TAU + time * (.012 + r() * .035) * (r() < .5 ? -1 : 1);
@@ -162,32 +210,62 @@
       reserve: reserve(balance),
     };
   }
-  function graph(users, posts, time, focus) {
-    const stars = users.map((user) => ({
-      ...user,
-      kind: "user",
-      position: position(user.id),
-    }));
+  function graph(users, posts, time = 0, focus = null, topology = null) {
+    const publicOnly = item => item && item.visibility !== 'private' && item.private !== true &&
+      !['private', 'private-message'].includes(item.kind);
+    const visiblePosts = posts.filter(publicOnly);
+    const stars = users.filter(publicOnly).map((user) => {
+      const facts = { ...user.star }, counts = facts.post_count;
+      if (counts) facts.post_count = { public: counts.public, exact: counts.exact, scanned: counts.scanned };
+      if (facts.balance?.visibility === 'self') facts.balance = { visibility: 'unavailable' };
+      const star = { ...user, star: facts, kind: 'user', position: starPosition(user) };
+      const layout = user.star?.layout;
+      star.layoutVersion = layout?.version === LAYOUT_VERSION && point(layout.position) ? LAYOUT_VERSION : 3;
+      star.orbit = star.layoutVersion === LAYOUT_VERSION ? layout.orbit : null;
+      return star;
+    });
     const index = new Map(stars.map((star) => [star.id, star]));
+    const loaded = new Map();
+    for (const post of visiblePosts) if (index.has(post.author?.id)) {
+      const ids = loaded.get(post.author.id) || new Set(); ids.add(post.id); loaded.set(post.author.id, ids);
+    }
+    for (const star of stars) star.post_ring = postRing(star, loaded.get(star.id)?.size || 0);
     const nodes = [...stars],
       links = [];
-    for (const post of posts) {
+    const shown = new Set(stars.map(star => star.id));
+    const candidates = [];
+    for (const post of visiblePosts) {
       const star = index.get(post.author?.id);
       if (!star) continue;
+      const orbit = postOrbit(post.id, star.post_ring);
       const node = {
         ...post,
         kind: post.reply_to ? "reply" : "post",
         orbitCenter: star.position,
-        position: satellite(post.id, star.position, time),
+        orbit,
+        position: satellite(post.id, star.position, time, orbit),
       };
       index.set(node.id, node);
-      if (focus === star.id || focus === node.id) {
-        nodes.push(node);
-        links.push([star, node, "orbit"]);
+      if (focus === star.id || focus === node.id) candidates.push(node);
+    }
+    const occupied = new Set();
+    const add = node => {
+      if (shown.has(node.id)) return true;
+      if (nodes.length - stars.length >= POST_NODE_LIMIT) return false;
+      nodes.push(node); shown.add(node.id); const star = index.get(node.author?.id);
+      if (star) star.post_ring.displayed_count += 1;
+      return true;
+    };
+    candidates.sort((a, b) => Number(b.id === focus) - Number(a.id === focus) ||
+      random('post-lod:v4:' + a.id)() - random('post-lod:v4:' + b.id)() || a.id.localeCompare(b.id));
+    for (const node of candidates) {
+      const slot = node.author.id + ':' + node.orbit.lane + ':' + node.orbit.slot;
+      if (!occupied.has(slot) && add(node)) {
+        occupied.add(slot); links.push([index.get(node.author.id), node, 'orbit']);
       }
     }
     const pairs = new Set();
-    for (const post of posts) {
+    for (const post of visiblePosts) {
       const a = index.get(post.id),
         b = index.get(post.reply_to?.id);
       if (!a || !b) continue;
@@ -201,12 +279,25 @@
         }
       }
       if (focus === a.author?.id || focus === a.id || focus === b.id) {
-        if (!nodes.includes(a)) nodes.push(a);
-        if (!nodes.includes(b)) nodes.push(b);
-        links.push([a, b, "reply"]);
+        if (add(a) && add(b)) links.push([a, b, "reply"]);
       }
     }
-    return { nodes, links };
+    const followPairs = new Set();
+    const explicit = new Set((topology?.edges || []).filter(edge => edge.source_type === 'explicit')
+      .map(edge => edge.source + ':' + edge.target));
+    for (const edge of topology?.edges || []) {
+      const source = index.get(edge.source), target = index.get(edge.target);
+      if (!source || !target || source.kind !== 'user' || target.kind !== 'user' || source === target) continue;
+      if (!['explicit', 'default'].includes(edge.source_type)) continue;
+      if (edge.source_type === 'default' && target.id !== 'u_root') continue;
+      const mutual = edge.mutual === true || explicit.has(edge.target + ':' + edge.source);
+      const type = edge.source_type === 'default' ? 'root-attachment' : mutual ? 'mutual' : 'follow';
+      const key = type === 'mutual' ? [source.id, target.id].sort().join(':') : source.id + ':' + target.id;
+      if (followPairs.has(type + ':' + key)) continue;
+      followPairs.add(type + ':' + key); links.push([source, target, type, { source_type: edge.source_type }]);
+    }
+    return { nodes, links, layoutVersion: LAYOUT_VERSION,
+      rings: stars.filter(star => star.post_ring.visible).map(star => ({ id: star.id, ...star.post_ring })) };
   }
   const bytes = (value) => new TextEncoder().encode(value);
   const b64 = (buffer) =>
@@ -343,9 +434,14 @@
   }
   globalThis.MSGUniverse = Object.freeze({
     TAU,
+    LAYOUT_VERSION,
     handle,
     random,
     position,
+    starPosition,
+    postRing,
+    privateRing,
+    postOrbit,
     nebula,
     SpatialIndex,
     trimMap,
