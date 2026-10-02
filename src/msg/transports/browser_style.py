@@ -1,7 +1,9 @@
 """One restrained, dependency-free visual language for browser-only views."""
 
+from html import escape
 from importlib.resources import files
 
+from msg.transports.browser_i18n import LANGUAGES
 from msg.transports.browser_palette import ACCENTS
 
 _MARK = files('msg.data').joinpath('logo.svg').read_text()
@@ -20,7 +22,12 @@ _THEME_ICONS = {
 PREFERENCES = (
     '<details class="preferences"><summary title="Display settings / 显示设置"><svg class="settings-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3"/><circle cx="15" cy="17" r="3"/></svg><span data-i18n="display">Display settings</span><svg class="settings-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></summary>'
     '<div class="preference-fields"><div class="preference-row"><label for="msg-language" data-i18n="language">Language</label>'
-    '<select id="msg-language"><option value="en">English</option><option value="zh">简体中文</option></select></div>'
+    '<select id="msg-language">'
+    + ''.join(
+        f'<option value="{code}" lang="{tag}">{escape(label)}</option>'
+        for code, label, tag, _ in LANGUAGES
+    )
+    + '</select></div>'
     '<div class="preference-row"><span id="accent-label" data-i18n="accent">Accent</span>'
     '<div id="msg-accent" class="accent-options" role="radiogroup" aria-labelledby="accent-label">'
     + ''.join(
@@ -158,12 +165,12 @@ time { flex-shrink: 0; font: 11px/1.6 var(--mono); }
 .notice::before { content: "[!] "; font-family: var(--mono); }
 .scroll-hint { display: none; color: var(--muted); font: 11px/1.6 var(--mono); }
 .table-scroll { max-width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+table { width: 100%; border-collapse: collapse; text-align: start; font-size: 14px; }
 .table-scroll table { min-width: 600px; }
 th, td { padding: 14px 16px; vertical-align: top; }
 th { color: var(--muted); font-size: 12px; font-weight: 500; border-bottom: 1px solid var(--line); }
-th:first-child, td:first-child { padding-left: 0; }
-th:last-child, td:last-child { padding-right: 0; }
+th:first-child, td:first-child { padding-inline-start: 0; }
+th:last-child, td:last-child { padding-inline-end: 0; }
 td a { text-decoration: none; }
 tbody tr:hover { background: var(--panel); }
 .number { text-align: right; font-variant-numeric: tabular-nums; }
@@ -371,4 +378,11 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 32px; }
 @media (max-width: 380px) {
   .page-document .account-menu summary { max-width: 70px; }
 }
+"""
+
+# Technical identifiers retain their reading order in right-to-left interfaces.
+THEME_CSS += """
+code, pre, .brand { direction: ltr; unicode-bidi: isolate; }
+[dir=rtl] .settings-note { text-align: start; }
+[dir=rtl] .document-toolbar .preferences { margin-right: 0; margin-inline-end: auto; }
 """
