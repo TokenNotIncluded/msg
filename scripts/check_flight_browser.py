@@ -670,8 +670,10 @@ def run(cases: set[str] | None = None) -> None:
             page.keyboard.up('w')
             assert page.evaluate('__renderer.flight.speed') > 0
             assert page.evaluate('__renderer.keys.size') == 0
-            assert page.evaluate("__renderer.flightSticks.every(s => !s.active && s.value === 0)")
-            assert page.evaluate('__renderer.flight.yawRate === 0 && __renderer.flight.pitchRate === 0')
+            assert page.evaluate('__renderer.flightSticks.every(s => !s.active && s.value === 0)')
+            assert page.evaluate(
+                '__renderer.flight.yawRate === 0 && __renderer.flight.pitchRate === 0'
+            )
             page.evaluate("document.getElementById('search-box').hidden = true")
             page.locator('#space').focus()
             page.keyboard.press('Escape')
@@ -694,8 +696,12 @@ def run(cases: set[str] | None = None) -> None:
                 assert page.evaluate('__renderer.flight.speed') > 0
                 assert page.evaluate('__renderer.keys.size') == 0
                 assert page.evaluate('__renderer.flightControls.size') == 0
-                assert page.evaluate("__renderer.flightSticks.every(s => !s.active && s.value === 0)")
-                assert page.evaluate('__renderer.flight.yawRate === 0 && __renderer.flight.pitchRate === 0')
+                assert page.evaluate(
+                    '__renderer.flightSticks.every(s => !s.active && s.value === 0)'
+                )
+                assert page.evaluate(
+                    '__renderer.flight.yawRate === 0 && __renderer.flight.pitchRate === 0'
+                )
             page.evaluate('__renderer.setPilot(false)')
             # Nearby inspection resolves only a current graph identity, through the read callback.
             page.locator('#pilot-toggle').click()
@@ -754,8 +760,8 @@ def run(cases: set[str] | None = None) -> None:
                 yaw = page.evaluate('__renderer.flight.yaw')
                 pitch_angle = page.evaluate('__renderer.flight.pitch')
                 cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': points})
-                points[1]['y'] += pitch['height'] * .34
-                points[2]['x'] += yaw_stick['width'] * .34
+                points[1]['y'] += pitch['height'] * 0.34
+                points[2]['x'] += yaw_stick['width'] * 0.34
                 cdp.send('Input.dispatchTouchEvent', {'type': 'touchMove', 'touchPoints': points})
                 page.wait_for_timeout(300)
                 assert page.evaluate('__renderer.flightControls.size') == 1
@@ -767,7 +773,9 @@ def run(cases: set[str] | None = None) -> None:
                     'Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': points[1:]}
                 )
                 assert page.evaluate('[...__renderer.flightControls.values()]') == ['w']
-                assert page.evaluate('__renderer.flightSticks.every(s => !s.active && s.value === 0)')
+                assert page.evaluate(
+                    '__renderer.flightSticks.every(s => !s.active && s.value === 0)'
+                )
                 cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
                 assert page.evaluate('__renderer.flightControls.size') == 0
                 for selector in (
