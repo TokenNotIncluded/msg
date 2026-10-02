@@ -403,6 +403,15 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
             from msg.plugins.star_projection import star_projection
 
             meta['star'] = await star_projection(app, ctx, request, tx, rid)
+        if 'star_private' in fields:
+            from msg.plugins.star_projection import private_post_counts
+
+            meta['star_private'] = await private_post_counts(app, ctx, request, tx, rid)
+        if 'star_topology' in fields:
+            from msg.plugins.star_projection import public_layout
+
+            require(ctx.principal.subject is None, 'public_star_summary_only')
+            meta['star_topology'] = (await public_layout(app, ctx, request, tx))['topology']
         if ctx.principal.subject == rid and (not fields or 'groups' in fields):
             meta['groups'] = []
             for membership in await tx.memberships(rid):

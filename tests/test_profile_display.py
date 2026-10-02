@@ -156,7 +156,7 @@ async def test_profile_bio_social_links_counts_and_lists_respect_visibility(inst
     ) as http:
         profile = await http.get('/@social-alice')
         assert '你好，写开源工具。' in profile.text
-        assert '关注 · 1' in profile.text and '粉丝 · 2' in profile.text
+        assert '关注 · 2' in profile.text and '粉丝 · 2' in profile.text
         assert '(/@social-alice/follows)' in profile.text
         html = await http.get('/@social-alice/followers?limit=1', headers={'Accept': 'text/html'})
         assert html.status_code == 200 and 'Next page' in html.text
@@ -178,9 +178,19 @@ async def test_profile_bio_social_links_counts_and_lists_respect_visibility(inst
                 )
         hidden = (await http.get('/@social-alice/json')).json()['profile']
         assert not hidden['bio'] and hidden['bio_path'] is None
-        assert hidden['follower_count'] == 1 and hidden['following_count'] == 1
+        assert hidden['follower_count'] == 1 and hidden['following_count'] == 2
         listing = await http.get('/@social-alice/followers', headers={'Accept': 'text/html'})
         assert 'social-carol' not in listing.text
+        async with app.metadata.transaction(write=True) as tx:
+            resource = await tx.resource(bob)
+            await tx.replace(
+                replace(resource, mode=0o700, generation=resource.generation + 1),
+                resource.generation,
+            )
+        root_only = (await http.get('/@social-alice/json')).json()['profile']
+        assert root_only['following_count'] == 1 and root_only['follower_count'] == 0
+        follows = (await http.get('/@social-alice/follows')).json()['items']
+        assert [(item['name'], item['path']) for item in follows] == [('@root', '/@root')]
 
 
 @pytest.mark.asyncio

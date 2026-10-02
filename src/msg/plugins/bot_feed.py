@@ -1,4 +1,4 @@
-"""One bounded recommendation page, using only explicit preferences and public posts."""
+"""One bounded recommendation page, using effective preferences and public posts."""
 
 import re
 from dataclasses import replace
@@ -10,6 +10,7 @@ from msg.core.models import HandlerOutput, Principal, ResourceRef
 from msg.core.post_preview import post_preview
 from msg.core.read_query import ReadBudget
 from msg.core.tags import normalize_tag
+from msg.plugins.agent_follows import blocked, effective_targets
 from msg.plugins.common import operation_id
 from msg.plugins.discovery import visible
 from msg.plugins.schemas import obj
@@ -30,27 +31,31 @@ def install(app, op):
     async def feed(ctx, request, tx):
         subject = ctx.principal.subject
         following = set()
+        budget = ReadBudget(ctx.deadline_monotonic, app.settings.server.limits.max_response_bytes)
         if subject:
             await app.authorizer.require_base(ctx.principal, operation_id(request), subject, tx)
-            following.update(
-                row[0]
-                for row in tx.rows(
-                    'SELECT target FROM agent_follows WHERE follower=? LIMIT 1000',
-                    (subject,),
-                )
-            )
+            for target in await effective_targets(tx, subject):
+                budget.scan()
+                resource = await tx.resource(target)
+                if (
+                    resource.type == 'user'
+                    and resource.state == 'active'
+                    and not blocked(tx, subject, target)
+                    and await visible(app, ctx, request, tx, target)
+                ):
+                    following.add(target)
             # Old subscriptions remain private, but are useful to their owner's
             # feed. They are never turned into public account-follow relations.
             following.update(
                 row[0]
                 for row in tx.rows(
                     'SELECT w.resource FROM watches w JOIN resources r ON r.id=w.resource '
-                    "WHERE w.subject=? AND r.type='user' AND r.state='active' LIMIT 1000",
+                    "WHERE w.subject=? AND r.type='user' AND r.state='active' "
+                    'ORDER BY w.resource LIMIT 1000',
                     (subject,),
                 )
             )
         interests = tuple(normalize_tag(tag) for tag in request.arguments.get('interests', ()))
-        budget = ReadBudget(ctx.deadline_monotonic, app.settings.server.limits.max_response_bytes)
         public = replace(
             ctx,
             principal=Principal(

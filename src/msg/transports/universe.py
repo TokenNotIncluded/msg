@@ -14,9 +14,10 @@ from datetime import timedelta
 
 from starlette.responses import Response
 
-from msg.constants import ROOT_SUBJECT
+from msg.constants import ROOT_SPACE, ROOT_SUBJECT
 from msg.core.codec import canonical, wire
 from msg.core.errors import Failure, require
+from msg.core.planet_layout import fallback_position, planet_layout
 from msg.core.post_preview import post_preview
 from msg.core.requests import request_for
 from msg.transports.http_common import BASE_HEADERS
@@ -37,7 +38,43 @@ HIDDEN = {
 }
 
 
+async def subject_position(service, subject_id):
+    """An authoritative public birth point, or None for a hidden identity.
+
+    The flight server assigns private identities a separate neutral home. This
+    helper never projects hidden follow labels or derives a private UUID point.
+    """
+    result = await service.executor.execute(
+        request_for(
+            'discovery.get',
+            {'id': subject_id, 'fields': ['star_topology']},
+            service.settings.service_url,
+            source='manual',
+        )
+    )
+    if result.error:
+        if result.error.code in HIDDEN:
+            return None
+        raise Failure(result.error.code)
+    graph = wire(result.data)['star_topology']
+    layout = planet_layout(graph['nodes'], graph['edges'])
+    return layout[subject_id]['position'] if subject_id in layout else fallback_position(subject_id)
+
+
 def page_arguments(kind, author=None):
+    if kind == 'posts' and author:
+        return {
+            'scope': ROOT_SPACE,
+            'type': 'post',
+            'terms': 'post',
+            'field': 'metadata',
+            'author': author,
+            'recursive': True,
+            'depth': 5,
+            'order': 'created',
+            'limit': 24,
+            'fields': [field for field in PAGE_FIELDS['posts'] if field != 'parent'],
+        }
     return {
         'type': 'user' if kind == 'users' else 'post',
         'limit': 100 if kind == 'users' else 24,
@@ -72,10 +109,11 @@ async def public_page(service, query):
             'invalid_universe_ids',
         )
     args = page_arguments(kind, author)
+    page_operation = 'discovery.lexical_search' if author else 'discovery.read_query'
     if 'cursor' in query:
         saved, _ = service.cursors.inspect_page(query['cursor'], service.clock())
         require(
-            saved.get('operation') == 'discovery.read_query'
+            saved.get('operation') == page_operation
             and canonical(saved.get('arguments')) == canonical(args),
             'cursor_query_mismatch',
         )
@@ -91,6 +129,13 @@ async def public_page(service, query):
                 return None
             raise Failure(result.error.code)
         return wire(result.data)
+
+    if author:
+        require(
+            await read('discovery.get', {'id': author, 'fields': ['id']}, optional=True)
+            is not None,
+            'not_found',
+        )
 
     if ids is not None:
         semaphore = asyncio.Semaphore(4)
@@ -125,7 +170,7 @@ async def public_page(service, query):
             if not any(re.fullmatch(r'u_[0-9a-f]{32}', item['id']) for item in page['items']):
                 page = await read('discovery.read_query', args)
         else:
-            page = await read('discovery.read_query', args)
+            page = await read(page_operation, args)
     anchor = None
     if kind == 'users' and ids is None and 'cursor' not in query:
         # Root is a real readable identity, not a decorative fake account, and
@@ -150,7 +195,8 @@ async def public_page(service, query):
         detail = await read('discovery.get', {'id': item['id']}, optional=True)
         if detail is None:
             continue
-        author = await reference(item['owner'])
+        author_link = detail.get('links', {}).get('a')
+        author = await reference(author_link['ref']['id']) if author_link else None
         content = detail.get('content', '')
         preview = post_preview(item['name'], content[:8192] if isinstance(content, str) else '')
         reply = next(
@@ -167,12 +213,23 @@ async def public_page(service, query):
             'reply_to': reply_to,
             **preview,
         })
+    topology = None
+    if kind == 'users':
+        readable = anchor or next(iter(items), None)
+        if readable is not None:
+            graph = await read(
+                'discovery.get', {'id': readable['id'], 'fields': ['star_topology']}, optional=True
+            )
+            if graph is not None:
+                topology = graph['star_topology']
     return {
         'version': 1,
         'kind': kind,
         'generated_at': wire(service.clock()),
         **({'anchor': anchor} if anchor is not None else {}),
+        **({'topology': topology} if topology is not None else {}),
         'author': query.get('author'),
+        **({'bounded': True, 'post_scope_depth': 5} if query.get('author') else {}),
         'items': items,
         'cursor': page.get('cursor'),
         'service': service.settings.service_url,
@@ -225,9 +282,26 @@ async def universe_response(service, request, browser_account, execute_packet):
                 )
             )
             facts = wire(public_facts.data).get('star', {}) if public_facts.error is None else {}
+            counts_result = await execute_packet(
+                request_for(
+                    'discovery.get',
+                    {'id': account['id'], 'fields': ['star_private']},
+                    service.settings.service_url,
+                    source='manual',
+                )
+            )
+            private_counts = {'own': None, 'private_visible': None, 'exact': False}
+            if counts_result.error is None:
+                require(counts_result.subject == account['id'], 'permission_denied')
+                private_counts = wire(counts_result.data)['star_private']
             account = {
                 **account,
-                'star': {**facts, 'balance': own_balance, 'checked_at': wire(service.clock())},
+                'star': {
+                    **facts,
+                    'post_count': {**facts.get('post_count', {}), **private_counts},
+                    'balance': own_balance,
+                    'checked_at': wire(service.clock()),
+                },
             }
         value = {
             'version': 1,

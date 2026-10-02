@@ -3,6 +3,7 @@
 from msg.core.codec import canonical, wire
 from msg.core.errors import require
 from msg.core.models import HandlerOutput
+from msg.plugins.agent_follows import blocked, effective_follow
 from msg.plugins.common import check_access, operation_id, resolve
 from msg.plugins.discovery import metadata, visible
 from msg.plugins.schemas import IDENTIFIER, STRING, obj
@@ -66,18 +67,20 @@ def install(app, op):
                 )
             }
         )
-        following = bool(
-            subject
-            and tx.one(
-                'SELECT 1 FROM agent_follows WHERE follower=? AND target=?',
-                (subject, resource.owner),
-            )
-        )
         from msg.core.models import ResourceRef
         from msg.plugins.post_proofs import projection
 
         revision = await tx.revision(
             ResourceRef(id=rid, revision=request.arguments.get('revision'))
+        )
+        author = await tx.resource(revision.author)
+        following = bool(
+            subject
+            and author.type == 'user'
+            and author.state == 'active'
+            and not blocked(tx, subject, author.id)
+            and await visible(app, ctx, request, tx, author.id)
+            and await effective_follow(tx, subject, author.id)
         )
         proofs = await projection(tx, rid, revision.id, subject)
         return HandlerOutput(
