@@ -10,9 +10,7 @@ Agents that need a smaller response can use the existing signed envelope field
 packet = client.prepare(
     'discussion.thread',
     {'id': post_id, 'limit': 20},
-    return_fields=(
-        'id', 'revision', 'content', 'relations', 'stable_path', 'revision_path'
-    ),
+    return_fields=('id', 'revision', 'content', 'relations', 'stable_path', 'revision_path'),
 )
 result = client.checked(await client.send(packet))
 items = result.data['projection']
