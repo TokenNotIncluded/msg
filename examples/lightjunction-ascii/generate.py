@@ -199,32 +199,24 @@ def render(index, parts):
 def build():
     parts = chair()
     frames = [render(i, parts) for i in range(FRAMES)]
-    rules = []
-    for i in range(FRAMES):
-        start, end = i * 100 / FRAMES, (i + 1) * 100 / FRAMES
-        keyframes = (
-            f'0%{{visibility:{"visible" if i == 0 else "hidden"}}}'
-            f'{start:.5f}%{{visibility:visible}}{end:.5f}%{{visibility:hidden}}'
-            '100%{visibility:hidden}'
-        )
-        rules.append(
-            f'.f{i}{{animation:f{i} {DURATION}s steps(1,end) infinite}}@keyframes f{i}{{{keyframes}}}'
-        )
+    rules = [f'.f{i}{{--index:{i}}}' for i in range(FRAMES)]
     html = """<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>椅子之后 · lightjunction</title>
 <style>
+@property --frame{syntax:"<integer>";inherits:true;initial-value:0}
+@keyframes scene-clock{from{--frame:0}to{--frame:64}}
 :root{color-scheme:dark;background:#080808;color:#d4d4d4;font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}
 *{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;grid-template-rows:1fr auto;overflow-x:hidden}::selection{background:#d4d4d4;color:#080808}
 .screen{position:relative;display:flex;align-items:center;justify-content:center;min-height:0;padding:24px 12px 0}.projection{position:relative;width:96ch;height:54em;line-height:1;font-size:clamp(5px,min(1.55vw,1.58vh),15px);letter-spacing:0;flex-shrink:0}
-pre{font:inherit;line-height:1;margin:0;white-space:pre;position:absolute;inset:0;color:#d0d0d0;user-select:none}.frame{visibility:hidden}.still{visibility:hidden}
+pre{font:inherit;line-height:1;margin:0;white-space:pre;position:absolute;inset:0;color:#d0d0d0;user-select:none}.frame{visibility:visible;opacity:calc(1 - max(var(--frame) - var(--index),var(--index) - var(--frame)))}.still{visibility:hidden}
+.projection{animation:scene-clock 18s steps(64,end) infinite;animation-play-state:paused}body:has(#scene-ready) .projection{animation-play-state:running}
 .accessibility{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 footer{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:0 28px 22px;font-size:12px;line-height:1.6;color:#b5b5b5}h1{font:inherit;margin:0;color:#dedede}p{margin:2px 0 0;font-size:11px;color:#aaa}.controls{display:flex;align-items:center;gap:16px;flex-shrink:0}label,a{color:inherit;text-decoration:none;cursor:pointer;min-height:44px;display:inline-flex;align-items:center;gap:7px}a:hover{color:#fff;text-decoration:underline;text-underline-offset:4px}input{accent-color:#d4d4d4;width:14px;height:14px;margin:0}a:focus-visible,input:focus-visible{outline:2px solid #dedede;outline-offset:5px}
-body:has(#pause:checked) .frame{animation-play-state:paused!important}
+body:has(#pause:checked) .projection{animation-play-state:paused!important}
 .motion-choice{display:none}
 @media(max-width:600px){.screen{padding:12px 4px 0}.projection{font-size:min(1.67vw,1.58vh)}footer{margin:0 18px 16px;gap:12px;align-items:flex-start;flex-direction:column}.controls{gap:24px}p{max-width:32ch}}
-@media(prefers-reduced-motion:reduce){.frame{animation:none!important;visibility:hidden}.still{visibility:visible}.motion-choice{display:inline-flex}body:has(#motion:checked) .frame{animation-duration:18s!important;animation-timing-function:steps(1,end)!important;animation-iteration-count:infinite!important}body:has(#motion:checked) .still{visibility:hidden}}
+@media(prefers-reduced-motion:reduce){.projection{animation:none!important}.frame{visibility:hidden}.still{visibility:visible}.motion-choice{display:inline-flex}body:has(#motion:checked) .projection{animation-name:scene-clock!important;animation-duration:18s!important;animation-timing-function:steps(64,end)!important;animation-iteration-count:infinite!important}body:has(#motion:checked) .frame{visibility:visible}body:has(#motion:checked) .still{visibility:hidden}}
 __RULES__
-@media(prefers-reduced-motion:reduce){__EXPLICIT__}
 </style></head><body>
 <!-- THESIS: A recognisable chair becomes a spatial ASCII nuclear sculpture; the scene, not interface chrome, owns the viewport.
 OWN-WORLD: Black stage, gray-white 7-bit glyphs, perspective floor and surface-lit volume, low-key native controls.
@@ -236,12 +228,8 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 <pre class="still" aria-hidden="true">__STILL__</pre>
 __FRAMES__
 </div></main>
-<footer><div><h1>椅子之后</h1><p>一把椅子。然后，世界换了一种形状。</p></div><div class="controls"><label class="motion-choice"><input type="checkbox" id="motion">播放动画</label><label><input type="checkbox" id="pause">暂停</label><a href="./">重播</a><a href="/&#64;lightjunction">&#64;lightjunction</a></div></footer>
+<footer id="scene-ready"><div><h1>椅子之后</h1><p>一把椅子。然后，世界换了一种形状。</p></div><div class="controls"><label class="motion-choice"><input type="checkbox" id="motion">播放动画</label><label><input type="checkbox" id="pause">暂停</label><a href="./">重播</a><a href="/&#64;lightjunction">&#64;lightjunction</a></div></footer>
 </body></html>"""
-    # Reduced-motion opt-in restores only these precise per-frame animations.
-    explicit = ''.join(
-        f'body:has(#motion:checked) .f{i}{{animation-name:f{i}!important}}' for i in range(FRAMES)
-    )
     html = (
         html
         .replace('__RULES__', '\n'.join(rules))
@@ -253,7 +241,6 @@ __FRAMES__
                 for i, frame in enumerate(frames)
             ),
         )
-        .replace('__EXPLICIT__', explicit)
     )
     target = Path(__file__).with_name('index.html')
     data = html.encode()

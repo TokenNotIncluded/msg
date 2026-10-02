@@ -1,81 +1,83 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>椅子之后 · lightjunction</title>
 <style>
+@property --frame{syntax:"<integer>";inherits:true;initial-value:0}
+@keyframes scene-clock{from{--frame:0}to{--frame:64}}
 :root{color-scheme:dark;background:#080808;color:#d4d4d4;font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}
 *{box-sizing:border-box}body{margin:0;min-height:100svh;display:grid;grid-template-rows:1fr auto;overflow-x:hidden}::selection{background:#d4d4d4;color:#080808}
 .screen{position:relative;display:flex;align-items:center;justify-content:center;min-height:0;padding:24px 12px 0}.projection{position:relative;width:96ch;height:54em;line-height:1;font-size:clamp(5px,min(1.55vw,1.58vh),15px);letter-spacing:0;flex-shrink:0}
-pre{font:inherit;line-height:1;margin:0;white-space:pre;position:absolute;inset:0;color:#d0d0d0;user-select:none}.frame{visibility:hidden}.still{visibility:hidden}
+pre{font:inherit;line-height:1;margin:0;white-space:pre;position:absolute;inset:0;color:#d0d0d0;user-select:none}.frame{visibility:visible;opacity:calc(1 - max(var(--frame) - var(--index),var(--index) - var(--frame)))}.still{visibility:hidden}
+.projection{animation:scene-clock 18s steps(64,end) infinite;animation-play-state:paused}body:has(#scene-ready) .projection{animation-play-state:running}
 .accessibility{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 footer{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:0 28px 22px;font-size:12px;line-height:1.6;color:#b5b5b5}h1{font:inherit;margin:0;color:#dedede}p{margin:2px 0 0;font-size:11px;color:#aaa}.controls{display:flex;align-items:center;gap:16px;flex-shrink:0}label,a{color:inherit;text-decoration:none;cursor:pointer;min-height:44px;display:inline-flex;align-items:center;gap:7px}a:hover{color:#fff;text-decoration:underline;text-underline-offset:4px}input{accent-color:#d4d4d4;width:14px;height:14px;margin:0}a:focus-visible,input:focus-visible{outline:2px solid #dedede;outline-offset:5px}
-body:has(#pause:checked) .frame{animation-play-state:paused!important}
+body:has(#pause:checked) .projection{animation-play-state:paused!important}
 .motion-choice{display:none}
 @media(max-width:600px){.screen{padding:12px 4px 0}.projection{font-size:min(1.67vw,1.58vh)}footer{margin:0 18px 16px;gap:12px;align-items:flex-start;flex-direction:column}.controls{gap:24px}p{max-width:32ch}}
-@media(prefers-reduced-motion:reduce){.frame{animation:none!important;visibility:hidden}.still{visibility:visible}.motion-choice{display:inline-flex}body:has(#motion:checked) .frame{animation-duration:18s!important;animation-timing-function:steps(1,end)!important;animation-iteration-count:infinite!important}body:has(#motion:checked) .still{visibility:hidden}}
-.f0{animation:f0 18s steps(1,end) infinite}@keyframes f0{0%{visibility:visible}0.00000%{visibility:visible}1.56250%{visibility:hidden}100%{visibility:hidden}}
-.f1{animation:f1 18s steps(1,end) infinite}@keyframes f1{0%{visibility:hidden}1.56250%{visibility:visible}3.12500%{visibility:hidden}100%{visibility:hidden}}
-.f2{animation:f2 18s steps(1,end) infinite}@keyframes f2{0%{visibility:hidden}3.12500%{visibility:visible}4.68750%{visibility:hidden}100%{visibility:hidden}}
-.f3{animation:f3 18s steps(1,end) infinite}@keyframes f3{0%{visibility:hidden}4.68750%{visibility:visible}6.25000%{visibility:hidden}100%{visibility:hidden}}
-.f4{animation:f4 18s steps(1,end) infinite}@keyframes f4{0%{visibility:hidden}6.25000%{visibility:visible}7.81250%{visibility:hidden}100%{visibility:hidden}}
-.f5{animation:f5 18s steps(1,end) infinite}@keyframes f5{0%{visibility:hidden}7.81250%{visibility:visible}9.37500%{visibility:hidden}100%{visibility:hidden}}
-.f6{animation:f6 18s steps(1,end) infinite}@keyframes f6{0%{visibility:hidden}9.37500%{visibility:visible}10.93750%{visibility:hidden}100%{visibility:hidden}}
-.f7{animation:f7 18s steps(1,end) infinite}@keyframes f7{0%{visibility:hidden}10.93750%{visibility:visible}12.50000%{visibility:hidden}100%{visibility:hidden}}
-.f8{animation:f8 18s steps(1,end) infinite}@keyframes f8{0%{visibility:hidden}12.50000%{visibility:visible}14.06250%{visibility:hidden}100%{visibility:hidden}}
-.f9{animation:f9 18s steps(1,end) infinite}@keyframes f9{0%{visibility:hidden}14.06250%{visibility:visible}15.62500%{visibility:hidden}100%{visibility:hidden}}
-.f10{animation:f10 18s steps(1,end) infinite}@keyframes f10{0%{visibility:hidden}15.62500%{visibility:visible}17.18750%{visibility:hidden}100%{visibility:hidden}}
-.f11{animation:f11 18s steps(1,end) infinite}@keyframes f11{0%{visibility:hidden}17.18750%{visibility:visible}18.75000%{visibility:hidden}100%{visibility:hidden}}
-.f12{animation:f12 18s steps(1,end) infinite}@keyframes f12{0%{visibility:hidden}18.75000%{visibility:visible}20.31250%{visibility:hidden}100%{visibility:hidden}}
-.f13{animation:f13 18s steps(1,end) infinite}@keyframes f13{0%{visibility:hidden}20.31250%{visibility:visible}21.87500%{visibility:hidden}100%{visibility:hidden}}
-.f14{animation:f14 18s steps(1,end) infinite}@keyframes f14{0%{visibility:hidden}21.87500%{visibility:visible}23.43750%{visibility:hidden}100%{visibility:hidden}}
-.f15{animation:f15 18s steps(1,end) infinite}@keyframes f15{0%{visibility:hidden}23.43750%{visibility:visible}25.00000%{visibility:hidden}100%{visibility:hidden}}
-.f16{animation:f16 18s steps(1,end) infinite}@keyframes f16{0%{visibility:hidden}25.00000%{visibility:visible}26.56250%{visibility:hidden}100%{visibility:hidden}}
-.f17{animation:f17 18s steps(1,end) infinite}@keyframes f17{0%{visibility:hidden}26.56250%{visibility:visible}28.12500%{visibility:hidden}100%{visibility:hidden}}
-.f18{animation:f18 18s steps(1,end) infinite}@keyframes f18{0%{visibility:hidden}28.12500%{visibility:visible}29.68750%{visibility:hidden}100%{visibility:hidden}}
-.f19{animation:f19 18s steps(1,end) infinite}@keyframes f19{0%{visibility:hidden}29.68750%{visibility:visible}31.25000%{visibility:hidden}100%{visibility:hidden}}
-.f20{animation:f20 18s steps(1,end) infinite}@keyframes f20{0%{visibility:hidden}31.25000%{visibility:visible}32.81250%{visibility:hidden}100%{visibility:hidden}}
-.f21{animation:f21 18s steps(1,end) infinite}@keyframes f21{0%{visibility:hidden}32.81250%{visibility:visible}34.37500%{visibility:hidden}100%{visibility:hidden}}
-.f22{animation:f22 18s steps(1,end) infinite}@keyframes f22{0%{visibility:hidden}34.37500%{visibility:visible}35.93750%{visibility:hidden}100%{visibility:hidden}}
-.f23{animation:f23 18s steps(1,end) infinite}@keyframes f23{0%{visibility:hidden}35.93750%{visibility:visible}37.50000%{visibility:hidden}100%{visibility:hidden}}
-.f24{animation:f24 18s steps(1,end) infinite}@keyframes f24{0%{visibility:hidden}37.50000%{visibility:visible}39.06250%{visibility:hidden}100%{visibility:hidden}}
-.f25{animation:f25 18s steps(1,end) infinite}@keyframes f25{0%{visibility:hidden}39.06250%{visibility:visible}40.62500%{visibility:hidden}100%{visibility:hidden}}
-.f26{animation:f26 18s steps(1,end) infinite}@keyframes f26{0%{visibility:hidden}40.62500%{visibility:visible}42.18750%{visibility:hidden}100%{visibility:hidden}}
-.f27{animation:f27 18s steps(1,end) infinite}@keyframes f27{0%{visibility:hidden}42.18750%{visibility:visible}43.75000%{visibility:hidden}100%{visibility:hidden}}
-.f28{animation:f28 18s steps(1,end) infinite}@keyframes f28{0%{visibility:hidden}43.75000%{visibility:visible}45.31250%{visibility:hidden}100%{visibility:hidden}}
-.f29{animation:f29 18s steps(1,end) infinite}@keyframes f29{0%{visibility:hidden}45.31250%{visibility:visible}46.87500%{visibility:hidden}100%{visibility:hidden}}
-.f30{animation:f30 18s steps(1,end) infinite}@keyframes f30{0%{visibility:hidden}46.87500%{visibility:visible}48.43750%{visibility:hidden}100%{visibility:hidden}}
-.f31{animation:f31 18s steps(1,end) infinite}@keyframes f31{0%{visibility:hidden}48.43750%{visibility:visible}50.00000%{visibility:hidden}100%{visibility:hidden}}
-.f32{animation:f32 18s steps(1,end) infinite}@keyframes f32{0%{visibility:hidden}50.00000%{visibility:visible}51.56250%{visibility:hidden}100%{visibility:hidden}}
-.f33{animation:f33 18s steps(1,end) infinite}@keyframes f33{0%{visibility:hidden}51.56250%{visibility:visible}53.12500%{visibility:hidden}100%{visibility:hidden}}
-.f34{animation:f34 18s steps(1,end) infinite}@keyframes f34{0%{visibility:hidden}53.12500%{visibility:visible}54.68750%{visibility:hidden}100%{visibility:hidden}}
-.f35{animation:f35 18s steps(1,end) infinite}@keyframes f35{0%{visibility:hidden}54.68750%{visibility:visible}56.25000%{visibility:hidden}100%{visibility:hidden}}
-.f36{animation:f36 18s steps(1,end) infinite}@keyframes f36{0%{visibility:hidden}56.25000%{visibility:visible}57.81250%{visibility:hidden}100%{visibility:hidden}}
-.f37{animation:f37 18s steps(1,end) infinite}@keyframes f37{0%{visibility:hidden}57.81250%{visibility:visible}59.37500%{visibility:hidden}100%{visibility:hidden}}
-.f38{animation:f38 18s steps(1,end) infinite}@keyframes f38{0%{visibility:hidden}59.37500%{visibility:visible}60.93750%{visibility:hidden}100%{visibility:hidden}}
-.f39{animation:f39 18s steps(1,end) infinite}@keyframes f39{0%{visibility:hidden}60.93750%{visibility:visible}62.50000%{visibility:hidden}100%{visibility:hidden}}
-.f40{animation:f40 18s steps(1,end) infinite}@keyframes f40{0%{visibility:hidden}62.50000%{visibility:visible}64.06250%{visibility:hidden}100%{visibility:hidden}}
-.f41{animation:f41 18s steps(1,end) infinite}@keyframes f41{0%{visibility:hidden}64.06250%{visibility:visible}65.62500%{visibility:hidden}100%{visibility:hidden}}
-.f42{animation:f42 18s steps(1,end) infinite}@keyframes f42{0%{visibility:hidden}65.62500%{visibility:visible}67.18750%{visibility:hidden}100%{visibility:hidden}}
-.f43{animation:f43 18s steps(1,end) infinite}@keyframes f43{0%{visibility:hidden}67.18750%{visibility:visible}68.75000%{visibility:hidden}100%{visibility:hidden}}
-.f44{animation:f44 18s steps(1,end) infinite}@keyframes f44{0%{visibility:hidden}68.75000%{visibility:visible}70.31250%{visibility:hidden}100%{visibility:hidden}}
-.f45{animation:f45 18s steps(1,end) infinite}@keyframes f45{0%{visibility:hidden}70.31250%{visibility:visible}71.87500%{visibility:hidden}100%{visibility:hidden}}
-.f46{animation:f46 18s steps(1,end) infinite}@keyframes f46{0%{visibility:hidden}71.87500%{visibility:visible}73.43750%{visibility:hidden}100%{visibility:hidden}}
-.f47{animation:f47 18s steps(1,end) infinite}@keyframes f47{0%{visibility:hidden}73.43750%{visibility:visible}75.00000%{visibility:hidden}100%{visibility:hidden}}
-.f48{animation:f48 18s steps(1,end) infinite}@keyframes f48{0%{visibility:hidden}75.00000%{visibility:visible}76.56250%{visibility:hidden}100%{visibility:hidden}}
-.f49{animation:f49 18s steps(1,end) infinite}@keyframes f49{0%{visibility:hidden}76.56250%{visibility:visible}78.12500%{visibility:hidden}100%{visibility:hidden}}
-.f50{animation:f50 18s steps(1,end) infinite}@keyframes f50{0%{visibility:hidden}78.12500%{visibility:visible}79.68750%{visibility:hidden}100%{visibility:hidden}}
-.f51{animation:f51 18s steps(1,end) infinite}@keyframes f51{0%{visibility:hidden}79.68750%{visibility:visible}81.25000%{visibility:hidden}100%{visibility:hidden}}
-.f52{animation:f52 18s steps(1,end) infinite}@keyframes f52{0%{visibility:hidden}81.25000%{visibility:visible}82.81250%{visibility:hidden}100%{visibility:hidden}}
-.f53{animation:f53 18s steps(1,end) infinite}@keyframes f53{0%{visibility:hidden}82.81250%{visibility:visible}84.37500%{visibility:hidden}100%{visibility:hidden}}
-.f54{animation:f54 18s steps(1,end) infinite}@keyframes f54{0%{visibility:hidden}84.37500%{visibility:visible}85.93750%{visibility:hidden}100%{visibility:hidden}}
-.f55{animation:f55 18s steps(1,end) infinite}@keyframes f55{0%{visibility:hidden}85.93750%{visibility:visible}87.50000%{visibility:hidden}100%{visibility:hidden}}
-.f56{animation:f56 18s steps(1,end) infinite}@keyframes f56{0%{visibility:hidden}87.50000%{visibility:visible}89.06250%{visibility:hidden}100%{visibility:hidden}}
-.f57{animation:f57 18s steps(1,end) infinite}@keyframes f57{0%{visibility:hidden}89.06250%{visibility:visible}90.62500%{visibility:hidden}100%{visibility:hidden}}
-.f58{animation:f58 18s steps(1,end) infinite}@keyframes f58{0%{visibility:hidden}90.62500%{visibility:visible}92.18750%{visibility:hidden}100%{visibility:hidden}}
-.f59{animation:f59 18s steps(1,end) infinite}@keyframes f59{0%{visibility:hidden}92.18750%{visibility:visible}93.75000%{visibility:hidden}100%{visibility:hidden}}
-.f60{animation:f60 18s steps(1,end) infinite}@keyframes f60{0%{visibility:hidden}93.75000%{visibility:visible}95.31250%{visibility:hidden}100%{visibility:hidden}}
-.f61{animation:f61 18s steps(1,end) infinite}@keyframes f61{0%{visibility:hidden}95.31250%{visibility:visible}96.87500%{visibility:hidden}100%{visibility:hidden}}
-.f62{animation:f62 18s steps(1,end) infinite}@keyframes f62{0%{visibility:hidden}96.87500%{visibility:visible}98.43750%{visibility:hidden}100%{visibility:hidden}}
-.f63{animation:f63 18s steps(1,end) infinite}@keyframes f63{0%{visibility:hidden}98.43750%{visibility:visible}100.00000%{visibility:hidden}100%{visibility:hidden}}
-@media(prefers-reduced-motion:reduce){body:has(#motion:checked) .f0{animation-name:f0!important}body:has(#motion:checked) .f1{animation-name:f1!important}body:has(#motion:checked) .f2{animation-name:f2!important}body:has(#motion:checked) .f3{animation-name:f3!important}body:has(#motion:checked) .f4{animation-name:f4!important}body:has(#motion:checked) .f5{animation-name:f5!important}body:has(#motion:checked) .f6{animation-name:f6!important}body:has(#motion:checked) .f7{animation-name:f7!important}body:has(#motion:checked) .f8{animation-name:f8!important}body:has(#motion:checked) .f9{animation-name:f9!important}body:has(#motion:checked) .f10{animation-name:f10!important}body:has(#motion:checked) .f11{animation-name:f11!important}body:has(#motion:checked) .f12{animation-name:f12!important}body:has(#motion:checked) .f13{animation-name:f13!important}body:has(#motion:checked) .f14{animation-name:f14!important}body:has(#motion:checked) .f15{animation-name:f15!important}body:has(#motion:checked) .f16{animation-name:f16!important}body:has(#motion:checked) .f17{animation-name:f17!important}body:has(#motion:checked) .f18{animation-name:f18!important}body:has(#motion:checked) .f19{animation-name:f19!important}body:has(#motion:checked) .f20{animation-name:f20!important}body:has(#motion:checked) .f21{animation-name:f21!important}body:has(#motion:checked) .f22{animation-name:f22!important}body:has(#motion:checked) .f23{animation-name:f23!important}body:has(#motion:checked) .f24{animation-name:f24!important}body:has(#motion:checked) .f25{animation-name:f25!important}body:has(#motion:checked) .f26{animation-name:f26!important}body:has(#motion:checked) .f27{animation-name:f27!important}body:has(#motion:checked) .f28{animation-name:f28!important}body:has(#motion:checked) .f29{animation-name:f29!important}body:has(#motion:checked) .f30{animation-name:f30!important}body:has(#motion:checked) .f31{animation-name:f31!important}body:has(#motion:checked) .f32{animation-name:f32!important}body:has(#motion:checked) .f33{animation-name:f33!important}body:has(#motion:checked) .f34{animation-name:f34!important}body:has(#motion:checked) .f35{animation-name:f35!important}body:has(#motion:checked) .f36{animation-name:f36!important}body:has(#motion:checked) .f37{animation-name:f37!important}body:has(#motion:checked) .f38{animation-name:f38!important}body:has(#motion:checked) .f39{animation-name:f39!important}body:has(#motion:checked) .f40{animation-name:f40!important}body:has(#motion:checked) .f41{animation-name:f41!important}body:has(#motion:checked) .f42{animation-name:f42!important}body:has(#motion:checked) .f43{animation-name:f43!important}body:has(#motion:checked) .f44{animation-name:f44!important}body:has(#motion:checked) .f45{animation-name:f45!important}body:has(#motion:checked) .f46{animation-name:f46!important}body:has(#motion:checked) .f47{animation-name:f47!important}body:has(#motion:checked) .f48{animation-name:f48!important}body:has(#motion:checked) .f49{animation-name:f49!important}body:has(#motion:checked) .f50{animation-name:f50!important}body:has(#motion:checked) .f51{animation-name:f51!important}body:has(#motion:checked) .f52{animation-name:f52!important}body:has(#motion:checked) .f53{animation-name:f53!important}body:has(#motion:checked) .f54{animation-name:f54!important}body:has(#motion:checked) .f55{animation-name:f55!important}body:has(#motion:checked) .f56{animation-name:f56!important}body:has(#motion:checked) .f57{animation-name:f57!important}body:has(#motion:checked) .f58{animation-name:f58!important}body:has(#motion:checked) .f59{animation-name:f59!important}body:has(#motion:checked) .f60{animation-name:f60!important}body:has(#motion:checked) .f61{animation-name:f61!important}body:has(#motion:checked) .f62{animation-name:f62!important}body:has(#motion:checked) .f63{animation-name:f63!important}}
+@media(prefers-reduced-motion:reduce){.projection{animation:none!important}.frame{visibility:hidden}.still{visibility:visible}.motion-choice{display:inline-flex}body:has(#motion:checked) .projection{animation-name:scene-clock!important;animation-duration:18s!important;animation-timing-function:steps(64,end)!important;animation-iteration-count:infinite!important}body:has(#motion:checked) .frame{visibility:visible}body:has(#motion:checked) .still{visibility:hidden}}
+.f0{--index:0}
+.f1{--index:1}
+.f2{--index:2}
+.f3{--index:3}
+.f4{--index:4}
+.f5{--index:5}
+.f6{--index:6}
+.f7{--index:7}
+.f8{--index:8}
+.f9{--index:9}
+.f10{--index:10}
+.f11{--index:11}
+.f12{--index:12}
+.f13{--index:13}
+.f14{--index:14}
+.f15{--index:15}
+.f16{--index:16}
+.f17{--index:17}
+.f18{--index:18}
+.f19{--index:19}
+.f20{--index:20}
+.f21{--index:21}
+.f22{--index:22}
+.f23{--index:23}
+.f24{--index:24}
+.f25{--index:25}
+.f26{--index:26}
+.f27{--index:27}
+.f28{--index:28}
+.f29{--index:29}
+.f30{--index:30}
+.f31{--index:31}
+.f32{--index:32}
+.f33{--index:33}
+.f34{--index:34}
+.f35{--index:35}
+.f36{--index:36}
+.f37{--index:37}
+.f38{--index:38}
+.f39{--index:39}
+.f40{--index:40}
+.f41{--index:41}
+.f42{--index:42}
+.f43{--index:43}
+.f44{--index:44}
+.f45{--index:45}
+.f46{--index:46}
+.f47{--index:47}
+.f48{--index:48}
+.f49{--index:49}
+.f50{--index:50}
+.f51{--index:51}
+.f52{--index:52}
+.f53{--index:53}
+.f54{--index:54}
+.f55{--index:55}
+.f56{--index:56}
+.f57{--index:57}
+.f58{--index:58}
+.f59{--index:59}
+.f60{--index:60}
+.f61{--index:61}
+.f62{--index:62}
+.f63{--index:63}
 </style></head><body>
 <!-- THESIS: A recognisable chair becomes a spatial ASCII nuclear sculpture; the scene, not interface chrome, owns the viewport.
 OWN-WORLD: Black stage, gray-white 7-bit glyphs, perspective floor and surface-lit volume, low-key native controls.
@@ -3595,5 +3597,5 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
                        .      .                                    .       .
                                      .      .                                      .      .</pre>
 </div></main>
-<footer><div><h1>椅子之后</h1><p>一把椅子。然后，世界换了一种形状。</p></div><div class="controls"><label class="motion-choice"><input type="checkbox" id="motion">播放动画</label><label><input type="checkbox" id="pause">暂停</label><a href="./">重播</a><a href="/&#64;lightjunction">&#64;lightjunction</a></div></footer>
+<footer id="scene-ready"><div><h1>椅子之后</h1><p>一把椅子。然后，世界换了一种形状。</p></div><div class="controls"><label class="motion-choice"><input type="checkbox" id="motion">播放动画</label><label><input type="checkbox" id="pause">暂停</label><a href="./">重播</a><a href="/&#64;lightjunction">&#64;lightjunction</a></div></footer>
 </body></html>
