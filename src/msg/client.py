@@ -163,14 +163,42 @@ class ClientState:
                 require(account_selection.get('version') == 1, 'unknown_client_state_version')
                 ClientPaths.discover(server=server, account=account_selection.get('account', ''))
             old_service = private_client_json(service_paths.state / 'client.json')
-            if (
-                account is None
-                and account_selection is None
-                and old_service is None
-                and migrate_from is None
-            ):
+            if account is None and account_selection is None and migrate_from is None:
+                names = service_paths.account_names()
+                if old_service is not None:
+                    configured = []
+                    for name in names:
+                        saved_paths = ClientPaths.discover(server=server, account=name)
+                        saved = private_client_json(saved_paths.state / 'client.json') or {}
+                        if any(
+                            saved.get(field) for field in ('subject_id', 'token', 'api_key')
+                        ) or any(
+                            saved_paths.file(file).exists() or saved_paths.file(file).is_symlink()
+                            for file in (
+                                'identity.key',
+                                'hardware-signer.json',
+                                'oauth-session.json',
+                            )
+                        ):
+                            configured.append(name)
+                    names = configured
+                old_account = (old_service or {}).get('handle') or 'default'
+                restored = (
+                    private_client_json(
+                        ClientPaths.discover(server=server, account=old_account).state
+                        / 'client.json'
+                    )
+                    if names == [old_account]
+                    else None
+                )
+                # Only a matching copy may finish an interrupted singleton
+                # migration. Different restored identities require a choice.
                 require(
-                    not service_paths.account_names(),
+                    not names
+                    or (
+                        (old_service or {}).get('subject_id')
+                        and (restored or {}).get('subject_id') == old_service['subject_id']
+                    ),
                     'local_account_selection_required',
                     details={'options': ['account list', 'account use NAME', '--account NAME']},
                 )

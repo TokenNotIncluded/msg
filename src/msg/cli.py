@@ -651,15 +651,10 @@ async def run(args):
                         'recovery_envelope' if args.migration_action == 'envelope' else 'refresh',
                     )
             else:
+                from msg.client_accounts import identity_status
                 from msg.client_upgrade import pending_upgrade
 
-                result = {
-                    'subject_id': state.subject,
-                    'key_id': state.signer.key_id if state.signer else None,
-                    'server': state.server,
-                    'certificates': state.certificates,
-                    'auth': 'token' if state.token else 'signature',
-                }
+                result = identity_status(state, signer_override=client.signer_override)
                 if state.data.get('delegated_identity'):
                     result['delegated_identity'] = state.data['delegated_identity']
                 pending = pending_upgrade(state)
