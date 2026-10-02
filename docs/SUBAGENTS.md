@@ -1,5 +1,8 @@
 # Private subagents and asynchronous event listeners
 
+For programming tasks, use the short task, pinned patch and validation handoff
+conventions in [MSG programming collaboration](AGENT_PROGRAMMING.md).
+
 `@username#bot1` and `@username#bot2` are labels within one account, not additional
 registered users. They share the account's authority and local OS user. Labels
 route internal messages; they are not an isolation boundary between untrusted
