@@ -1096,30 +1096,40 @@
   if (globalThis.MSGFlightClient?.Client) {
     flightClient = new globalThis.MSGFlightClient.Client({
       onStatus(connection, message) {
+        const connected = !!flightClient?.connected;
+        const lostWhilePaused = connection === 'suspended' && !connected;
+        const mapMessage = lostWhilePaused ? '飞行连接已断开，返回飞行重新连接后再选择区域。' :
+          connection === 'suspended' ? '已暂停控制，仍可选择区域。' :
+          connection === 'failed' ? '飞行连接失败，请退出飞行后重新进入。' :
+          connection === 'connected' ? '' : connection === 'connecting' || connection === 'reconnecting' ? '正在连接飞行世界…' : '飞行未连接，返回飞行重新连接后再选择区域。';
         const el = $('game-connection');
         if (el) {
           const labels = {connecting:'连接中', connected:'已连接', stale:'连接过期', disconnected:'已断开', error:'连接失败', failed:'连接失败，请退出后重试', suspended:'已暂停', reconnecting:'已断开，重新连接中'};
-          el.dataset.state = connection; el.textContent = labels[connection] || message || '未连接';
-          el.title = connection === 'suspended' ? '点击飞行画面继续控制。' : message || '';
+          el.dataset.state = lostWhilePaused ? 'disconnected' : connection;
+          el.textContent = lostWhilePaused ? '已断开，点击画面重连' : labels[connection] || message || '未连接';
+          el.title = lostWhilePaused ? mapMessage : connection === 'suspended' ? '点击飞行画面继续控制。' : message || '';
         }
-        if (['connecting', 'disconnected', 'stale', 'error', 'failed', 'reconnecting'].includes(connection)) {
-          renderer?.clearRemoteShips();
-          flatMap?.update({players:[], selfId:null, regionCounts:null, currentRegion:null, regionReadyMs:0, serverTimeMs:0});
-        }
+        if (!connected) renderer?.clearRemoteShips();
+        flatMap?.update({connected, connectionMessage:mapMessage});
         if (connection !== 'connected') renderer?.stopFlightInput(false);
         renderer?.updateGameHud();
       },
       onHello(hello) {
         renderer?.receiveFlightHello(hello);
         flatMap?.update({regions:hello.regions, currentRegion:hello.region, selfId:hello.self.id,
+          connected:flightClient.connected, fuel:hello.self.fuel, hp:hello.self.hp,
           mySubject:hello.self.subject_id, regionReadyMs:hello.self.region_ready_ms, serverTimeMs:flightClient.serverNow});
       },
       onSnapshot(snapshot) {
         renderer?.receiveFlightSnapshot(snapshot);
         flatMap?.update({players:snapshot.players, currentRegion:snapshot.region, selfId:snapshot.self_id,
+          connected:flightClient.connected, fuel:flightClient.self?.fuel, hp:flightClient.self?.hp,
           regionCounts:snapshot.region_counts, regionReadyMs:flightClient.self?.region_ready_ms, serverTimeMs:flightClient.serverNow});
       },
-      onError(message) { notice(message, true); },
+      onError(message) {
+        if (flatMap?.visible) flatMap.rejectRegion(message);
+        else notice(message, true);
+      },
     });
   }
   renderer = new globalThis.MSGUniverseRenderer($("space"), $("labels"), {
@@ -1156,11 +1166,13 @@
     flatMap = new globalThis.MSGFlatMap.Map($('region-map-canvas'), {
       container:$('region-map'), status:$('region-map-status'), actions:$('region-map-actions'),
       onSelectRegion(region) {
-        if (!flightClient?.connected) { notice('连接后才能选择区域。', true); return; }
+        if (!flightClient?.connected) { flatMap.update({connected:false}); return; }
         renderer.stopFlightInput();
-        if (flightClient.chooseRegion(region)) {
-          flatMap.hide(); $('space').focus({preventScroll:true}); flightClient.resume();
-        }
+        if (!flightClient.chooseRegion(region)) flatMap.rejectRegion('区域切换请求未发出，请重试。');
+      },
+      onRegionConfirmed() {
+        if (!flatMap.visible) return;
+        flatMap.hide(); $('space').focus({preventScroll:true}); if (renderer.flight) flightClient?.resume();
       },
       onReturn3D() { flatMap.hide(); $('space').focus({preventScroll:true}); if (renderer.flight) flightClient?.resume(); },
       onRegionFocus() { renderer.stopFlightInput(); },

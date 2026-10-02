@@ -65,6 +65,8 @@
       this.regions = []; this.stars = []; this.players = []; this.counts = null;
       this.currentRegion = null; this.focusedRegion = null; this.selfId = null;
       this.regionReadyMs = 0; this.serverTimeMs = null; this.visible = false; this.destroyed = false;
+      this.connected = false; this.connectionMessage = "连接后才能选择区域。";
+      this.fuel = null; this.hp = null; this.pendingRegion = null; this.regionError = "";
       this.index = new M.SpatialIndex([]); this.playerIndex = new M.SpatialIndex([]);
       this.pointers = new Map(); this.listeners = []; this.buttons = new Map();
       this.requestFrame = globalThis.requestAnimationFrame?.bind(globalThis) || (fn => setTimeout(fn, 16));
@@ -121,8 +123,23 @@
       if (own(data, "currentRegion")) this.currentRegion = Number.isInteger(data.currentRegion) ? data.currentRegion : null;
       if (own(data, "regionReadyMs")) this.regionReadyMs = Math.max(0, Number(data.regionReadyMs) || 0);
       if (own(data, "serverTimeMs")) this.serverTimeMs = Number.isFinite(data.serverTimeMs) ? data.serverTimeMs : null;
+      if (own(data, "fuel")) this.fuel = Number.isFinite(data.fuel) ? data.fuel : null;
+      if (own(data, "hp")) this.hp = Number.isFinite(data.hp) ? data.hp : null;
+      if (own(data, "connectionMessage")) this.connectionMessage = String(data.connectionMessage || "").slice(0, 240);
+      if (own(data, "connected")) {
+        this.connected = data.connected === true;
+        if (!this.connected) {
+          this.players = []; this.playerIndex = new M.SpatialIndex([]);
+          this.selfId = this.currentRegion = this.counts = null;
+          this.fuel = this.hp = this.serverTimeMs = null; this.regionReadyMs = 0;
+          this.pendingRegion = null; this.regionError = "";
+        }
+      }
+      const confirmed = this.connected && this.pendingRegion !== null && this.currentRegion === this.pendingRegion;
+      if (confirmed) { this.pendingRegion = null; this.regionError = ""; }
       if (this.focusedRegion === null) this.focusedRegion = this.regions.find(r => r.id === this.currentRegion)?.id ?? this.regions[0]?.id ?? null;
       this.syncLabels(); this.schedule();
+      if (confirmed) this.options.onRegionConfirmed?.(this.currentRegion);
     }
     syncRegions() {
       if (!this.regionList) return;
@@ -143,19 +160,39 @@
         const text = label(region) + " · " + (population === null ? "人数未知" : population + " 人") + (current ? " · 当前" : "");
         if (button.textContent !== text) button.textContent = text;
         button.setAttribute("aria-pressed", String(current));
-        button.setAttribute("title", region.name);
+        const reason = this.unavailableReason(region.id);
+        button.disabled = !!reason;
+        button.setAttribute("title", reason || region.name);
       }
       if (!this.status) return;
       const current = this.regions.find(r => r.id === this.currentRegion), population = current && regionPopulation(current, this.counts);
       const cooldown = this.serverTimeMs === null ? 0 : Math.max(0, this.regionReadyMs - this.serverTimeMs);
       const selected = this.regions.find(r => r.id === this.focusedRegion);
       const selectedPopulation = selected && regionPopulation(selected, this.counts);
+      const reason = this.regionError || this.unavailableReason(this.focusedRegion);
       const text = (current ? "当前 " + label(current) + " · " + (population === null ? "人数未知" : population + " 人在线") : "等待当前区域") +
         (selected ? " · 选择 " + label(selected) + "（" + (selectedPopulation === null ? "人数未知" : selectedPopulation + " 人") + "）" : "") +
-        " · " + this.stars.length.toLocaleString() + " 颗已加载公开星点 · " + this.players.length + " 个实时玩家" +
+        " · " + this.stars.length.toLocaleString() + " 颗已加载公开星点" + (this.connected ? " · " + this.players.length + " 个实时玩家" : " · 实时玩家未连接") +
         (this.regions.length ? "" : " · 等待服务器区域数据") +
-        (cooldown > 0 ? " · 区域切换冷却 " + Math.ceil(cooldown / 1000) + " 秒" : "");
+        (cooldown > 0 ? " · 区域切换冷却 " + Math.ceil(cooldown / 1000) + " 秒" : "") +
+        (reason ? " · " + reason : this.connectionMessage ? " · " + this.connectionMessage : "");
+      this.status.setAttribute("data-state", this.regionError ? "error" : !this.connected ? "disconnected" : this.pendingRegion !== null ? "pending" : "ready");
       if (this.status.textContent !== text) this.status.textContent = text;
+    }
+    unavailableReason(id) {
+      if (!this.connected) return this.connectionMessage || "连接后才能选择区域。";
+      if (this.pendingRegion !== null) return "等待服务器确认进入区域 " + String(this.pendingRegion).padStart(2, "0") + "…";
+      if (this.hp === null || this.fuel === null) return "等待飞船状态。";
+      if (this.hp <= 0) return "重生后才能选择区域。";
+      const cooldown = this.serverTimeMs === null ? 0 : Math.max(0, this.regionReadyMs - this.serverTimeMs);
+      if (cooldown > 0) return "区域切换冷却 " + Math.ceil(cooldown / 1000) + " 秒。";
+      if (this.fuel < 20) return "燃料不足，切换区域需要 20 燃料。";
+      if (id === this.currentRegion) return "已在此区域，请选择其他区域。";
+      return "";
+    }
+    rejectRegion(message) {
+      this.pendingRegion = null; this.regionError = String(message || "区域切换请求未发出，请重试。").slice(0, 240);
+      this.syncLabels();
     }
     focus(id, reveal = false) {
       const region = this.regions.find(r => r.id === id); if (!region) return;
@@ -166,11 +203,15 @@
         }
       }
       if (this.focusedRegion === id) return;
-      this.focusedRegion = id; this.options.onRegionFocus?.(id); this.syncLabels(); this.schedule();
+      this.focusedRegion = id; this.regionError = ""; this.options.onRegionFocus?.(id); this.syncLabels(); this.schedule();
     }
     select(id) {
       if (this.destroyed || !this.regions.some(r => r.id === id)) return;
-      this.focus(id); this.options.onSelectRegion?.(id);
+      this.focus(id);
+      const reason = this.unavailableReason(id);
+      if (reason) { this.syncLabels(); return; }
+      this.regionError = ""; this.pendingRegion = id; this.syncLabels();
+      this.options.onSelectRegion?.(id);
     }
     show() {
       if (this.destroyed) return;

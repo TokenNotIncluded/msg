@@ -1026,6 +1026,7 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 #region-map-close { min-width: 44px; min-height: 44px; padding: 10px 0 10px 16px; font: 12px var(--mono); }
 #region-map-canvas { display: block; width: 100%; aspect-ratio: 4 / 3; max-height: 52dvh; touch-action: none; background: #050505; outline-offset: 4px; }
 #region-map-status, .region-map-note { color: var(--hud-muted); font: 12px/1.7 var(--mono); margin: 12px 0; overflow-wrap: anywhere; }
+#region-map-status[data-state="error"], #region-map-status[data-state="disconnected"], #region-map-status[data-state="pending"] { color: var(--hud-text); }
 #region-map-actions, .region-map-tools, .region-map-regions { display: flex; flex-wrap: wrap; gap: 6px; }
 #region-map-actions button, .region-map-tools button, .region-map-regions button { min-height: 44px; min-width: 44px; padding: 10px 14px; border: 1px solid var(--hud-line); border-radius: 2px; color: var(--hud-muted); font: 12px var(--mono); background: transparent; }
 #region-map-actions button[aria-pressed="true"], .region-map-regions button[aria-pressed="true"] { background: var(--hud-text); color: #111; border-color: var(--hud-text); }
