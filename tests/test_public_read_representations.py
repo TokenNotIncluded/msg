@@ -90,6 +90,13 @@ async def test_public_pages_default_to_short_reads_and_negotiate_explicit_html(i
             'server',
             'stats',
             'feed',
+            'topics',
+            'ls',
+            'read',
+            'search',
+            'users',
+            'user',
+            'rules',
             'clear',
         }
         assert directory.json()['endpoint'] == '/_terminal?command={command}'
