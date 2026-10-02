@@ -124,12 +124,24 @@ async def test_topic_policy_approval_invite_closed_and_role_transfer(installed):
         subject=owner,
     )
     assert approved.data['status'] == 'active'
-    member_sync = await call(app, 'communication.changes', {}, key=alice_key, subject=alice)
+    member_items = []
+    sync_arguments = {}
+    while True:
+        member_sync = await call(
+            app, 'communication.changes', sync_arguments, key=alice_key, subject=alice
+        )
+        assert member_sync.status == 'ok', wire(member_sync)
+        member_items.extend(member_sync.data['items'])
+        if not member_sync.data['has_more']:
+            break
+        cursor = member_sync.data['sync_cursor']
+        assert cursor != sync_arguments.get('cursor')
+        sync_arguments = {'cursor': cursor}
     assert any(
         item['type'].startswith('topic.') and item['data'].get('topic_id') == topic
-        for item in member_sync.data['items']
+        for item in member_items
     )
-    assert sum(item['request_id'] == approved.request_id for item in member_sync.data['items']) == 1
+    assert sum(item['request_id'] == approved.request_id for item in member_items) == 1
     promoted = await call(
         app,
         'content.topic_promote',
