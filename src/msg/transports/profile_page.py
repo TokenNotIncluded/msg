@@ -85,7 +85,9 @@ PROFILE_SCRIPT = r"""(() => {
  editLink.addEventListener('click',()=>{editor.open=true});
  const kind=editor.querySelector('select'),file=editor.querySelector('input[type=file]');
  const preview=editor.querySelector('.profile-art-preview'),status=editor.querySelector('[role=status]');
- const prepared=editor.querySelector('.profile-art-prepared'),command=editor.querySelector('code');
+ const prepared=editor.querySelector('.profile-art-prepared'),command=editor.querySelector('.profile-art-command');
+ const fileCommand=editor.querySelector('.profile-art-file-command');
+ const shellQuote=value=>"'"+value.replaceAll("'","'\\''")+"'";
  let downloadUrl=null,version=0;
  const namespace='http://www.w3.org/2000/svg';
  const tags=new Set(['svg','g','defs','title','desc','text','tspan','rect','circle','ellipse','path','line','polyline','polygon','style','animate','animateTransform','animateMotion','set']);
@@ -117,7 +119,8 @@ PROFILE_SCRIPT = r"""(() => {
      const bytes=new Uint8Array(await selected.arrayBuffer());validate(bytes);
      if(current!==version)return;
      let binary='';bytes.forEach(byte=>{binary+=String.fromCharCode(byte)});
-     const data=btoa(binary),name=kind.value==='avatar'?'AVATAR.svg':'BACKGROUND.svg';
+     const encoded=btoa(binary),data=encoded.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+     const name=kind.value==='avatar'?'AVATAR.svg':'BACKGROUND.svg';
      const response=await fetch(editor.dataset.profilePath+'/'+name+'/meta',{headers:{Accept:'application/json'},credentials:'same-origin'});
      let operation='file.create',args={parent:editor.dataset.profilePath,name,data,media_type:'image/svg+xml'},expect='';
      if(response.ok){
@@ -127,17 +130,21 @@ PROFILE_SCRIPT = r"""(() => {
      }else if(response.status!==404){throw Error('无法读取现有图片，请重新登录后重试。 / Cannot read existing artwork; sign in again.');}
      if(current!==version)return;
      const filename='msg-profile-'+kind.value+'.json';
-     downloadUrl=URL.createObjectURL(new Blob([JSON.stringify(args,null,2)+'\n'],{type:'application/json'}));
+     const requestJson=JSON.stringify(args,null,2)+'\n';
+     downloadUrl=URL.createObjectURL(new Blob([requestJson],{type:'application/json'}));
      const download=editor.querySelector('a[download]');download.href=downloadUrl;download.download=filename;
-     const image=document.createElement('img');image.alt='新图片预览 / New artwork preview';image.src='data:image/svg+xml;base64,'+data;preview.replaceChildren(image);preview.hidden=false;
+     const image=document.createElement('img');image.alt='新图片预览 / New artwork preview';image.src='data:image/svg+xml;base64,'+encoded;preview.replaceChildren(image);preview.hidden=false;
      const requestId='profile_art_'+crypto.randomUUID().replaceAll('-','');
-     command.textContent='msg --server '+location.origin+' call '+operation+' @'+filename+' --request-id '+requestId+expect;
+     const prefix='msg --server '+shellQuote(location.origin)+' call '+operation;
+     const options=' --request-id '+requestId+expect,delimiter='MSG_PROFILE_REQUEST';
+     command.textContent=prefix+' -'+options+" <<'"+delimiter+"'\n"+requestJson+delimiter+'\n';
+     fileCommand.textContent=prefix+' @'+filename+options;
      prepared.hidden=false;status.textContent='预览已就绪，尚未保存。 / Preview ready; not saved yet.';
    }catch(error){if(current===version)status.textContent=error.message||'无法准备图片。 / Could not prepare artwork.';}
  });
  editor.querySelector('button').addEventListener('click',async()=>{
-   try{await navigator.clipboard.writeText(command.textContent);status.textContent='命令已复制，执行成功后刷新页面。 / Command copied; refresh after it succeeds.';}
-   catch{status.textContent='请选择并复制下方命令。 / Select and copy the command below.';}
+   try{await navigator.clipboard.writeText(command.textContent);status.textContent='命令已复制，尚未保存；在终端执行成功后刷新页面。 / Command copied, not saved yet; run it in your terminal, then refresh.';}
+   catch{prepared.querySelector('.profile-art-command-view').open=true;status.textContent='请选择并复制下方完整命令。 / Select and copy the full command below.';}
  });
 })();"""
 PROFILE_HASH = base64.b64encode(sha256(PROFILE_SCRIPT.encode()).digest()).decode()
@@ -173,14 +180,18 @@ def artwork_editor_html(path):
         '<label>SVG 文件 · 最多 96 KiB<input type="file" accept=".svg,image/svg+xml"></label></div>'
         '<div class="profile-art-preview" hidden></div>'
         '<p class="profile-art-status" role="status" aria-live="polite"></p>'
-        '<div class="profile-art-prepared" hidden><p>下载请求文件，在同一目录执行下方命令。'
-        '确认 CLI 使用的是本人账号；成功后刷新页面。 / Download the request and run the command '
-        'from the same directory using your own CLI account, then refresh.</p>'
-        '<pre><code></code></pre><div class="profile-art-actions">'
-        '<a download>下载请求 / Download request</a>'
-        '<button type="button">复制命令 / Copy command</button>'
+        '<div class="profile-art-prepared" hidden><p>复制保存命令，粘贴到自己的终端执行。'
+        '终端须配置本人 MSG 签名账号；成功后刷新页面。 / Copy the save command and paste it '
+        'into your terminal with your own MSG signing account, then refresh after it succeeds.</p>'
+        '<div class="profile-art-actions">'
+        '<button type="button">复制保存命令 / Copy save command</button>'
         '<a href="https://github.com/TokenNotIncluded/msg/blob/main/docs/PROFILES.md">使用说明 / Help</a>'
-        '</div></div></details>'
+        '</div><details class="profile-art-command-view"><summary>查看完整命令 / Show command</summary>'
+        '<pre><code class="profile-art-command"></code></pre></details>'
+        '<details class="profile-art-download"><summary>下载请求文件（可选） / Download request (optional)</summary>'
+        '<p>也可以下载 JSON，在下载目录执行下面这条命令。 / Alternatively, download the JSON '
+        'and run this command from its directory.</p><a download>下载 JSON / Download JSON</a>'
+        '<pre><code class="profile-art-file-command"></code></pre></details></div></details>'
     )
 
 

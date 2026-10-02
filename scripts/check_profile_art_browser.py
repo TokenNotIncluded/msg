@@ -15,12 +15,13 @@ from urllib.parse import urlsplit
 
 from playwright.sync_api import sync_playwright
 
+from msg.core.codec import unb64
 from msg.core.profile_art import generate_svg, still_svg
 from msg.transports.home_page import HOME_BROWSER_HEADERS, document_html
 
 ORIGIN = 'http://127.0.0.1:8999'
 ARTIFACTS = Path(os.environ.get('MSG_PROFILE_ART_ARTIFACTS', 'artifacts/profile-art'))
-CUSTOM = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 320"><text x="30" y="160" fill="#73864b">CUSTOM SVG</text></svg>'
+CUSTOM = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 320"><text x="30" y="160" fill="#73864b">CUSTOM SVG · 头像 🚀 / +</text></svg>'
 PROFILES = {
     'owner': ('u_fixture_owner', ''),
     'other': ('u_fixture_other', ''),
@@ -134,18 +135,31 @@ def run():
             page.wait_for_function(
                 "() => document.querySelector('.profile-art-prepared').hidden===false"
             )
+            command = page.locator('.profile-art-command').text_content()
             assert (
-                'file.create @msg-profile-avatar.json --request-id profile_art_'
-                in page.locator('.profile-art-prepared code').inner_text()
+                'file.create - --request-id profile_art_' in command.splitlines()[0]
             )
+            assert command.splitlines()[0].endswith(" <<'MSG_PROFILE_REQUEST'")
+            assert command.endswith('\nMSG_PROFILE_REQUEST\n')
+            command_packet = json.loads('\n'.join(command.splitlines()[1:-1]))
+            assert unb64(command_packet['data']) == CUSTOM.encode()
             assert 'not saved yet' in page.locator('.profile-art-editor [role=status]').inner_text()
             assert page.locator('.profile-art-preview').is_visible()
+            page.evaluate("() => {navigator.clipboard.writeText=async text=>{window.copiedSaveCommand=text}}")
+            page.locator('.profile-art-editor button').click()
+            assert page.evaluate('window.copiedSaveCommand') == command
+            assert 'not saved yet' in page.locator('.profile-art-editor [role=status]').inner_text()
+            page.locator('.profile-art-download summary').click()
             with page.expect_download() as download_info:
                 page.locator('.profile-art-editor a[download]').click()
             request_file = Path(download_info.value.path())
             packet = json.loads(request_file.read_text())
             assert packet['parent'] == '/@owner' and packet['name'] == 'AVATAR.svg'
             assert packet['media_type'] == 'image/svg+xml'
+            assert packet == command_packet and unb64(packet['data']) == CUSTOM.encode()
+            assert 'file.create @msg-profile-avatar.json --request-id profile_art_' in page.locator('.profile-art-file-command').inner_text()
+            (ARTIFACTS / f'owner-create-{width}.json').write_text(json.dumps(packet))
+            (ARTIFACTS / f'owner-create-{width}.sh').write_text(command)
             page.screenshot(path=str(ARTIFACTS / f'owner-edit-{width}.png'), full_page=True)
             state['existing'] = True
             upload.set_input_files({
@@ -156,17 +170,23 @@ def run():
             page.wait_for_function(
                 "() => document.querySelector('.profile-art-prepared').hidden===false"
             )
-            assert (
-                'file.write @msg-profile-avatar.json --request-id profile_art_'
-                in page.locator('.profile-art-prepared code').inner_text()
-            )
-            write_command = page.locator('.profile-art-prepared code').inner_text()
-            assert write_command.endswith(' --expect r_fixture=3')
+            write_command = page.locator('.profile-art-command').text_content()
+            assert 'file.write - --request-id profile_art_' in write_command.splitlines()[0]
+            assert " --expect r_fixture=3 <<'MSG_PROFILE_REQUEST'" in write_command.splitlines()[0]
+            write_packet = json.loads('\n'.join(write_command.splitlines()[1:-1]))
+            assert unb64(write_packet['data']) == CUSTOM.encode()
             with page.expect_download() as download_info:
                 page.locator('.profile-art-editor a[download]').click()
             packet = json.loads(Path(download_info.value.path()).read_text())
             assert packet['id'] == 'r_fixture' and packet['base_revision'] == 'v_fixture'
-            assert page.locator('.profile-art-prepared code').inner_text() == write_command
+            assert packet == write_packet and unb64(packet['data']) == CUSTOM.encode()
+            assert page.locator('.profile-art-command').text_content() == write_command
+            (ARTIFACTS / f'owner-write-{width}.json').write_text(json.dumps(packet))
+            (ARTIFACTS / f'owner-write-{width}.sh').write_text(write_command)
+            page.evaluate("() => {navigator.clipboard.writeText=async()=>{throw Error('clipboard blocked')}}")
+            page.locator('.profile-art-editor button').click()
+            assert page.locator('.profile-art-command-view').get_attribute('open') is not None
+            assert 'full command below' in page.locator('.profile-art-editor [role=status]').inner_text()
             before = len(requests)
             upload.set_input_files({
                 'name': 'unsafe.svg',
@@ -198,6 +218,10 @@ def run():
             results.append({
                 'width': width,
                 'owner_create_and_update': True,
+                'ui_data_decoded': True,
+                'stdin_and_download_requests_match': True,
+                'copied_command_stays_unsaved': True,
+                'clipboard_fallback': True,
                 'unsafe_rejected': True,
                 'owner_only': True,
                 'overflow': False,
