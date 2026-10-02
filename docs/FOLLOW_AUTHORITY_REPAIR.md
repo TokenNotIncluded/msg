@@ -14,10 +14,10 @@ msgd --config-dir /etc/msgd account repair-follows @lightdot
 
 默认只读，不需要 Root PIN，也不启动服务、迁移数据库、分配序列或读取任何私钥。输出原 subject、当前 primary key、既有 scope/constraints、两项操作的现状与拟添加项，以及绑定完整凭据状态的 `digest`。可加 `--key-id ORIGINAL_PRIMARY_KEY` 明确核对原密钥。
 
-独立预览入口也可在命令发布前，用匹配当前服务器 MSG 安装的 Python 执行：
+命令发布前，也可由管理员核对预览模块的代码和摘要，再用匹配当前服务器 MSG 安装的 Python 执行该文件：
 
 ```sh
-python -m msg.admin.follow_authority --config-dir /etc/msgd @lightdot
+python /path/to/reviewed/follow_authority.py --config-dir /etc/msgd @lightdot
 ```
 
 错误只输出错误码，不输出私钥、凭据 verifier 或完整凭据。预览能说明实际缺项，不能证明缺项是历史默认值还是管理员有意收窄；管理员必须结合原账号确认后决定是否修复。

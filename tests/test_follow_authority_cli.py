@@ -7,7 +7,13 @@ import pytest
 from test_service import register
 
 from msg import daemon
-from msg.admin.follow_authority import FOLLOW_OPERATIONS, open_for_repair, preview_configuration
+from msg.admin.follow_authority import (
+    FOLLOW_OPERATIONS,
+    follow_preview,
+    open_for_repair,
+    preview_configuration,
+    repair_follows,
+)
 from msg.admin.root import RootAdmin
 from msg.application import Application
 from msg.core.codec import canonical, digest, loads
@@ -147,3 +153,60 @@ def test_apply_requires_the_prior_preview_before_touching_authority(tmp_path, mo
     monkeypatch.setattr('msg.admin.root.root_envelope', forbidden)
     with pytest.raises(Failure, match='follow_repair_expected_preview_required'):
         RootAdmin(tmp_path).repair_follows('@old', **options)
+
+
+@pytest.mark.asyncio
+async def test_late_recovery_markers_block_apply_without_business_or_sequence_writes(installed):
+    from read_only_evidence import business_snapshot
+
+    app, root = installed
+    key, uid, _ = await register(app, 'follow-late-marker')
+    async with app.metadata.transaction(write=True) as tx:
+        credential = await tx.credential(key.key_id)
+        await tx.save_credential(
+            replace(
+                credential,
+                ceiling=tuple(
+                    replace(g, operations=g.operations - FOLLOW_OPERATIONS)
+                    if g.capability == 'communication.basic'
+                    else g
+                    for g in credential.ceiling
+                ),
+            ),
+            (await tx.subject(uid)).auth_version,
+        )
+    async with app.metadata.transaction(write=False) as tx:
+        plan = await follow_preview(app, tx, uid)
+
+    async def snapshot():
+        async with app.metadata.transaction(write=False) as tx:
+            sequence_state = tx.rows(
+                "SELECT sequencename,last_value FROM pg_sequences WHERE schemaname='public' ORDER BY sequencename"
+            )
+        return await business_snapshot(app), sequence_state
+
+    marker = app.settings.recovery_marker
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    for mode in ('file', 'dangling-symlink', 'during-signature'):
+        before = await snapshot()
+        if mode == 'file':
+            marker.write_text('{}')
+        elif mode == 'dangling-symlink':
+            marker.symlink_to(marker.parent / 'absent-marker-target')
+
+        class MarkerSigner:
+            public_key = root.public_key
+
+            def sign(self, value, *, purpose):
+                marker.write_text('{}')
+                return root.sign(value, purpose=purpose)
+
+        signer = MarkerSigner() if mode == 'during-signature' else root
+        try:
+            with pytest.raises(Failure, match='recovery_quarantined'):
+                await repair_follows(
+                    app, uid, signer, expected_digest=digest(plan), operator='late-marker-test'
+                )
+            assert await snapshot() == before, mode
+        finally:
+            marker.unlink(missing_ok=True)
