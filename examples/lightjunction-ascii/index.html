@@ -425,7 +425,8 @@ function createShelterWorld({ box, sphere, limb }) {
     requestAnimationFrame(frame);
     if(document.hidden||state.paused||state.waiting){last=now;return;}
     const dt=last?Math.min(.08,(now-last)/1000):0;last=now;advance(dt);
-    if(now-painted>(innerWidth<600?85:65)){render();painted=now;}
+    const interval=innerWidth<600?50:1000/30;
+    if(now-painted>=interval){render();painted=now-((now-painted)%interval);}
   }
   function resize() {
     cols=innerWidth<600?76:112;rows=innerWidth<600?56:60;
