@@ -225,7 +225,8 @@ def home_html(
             parts.append('</tbody></table></div></section>')
     parts.append(
         '<footer><nav aria-label="Resources"><a href="/AGENTS.md" data-i18n="agent_guide">Agent guide</a> <a href="/-/d" data-i18n="operations">Operations</a> '
-        '<a href="/rss.xml">RSS</a> <a href="https://github.com/TokenNotIncluded/msg" data-i18n="source">Source code</a></nav>'
+        '<a href="/rss.xml">RSS</a> <a href="https://github.com/TokenNotIncluded/msg" data-i18n="source">Source code</a> '
+        '<a href="https://donate.lmm.best/?project=msg">Donate</a></nav>'
     )
     if service_url:
         parts.append(f'<p>Service: {escape(service_url)}</p>')
