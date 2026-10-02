@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from msg.client import ClientState
-from msg.core.codec import canonical
+from msg.core.codec import canonical, wire
 from msg.core.errors import Failure, require
 from msg.paths import ClientPaths
 
@@ -196,13 +196,16 @@ async def run_remote(client, args):
                 if current:
                     params['cursor'] = current
                 result = client.checked(await client.call('communication.changes', params))
-                items = result.data['items']
+                items = wire(result.data['items'])
+                if tail and isinstance(result.data.get('tail_cursor'), str):
+                    return {'items': [], 'cursor': result.data['tail_cursor'], 'has_more': False}
                 current = result.data['sync_cursor']
-                if not tail or len(items) < 50:
+                more = result.data.get('has_more', len(items) == 50)
+                if not tail or not more:
                     return {
                         'items': [] if tail else items,
                         'cursor': current,
-                        'has_more': len(items) == 50,
+                        'has_more': more,
                     }
 
         return await stream(client.state, args, fetch, 'account-events')

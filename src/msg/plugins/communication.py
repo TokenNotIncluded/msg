@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
+import time
 from dataclasses import replace as replace
 from datetime import UTC, datetime, timedelta
 
@@ -1130,10 +1132,15 @@ def install(app):
                 },
             )
 
-        for seq, raw in tx.execute(
-            'SELECT seq,body FROM events WHERE seq>? ORDER BY seq', (position,)
-        ):
-            position = seq
+        # Visible-item limits do not bound sparse histories. Fetch one fixed
+        # window plus a lookahead; the lookahead must never advance the cursor.
+        rows = tx.rows(
+            'SELECT seq,body FROM events WHERE seq>? AND seq<=? ORDER BY seq LIMIT 65',
+            (position, tail_position),
+        )
+        slice_deadline = time.monotonic() + 0.05
+        for seq, raw in rows[:64]:
+            require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
             event = loads(raw)
             if event['type'].startswith('topic.') and event.get('data', {}).get('reason'):
                 from msg.plugins.content import topic_admin
@@ -1146,10 +1153,15 @@ def install(app):
             permitted = []
             parents = {}
             for ref in references:
+                require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
                 if await visible(app, ctx, request, tx, ref['id']):
                     permitted.append(ref)
                     resource = await tx.resource(ref['id'])
                     parents[ref['id']] = {'parent': resource.parent, 'name': resource.name}
+                # SQL and certificate checks are synchronous despite their
+                # async wrappers. A short timer lets ready I/O callbacks run
+                # instead of immediately rescheduling this task with sleep(0).
+                await asyncio.sleep(0.001)
             relevant = event['subject'] == subject or event['subject'] in watches
             if event['type'].startswith('topic.'):
                 topic = event.get('data', {}).get('topic_id')
@@ -1163,6 +1175,9 @@ def install(app):
                 )
                 relevant = relevant or member is not None
             for ref in permitted:
+                if relevant:
+                    break
+                require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
                 relevant = (
                     relevant
                     or ref['id'] in watches
@@ -1171,6 +1186,7 @@ def install(app):
                 direct = await direct_ancestor(tx, ref['id'])
                 if direct is not None:
                     relevant = True
+                await asyncio.sleep(0.001)
             if relevant and (permitted or not references and event['subject'] == subject):
                 event['resources'] = permitted
                 items.append({
@@ -1179,13 +1195,18 @@ def install(app):
                     'resource_parents': parents,
                     'resume_cursor': resume(seq),
                 })
-            if len(items) >= limit:
+            # Commit only fully checked events. A time slice never drops the
+            # remaining references of an event or skips the next stored row.
+            position = seq
+            await asyncio.sleep(0)
+            if len(items) >= limit or time.monotonic() >= slice_deadline:
                 break
         return HandlerOutput(
             data={
                 'items': items,
                 'sync_cursor': resume(position),
                 'tail_cursor': resume(tail_position),
+                'has_more': position < tail_position,
             }
         )
 

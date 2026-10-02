@@ -27,6 +27,18 @@ async def client_for(app, directory, username):
     return client, http
 
 
+async def all_messages(agents, name):
+    items, cursor = [], None
+    for _ in range(50):
+        page = await agents.inbox(name, cursor=cursor)
+        items.extend(page['items'])
+        if not page['has_more']:
+            return items
+        assert page['cursor'] != cursor
+        cursor = page['cursor']
+    pytest.fail('mailbox history did not finish within bounded continuation calls')
+
+
 @pytest.mark.asyncio
 async def test_remote_private_delivery_tail_restart_and_archive(installed, tmp_path):
     app, _ = installed
@@ -64,8 +76,8 @@ async def test_remote_private_delivery_tail_restart_and_archive(installed, tmp_p
         await agents.archive('bot2')
         with pytest.raises(Failure, match='subagent_archived'):
             await agents.send('bot1', 'bot2', 'after archive')
-        history = await agents.inbox('bot2')
-        assert [x['message'] for x in history['items']] == ['private handoff']
+        history = await all_messages(agents, 'bot2')
+        assert [x['message'] for x in history] == ['private handoff']
         public = client.checked(
             await client.call(
                 'file.create',
@@ -223,11 +235,10 @@ async def test_remote_labels_legacy_messages_and_cursor_survive_account_rename(i
             '@bots-after#bot2',
         ]
         assert (await agents.create('bot1'))['identity'] == '@bots-after#bot1'
-        history = await agents.inbox('bot2')
-        assert {x['id'] for x in history['items']} == {'legacy', 'stable'}
+        history = await all_messages(agents, 'bot2')
+        assert {x['id'] for x in history} == {'legacy', 'stable'}
         assert all(
-            x['from'] == '@bots-after#bot1' and x['to'] == '@bots-after#bot2'
-            for x in history['items']
+            x['from'] == '@bots-after#bot1' and x['to'] == '@bots-after#bot2' for x in history
         )
         # Both old v1 records and v2 records remain idempotent after rename.
         for identifier, message in [
@@ -268,6 +279,6 @@ async def test_remote_labels_legacy_messages_and_cursor_survive_account_rename(i
             )
         )
         with pytest.raises(Failure, match='invalid_subagent_message'):
-            await agents.inbox('bot2')
+            await all_messages(agents, 'bot2')
     finally:
         await http.aclose()

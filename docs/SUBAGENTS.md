@@ -100,9 +100,22 @@ Newer servers attach authorized current-parent hints and protected event resume
 cursors to the existing change-stream output. The client can skip unrelated
 message-body reads, fetch larger internal pages without exceeding the requested
 message limit, and obtain the tail without reading old message bodies. Older
-servers retain the original bounded scan. These additions preserve the published
+servers retain the original output. These additions preserve the published
 operation inputs and short codes; they do not add a server-side mailbox index, so
 a cold scan can still require linear database work.
+
+The change stream now scans at most 64 stored events per page and yields during
+current permission checks. It can return an empty or short page with
+`has_more=true`; resume its protected `sync_cursor` to continue. Remote inbox
+calls scan at most eight pages before returning their progressed cursor and
+`has_more`, so even a long sparse history does not make one call drain the entire
+account. Keep continuing while `has_more` is true. A legacy server without the
+new output hints retains the original page-size inference; legacy tail scans
+still run to the end so they do not silently select an earlier position.
+Older clients can explicitly resume the same protected cursors, but clients that
+infer completion from a short page can pause before reaching the current end on
+newer servers. Update those readers to follow `has_more` rather than treating an
+empty page as proof that the account history is drained.
 
 ## Existing account events
 

@@ -11,6 +11,17 @@ from msg.core.codec import b64, wire
 from msg.core.errors import Failure
 
 
+async def next_messages(agents, name, **arguments):
+    """A bounded sparse page can be empty while its cursor still advances."""
+    for _ in range(50):
+        page = await agents.inbox(name, **arguments)
+        if page['items'] or not page['has_more']:
+            return page
+        assert page['cursor'] != arguments.get('cursor')
+        arguments['cursor'] = page['cursor']
+    pytest.fail('bounded inbox did not reach the expected message')
+
+
 @pytest.mark.asyncio
 async def test_remote_mailbox_round_trips(installed, tmp_path):
     app, _ = installed
@@ -44,19 +55,25 @@ async def test_remote_mailbox_round_trips(installed, tmp_path):
         calls.clear()
         start = perf_counter()
         page = await agents.inbox('recipient', limit=2)
+        first_inbox_calls = list(calls)
+        assert first_inbox_calls.count('communication.changes') <= 8
+        if not page['items']:
+            assert page['has_more']
+            page = await next_messages(agents, 'recipient', cursor=page['cursor'], limit=2)
         inbox_seconds = perf_counter() - start
         assert [item['id'] for item in page['items']] == ['once']
         assert len(send_calls) == 8
-        assert len(calls) == 8
         inbox_calls = list(calls)
         calls.clear()
         tail = await agents.inbox('recipient', tail=True)
         assert tail['items'] == []
         assert len(calls) == 6
         await agents.send('sender', 'recipient', 'after tail', message_id='later')
+        calls.clear()
         assert [
             item['id'] for item in (await agents.inbox('recipient', cursor=tail['cursor']))['items']
         ] == ['later']
+        assert len(calls) == 7
         # A large internal page must leave later messages unread when the user
         # requests one. An unrelated first event forces that larger second page.
         start_page = await agents.inbox('recipient', tail=True)
@@ -84,7 +101,8 @@ async def test_remote_mailbox_round_trips(installed, tmp_path):
         print({
             'send_requests': len(send_calls),
             'send_seconds': round(send_seconds, 3),
-            'inbox_requests': len(inbox_calls),
+            'cold_first_requests': len(first_inbox_calls),
+            'cold_total_requests': len(inbox_calls),
             'inbox_seconds': round(inbox_seconds, 3),
         })
     finally:
@@ -134,7 +152,7 @@ async def test_changes_hints_current_acl_and_mailbox_cursor_scope(installed, tmp
             )
         )
         with pytest.raises(Failure, match='subagent_private_namespace_conflict'):
-            await agents.inbox('recipient')
+            await next_messages(agents, 'recipient')
         # A change in read authority must invalidate previously minted cursors.
         stale = await client.call(
             'communication.changes',
@@ -170,7 +188,30 @@ async def test_remote_old_output_compatibility_and_replay_privacy(installed, tmp
                     fresh_pages -= 1
                     return result
                 data = wire(result.data)
+                # A legacy worker filled its visible-item page before
+                # returning. Reconstruct that output from real signed bounded
+                # HTTP pages so removing has_more does not invent a sparse
+                # page that an actual legacy worker would never have emitted.
+                target = packet.arguments['limit']
+                while len(data['items']) < target and data['has_more']:
+                    following = client.checked(
+                        await original_transport(
+                            client.prepare(
+                                'communication.changes',
+                                {
+                                    'cursor': data['sync_cursor'],
+                                    'limit': target - len(data['items']),
+                                },
+                            )
+                        )
+                    )
+                    next_page = wire(following.data)
+                    data['items'].extend(next_page['items'])
+                    data.update(
+                        sync_cursor=next_page['sync_cursor'], has_more=next_page['has_more']
+                    )
                 data.pop('tail_cursor', None)
+                data.pop('has_more', None)
                 for event in data['items']:
                     event.pop('resource_parents', None)
                     event.pop('resume_cursor', None)
@@ -178,7 +219,9 @@ async def test_remote_old_output_compatibility_and_replay_privacy(installed, tmp
             return result
 
         client.transport.call = old_output
-        assert [item['id'] for item in (await agents.inbox('recipient'))['items']] == ['legacy']
+        assert [item['id'] for item in (await next_messages(agents, 'recipient'))['items']] == [
+            'legacy'
+        ]
         tail = await agents.inbox('recipient', tail=True)
         await agents.send('sender', 'recipient', 'legacy delta', message_id='next')
         delta = await agents.inbox('recipient', cursor=tail['cursor'])
