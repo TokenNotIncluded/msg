@@ -34,15 +34,24 @@ CODE_SCRIPT = r"""(() => {
       const source = block.querySelector('.code-source');
       const status = block.querySelector('.code-copy-status');
       const text = (en, zh) => globalThis.msgText?.(en, zh) ?? (document.documentElement.lang.startsWith('zh') ? zh : en);
+      const original = new TextDecoder('utf-8', {ignoreBOM:true}).decode(Uint8Array.from(atob(source.dataset.codeSource), char => char.charCodeAt(0)));
       try {
         if (!navigator.clipboard?.writeText) throw new Error('clipboard_unavailable');
-        const original = new TextDecoder().decode(Uint8Array.from(atob(source.dataset.codeSource), char => char.charCodeAt(0)));
         await navigator.clipboard.writeText(original);
         status.textContent = text('Copied','已复制');
       } catch {
+        source.value = original;
         source.hidden = false;
         source.focus(); source.select();
-        status.textContent = text('Select and copy the source below','请复制下面选中的原文');
+        if (!block.querySelector('[data-source-download]')) {
+          const link = document.createElement('a');
+          link.dataset.sourceDownload = '';
+          link.href = URL.createObjectURL(new Blob([new TextEncoder().encode(original)], {type:'text/plain;charset=utf-8'}));
+          link.download = block.classList.contains('diff-view') ? 'diff.patch' : 'source.txt';
+          link.textContent = text('Download source','下载原文');
+          block.querySelector('.code-toolbar').append(link);
+        }
+        status.textContent = text('Copy below or download the exact source','复制下方文字，或下载原文');
       }
     });
   }

@@ -28,7 +28,18 @@ def test_literal_code_and_exact_copy_never_turn_into_html(language):
     assert 'src="http' not in html
 
 
-@pytest.mark.parametrize('source,count', [('', 1), ('\n', 1), ('a\n\n', 2), ('a\nb', 2)])
+@pytest.mark.parametrize(
+    'source,count',
+    [
+        ('', 1),
+        ('\n', 1),
+        ('a\n\n', 2),
+        ('a\nb', 2),
+        pytest.param('\ufeffprint(1)\n', 1, id='leading-bom'),
+        pytest.param('\nprint(1)\n', 2, id='leading-blank'),
+        pytest.param('print(1)\r\nprint(2)\r\n', 2, id='crlf'),
+    ],
+)
 def test_blank_lines_and_missing_final_newline_are_counted(source, count):
     html = render_code(source, 'text')
     assert html.count('class="code-line"') == count

@@ -2,7 +2,7 @@
 
 HTML documents render Markdown fenced code with language labels, source line numbers, local Pygments highlighting and a **Copy source** button. Unknown languages remain escaped plain text. No external script, style or highlighting service is fetched. Inline authored HTML remains disabled. Code and diff lines scroll inside their own keyboard-focusable region; long lines do not widen the document.
 
-The copy button uses the original code content, separately encoded from the rendered line numbers and highlighting. If the browser cannot access the clipboard, the source appears in a selected text area for manual copying. The code module's script must be authorized by its exact `CODE_HASH` in the document's Content Security Policy.
+The copy button uses the original code content, separately encoded from the rendered line numbers and highlighting, including a leading BOM or blank line. If the browser cannot access the clipboard, the source appears in a selected text area for manual copying. A **Download source** link preserves the exact UTF-8 source bytes, including CRLF line endings that browser text areas normalize. The code module's script must be authorized by its exact `CODE_HASH` in the document's Content Security Policy.
 
 Revision differences display old and new line numbers, explicit `−` / `+` markers, unchanged context and `@@` hunk headings. Read-current and history links remain available. A first revision explicitly states that no previous revision exists; a comparison with no text changes retains its normal empty state.
 
