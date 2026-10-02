@@ -1,5 +1,7 @@
 """Public SVG/text editing uses a single quota gate across browser, CLI and batch."""
 
+import re
+import xml.etree.ElementTree as ET
 from datetime import timedelta
 
 import pytest
@@ -24,9 +26,7 @@ from msg.transports.oauth_http import csrf
         DEFAULT_SVG.replace('dur="12s"', 'dur="0.001s"', 1),
         DEFAULT_SVG.replace('viewBox="0 0 960 300"', 'viewBox="0 0 1000000 1000000"', 1),
         '<!DOCTYPE svg [<!ENTITY a "a">]>' + DEFAULT_SVG,
-        DEFAULT_SVG.replace(
-            'values="#d6d6da;#d6d6da;#88baff;#d6d6da"', 'values="url(https://outside.invalid)"', 1
-        ),
+        re.sub(r'values="[^"]+"', 'values="url(https://outside.invalid)"', DEFAULT_SVG, count=1),
     ],
 )
 def test_svg_rejects_active_or_unbounded_content(svg):
@@ -140,6 +140,35 @@ async def test_every_user_edits_both_parts_and_limits_are_atomic(installed):
         assert tx.setting('public_board_quota:' + first)['hour_count'] == 5
 
 
+async def test_release_default_never_overwrites_an_existing_user_board(installed):
+    from msg.core.public_board_art import (
+        DEFAULT_SVG as ART_SVG,
+        DEFAULT_TEXT as ART_TEXT,
+        default_art as art,
+    )
+    from msg.plugins.public_board import default, default_art
+
+    assert default_art is art and default()['svg'] == ART_SVG
+    assert default()['text'] == ART_TEXT
+    app, _ = installed
+    saved = {
+        **default(),
+        'generation': 23,
+        'svg': DEFAULT_SVG.replace('>svg + text<', '>user artwork<'),
+        'text': '用户保存的正文',
+        'updated_by': 'existing-account',
+        'history': [{**default(), 'generation': 22, 'text': 'previous user text'}],
+    }
+    async with app.metadata.transaction(write=True) as tx:
+        tx.set_setting(KEY, saved)
+    read = await call(app, 'discovery.public_board', {})
+    assert read.status == 'ok', read.error
+    assert read.data['generation'] == 23 and read.data['svg'] == saved['svg']
+    assert read.data['text'] == saved['text'] and read.data['updated_by'] == saved['updated_by']
+    async with app.metadata.transaction(write=False) as tx:
+        assert tx.setting(KEY) == saved
+
+
 async def test_batch_size_and_payload_limits_cannot_bypass_gate(installed):
     from test_batch import packet
 
@@ -198,7 +227,11 @@ async def test_browser_save_requires_csrf_and_uses_same_quota(oauth):
     assert art.status_code == 200 and '<animate' in art.text
     assert "default-src 'none'" in art.headers['content-security-policy']
     still = await http.get('/_public-board/art.svg?motion=still')
-    assert still.status_code == 200 and 'animate' not in still.text
+    assert still.status_code == 200
+    assert not any(
+        element.tag.rsplit('}', 1)[-1] in {'animate', 'animateTransform'}
+        for element in ET.fromstring(still.content).iter()
+    )
     args = {
         'operation': 'content.public_board_update',
         'generation': 0,

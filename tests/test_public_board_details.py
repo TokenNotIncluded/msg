@@ -20,19 +20,23 @@ class Element {
 }
 const fields={svg:new Element('old-svg'),text:new Element('old-text')};
 const edit=new Element(),refresh=new Element(),save=new Element(),pause=new Element(),status=new Element(),image=new Element();
+const success=new Element();success.hidden=true;
 const menu=new Element(),menuToggle=new Element(),close=new Element();menu.open=false;
 menu.querySelector=()=>menuToggle;menu.contains=target=>[menu,menuToggle,edit,pause].includes(target);
 const version=new Element(),content=new Element(),quota=new Element(),size=new Element(),form=new Element();form.hidden=true;
 const selectors={'form':form,'[role=status]':status,'img':image,'[data-edit]':edit,'[data-refresh]':refresh,'[type=submit]':save,
  '[data-pause]':pause,'[data-version]':version,'[data-content]':content,'[data-quota]':quota,'[data-size]':size,
  '[data-menu]':menu,'[data-close]':close,
+ '[data-success]':success,
  '[name=svg]':fields.svg,'[name=text]':fields.text};
 form.querySelector=selector=>selectors[selector];
 const panel=new Element();panel.dataset={generation:'0',signedIn:'true',csrf:'csrf'};panel.querySelector=selector=>selectors[selector];
 const motion=new Element();motion.matches=!!input.reduced;
 const windowEvents=new Element(),requests=[],snapshots=[];
 let nextResponse,resolveFetch,running,id=0;
+const timers=new Map();let timerId=0;
 const context={document:{getElementById:()=>panel},matchMedia:()=>motion,TextEncoder,
+ setTimeout:callback=>{timers.set(++timerId,callback);return timerId;},clearTimeout:id=>timers.delete(id),
  crypto:{randomUUID:()=>`request-${++id}`},AbortSignal:{timeout:()=>undefined},
  addEventListener:(...args)=>windowEvents.addEventListener(...args),location:{assign:()=>{}},
  fetch:async(url,options={})=>{
@@ -46,6 +50,7 @@ const context={document:{getElementById:()=>panel},matchMedia:()=>motion,TextEnc
 vm.runInNewContext(input.script,context);
 const snapshot=()=>({svg:fields.svg.value,text:fields.text.value,generation:panel.dataset.generation,hidden:form.hidden,
  menuOpen:menu.open,menuFocused:!!menuToggle.focused,textFocused:!!fields.text.focused,
+ successHidden:success.hidden,successText:success.textContent,
  expanded:edit.attrs['aria-expanded'],pressed:pause.attrs['aria-pressed'],image:image.src,status:status.textContent,
  saveDisabled:save.disabled,refreshDisabled:refresh.disabled,svgDisabled:fields.svg.disabled,textDisabled:fields.text.disabled,
  size:size.textContent,requests:structuredClone(requests)});
@@ -57,6 +62,7 @@ const snapshot=()=>({svg:fields.svg.value,text:fields.text.value,generation:pane
    if(action.kind==='close-editor')await close.emit('click');
    if(action.kind==='escape')await panel.emit('keydown',{key:'Escape',preventDefault(){}});
    if(action.kind==='outside-click')await windowEvents.emit('click',{target:new Element()});
+   if(action.kind==='expire-success'){for(const callback of [...timers.values()])callback();}
    if(action.kind==='pause')await pause.emit('click');
    if(action.kind==='motion'){motion.matches=action.matches;await motion.emit('change',{matches:action.matches});}
    if(action.kind==='refresh'){nextResponse=action.response;await refresh.emit('click');}
@@ -114,6 +120,7 @@ def test_conflict_refresh_keeps_draft_and_only_submits_changed_field():
     assert payload['generation'] == 1 and payload['text'] == 'my-draft'
     assert 'svg' not in payload
     assert result['final']['hidden'] and result['final']['expanded'] == 'false'
+    assert not result['final']['successHidden'] and '已保存' in result['final']['successText']
 
 
 def test_save_serializes_refresh_and_reuses_request_id_after_failure():
@@ -210,3 +217,28 @@ def test_options_are_discreet_and_editor_close_preserves_draft():
         '点击「编辑公共栏」' not in rendered and '所有已登录用户和 Agent 都可修改' not in rendered
     )
     assert '<h1>' not in rendered
+
+
+def test_success_is_visible_outside_closed_editor_then_returns_to_quiet_default():
+    result = run_editor([
+        {'kind': 'snapshot'},
+        {'kind': 'edit'},
+        {'kind': 'input', 'name': 'text', 'value': 'published text'},
+        {
+            'kind': 'submit',
+            'response': {
+                'body': {'status': 'ok', 'data': value(1, text='published text', svg='old-svg')}
+            },
+        },
+        {'kind': 'snapshot'},
+        {'kind': 'expire-success'},
+    ])
+    initial, saved = result['snapshots']
+    assert initial['successHidden'] and not initial['successText']
+    assert saved['hidden'] and not saved['successHidden'] and '已保存' in saved['successText']
+    assert result['final']['successHidden'] and not result['final']['successText']
+    rendered = html()
+    assert rendered.index('data-success hidden') < rendered.index(
+        '<form id="public-board-editor" hidden>'
+    )
+    assert 'aria-atomic="true" data-success' in rendered

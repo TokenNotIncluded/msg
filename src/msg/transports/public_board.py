@@ -16,7 +16,10 @@ from msg.transports.http_common import BASE_HEADERS
 
 SCRIPT = r"""(() => {
 const panel=document.getElementById('public-board'); if(!panel)return;
-const form=panel.querySelector('form'),status=panel.querySelector('[role=status]'),image=panel.querySelector('img');
+const form=panel.querySelector('form'),status=form.querySelector('[role=status]'),image=panel.querySelector('img');
+const success=panel.querySelector('[data-success]');let successTimer;
+const clearSuccess=()=>{clearTimeout(successTimer);success.hidden=true;success.textContent='';};
+const saved=()=>{clearSuccess();success.hidden=false;success.textContent='已保存，所有访客都能看到。 / Saved for everyone.';successTimer=setTimeout(clearSuccess,5000);};
 const fields={svg:form.querySelector('[name=svg]'),text:form.querySelector('[name=text]')};
 const edit=panel.querySelector('[data-edit]'),refresh=form.querySelector('[data-refresh]'),button=form.querySelector('[type=submit]');
 const menu=panel.querySelector('[data-menu]'),menuToggle=menu.querySelector('summary');
@@ -32,6 +35,7 @@ pause.addEventListener('click',()=>{paused=!paused;art();closeMenu(true);});art(
 motion.addEventListener('change',event=>{paused=event.matches;art();});
 edit.addEventListener('click',()=>{
  if(panel.dataset.signedIn!=='true'){location.assign('/login');return;}
+ clearSuccess();
  editing(form.hidden);closeMenu();if(!form.hidden)fields.text.focus();else menuToggle.focus();
 });
 form.querySelector('[data-close]').addEventListener('click',()=>{editing(false);menuToggle.focus();});
@@ -65,11 +69,11 @@ form.addEventListener('submit',async event=>{
  const payload={operation:'content.public_board_update',generation:Number(panel.dataset.generation),csrf:panel.dataset.csrf};
  for(const name of names)payload[name]=fields[name].value;
  const key=JSON.stringify(payload);if(!pending||pending.key!==key)pending={key,id:crypto.randomUUID()};
- setBusy(true);status.textContent='正在保存… / Saving…';
+ clearSuccess();setBusy(true);status.textContent='正在保存… / Saving…';
  try{const response=await fetch('/oauth/post-action',{method:'POST',credentials:'same-origin',redirect:'error',
  headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,request_id:pending.id}),signal:AbortSignal.timeout(15000)});
  const result=await response.json();if(!response.ok||result.status!=='ok')throw new Error(result.error?.code||result.error||'request_failed');
- latest(result.data);pending=null;editing(false);closeMenu(true);status.textContent='已保存，所有访客都能看到。 / Saved for everyone.';
+ latest(result.data);pending=null;status.textContent='';editing(false);closeMenu(true);saved();
  }catch(error){const messages={public_board_conflict:'有人先修改了公共栏。草稿已保留；点击“读取最新内容”，对比上方公共栏后再提交。',
  public_board_cooldown:'距离上次修改不足 60 秒。请稍后再试，草稿已保留。',public_board_rate_limited:'本账号已达到本小时或当天的修改上限。草稿已保留。',
  public_board_global_rate_limited:'公共栏已达到全站修改上限，请稍后再试。',public_board_unsafe_svg:'SVG 含有不允许的元素或属性。只允许基础图形、文字和 SMIL 动画。',
@@ -101,7 +105,7 @@ CSS = """
 .public-board-options button{display:block;width:100%;border:0;background:transparent;text-align:left;font-size:13px}.public-board-options button:hover{background:var(--line)}.public-board-options button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .public-board form{margin-top:20px}.public-board form[hidden]{display:none}
 .public-board label{display:block;margin:16px 0 8px}.public-board textarea{display:block;width:100%;min-height:120px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--fg);resize:vertical;line-height:1.6}
-.public-board [name=svg]{min-height:240px;font:13px/1.6 var(--mono)}.public-board [role=status]{overflow-wrap:anywhere;font-size:13px;color:var(--muted)}.public-board [role=status]:empty{display:none}
+.public-board [name=svg]{min-height:240px;font:13px/1.6 var(--mono)}.public-board [role=status]{overflow-wrap:anywhere;font-size:13px;color:var(--muted)}.public-board [role=status]:empty,.public-board [role=status][hidden]{display:none}
 .public-board-limits{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:24px;border-top:1px solid var(--line);margin-top:20px;padding-top:18px;color:var(--muted);font-size:12px;line-height:1.8}.public-board-limits p{margin:0}.public-board-limits strong{display:block;font:12px var(--mono);color:var(--fg);margin-bottom:8px}@media(max-width:640px){.public-board-limits{grid-template-columns:1fr;gap:14px}.public-board img{margin:14px 0 22px}.public-board-editor-head{gap:8px}}
 .public-board summary{cursor:pointer;min-height:44px;line-height:44px}
 """
@@ -129,6 +133,7 @@ def html(value=None, account=None, csrf=''):
         '<button type="button" data-pause aria-pressed="true">播放动图 / Play</button></div></details>'
         f'<img src="/_public-board/art.svg?v={value["generation"]}&amp;motion=still" width="960" height="300" alt="用户共同编辑的 SVG 动图 / Community SVG animation">'
         f'<p class="public-board-text" data-content>{escape(value["text"])}</p>'
+        '<p role="status" aria-live="polite" aria-atomic="true" data-success hidden></p>'
         '<form id="public-board-editor" hidden>'
         '<div class="public-board-editor-head"><h2>编辑公共栏 / Edit board</h2>'
         f'<span class="muted" data-version>版本 / Version {value["generation"]}</span></div>'
