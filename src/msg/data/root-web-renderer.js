@@ -406,9 +406,10 @@
         if (key === 'h') { e.preventDefault(); this.home(); return; }
         if (key === 'enter' && !e.repeat) { e.preventDefault(); this.inspectNearby(); return; }
         if (this.network && !e.repeat && ['j', 'k', 'shift'].includes(key)) {
-          e.preventDefault(); this.queueGameAction(key === 'j' ? 'shield' : 'dash'); return;
+          e.preventDefault(); this.network.resume(); this.queueGameAction(key === 'j' ? 'shield' : 'dash'); return;
         }
         if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift', 'b'].includes(key)) {
+          if (!e.repeat) this.network?.resume();
           e.preventDefault(); this.keys.add(key); this.wake();
         }
       });
@@ -425,6 +426,7 @@
       canvas.addEventListener('pointerdown', e => {
         if (!this.flight || e.button !== 0) return;
         e.preventDefault(); canvas.focus({ preventScroll: true });
+        this.network?.resume();
         canvas.setPointerCapture(e.pointerId);
         this.flightPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       });
@@ -445,10 +447,14 @@
       }
       for (const button of document.querySelectorAll('[data-flight-key]')) {
         const key = button.dataset.flightKey;
-        const press = (id) => { this.flightControls.set(id, key); button.classList.add('held'); this.wake(); };
+        const press = (id) => {
+          if (!this.flightControls.has(id)) this.network?.resume();
+          this.flightControls.set(id, key); button.classList.add('held'); this.wake();
+        };
         const release = (id) => {
           this.flightControls.delete(id);
           if (![...this.flightControls.values()].includes(key)) button.classList.remove('held');
+          this.sendFlightInput();
           this.wake();
         };
         button.addEventListener('pointerdown', e => {

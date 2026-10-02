@@ -1102,7 +1102,7 @@
         }
         if (['connecting', 'disconnected', 'stale', 'error', 'failed', 'reconnecting'].includes(connection)) {
           renderer?.clearRemoteShips();
-          flatMap?.update({players:[], selfId:null});
+          flatMap?.update({players:[], selfId:null, regionCounts:null, currentRegion:null, regionReadyMs:0, serverTimeMs:0});
         }
         if (connection !== 'connected') renderer?.stopFlightInput(false);
         renderer?.updateGameHud();
