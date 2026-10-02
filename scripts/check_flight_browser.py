@@ -515,7 +515,7 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
         contexts[1].set_offline(True)
         # Chromium's offline emulation leaves an existing paused WebSocket open.
         # Close the real socket too, so its native close event exercises transport loss.
-        second.evaluate('__renderer.network._socket.close(1001, "fixture transport loss")')
+        second.evaluate('__renderer.network._socket.close(4001, "fixture transport loss")')
         wait(second, '!__renderer.network.connected', timeout=10000)
         wait(second, 'document.getElementById("region-map-status").dataset.state === "disconnected"')
         assert second.locator('#region-map-status').is_visible()
