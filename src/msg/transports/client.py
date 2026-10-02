@@ -40,7 +40,7 @@ class HTTPTransport:
         self.bytes_received = 0
         self.bytes_sent = 0
 
-    async def _json(self, method, path, *, body=None, headers=None, maximum=None):
+    async def _json(self, method, path, *, body=None, headers=None, maximum=None, read_only=False):
         require_safe_relative_url(path, maximum=self.max_path_bytes)
         limit = maximum or self.max_response_bytes
         raw = canonical(body) if body is not None else None
@@ -63,7 +63,19 @@ class HTTPTransport:
                 return None
             try:
                 value = loads(bytes(data))
-            except Failure:
+            except Failure as exc:
+                media_type = (
+                    response.headers.get('content-type', '').partition(';')[0].strip().lower()
+                )
+                # A restarting gateway can return HTML or an empty body. Only
+                # declared reads recover; strict JSON rejections stay terminal.
+                if (
+                    read_only
+                    and response.status_code in {502, 503, 504}
+                    and exc.code == 'invalid_json'
+                    and 'json' not in media_type
+                ):
+                    raise Failure('transport_error', retryable=True) from None
                 raise Failure('invalid_server_response') from None
             require(isinstance(value, dict), 'invalid_server_response')
             if response.status_code >= 400 and 'status' not in value:
@@ -81,7 +93,7 @@ class HTTPTransport:
 
     async def description(self):
         if self._description is None:
-            value = await self._json('GET', '/_transports')
+            value = await self._json('GET', '/_transports', read_only=True)
             require(
                 value.get('version') == 1 and value.get('target_service') == self.server,
                 'service_mismatch',
@@ -114,11 +126,11 @@ class HTTPTransport:
 
     async def call(self, request):
         self._secure_delivery(request)
-        await self._effect(request.operation)
+        effect = await self._effect(request.operation)
         path = '/-/p/' + request.operation
         # Signed reads use POST to a query endpoint: read/write is the operation's
         # declared effect, not inferred from whether HTTP has a request body.
-        value = await self._json('POST', path, body=wire(request))
+        value = await self._json('POST', path, body=wire(request), read_only=effect == 'read')
         return decode_result(value)
 
     async def call_reads(self, requests):
@@ -147,6 +159,7 @@ class HTTPTransport:
                 'query': f'query MsgReads({parameters}) {{ {fields} }}',
                 'variables': {f'p{index}': wire(request) for index, request in enumerate(requests)},
             },
+            read_only=True,
         )
         require(isinstance(result, dict), 'invalid_graphql_result')
         if result.get('status') == 'error':
@@ -192,7 +205,7 @@ class PathGETTransport(HTTPTransport):
 
     async def call(self, request):
         require_url_safe_packet(request)
-        await self._effect(request.operation)
+        effect = await self._effect(request.operation)
         raw = canonical(request)
         encoded, encoding = b64(raw), 'j'
         compressed = b64(gzip.compress(raw, mtime=0))
@@ -201,7 +214,7 @@ class PathGETTransport(HTTPTransport):
         path = '/-/g/' + request.operation + '/' + encoding + '/' + encoded
         limits = await self.discover()
         require(len(path.encode()) <= limits.max_path_bytes, 'path_too_large')
-        return decode_result(await self._json('GET', path))
+        return decode_result(await self._json('GET', path, read_only=effect == 'read'))
 
 
 class GraphQLTransport(HTTPTransport):
@@ -216,7 +229,7 @@ class GraphQLTransport(HTTPTransport):
             'variables': {'packet': wire(request)},
         }
         endpoint = '/_read/graphql' if effect == 'read' else '/-/graphql'
-        result = await self._json('POST', endpoint, body=payload)
+        result = await self._json('POST', endpoint, body=payload, read_only=effect == 'read')
         require(isinstance(result, dict), 'invalid_graphql_result')
         errors = result.get('errors')
         require(errors is None or isinstance(errors, list), 'invalid_graphql_result')
@@ -239,7 +252,7 @@ class MCPHTTPTransport(HTTPTransport):
 
     async def call(self, request):
         self._secure_delivery(request)
-        await self._effect(request.operation)
+        effect = await self._effect(request.operation)
         from msg.transports.mcp_protocol import PROTOCOL_VERSION
 
         tool_name = (
@@ -260,6 +273,7 @@ class MCPHTTPTransport(HTTPTransport):
                 'Accept': 'application/json, text/event-stream',
                 'MCP-Protocol-Version': PROTOCOL_VERSION,
             },
+            read_only=effect == 'read',
         )
         require(isinstance(value, dict), 'invalid_mcp_result')
         if 'error' in value:
