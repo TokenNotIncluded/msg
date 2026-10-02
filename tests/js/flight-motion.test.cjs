@@ -93,3 +93,14 @@ test('all 2300 shared glyph coordinates match the Python Float32 golden and are 
   assert.equal(createHash('sha256').update(Buffer.from(positions.buffer)).digest('hex'),
     '259f170fb59c49eb4d39e12d7302e4ccbc38a95c4356a6f804f66878068c6238');
 });
+
+test('slow render frames subdivide the whole interval without advancing a paused or invalid clock', () => {
+  for(const hz of [10,20,30,60,120]) {
+    const prediction=new FlightPrediction(ship());
+    for(let i=1;i<=hz*2;i++) prediction.step(1/hz,{...neutral,throttle:1},{},i*1000/hz);
+    close(prediction.position[2],-31.66666666666667); close(prediction.state.velocity[2],-20);
+    const before=[...prediction.position];
+    for(const invalid of [0,-1,NaN,Infinity]) prediction.step(invalid,{...neutral,throttle:1},{},3000);
+    assert.deepEqual(prediction.position,before);
+  }
+});

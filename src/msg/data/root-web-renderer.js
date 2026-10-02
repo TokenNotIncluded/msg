@@ -141,8 +141,14 @@
         this.offset = previous.map((p, i) => p - this.state.position[i]);
       }
     }
-    step(dt, controls, limits, now, reduced = false) {
-      integrateFlight(this.state, dt, controls, limits, now);
+    step(seconds, controls, limits, now, reduced = false) {
+      const dt = Number.isFinite(seconds) ? clamp(seconds, 0, .12) : 0;
+      // A slow 20-30 FPS device still advances the whole visible interval.
+      // Smaller physics substeps retain dash/fuel boundaries and hard bounds.
+      for (let remaining = dt; remaining > 0; ) {
+        const step = Math.min(remaining, .04); remaining -= step;
+        integrateFlight(this.state, step, controls, limits, now - remaining * 1000);
+      }
       const decay = reduced ? 0 : Math.exp(-dt * 7);
       this.offset = this.offset.map(v => v * decay);
       this.position = this.state.position.map((v, i) => v + this.offset[i]);
@@ -1085,7 +1091,7 @@
     render(timestamp) {
       this.frame = 0;
       if (!this.available || document.hidden || this.lost) return;
-      const dt = Math.min(0.04, this.last ? (timestamp - this.last) / 1000 : 0);
+      const dt = Math.max(0, Math.min(0.12, this.last ? (timestamp - this.last) / 1000 : 0));
       this.last = timestamp;
       const c = this.camera;
       if (!this.paused) {
