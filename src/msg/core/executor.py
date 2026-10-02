@@ -19,6 +19,7 @@ from msg.core.models import (
     HandlerOutput,
     OperationError,
     OperationResult,
+    ResourcePageOutput,
 )
 from msg.core.packet import result_wire as result_wire
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION, receipt_bytes
@@ -224,7 +225,12 @@ class OperationExecutor:
                     output = await spec.handler(context, request, session)
                     if request.return_fields:
                         require(
-                            output.resources and self.result_projection is not None,
+                            (
+                                output.resources
+                                or spec.effect == 'read'
+                                and isinstance(output, ResourcePageOutput)
+                            )
+                            and self.result_projection is not None,
                             'projection_unavailable',
                         )
                         projections = [

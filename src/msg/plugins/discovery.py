@@ -645,13 +645,15 @@ async def previous_segment(app, blob, target, max_bytes):
     return previous
 
 
-def next_link(app, operation, args):
+def next_link(app, operation, args, *, return_fields=()):
+    identity = (operation, args, return_fields) if return_fields else (operation, args)
     packet = request_for(
         operation,
         args,
         app.settings.service_url,
         source='manual',
-        request_id='read_' + digest((operation, args))[7:39],
+        request_id='read_' + digest(identity)[7:39],
+        return_fields=return_fields,
     )
     packet = replace(packet, expires_at=None)
     return f'/-/g/{operation}/j/' + b64(canonical(packet))

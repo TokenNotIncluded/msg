@@ -292,6 +292,12 @@ class HandlerOutput:
     output: ResourceRef | None = None
 
 
+class ResourcePageOutput(HandlerOutput):
+    """A read collection can project an empty page without adding wire fields."""
+
+    __slots__ = ()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class OperationResult:
     request_id: RequestId
