@@ -551,6 +551,15 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
     if resource.type == 'post' and (not fields or 'links' in fields):
         active = await tx.revision(ResourceRef(id=rid, revision=revision))
         meta['links'] = await basic_links(app, ctx, request, tx, resource, active)
+    if resource.type == 'post' and (
+        not fields or {'attachments', 'attachments_more'} & set(fields)
+    ):
+        from msg.plugins.attachment_projection import attachment_descriptors
+
+        active = await tx.revision(ResourceRef(id=rid, revision=revision))
+        meta['attachments'], meta['attachments_more'] = await attachment_descriptors(
+            app, ctx, request, tx, active
+        )
     known = set(meta)
     if fields:
         require(set(fields) <= known, 'unknown_projection_field')
@@ -574,6 +583,8 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'certificates',
         'links',
         'relations',
+        'attachments',
+        'attachments_more',
         'raw_url',
         'transfer_operation',
         'kind',

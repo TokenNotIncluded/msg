@@ -782,7 +782,7 @@ def post_title(item):
     return {'title': title} if title and not re.fullmatch(r'p_[0-9a-f]{32}', title) else {}
 
 
-def describe_resource(data):
+def describe_resource(data, *, include_attachments=True):
     if 'certificate' in data or 'certificates' in data:
         from msg.transports.certificate_pages import certificate_markdown
 
@@ -832,7 +832,12 @@ def describe_resource(data):
             + ''.join(f'{key}: {canonical(value).decode()}\n' for key, value in metadata.items())
             + '---\n\n'
         )
-        return front_matter + content.rstrip('\n') + '\n\n' + ' · '.join(links) + '\n'
+        attachments = ''
+        if include_attachments:
+            from msg.transports.attachment_views import attachment_markdown
+
+            attachments = attachment_markdown(data)
+        return front_matter + content.rstrip('\n') + '\n\n' + attachments + ' · '.join(links) + '\n'
     if 'content' in data:
         content = data['content']
         if isinstance(content, str):
@@ -3874,7 +3879,7 @@ def create_app(service):
                 else certificate_markup
                 if certificate_markup is not None
                 else document_html(
-                    resource_markdown(value, describe_resource(value)),
+                    resource_markdown(value, describe_resource(value, include_attachments=False)),
                     title=path,
                     account=account,
                     resource=value,
