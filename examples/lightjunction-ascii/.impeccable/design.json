@@ -21,7 +21,7 @@
       },
       {
         "name": "runtime-render",
-        "value": "requestAnimationFrame; 65ms desktop / 85ms compact paint interval; dt <= 0.08s",
+        "value": "requestAnimationFrame simulation; 30fps desktop / 20fps compact paint targets with interval remainder; dt <= 0.08s",
         "purpose": "Generate the current 3D world into one ASCII pre from player and explosion state."
       },
       {
