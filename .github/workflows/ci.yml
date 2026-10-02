@@ -12,7 +12,8 @@ concurrency:
 jobs:
   shards:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The 20-minute budget canceled a progressing PG/tool integration shard at 85%.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

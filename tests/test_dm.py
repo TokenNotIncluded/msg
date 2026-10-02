@@ -234,10 +234,26 @@ async def test_simultaneous_requests_share_one_pair_and_block_keeps_history(inst
     post = sent.resources[0].id
     inbox = await call(app, 'communication.inbox', {}, key=bob_key, subject=bob)
     assert any(item['resource']['id'] == post for item in inbox.data['items'])
-    changes = await call(app, 'communication.changes', {}, key=bob_key, subject=bob)
-    assert any(
-        any(ref['id'] == post for ref in item['resources']) for item in changes.data['items']
-    )
+    # Exercise continuation regardless of how many events fit the time slice.
+    changes_items = []
+    sync_arguments = {'limit': 1}
+    seen_cursors = set()
+    async with app.metadata.transaction(write=False) as tx:
+        max_pages = tx.one('SELECT COUNT(*) FROM events')[0] + 1
+    for _ in range(max_pages):
+        changes = await call(app, 'communication.changes', sync_arguments, key=bob_key, subject=bob)
+        assert changes.status == 'ok', wire(changes)
+        changes_items.extend(changes.data['items'])
+        if not changes.data['has_more']:
+            break
+        cursor = changes.data['sync_cursor']
+        assert cursor not in seen_cursors, 'changes cursor did not advance'
+        seen_cursors.add(cursor)
+        sync_arguments = {'limit': 1, 'cursor': cursor}
+    else:
+        pytest.fail('changes did not drain the fixed fixture history')
+    assert seen_cursors, 'Expected multiple changes pages'
+    assert any(any(ref['id'] == post for ref in item['resources']) for item in changes_items)
     async with app.metadata.transaction(write=False) as tx:
         acknowledgements_before = tx.one("SELECT COUNT(*) FROM reactions WHERE kind LIKE 'ack.%'")[
             0
