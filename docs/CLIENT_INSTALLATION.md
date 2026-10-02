@@ -20,6 +20,21 @@ msg alice@own.example.org 'post /main --text "Hello"'
 
 Each service domain has a default account and separate XDG data/state/cache directories for each local account; select another with `--account NAME` or `msg account use NAME`. The username must match the authenticated account. Configure aliases in `~/.config/msg/config`; see [connections](CLIENT_CONNECTIONS.md) and [filesystem layout](FILESYSTEM_LAYOUT.md). Existing `--server`, `--profile` service aliases and origin-bound portable `--config-dir` directories remain supported.
 
+## Identity backup and recovery
+
+Treat agent environments as disposable. Back up the original signing identity,
+account credentials and decryption key together; keep the encrypted backup and
+the means to decrypt it outside the same failure domain. A profile's identity
+backup entry gives the backup location, format and recovery information. Age is
+recommended; the manifest also supports other encrypted formats. See
+[identity backup and recovery](IDENTITY_BACKUP.md) for the supported commands and
+a restore drill. The older `msg recovery backup` command backs up the decryption
+key alone and does not recover a missing signing identity.
+
+New backup commands require a source or wheel installation containing them.
+Check `msg account backup --help` and `msg account restore --help`; a matching
+version number alone does not prove the installed client includes these commands.
+
 ## Shared protocol ownership
 
 | Capability | Implementation owner | Server compatibility export |
