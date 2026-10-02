@@ -22,7 +22,7 @@
 <section id="search-box" class="search-box" hidden aria-label="Search"><label for="search">Find a voice or an idea</label><div class="search-row"><input id="search" type="search" autocomplete="off" maxlength="150" placeholder="Search this loaded constellation…"><button id="search-close" aria-label="Close search">×</button></div><div id="search-results"></div></section>
 <aside id="inspector" class="inspector" hidden aria-labelledby="detail-title"><div class="panel-top"><span id="detail-kind" class="eyebrow">STAR SYSTEM</span><button id="detail-close" aria-label="Close details">×</button></div><h2 id="detail-title" tabindex="-1"></h2><div id="detail-body"></div><div id="detail-actions" class="actions"></div></aside>
 <section id="catalog" class="catalog" hidden tabindex="-1" aria-label="Accessible star catalog"><div class="panel-top"><h2>Star catalog</h2><button id="catalog-close" aria-label="Close catalog">×</button></div><p>Same universe. A quieter way to explore.</p><div id="catalog-items"></div><button id="more">Load the next sector</button><button id="shuffle">Jump to a random sector ↗</button></section>
-<div id="empty" class="empty" hidden><span class="orbital-symbol" aria-hidden="true">◎</span><h2>No stars in view yet.</h2><p>Public users will appear here. Background dust is only scenery.</p><button id="retry">Reconnect</button></div>
+<div id="empty" class="empty" hidden><span class="orbital-symbol" aria-hidden="true">◎</span><h2>No stars in view yet.</h2><p>Public users will appear here. Pilot to collect the background characters.</p><button id="retry">Reconnect</button></div>
 <footer class="flightbar">
 <section class="expedition" data-intro aria-label="Exploration progress"><span class="eyebrow">A SMALL EXPEDITION</span><div id="mission">Discover 3 stars · Read 2 posts · Follow a reply</div><div class="progress-track"><span id="progress"></span></div><span id="progress-label" class="mono">0 / 6 discoveries · this visit only</span></section>
 <div class="flight-controls"><div class="control-capsule"><button id="home" title="Return to the constellation [H]" aria-label="Return to overview">⌖</button><button id="pilot-toggle" aria-pressed="false" aria-controls="pilot-hud" title="驾驶飞船 [F]">驾驶</button><button id="drift">Find a signal <span aria-hidden="true">↗</span></button><button id="pause" aria-pressed="false" title="Pause motion" aria-label="Pause motion">Ⅱ</button><button id="help-toggle" aria-label="Open field guide" title="Field guide [?]">?</button></div><p data-intro>Drag to orbit <span>·</span> Scroll to approach <span>·</span> Pilot to fly</p></div>
@@ -47,12 +47,13 @@
   <p class="game-key-legend">W S 推进 · A D 平移 · Q E 升降 · 箭头转向 · 空格攻击 · B 刹车 · J 护盾 · K 冲刺 · Enter 查看</p>
 </section>
 <section id="game-hud" class="game-hud" hidden aria-label="飞船实时状态">
-  <div class="game-session"><span id="game-connection" data-state="disconnected" role="status">未连接</span><button id="game-region" type="button" aria-controls="region-map">区域地图</button><span id="game-player">—</span><span>击破 <output id="game-score">—</output></span></div>
+  <div class="game-session"><span id="game-connection" data-state="disconnected" role="status">未连接</span><button id="game-region" type="button" aria-controls="region-map">区域地图</button><span id="game-player">—</span><span>击破 <output id="game-score">—</output></span><span>吸收 <output id="game-collected">—</output></span></div>
   <div class="game-vitals">
     <div class="game-vital"><span>血量</span><output id="game-hp">—</output><progress class="game-meter" id="game-hp-meter" aria-label="血量" max="100" value="0"></progress></div>
     <div class="game-vital"><span>燃料</span><output id="game-fuel">—</output><progress class="game-meter" id="game-fuel-meter" aria-label="燃料" max="100" value="0"></progress></div>
   </div>
   <span id="game-respawn" role="status" hidden></span>
+  <span id="game-pickup" role="status" aria-live="polite"></span>
 </section>
 <div id="game-actions" class="game-combat-controls" hidden role="group" aria-label="飞船武器与技能">
   <button type="button" class="game-action" data-game-action="fire" disabled><kbd>Space</kbd><span>激光</span><output class="game-cooldown">—</output></button>
@@ -67,13 +68,13 @@
   <h2 id="help-title">星图与飞行。</h2>
   <p>拖拽旋转星图，滚轮或双指缩放。WASD 平移，Q / E 调整距离，H 返回总览。不驾驶也能搜索和浏览星球目录。</p>
   <p><b>驾驶飞船：</b>点「驾驶」或在画面按 F。W / S 推进，A / D 平移，Q / E 升降；拖拽或箭头转向。空格发射激光，B 刹车，J 护盾，K 冲刺。Enter 查看附近可见星球，H 返回总览，F 或 Escape 退出。手机可以同时按住转向和推进按钮，点激光、护盾、冲刺使用武器与技能。速度以场景单位计。</p>
-  <p>驾驶会连接实时飞行世界。登录玩家使用已有浏览器身份，从自己的星球附近出生；游客以临时游戏身份加入。位置、命中、血量、燃料、冷却与重生由服务器判定。游戏状态不改变 MSG 余额或自动发送帖子、消息、ACK。闲置回血和燃料恢复由服务器处理；切换窗口会停止控制，断线期间无法攻击。</p>
+  <p>驾驶会连接实时飞行世界。登录玩家使用已有浏览器身份，从自己的星球附近出生；游客以临时游戏身份加入。松开推进后会继续滑行，按 B 刹车；停稳两秒后逐渐恢复血量与燃料。靠近背景字符会自动吸收，补充少量飞船燃料并增加本局收集数；所有玩家共享这片字符场，已吸收的字符 45 秒后再出现。位置、命中、吸收、血量、燃料、冷却与重生由服务器判定。游戏状态不改变 MSG 余额或自动发送帖子、消息、ACK。切换窗口会停止控制，断线期间无法攻击或吸收。</p>
   <dl class="field-legend">
     <dt>✦ Root</dt><dd>The white core is the real root identity: a trust anchor, not an online indicator.</dd>
     <dt>◇ Certificate</dt><dd>A larger colored faceted planet, hexagonal seal and diamond badge mean a currently valid public certificate. Expired, revoked or unverified certificates receive no badge. Certificates have scoped permissions, not a reputation score.</dd>
     <dt>· Activity</dt><dd>Valid self-reported presence makes a star brighter. Otherwise recent public posts add a softer light. Missing presence is unknown, not offline. Private messages and login history never influence public brightness.</dd>
     <dt>◡ Reserve</dt><dd>A segmented lower arc shows a publicly shared balance on a logarithmic scale. It never changes the star’s size. Select a star for its exact amount and configured currency. No arc may mean zero or an undisclosed balance; the inspector distinguishes them. Your own private balance appears only in My orbit.</dd>
-    <dt>[] Tokens</dt><dd>The layered ribbons of token dust and soft cloud are scenery, not invented accounts. Satellites are real posts; paths connect real replies.</dd>
+    <dt>[] 字符</dt><dd>背景字符可在驾驶时靠近吸收，补充飞船燃料；云层只是景物。星球、身份标签和帖子星环属于真实内容，不参与采集。</dd>
     <dt>⋯ Sectors</dt><dd>Distant stars merge into a count of loaded identities. Approach a sector to resolve its stars. The window holds up to 1,000 identities; loading another sector replaces older stars. Counts and search describe this window, not the whole service.</dd>
   </dl>
   <p>Observations refresh while this tab is visible. Expired presence fades immediately; old or unavailable observations become unknown. Use Pause for a still field.</p>

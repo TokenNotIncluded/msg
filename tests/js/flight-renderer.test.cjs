@@ -106,3 +106,25 @@ test('new hello reanchors an existing ship to server spawn and orientation', () 
   assert.deepEqual(r.flight.position, [200,50,10]); assert.equal(r.flight.yaw, -.7); assert.equal(r.flight.pitch, -.2);
   assert.equal(r.homeBody.private, true);
 });
+
+test('shared bitmap removes every glyph from GPU/software dust only after confirmation and restores availability', () => {
+  const r=renderer(); r.sceneSeed='preview'; r.tokenNodes=new Map();
+  const clear=Object.freeze(Array(288).fill(0)), field={seed:'0'.repeat(32),count:2300,revision:0,mask:clear};
+  r.syncCollectibles(field); assert.equal(r.dust.length,2300*8); assert.equal(r.renderDust.length,2300*8);
+  r.flight.position=Array.from(r.dust.subarray(0,3));
+  r.updateFlight(.01); assert.equal(r.renderDust.length,2300*8,'proximity alone never claims a glyph');
+  const mask=[...clear]; mask[0]=3; mask[287]=8;
+  r.syncCollectibles({revision:1,mask});
+  assert.equal(r.glyphTaken(0),true); assert.equal(r.glyphTaken(1),true); assert.equal(r.glyphTaken(2299),true);
+  assert.equal(r.renderDust.length,2297*8);
+  r.syncCollectibles({revision:2,mask:clear}); assert.equal(r.renderDust.length,2300*8);
+});
+
+test('absorption animation only follows confirmed events and stops immediately on disconnect', () => {
+  const r=renderer(); r.dust=MSGUniverseFlight.tokenNebula('0'.repeat(32)).dust; r.collectEvents=new Map();
+  assert.deepEqual(r.absorptionGlyphs(),[]);
+  r.collectEvents.set('evt_1',{id:'evt_1',type:'collect',player_id:r.network.self.id,at_ms:900,glyph_ids:[0]});
+  const effects=r.absorptionGlyphs(); assert.equal(effects.length,1); assert.equal(effects[0].id,0);
+  r.network.connected=false; assert.deepEqual(r.absorptionGlyphs(),[]);
+  r.clearRemoteShips(); assert.equal(r.collectEvents.size,0);
+});

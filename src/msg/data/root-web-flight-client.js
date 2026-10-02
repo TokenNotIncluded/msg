@@ -10,7 +10,7 @@
   const RETRY_MS = [500, 1000, 2000, 4000, 8000];
   const ACTIONS = new Set(['laser', 'shield', 'dash']);
   const INPUT_FIELDS = new Set(['throttle', 'strafe', 'lift', 'yaw', 'pitch', 'brake', 'actions']);
-  const EVENT_TYPES = new Set(['laser', 'hit', 'shield', 'dash', 'death', 'respawn', 'region']);
+  const EVENT_TYPES = new Set(['laser', 'hit', 'shield', 'dash', 'death', 'respawn', 'region', 'collect']);
   const MAX_TIME = 8.64e15;
   const MAX_FRAME = 262144;
   const noop = () => {};
@@ -30,6 +30,32 @@
   const clock = () => globalThis.performance?.now?.() ?? Date.now();
   const neutral = (yaw = 0, pitch = 0) =>
     ({ throttle: 0, strafe: 0, lift: 0, yaw, pitch, brake: false, actions: [] });
+  function collectibleMask(value, count = 2300) {
+    const bytes = Math.ceil(count / 8), alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    if (typeof value !== 'string' || value.length !== Math.ceil(bytes / 3) * 4 ||
+        !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) return null;
+    const result = [], raw = value.replace(/=+$/, '');
+    let bits = 0, buffer = 0;
+    for (const letter of raw) {
+      buffer = (buffer << 6) | alphabet.indexOf(letter); bits += 6;
+      if (bits >= 8) { bits -= 8; result.push((buffer >>> bits) & 255); }
+    }
+    if (result.length !== bytes || buffer & ((1 << bits) - 1) ||
+        count % 8 && result.at(-1) >>> (count % 8)) return null;
+    return Object.freeze(result);
+  }
+  function collectibles(value, hello = false) {
+    if (!object(value) || value.version !== 1 || !integer(value.revision, 0)) return null;
+    const mask = collectibleMask(value.taken);
+    if (!mask) return null;
+    const result = { version: 1, revision: value.revision, mask };
+    if (hello) {
+      if (value.count !== 2300 || typeof value.seed !== 'string' || !/^[a-f0-9]{32}$/.test(value.seed) ||
+          !finite(value.radius, .1, 12) || !finite(value.fuel, 0, 100) || !integer(value.respawn_ms, 1000, 3600000)) return null;
+      Object.assign(result, { seed: value.seed, count: value.count, radius: value.radius, fuel: value.fuel, respawn_ms: value.respawn_ms });
+    }
+    return Object.freeze(result);
+  }
 
   function ship(value, extent = 480, own = false) {
     if (!object(value) || !id(value.id) || value.id.length > 64 || !text(value.handle, 160) ||
@@ -43,6 +69,8 @@
           .every(key => time(value[key])) ||
         (value.region_ready_ms !== undefined && !time(value.region_ready_ms)) ||
         (value.score !== undefined && !integer(value.score, 0)) ||
+        (value.collected !== undefined && !integer(value.collected, 0)) ||
+        (value.dash_until_ms !== undefined && !time(value.dash_until_ms)) ||
         (!own && (value.home_position !== undefined || value.home_body !== undefined))) return null;
     const result = {
       id: value.id, subject_id: value.subject_id, handle: value.handle, guest: value.guest,
@@ -54,6 +82,8 @@
     };
     if (value.region_ready_ms !== undefined) result.region_ready_ms = value.region_ready_ms;
     if (value.score !== undefined) result.score = value.score;
+    if (value.collected !== undefined) result.collected = value.collected;
+    if (value.dash_until_ms !== undefined) result.dash_until_ms = value.dash_until_ms;
     if (own && value.home_position !== undefined) {
       if (!vector(value.home_position, extent)) return null;
       result.home_position = frozenVector(value.home_position);
@@ -87,6 +117,12 @@
     if (value.position !== undefined) result.position = frozenVector(value.position);
     if (value.end !== undefined) result.end = frozenVector(value.end);
     if (value.region !== undefined) result.region = value.region;
+    if (value.type === 'collect') {
+      if (!Array.isArray(value.glyph_ids) || !value.glyph_ids.length || value.glyph_ids.length > 32 ||
+          value.glyph_ids.some(glyph => !integer(glyph, 0, 2299)) || new Set(value.glyph_ids).size !== value.glyph_ids.length ||
+          !finite(value.fuel_added, 0, 128) || !integer(value.collected, value.glyph_ids.length)) return null;
+      result.glyph_ids = Object.freeze([...value.glyph_ids]); result.fuel_added = value.fuel_added; result.collected = value.collected;
+    }
     return Object.freeze(result);
   }
 
@@ -116,6 +152,7 @@
 
     get connected() { return Boolean(this._hello && this._socket?.readyState === 1); }
     get self() { return this._self; }
+    get limits() { return this._hello?.limits ?? {}; }
     get snapshot() { return this._snapshot; }
     get serverNow() {
       return this._anchor ? this._anchor.server + Math.max(0, clock() - this._anchor.local) : Date.now();
@@ -401,10 +438,12 @@
         if (!/^[a-z][a-z0-9_]{0,63}$/.test(key) || !finite(limit, 0, 1e9)) { this._badFrame(); return; }
         limits[key] = limit;
       }
+      const field = value.collectibles === undefined ? null : collectibles(value.collectibles, true);
+      if (value.collectibles !== undefined && !field) { this._badFrame(); return; }
       this._hello = Object.freeze({ v: VERSION, type: 'hello', self, resume: value.resume,
         server_time_ms: value.server_time_ms,
         tick_hz: value.tick_hz, region: value.region,
-        regions: Object.freeze(regions), limits: Object.freeze(limits) });
+        regions: Object.freeze(regions), limits: Object.freeze(limits), ...(field ? { collectibles: field } : {}) });
       this._self = self;
       this._anchor = { server: value.server_time_ms, local: clock() };
       this._seq = Math.max(this._seq, self.ack_seq);
@@ -453,6 +492,17 @@
         self_id: self.id, region: value.region, players: Object.freeze(players),
         events: Object.freeze(events), total_players: value.total_players,
       };
+      if (value.state_time_ms !== undefined) {
+        if (!time(value.state_time_ms) || value.state_time_ms > value.server_time_ms) { this._badFrame(); return; }
+        snapshot.state_time_ms = value.state_time_ms;
+      }
+      if (value.collectibles !== undefined || this._hello.collectibles) {
+        const field = collectibles(value.collectibles);
+        if (!this._hello.collectibles || !field) {
+          this._badFrame(); return;
+        }
+        snapshot.collectibles = field;
+      }
       if (value.region_counts !== undefined) {
         if (!object(value.region_counts) || Object.keys(value.region_counts).length !== this._hello.regions.length ||
             this._hello.regions.some(item => !integer(value.region_counts[String(item.id)], 0, value.total_players) ||
@@ -465,6 +515,8 @@
       // Duplicate/late valid snapshots must not rewind positions or cooldown clocks.
       if (this._snapshot && value.tick <= this._snapshot.tick) return;
       if (value.server_time_ms < (this._snapshot?.server_time_ms ?? this._hello.server_time_ms - 1000) ||
+          snapshot.state_time_ms < (this._snapshot?.state_time_ms ?? 0) ||
+          snapshot.collectibles && snapshot.collectibles.revision < (this._snapshot?.collectibles?.revision ?? this._hello.collectibles.revision) ||
           self.ack_seq < this._self.ack_seq || self.ack_seq > this._seq) { this._badFrame(); return; }
       this._snapshot = Object.freeze(snapshot);
       // Only hello may provide own private home metadata; never copy it to the world snapshot.
@@ -473,12 +525,13 @@
         ...(home.home_position !== undefined ? { home_position: home.home_position } : {}),
         ...(home.home_body !== undefined ? { home_body: home.home_body } : {}),
       });
-      this._anchor = { server: value.server_time_ms, local: clock() };
+      // Variable packet transit must not rewind the render/cooldown clock.
+      this._anchor = { server: Math.max(this.serverNow, value.server_time_ms), local: clock() };
       this._seq = Math.max(this._seq, self.ack_seq);
       this._watchSnapshot();
       this._notify('onSnapshot', this._snapshot);
     }
   }
 
-  globalThis.MSGFlightClient = Object.freeze({ Client });
+  globalThis.MSGFlightClient = Object.freeze({ Client, collectibleMask });
 })();

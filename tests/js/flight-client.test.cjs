@@ -230,8 +230,9 @@ test('server time is anchored at hello/snapshot and immune to wall-clock jumps f
   b.clock.advance(125); assert.equal(b.client.serverNow, BASE_TIME + 8125);
   b.clock.wallShift(-3600000); assert.equal(b.client.serverNow, BASE_TIME + 8125);
   ws.receive(snapshot({ server_time_ms: BASE_TIME + 8100 }));
-  b.clock.advance(100); assert.equal(b.client.serverNow, BASE_TIME + 8200);
-  b.clock.wallShift(7200000); assert.equal(b.client.serverNow, BASE_TIME + 8200);
+  assert.equal(b.client.serverNow, BASE_TIME + 8125, 'a delayed snapshot cannot rewind the monotonic clock');
+  b.clock.advance(100); assert.equal(b.client.serverNow, BASE_TIME + 8225);
+  b.clock.wallShift(7200000); assert.equal(b.client.serverNow, BASE_TIME + 8225);
 });
 
 test('duplicate and late valid snapshots cannot rewind positions or server clocks', () => {
@@ -474,4 +475,60 @@ test('view callback exceptions do not turn a good server frame into a protocol f
   const b = browser({ callbackOverrides: { onStatus: fail, onHello: fail, onSnapshot: fail } }), ws = b.join();
   ws.receive(snapshot()); assert.equal(b.client.connected, true); assert.equal(b.errors.length, 0);
   b.pagehide(); assert.equal(b.client.connected, false);
+});
+
+const field = (changes = {}) => ({version:1,seed:'0'.repeat(32),count:2300,radius:4.5,fuel:4,
+  respawn_ms:45000,revision:0,taken:Buffer.alloc(288).toString('base64'),...changes});
+test('shared collectible bitmap and collection events stay bounded and authoritative', () => {
+  const b=browser(), ws=b.join(hello({collectibles:field(),self:ship({collected:0,dash_until_ms:0})}));
+  const mask=Buffer.alloc(288); mask[0]=1; mask[287]=8;
+  const event={id:'evt_2',type:'collect',player_id:SELF_ID,at_ms:BASE_TIME,glyph_ids:[0,2299],fuel_added:8,collected:2};
+  ws.receive(snapshot({collectibles:field({revision:1,taken:mask.toString('base64')}),state_time_ms:BASE_TIME,
+    players:[ship({collected:2,dash_until_ms:BASE_TIME+1000})],events:[event]}));
+  assert.equal(b.client.connected,true); assert.equal(b.client.self.collected,2);
+  assert.equal(b.client.self.dash_until_ms,BASE_TIME+1000);
+  assert.equal(b.client.snapshot.collectibles.mask[0],1); assert.equal(b.client.snapshot.collectibles.mask[287],8);
+  assert.ok(Object.isFrozen(b.client.snapshot.collectibles.mask));
+  assert.deepEqual(plain(b.client.snapshot.events[0].glyph_ids),[0,2299]);
+  assert.equal(b.client.snapshot.events[0].fuel_added,8);
+  const frames=ws.sent.length; assert.equal(b.client.setInput({glyph_ids:[0],fuel:100,collected:999}),false);
+  assert.equal(ws.sent.length,frames+1); assert.equal(ws.sent.at(-1).type,'input');
+  assert.equal('glyph_ids' in ws.sent.at(-1),false);
+});
+
+test('malformed collectible metadata, unused mask bits and collection claims fail closed', () => {
+  const badMask=Buffer.alloc(288); badMask[287]=16;
+  for (const changes of [{count:2301},{seed:'user-selected-seed'},{radius:100},{taken:''},
+    {taken:badMask.toString('base64')},{taken:Buffer.alloc(289).toString('base64')},{respawn_ms:0}]) {
+    const b=browser(); b.join(hello({collectibles:field(changes)})); assert.equal(b.client.connected,false);
+  }
+  for (const event of [{glyph_ids:[2300],fuel_added:4,collected:1},{glyph_ids:[0,0],fuel_added:8,collected:2},
+    {glyph_ids:Array.from({length:33},(_,i)=>i),fuel_added:100,collected:33},
+    {glyph_ids:[0],fuel_added:-1,collected:1},{glyph_ids:[0],fuel_added:4,collected:-1}]) {
+    const b=browser(),ws=b.join(hello({collectibles:field()}));
+    ws.receive(snapshot({collectibles:field(),events:[{id:'evt_1',type:'collect',player_id:SELF_ID,at_ms:BASE_TIME,...event}]}));
+    assert.equal(b.client.connected,false);
+  }
+});
+
+test('late bitmap revisions cannot rewind a field; live revisions and physical times cannot go backwards', () => {
+  const b=browser(),ws=b.join(hello({collectibles:field()}));
+  ws.receive(snapshot({tick:2,server_time_ms:BASE_TIME+200,state_time_ms:BASE_TIME+180,collectibles:field({revision:1})}));
+  ws.receive(snapshot({tick:1,state_time_ms:BASE_TIME,collectibles:field()}));
+  assert.equal(b.client.connected,true); assert.equal(b.client.snapshot.collectibles.revision,1);
+  ws.receive(snapshot({tick:3,server_time_ms:BASE_TIME+400,state_time_ms:BASE_TIME+380,collectibles:field()}));
+  assert.equal(b.client.connected,false);
+  const c=browser(),socket=c.join();
+  socket.receive(snapshot({state_time_ms:BASE_TIME+1,server_time_ms:BASE_TIME}));
+  assert.equal(c.client.connected,false);
+});
+
+test('backpressure reconnect rebinds seed and bitmap without stale pickups or resource claims', () => {
+  const b=browser(),ws=b.join(hello({collectibles:field()}));
+  ws.bufferedAmount=16385; b.clock.advance(50); assert.equal(b.client.connected,false);
+  assert.equal(b.client.self,null); assert.equal(b.client.snapshot,null);
+  b.clock.advance(500); const next=b.sockets.at(-1); next.open();
+  next.receive(hello({collectibles:field({seed:'1'.repeat(32),revision:9}),self:ship({collected:12})}));
+  assert.equal(b.hellos.at(-1).collectibles.seed,'1'.repeat(32)); assert.equal(b.client.self.collected,12);
+  b.clock.advance(50); assert.equal('collected' in next.sent.at(-1),false);
 });
