@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import Enum, StrEnum
+from hashlib import sha256
 from html import escape
 from importlib.resources import files
 from urllib.parse import quote, unquote_to_bytes, urlencode, urlsplit
@@ -925,6 +926,34 @@ def parse_stable_view(path, raw_path):
 
 def create_app(service):
     from msg.transports.flight_space import FlightHub
+    from msg.transports.home_cache import PublicHomeCache, not_modified, render_snapshot
+
+    async def load_public_home():
+        import asyncio
+
+        summary, board = await asyncio.gather(
+            service.executor.execute(
+                request_for(
+                    'discovery.read_query',
+                    {'home_summary': True},
+                    service.settings.service_url,
+                    source='manual',
+                    contract_version=4,
+                )
+            ),
+            service.executor.execute(
+                request_for(
+                    'discovery.public_board', {}, service.settings.service_url, source='manual'
+                )
+            ),
+        )
+        return (
+            None if summary.error else summary.data,
+            None if board.error else wire(board.data),
+        )
+
+    home_cache = PublicHomeCache(load_public_home)
+    install_source = files('msg.data').joinpath('install.sh').read_bytes()
 
     flight_hub = FlightHub(service)
     mcp = MCPServer(service)
@@ -938,6 +967,7 @@ def create_app(service):
                 await service.load()
             yield
         finally:
+            await home_cache.close()
             await flight_hub.close()
             await service.close()
 
@@ -2638,14 +2668,21 @@ def create_app(service):
                 )
             if path == '/install':
                 require(not request.url.query, 'unknown_query_parameter')
-                payload = files('msg.data').joinpath('install.sh').read_bytes()
+                payload = install_source
+                etag = '"' + sha256(payload).hexdigest() + '"'
+                headers = {
+                    **BASE_HEADERS,
+                    'ETag': etag,
+                    'Cache-Control': 'public, max-age=300',
+                }
+                if not_modified(request, etag):
+                    return Response(status_code=304, headers=headers)
                 return Response(
                     b'' if request.method == 'HEAD' else payload,
                     media_type='text/plain',
                     headers={
-                        **BASE_HEADERS,
+                        **headers,
                         'Content-Length': str(len(payload)),
-                        'Cache-Control': 'no-cache',
                     },
                 )
             if path in {'/robots.txt', '/sitemap.xml'}:
@@ -2672,7 +2709,15 @@ def create_app(service):
                     headers={**BASE_HEADERS, 'Content-Length': str(len(payload))},
                 )
             if path == '/favicon.png':
-                headers = {**BASE_HEADERS, 'Content-Length': str(len(HOME_FAVICON))}
+                etag = '"' + sha256(HOME_FAVICON).hexdigest() + '"'
+                headers = {
+                    **BASE_HEADERS,
+                    'ETag': etag,
+                    'Cache-Control': 'public, max-age=300',
+                }
+                if not_modified(request, etag):
+                    return Response(status_code=304, headers=headers)
+                headers['Content-Length'] = str(len(HOME_FAVICON))
                 return Response(
                     b'' if request.method == 'HEAD' else HOME_FAVICON,
                     media_type='image/png',
@@ -2686,7 +2731,11 @@ def create_app(service):
                     source='manual',
                     contract_version=4,
                 )
-                result = await execute_packet(packet, entry='network')
+                snapshot = await home_cache.get()
+                # The existing executor still performs live runtime/auth checks.
+                # Only server-local candidates enter this context, never a cookie.
+                with render_snapshot(snapshot):
+                    result = await execute_packet(packet, entry='network')
                 if result.error and result.error.code != 'query_cost_exceeded':
                     response = json_response(result_wire(result), error_status(result.error.code))
                     if request.method == 'HEAD':
@@ -2714,17 +2763,26 @@ def create_app(service):
                                 source='manual',
                             )
                         )
-                        if not result.error and not channels.error:
-                            home_data = {**result.data, 'channels': channels.data['channels']}
+                        if home_data is not None and not channels.error:
+                            home_data = {**home_data, 'channels': channels.data['channels']}
                 from msg.transports.oauth_http import csrf
 
                 board_packet = request_for(
                     'discovery.public_board', {}, service.settings.service_url, source='manual'
                 )
-                board_result = await execute_packet(board_packet)
-                if board_result.error:
-                    board_result = await service.executor.execute(board_packet)
-                board_value = wire(board_result.data) if not board_result.error else None
+                board_value = snapshot.board
+                if browser:
+                    # Personal quota is never part of the anonymous snapshot.
+                    board_result = await execute_packet(board_packet)
+                    if not board_result.error:
+                        board_value = wire(board_result.data)
+                if board_value is None:
+                    from msg.plugins.public_board import default, projection
+
+                    board_value = {
+                        **projection(default()),
+                        'text': '公共栏暂时无法读取，请稍后刷新。 / Public board unavailable; refresh shortly.',
+                    }
                 session_cookie = (
                     '__Host-msg_session' if expected.scheme == 'https' else 'msg_session'
                 )
@@ -2745,9 +2803,28 @@ def create_app(service):
                 headers = {
                     **(HOME_BROWSER_HEADERS if browser_html else BASE_HEADERS),
                     'Content-Length': str(len(payload)),
-                    'Cache-Control': 'no-store',
+                    'Cache-Control': 'private, no-store'
+                    if request.headers.get('cookie')
+                    else 'private, no-cache',
                     'Vary': 'Accept, Cookie',
+                    'X-Msg-Home-Snapshot': 'unavailable'
+                    if snapshot.data is None
+                    else 'refreshing'
+                    if home_cache.pending is not None and not home_cache.pending.done()
+                    else 'stale'
+                    if home_cache.clock() - snapshot.created >= home_cache.ttl
+                    else 'fresh',
+                    **(
+                        {'X-Msg-Home-Age': str(int(max(0, home_cache.clock() - snapshot.created)))}
+                        if snapshot.data is not None
+                        else {}
+                    ),
                 }
+                if not request.headers.get('cookie'):
+                    headers['ETag'] = '"' + sha256(payload).hexdigest() + '"'
+                    if not_modified(request, headers['ETag']):
+                        headers.pop('Content-Length', None)
+                        return Response(status_code=304, headers=headers)
                 return Response(
                     b'' if request.method == 'HEAD' else payload,
                     media_type='text/html'
@@ -3961,4 +4038,5 @@ def create_app(service):
         lifespan=lifespan,
     )
     app.state.flight_hub = flight_hub
+    app.state.home_cache = home_cache
     return app

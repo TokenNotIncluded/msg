@@ -710,9 +710,17 @@ def install(app):
     async def home(ctx, request, tx):
         """Live counts and recent resources, filtered by current read access."""
         require(ctx.principal.subject is None, 'public_home_summary_only')
+        from msg.transports.home_cache import current_snapshot
+
+        snapshot = current_snapshot()
+        if snapshot is not None:
+            return await revalidate_home(ctx, request, tx, snapshot)
         return await home_summary(ctx, request, tx)
 
     async def home_summary(ctx, request, tx, *, channels_only=False):
+        from msg.transports.home_cache import HomeReadSession, record_version
+
+        tx = HomeReadSession(tx)
         timezone = ZoneInfo('Asia/Taipei')
         today = ctx.now.astimezone(timezone).date()
         posts = posts_today = users = 0
@@ -765,6 +773,7 @@ def install(app):
                         'path': '/*' + hex_id(rid),
                         'created_at': resource.created_at.astimezone(timezone).isoformat(),
                     })
+                    record_version(latest[-1]['path'], resource)
             if len(rows) < 128:
                 break
         require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
@@ -782,35 +791,10 @@ def install(app):
                 or tx.rows('SELECT 1 FROM dm_conversations WHERE resource_id=?', (resource.id,))
             ) or not await visible(app, ctx, request, tx, resource.id):
                 continue
-            chain = (*await tx.ancestors(resource.id), resource)
-            mode = resource.mode
-            if resource.id == 't_last_will':
-                posting = 'legacy directive'
-            elif not tx.setting('policy:' + resource.id, {}).get('editable', True):
-                posting = 'frozen'
-            elif mode & 0o003 == 0o003:
-                posting = 'identity'
-            elif mode & 0o030 == 0o030:
-                posting = 'owner / group' if mode & 0o300 == 0o300 else 'group'
-            elif mode & 0o300 == 0o300:
-                posting = 'owner'
-            else:
-                posting = 'closed'
-            if any(item.mode & 0o4000 for item in chain):
-                posting += ' +cert'
-            from msg.plugins.board_presentation import projection as board_presentation
-
-            channels.append({
-                'name': resource.name,
-                'path': short_subject_path(await tx.path(resource.id)),
-                'read': 'Current identity access.'
-                if ctx.principal.subject
-                else 'Public; no login required.',
-                'mode': f'{mode:04o}',
-                'about': (await board_presentation(app, ctx, request, tx, resource))['description'],
-                'posting': posting,
-                'posts': channel_posts.get(resource.id, 0),
-            })
+            channels.append(
+                await home_channel(ctx, request, tx, resource, channel_posts.get(resource.id, 0))
+            )
+            record_version(channels[-1]['path'], resource)
         return HandlerOutput(
             data={
                 'channels': channels,
@@ -822,6 +806,85 @@ def install(app):
                 'latest': latest,
             }
         )
+
+    async def home_channel(ctx, request, tx, resource, posts):
+        chain = (*await tx.ancestors(resource.id), resource)
+        mode = resource.mode
+        if resource.id == 't_last_will':
+            posting = 'legacy directive'
+        elif not tx.setting('policy:' + resource.id, {}).get('editable', True):
+            posting = 'frozen'
+        elif mode & 0o003 == 0o003:
+            posting = 'identity'
+        elif mode & 0o030 == 0o030:
+            posting = 'owner / group' if mode & 0o300 == 0o300 else 'group'
+        elif mode & 0o300 == 0o300:
+            posting = 'owner'
+        else:
+            posting = 'closed'
+        if any(item.mode & 0o4000 for item in chain):
+            posting += ' +cert'
+        from msg.plugins.board_presentation import projection as board_presentation
+
+        return {
+            'name': resource.name,
+            'path': short_subject_path(await tx.path(resource.id)),
+            'read': 'Current identity access.'
+            if ctx.principal.subject
+            else 'Public; no login required.',
+            'mode': f'{mode:04o}',
+            'about': (await board_presentation(app, ctx, request, tx, resource))['description'],
+            'posting': posting,
+            'posts': posts,
+        }
+
+    async def revalidate_home(ctx, request, tx, snapshot):
+        """Cached aggregate statistics never authorize a cached content reference."""
+        from msg.transports.home_cache import HomeReadSession
+
+        if snapshot.data is None:
+            return HandlerOutput(data=None)
+        tx = HomeReadSession(tx)
+        data = {**snapshot.data, 'latest': [], 'channels': []}
+        changed = False
+        for field in ('latest', 'channels'):
+            for item in snapshot.data[field]:
+                require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
+                version = snapshot.versions.get(item['path'])
+                if version is None:
+                    changed = True
+                    continue
+                try:
+                    resource = await tx.resource(version[0])
+                except Failure as exc:
+                    if exc.code != 'not_found':
+                        raise
+                    changed = True
+                    continue
+                if resource.state != 'active' or not await visible(
+                    app, ctx, request, tx, resource.id
+                ):
+                    changed = True
+                    continue
+                if field == 'latest':
+                    # An edited or moved post must not retain an old excerpt.
+                    if (resource.id, resource.generation, resource.revision) != version:
+                        changed = True
+                        continue
+                    data[field].append(dict(item))
+                elif resource.type == 'topic' and resource.parent == ROOT_SPACE:
+                    data[field].append(
+                        await home_channel(ctx, request, tx, resource, item['posts'])
+                    )
+                else:
+                    changed = True
+        if changed and snapshot.invalidate is not None:
+            snapshot.invalidate()
+        if changed and snapshot.data['latest'] and not data['latest']:
+            # Filtering invalid candidates must not invent an empty site while
+            # the full scan is refreshing. Existing renderers explain None.
+            return HandlerOutput(data=None)
+        return HandlerOutput(data=data)
 
     @op(
         'discovery.get',
