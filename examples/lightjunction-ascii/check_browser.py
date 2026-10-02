@@ -54,10 +54,12 @@ async def check_playback_controls(page):
     moving = await page.evaluate(frame)
     assert moving != before, (before, moving)
     await page.locator('#pause').check()
-    paused = await page.evaluate(frame)
+    paused_state = await settled_pause(page)
+    paused = paused_state['frame']
     await page.wait_for_timeout(650)
-    stable = await page.evaluate(frame)
-    assert stable == paused
+    stable_state = await page.evaluate(PAUSE_STATE)
+    stable = stable_state['frame']
+    assert stable_state == paused_state
     assert await page.evaluate(
         "[...document.querySelectorAll('.frame')].every(p=>getComputedStyle(p).animationPlayState==='paused')"
     )
@@ -68,15 +70,43 @@ async def check_playback_controls(page):
     await page.locator('#pause').focus()
     await page.keyboard.press('Space')
     assert await page.locator('#pause').is_checked()
-    keyboard_paused = await page.evaluate(frame)
+    keyboard_state = await settled_pause(page)
+    keyboard_paused = keyboard_state['frame']
     await page.wait_for_timeout(650)
-    assert await page.evaluate(frame) == keyboard_paused
+    assert await page.evaluate(PAUSE_STATE) == keyboard_state
     return {
         'advanced': [before, moving],
         'paused': [paused, stable],
         'resumed': resumed,
         'space_paused': keyboard_paused,
+        'paused_time': paused_state['time'],
+        'space_paused_time': keyboard_state['time'],
     }
+
+
+PAUSE_STATE = """() => {
+  const frames=[...document.querySelectorAll('.frame')];
+  const animations=frames.flatMap(p=>p.getAnimations());
+  return {frame:frames.findIndex(p=>getComputedStyle(p).visibility==='visible'),
+    paused:animations.length===64 && animations.every(a=>a.playState==='paused'),
+    pending:animations.some(a=>a.pending),time:animations[0]?.currentTime};
+}"""
+
+
+async def settled_pause(page):
+    """CSS pause commits on a render tick, after the native checkbox has changed.
+
+    Poll from Python: sandboxed pages cannot execute asynchronous rAF callbacks.
+    Keep the later 650ms freeze assertion; settling does not replace verification.
+    """
+    previous = None
+    for _ in range(20):
+        state = await page.evaluate(PAUSE_STATE)
+        if state['paused'] and not state['pending'] and state == previous:
+            return state
+        previous = state
+        await page.wait_for_timeout(50)
+    raise AssertionError(f'CSS animation did not settle paused: {previous}')
 
 
 async def inspect(browser, origin, name, viewport, reduced=False):
