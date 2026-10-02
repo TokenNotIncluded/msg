@@ -119,10 +119,17 @@ class BubblewrapRunner:
         timeout = max(p.timeout_ms for p in policies) / 1000 + 10
         try:
             stdout, _ = await asyncio.wait_for(process.communicate(packet), timeout)
-        except BaseException:
+        except BaseException as exc:
             if process.returncode is None:
-                process.kill()
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
             await process.wait()
+            # Worker shutdown keeps the live attempt leased until its normal
+            # expiry fence. A timeout is uncertain; cancellation must propagate.
+            if isinstance(exc, asyncio.CancelledError):
+                raise
             raise Failure('external_uncertain') from None
         if process.returncode != 0:
             if stdout:
