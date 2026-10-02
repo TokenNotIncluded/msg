@@ -14,6 +14,7 @@
     posts: new Map(),
     cursors: {},
     starCursors: new Map(),
+    topology: null,
     privateMessages: new Map(),
     activeConversation: null,
     mode: "public",
@@ -110,6 +111,7 @@
           if (state.selected?.id === id) closeDetail();
         }
         for (const item of page.items) if (batch.includes(item.id) && state.users.has(item.id)) state.users.set(item.id, item);
+        if (page.topology?.version === 1) state.topology = page.topology;
         if (page.generated_at && Number.isFinite(Date.parse(page.generated_at)))
           state.clockOffset = Date.parse(page.generated_at) - Date.now();
         renderGraph(); refreshFacts(); counters();
@@ -123,7 +125,7 @@
   }
 
   const requests = new Set();
-  let toastTimer, renderer, privacyTimer;
+  let toastTimer, renderer, privacyTimer, flightClient, flatMap;
   const text = (tag, value, className) => {
     const el = document.createElement(tag);
     el.textContent = value;
@@ -293,10 +295,13 @@
           [...state.posts.values()],
           time,
           state.selected?.id,
+          state.topology,
         );
   }
   function renderGraph() {
     renderer?.setGraph(graph(renderer.clock));
+    // The region map never receives positions from private conversations.
+    flatMap?.update({graph:M.graph([...state.users.values()], [...state.posts.values()], renderer.clock, state.selected?.id, state.topology)});
   }
   function counters() {
     $("counts").textContent =
@@ -375,6 +380,7 @@
     return page;
   }
   function merge(page) {
+    if (page.topology?.version === 1) state.topology = page.topology;
     if (page.anchor?.id === 'u_root') state.users.set(page.anchor.id, page.anchor);
     if (page.author) state.starCursors.set(page.author, page.cursor);
     else state.cursors[page.kind] = page.cursor;
@@ -422,6 +428,7 @@
         state.posts.clear();
         state.cursors = {};
         state.starCursors.clear();
+        state.topology = null;
       }
       for (const page of pages) merge(page);
       $("empty").hidden = state.users.size > 0;
@@ -561,11 +568,12 @@
   }
   function focusPosition(item) {
     if (item.position) return item.position;
-    if (item.kind === "user") return M.position(item.id);
+    if (item.kind === "user") return M.starPosition ? M.starPosition(item) : M.position(item.id);
     return M.satellite(
       item.id,
-      M.position(item.author?.id || item.id),
+      M.starPosition ? M.starPosition(state.users.get(item.author?.id) || item.author || item) : M.position(item.author?.id || item.id),
       renderer.clock,
+      item.orbit,
     );
   }
   async function select(item, approach = false) {
@@ -1083,7 +1091,38 @@
       $("send").disabled = false;
     }
   }
+  if (globalThis.MSGFlightClient?.Client) {
+    flightClient = new globalThis.MSGFlightClient.Client({
+      onStatus(connection, message) {
+        const el = $('game-connection');
+        if (el) {
+          const labels = {connecting:'连接中', connected:'已连接', stale:'连接过期', disconnected:'已断开', error:'连接失败', failed:'连接失败，请退出后重试', suspended:'控制已暂停，点飞行画面继续', reconnecting:'已断开，重新连接中'};
+          el.dataset.state = connection; el.textContent = labels[connection] || message || '未连接';
+          el.title = message || '';
+        }
+        if (['connecting', 'disconnected', 'stale', 'error', 'failed', 'reconnecting'].includes(connection)) {
+          renderer?.clearRemoteShips();
+          flatMap?.update({players:[], selfId:null});
+        }
+        if (connection !== 'connected') renderer?.stopFlightInput(false);
+        renderer?.updateGameHud();
+      },
+      onHello(hello) {
+        renderer?.receiveFlightHello(hello);
+        flatMap?.update({regions:hello.regions, currentRegion:hello.region, selfId:hello.self.id,
+          mySubject:hello.self.subject_id, regionReadyMs:hello.self.region_ready_ms, serverTimeMs:flightClient.serverNow});
+      },
+      onSnapshot(snapshot) {
+        renderer?.receiveFlightSnapshot(snapshot);
+        flatMap?.update({players:snapshot.players, currentRegion:snapshot.region, selfId:snapshot.self_id,
+          regionCounts:snapshot.region_counts, regionReadyMs:flightClient.self?.region_ready_ms, serverTimeMs:flightClient.serverNow});
+      },
+      onError(message) { notice(message, true); },
+    });
+  }
   renderer = new globalThis.MSGUniverseRenderer($("space"), $("labels"), {
+    flight:flightClient,
+    prepareFlight() { if (state.mode === 'private') publicMode(false); },
     now,
     select: (item) => select(item, true),
     overview: () => closeDetail(),
@@ -1107,6 +1146,26 @@
       $("pause").textContent = paused ? "▷" : "Ⅱ";
     },
   });
+  if (!flightClient) {
+    $('pilot-toggle').disabled = true;
+    $('pilot-toggle').title = '实时飞行模块未加载';
+  }
+  if (globalThis.MSGFlatMap?.Map) {
+    flatMap = new globalThis.MSGFlatMap.Map($('region-map-canvas'), {
+      container:$('region-map'), status:$('region-map-status'), actions:$('region-map-actions'),
+      onSelectRegion(region) {
+        if (!flightClient?.connected) { notice('连接后才能选择区域。', true); return; }
+        renderer.stopFlightInput();
+        if (flightClient.chooseRegion(region)) {
+          flatMap.hide(); $('space').focus({preventScroll:true}); flightClient.resume();
+        }
+      },
+      onReturn3D() { flatMap.hide(); $('space').focus({preventScroll:true}); if (renderer.flight) flightClient?.resume(); },
+      onRegionFocus() { renderer.stopFlightInput(); },
+    });
+    $('game-region').onclick = () => { renderer.stopFlightInput(); flatMap.show(); };
+    $('region-map-close').onclick = () => { flatMap.hide(); $('space').focus({preventScroll:true}); if (renderer.flight) flightClient?.resume(); };
+  } else $('game-region').disabled = true;
   $("pause").setAttribute("aria-pressed", String(renderer.paused));
   $("pause").textContent = renderer.paused ? "▷" : "Ⅱ";
   for (const event of ['pointermove', 'pointerdown', 'wheel', 'keydown'])

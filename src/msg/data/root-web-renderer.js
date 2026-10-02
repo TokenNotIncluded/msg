@@ -189,6 +189,13 @@
       this.dust = scenery.dust;
       this.clouds = scenery.clouds;
       this.flight = null;
+      this.network = callbacks.flight || null;
+      this.wantFlight = false;
+      this.remoteShips = new Map();
+      this.shipLabels = new Map();
+      this.shotEvents = new Map();
+      this.gameActions = new Set();
+      this.homeBody = null;
       this.flightPointers = new Map();
       this.flightControls = new Map();
       this.flightHud = document.getElementById('pilot-hud');
@@ -202,6 +209,7 @@
       canvas.addEventListener("webglcontextlost", (e) => {
         e.preventDefault();
         this.stopFlightInput();
+        this.clearRemoteShips();
         this.lost = true;
         this.available = false;
         if (this.flightButton) this.flightButton.disabled = true;
@@ -315,41 +323,67 @@
       this.wake();
     }
     setPilot(active) {
-      if (active === Boolean(this.flight) || (active && (!this.available || this.lost))) return;
+      if (active && (!this.available || this.lost)) return;
+      if (active && this.network && !this.wantFlight) this.callbacks.prepareFlight?.();
+      this.wantFlight = active;
+      if (active && this.network && (!this.network.connected || !this.network.self)) {
+        this.network.connect();
+        document.getElementById('game-hud').hidden = false;
+        if (this.flightButton) this.flightButton.textContent = '取消连接';
+        return;
+      }
+      if (active === Boolean(this.flight)) {
+        if (!active && this.network) {
+          this.network.disconnect(); this.clearRemoteShips(); this.homeBody = null;
+          document.getElementById('game-hud').hidden = true;
+          if (this.flightButton) this.flightButton.textContent = '驾驶';
+        }
+        return;
+      }
       this.stopFlightInput();
       this.destination = null;
       this.nearby = null;
       if (active) {
         this.focusId = null;
         this.callbacks.overview?.();
-        const b = this.basis(), c = this.camera;
-        this.flight = new Flight(c.target.map((v, i) => v + b.eye[i] * Math.max(12, c.distance - 34)), c.yaw, c.pitch);
+        const b = this.basis(), c = this.camera, ship = this.network?.self;
+        this.flight = ship ? new Flight(ship.position, -ship.yaw, -ship.pitch)
+          : new Flight(c.target.map((v, i) => v + b.eye[i] * Math.max(12, c.distance - 34)), c.yaw, c.pitch);
+        if (ship) this.flight.velocity = [...ship.velocity];
+        this.network?.resume();
         this.updateFlight(0);
       } else {
         this.camera.target = [...this.flight.position];
         this.camera.distance = 90;
         this.flight = null;
+        this.network?.disconnect();
+        this.clearRemoteShips(); this.homeBody = null;
       }
       this.reindex();
       this.last = 0;
       this.canvas.dataset.piloting = String(active);
       document.getElementById('universe')?.classList.toggle('piloting', active);
       if (this.flightHud) this.flightHud.hidden = !active;
+      for (const id of ['game-hud', 'game-actions']) {
+        const el = document.getElementById(id); if (el) el.hidden = !active || !this.network;
+      }
       if (this.flightButton) {
         this.flightButton.setAttribute('aria-pressed', String(active));
-        this.flightButton.textContent = active ? 'Exit flight' : 'Pilot';
+        this.flightButton.textContent = active ? '退出飞行' : '驾驶';
       }
       this.updateFlightHud(true);
       if (active) this.canvas.focus({ preventScroll: true });
       this.wake();
     }
-    stopFlightInput() {
+    stopFlightInput(notifyNetwork = true) {
       this.keys.clear();
       this.pointers.clear();
       this.start = null;
       this.flightPointers?.clear();
       this.flightControls?.clear();
-      this.flight?.halt();
+      if (!this.network) this.flight?.halt();
+      this.gameActions.clear();
+      if (notifyNetwork) this.network?.suspend();
       for (const button of document.querySelectorAll('[data-flight-key]')) button.classList.remove('held');
       // Focusing Inspect must not disable that button between pointerdown and
       // click. Re-resolve its identity when clicked; input cancellation alone
@@ -358,19 +392,23 @@
     }
     flightEvents() {
       const canvas = this.canvas;
-      this.flightButton?.addEventListener('click', () => this.setPilot(!this.flight));
+      this.flightButton?.addEventListener('click', () => this.setPilot(!(this.flight || this.wantFlight)));
       document.getElementById('pilot-inspect')?.addEventListener('click', () => this.inspectNearby());
       canvas.addEventListener('keydown', e => {
         if (e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
         const key = e.key.toLowerCase();
-        if (key === 'f' && !e.repeat) { e.preventDefault(); this.setPilot(!this.flight); return; }
+        if (key === 'f' && !e.repeat) { e.preventDefault(); this.setPilot(!(this.flight || this.wantFlight)); return; }
+        if (key === 'escape' && this.wantFlight && !this.flight) { e.preventDefault(); this.setPilot(false); return; }
         if (!this.flight) return;
         if (key === 'escape') {
           e.preventDefault(); this.setPilot(false); this.flightButton?.focus(); return;
         }
         if (key === 'h') { e.preventDefault(); this.home(); return; }
         if (key === 'enter' && !e.repeat) { e.preventDefault(); this.inspectNearby(); return; }
-        if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift'].includes(key)) {
+        if (this.network && !e.repeat && ['j', 'k', 'shift'].includes(key)) {
+          e.preventDefault(); this.queueGameAction(key === 'j' ? 'shield' : 'dash'); return;
+        }
+        if (['w', 'a', 's', 'd', 'q', 'e', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' ', 'shift', 'b'].includes(key)) {
           e.preventDefault(); this.keys.add(key); this.wake();
         }
       });
@@ -383,6 +421,7 @@
       document.addEventListener('focusin', e => {
         if (this.flight && e.target !== canvas) this.stopFlightInput();
       });
+      canvas.addEventListener('focus', () => { if (this.flight && !document.hidden) this.network?.resume(); });
       canvas.addEventListener('pointerdown', e => {
         if (!this.flight || e.button !== 0) return;
         e.preventDefault(); canvas.focus({ preventScroll: true });
@@ -431,13 +470,87 @@
         });
         button.addEventListener('blur', () => release('keyboard:' + key));
       }
+      for (const button of document.querySelectorAll('[data-game-action]')) {
+        const action = button.dataset.gameAction === 'fire' ? 'laser' : button.dataset.gameAction;
+        button.addEventListener('click', () => {
+          if (!this.flight || !this.network?.connected) return;
+          this.canvas.focus({preventScroll:true}); this.network.resume();
+          this.queueGameAction(action); this.sendFlightInput();
+        });
+      }
+    }
+    queueGameAction(action) {
+      if (!this.network?.connected || !this.flight || this.network.self?.hp <= 0) return;
+      this.gameActions.add(action); this.wake();
+    }
+    sendFlightInput() {
+      if (!this.network?.connected || !this.flight) return;
+      const keys = new Set([...this.keys, ...this.flightControls.values()]);
+      const axis = (positive, negative) => Number(keys.has(positive)) - Number(keys.has(negative));
+      const actions = [...this.gameActions];
+      if (keys.has(' ')) actions.push('laser');
+      this.network.setInput({throttle:axis('w', 's'), strafe:axis('d', 'a'), lift:axis('e', 'q'),
+        yaw:-this.flight.yaw, pitch:-this.flight.pitch, brake:keys.has('b'), actions:[...new Set(actions)]});
+      this.gameActions.clear();
+    }
+    receiveFlightHello(hello) {
+      this.homeBody = hello.self.home_body?.private ? hello.self.home_body : null;
+      if (this.flight) {
+        this.flight.position = [...hello.self.position]; this.flight.velocity = [...hello.self.velocity];
+        this.flight.yaw = -hello.self.yaw; this.flight.pitch = -hello.self.pitch;
+      }
+      if (this.wantFlight) this.setPilot(true);
+    }
+    receiveFlightSnapshot(snapshot) {
+      const live = new Set(snapshot.players.map(ship => ship.id));
+      for (const [id] of this.remoteShips) if (!live.has(id)) this.remoteShips.delete(id);
+      for (const ship of snapshot.players) {
+        const previous = this.remoteShips.get(ship.id);
+        const sameRegion = previous?.state.region === ship.region;
+        this.remoteShips.set(ship.id, {state:ship, position:sameRegion ? previous.position : [...ship.position]});
+      }
+      if (this.flight && this.network?.self) {
+        const ship = this.network.self;
+        if (Math.hypot(...this.flight.position.map((value, i) => value - ship.position[i])) > 45)
+          this.flight.position = [...ship.position];
+      }
+      const now = this.network.serverNow;
+      for (const event of snapshot.events) if (event.type === 'laser' && event.position && event.end && now - event.at_ms < 400)
+        this.shotEvents.set(event.id, event);
+      for (const [id, event] of this.shotEvents) if (now - event.at_ms > 400) this.shotEvents.delete(id);
+      this.wake();
+    }
+    clearRemoteShips() {
+      this.remoteShips.clear(); this.shotEvents.clear();
+      for (const label of this.shipLabels.values()) label.remove();
+      this.shipLabels.clear(); this.wake();
     }
     updateFlight(dt) {
       const flight = this.flight, now = this.callbacks.now?.() ?? Date.now();
       const bodies = this.graph.nodes.filter(node => node.kind === 'user' || node.kind === 'private')
         .map(node => ({ node, position: node.position, radius: M.appearance(node, now).radius * 1.07 }));
       const keys = new Set([...this.keys, ...this.flightControls.values()]);
-      flight.step(dt, keys, bodies, this.reduced.matches);
+      if (this.network) {
+        const ship = this.network.connected && this.network.self;
+        if (ship) {
+          const controlled = document.activeElement === this.canvas || this.flightControls.size > 0;
+          if (controlled && ship.hp > 0) {
+            flight.yaw -= (Number(keys.has('arrowright')) - Number(keys.has('arrowleft'))) * dt * 1.15;
+            flight.pitch = clamp(flight.pitch - (Number(keys.has('arrowup')) - Number(keys.has('arrowdown'))) * dt, -1.35, 1.35);
+            this.sendFlightInput();
+          }
+          const blend = this.reduced.matches || !dt ? 1 : 1 - Math.exp(-dt * 18);
+          flight.position = flight.position.map((value, i) => mix(value, ship.position[i], blend));
+          flight.velocity = [...ship.velocity];
+          flight.thrust = controlled && ship.hp > 0 ? Number(keys.has('w')) - Number(keys.has('s')) : 0;
+          flight.boost = false;
+          flight.bank = this.reduced.matches ? 0 : mix(flight.bank, 0, blend);
+        } else { flight.thrust = 0; flight.boost = false; }
+        for (const remote of this.remoteShips.values()) {
+          const blend = this.reduced.matches || !dt ? 1 : 1 - Math.exp(-dt * 18);
+          remote.position = remote.position.map((value, i) => mix(value, remote.state.position[i], blend));
+        }
+      } else flight.step(dt, keys, bodies, this.reduced.matches);
       const smoothing = this.paused || this.reduced.matches || !dt ? 1 : 1 - Math.exp(-dt * 9);
       // Interpolate angles across the wrap boundary, never via a full rotation.
       const angle = Math.atan2(Math.sin(flight.yaw - this.camera.yaw), Math.cos(flight.yaw - this.camera.yaw));
@@ -457,11 +570,34 @@
     }
     updateFlightHud(clear = false) {
       const speed = document.getElementById('pilot-speed'), approach = document.getElementById('pilot-inspect');
-      if (speed) speed.textContent = this.flight ? Math.round(this.flight.speed).toString().padStart(3, '0') : '000';
+      if (speed) speed.textContent = this.flight && (!this.network || this.network.connected) ? Math.round(this.flight.speed).toString().padStart(3, '0') : '—';
       if (!approach) return;
       const node = !clear && this.flight && this.nearby;
       approach.disabled = !node;
-      approach.textContent = node ? 'Inspect ' + M.handle(node.name || node.title || 'Signal') + ' ↗' : 'Approach a star';
+      approach.textContent = node ? '查看 ' + M.handle(node.name || node.title || 'Signal') + ' ↗' : '靠近星球查看';
+      if (this.network) this.updateGameHud();
+    }
+    updateGameHud() {
+      const ship = this.network.connected && this.network.self, now = this.network.serverNow;
+      for (const field of ['hp', 'fuel']) {
+        const output = document.getElementById('game-' + field), meter = document.getElementById('game-' + field + '-meter');
+        if (output) output.textContent = ship ? Math.round(ship[field]).toString() : '—';
+        if (meter) { meter.value = ship ? ship[field] : 0; meter.closest('.game-vital').dataset.critical = String(ship && ship[field] < 25); }
+      }
+      const player = document.getElementById('game-player');
+      if (player) player.textContent = ship ? ship.handle : '—';
+      const score = document.getElementById('game-score'); if (score) score.textContent = ship && Number.isFinite(ship.score) ? String(ship.score) : '—';
+      const respawn = document.getElementById('game-respawn');
+      if (respawn) { respawn.hidden = !ship || ship.hp > 0; respawn.textContent = ship && ship.hp <= 0 ? '重生倒计时 ' + Math.max(0, (ship.respawn_at_ms - now) / 1000).toFixed(1) + 's' : ''; }
+      const region = document.getElementById('game-region');
+      if (region) region.textContent = ship ? '区域 ' + String(ship.region).padStart(2, '0') + ' / 地图' : '区域地图';
+      for (const button of document.querySelectorAll('[data-game-action]')) {
+        const action = button.dataset.gameAction === 'fire' ? 'laser' : button.dataset.gameAction;
+        const remaining = ship ? Math.max(0, (ship[action + '_ready_ms'] - now) / 1000) : Infinity;
+        button.disabled = !ship || ship.hp <= 0 || remaining > 0;
+        button.dataset.active = String(action === 'shield' && ship && ship.shield_until_ms > now);
+        button.querySelector('.game-cooldown').textContent = ship ? remaining > 0 ? remaining.toFixed(1) + 's' : '就绪' : '—';
+      }
     }
     inspectNearby() {
       // Re-resolve from the current authorized graph; no stale private selection.
@@ -470,13 +606,13 @@
       this.setPilot(false);
       this.callbacks.select?.(node);
     }
-    shipGeometry(geometry) {
-      const flight = this.flight, b = flightBasis(flight.yaw, flight.pitch), { lines, points, solids } = geometry;
+    shipGeometry(geometry, flight = this.flight, color = [.86, .88, .9]) {
+      const b = flightBasis(flight.yaw, flight.pitch), { lines, points, solids } = geometry;
       const bank = flight.bank, right = b.right.map((v, i) => v * Math.cos(bank) + b.up[i] * Math.sin(bank));
       const up = b.up.map((v, i) => v * Math.cos(bank) - b.right[i] * Math.sin(bank));
       const at = ([x, y, z]) => flight.position.map((v, i) => v + right[i] * x + up[i] * y + b.eye[i] * z);
       const vertices = [[0, 0, -3.8], [-2.7, -.35, 2], [2.7, -.35, 2], [0, .85, .7], [0, -.55, 1.7], [0, .1, 2.1]].map(at);
-      const face = (indices, light) => { for (const i of indices) solids.push(...vertices[i], light, light, light, 1, 1); };
+      const face = (indices, light) => { for (const i of indices) solids.push(...vertices[i], ...color.map(v => v * light), 1, 1); };
       face([0, 1, 3], .56); face([0, 3, 2], .84); face([1, 2, 4], .2);
       face([0, 4, 1], .28); face([0, 2, 4], .35); face([1, 5, 3], .48); face([3, 5, 2], .62);
       for (const [a, z] of [[0, 1], [0, 2], [0, 3], [1, 3], [2, 3]])
@@ -808,7 +944,7 @@
         );
       }
       this.callbacks.tick?.(this.clock);
-      for (const node of this.satellites) node.position = M.satellite(node.id, node.orbitCenter, this.clock);
+      for (const node of this.satellites) node.position = M.satellite(node.id, node.orbitCenter, this.clock, node.orbit);
       this.prepareView();
       if (this.software) {
         this.renderSoftware();
@@ -858,6 +994,7 @@
     }
     finish() {
       this.updateLabels();
+      this.updateShipLabels();
       this.updateTokens();
       this.callbacks.camera?.(this.camera.target);
       this.dirty = false;
@@ -870,8 +1007,8 @@
       const now = this.callbacks.now?.() ?? Date.now();
       const vertex = (p, col, alpha, size = 1) => [...p, ...col, alpha, size];
       const line = (a, z, col, alpha) => lines.push(...vertex(a, col, alpha), ...vertex(z, col, alpha));
-      const ring = (p, radius, col, alpha, { fraction = 1, tilt = .35, sides = 80, start = 0, dashed = false } = {}) => {
-        const at = (angle) => [p[0] + Math.cos(angle) * radius,
+      const ring = (p, radius, col, alpha, { fraction = 1, tilt = .35, sides = 80, start = 0, dashed = false, basis = null } = {}) => {
+        const at = (angle) => basis ? p.map((value, i) => value + radius * (Math.cos(angle) * basis[0][i] + Math.sin(angle) * basis[1][i])) : [p[0] + Math.cos(angle) * radius,
           p[1] + Math.sin(angle) * radius * Math.sin(tilt), p[2] + Math.sin(angle) * radius * Math.cos(tilt)];
         const count = Math.max(1, Math.ceil(sides * fraction));
         for (let j = 0; j < count; j++) {
@@ -882,7 +1019,7 @@
       for (const [a, z, type] of this.view.links) {
         const related = [a.id, z.id, a.author?.id, z.author?.id].includes(this.focusId);
         const col = type.startsWith('private') ? palette.private : palette.reply;
-        const alpha = type === 'orbit' ? .10 : related ? .33 : .08;
+        const alpha = type === 'mutual' ? related ? .7 : .4 : type === 'follow' ? related ? .3 : .13 : type === 'root-attachment' ? .07 : type === 'orbit' ? .10 : related ? .33 : .08;
         let last = a.position;
         for (let j = 1; j <= 24; j++) {
           const t = j / 24;
@@ -892,6 +1029,7 @@
         }
       }
       let detailed = 0;
+      const groups = new Set();
       for (const node of this.view.nodes) {
         if (node.kind === 'cluster') {
           // Clusters count ONLY loaded, authorized identities; not fake users
@@ -916,6 +1054,17 @@
         if (!selected && !hovered && !style.root && (!projected || projected.scale * style.radius < 3 || detailed >= (this.software ? 24 : 64))) continue;
         detailed++;
         if (isStar) {
+          const postRing = node.post_ring;
+          if (postRing?.visible && postRing.ring_radii?.length && postRing.basis?.length === 2) {
+            for (const radius of postRing.ring_radii)
+              ring(postRing.center || p, radius, col, selected ? .5 : .25, {basis:postRing.basis, sides:64});
+          }
+          const orbit = node.orbit;
+          if (['binary', 'multi'].includes(orbit?.kind) && orbit.center?.length === 3 && !groups.has(orbit.group_id)) {
+            groups.add(orbit.group_id);
+            ring(orbit.center, orbit.radius, [.78, .83, .88], .25, {tilt:orbit.tilt || 0, sides:64, dashed:true});
+            points.push(...vertex(orbit.center, [.85, .89, .94], .7, .6));
+          }
           const r = style.radius, rotation = this.clock * traits.speed + traits.phase;
           const rotate = v => [v[0] * Math.cos(rotation) - v[2] * Math.sin(rotation), v[1],
             v[0] * Math.sin(rotation) + v[2] * Math.cos(rotation)];
@@ -971,7 +1120,31 @@
           }
         }
       }
-      if (this.flight) this.shipGeometry({ lines, points, solids });
+      if (this.homeBody && this.flight) {
+        const body = this.homeBody;
+        const mesh = planetMesh(body.id);
+        for (const face of mesh) for (const v of face)
+          solids.push(...vertex(v.map((value, i) => body.position[i] + value * body.radius), [.38, .43, .40], 1));
+        ring(body.position, body.radius * 1.5, [.67, .75, .7], .3, {tilt:.15});
+      }
+      if (this.flight && (!this.network || this.network.connected && this.network.self?.hp > 0)) this.shipGeometry({ lines, points, solids });
+      if (this.flight && this.network?.connected) {
+        const serverNow = this.network.serverNow;
+        for (const {state:ship, position} of this.remoteShips.values()) {
+          if (ship.id === this.network.self?.id || ship.hp <= 0) continue;
+          const flight = {position, yaw:-ship.yaw, pitch:-ship.pitch, bank:0, trail:[],
+            thrust:Math.hypot(...ship.velocity) > 2 ? 1 : 0, boost:false};
+          this.shipGeometry({lines, points, solids}, flight, ship.guest ? [.74, .77, .80] : [.8, .87, .84]);
+          if (ship.shield_until_ms > serverNow) ring(position, 4.5, [.6, .87, .95], .6, {tilt:.4, sides:32});
+        }
+        const own = this.network.self;
+        if (own?.shield_until_ms > serverNow) ring(this.flight.position, 4.5, [.6, .87, .95], .6, {tilt:.4, sides:32});
+        for (const [id, event] of this.shotEvents) {
+          const age = serverNow - event.at_ms;
+          if (age > 400) { this.shotEvents.delete(id); continue; }
+          line(event.position, event.end, [.98, .66, .46], clamp(1 - age / 400, 0, 1));
+        }
+      }
       return { lines, points, triangles, solids };
     }
     renderSoftware() {
@@ -1108,6 +1281,33 @@
           el.remove();
           this.labelNodes.delete(id);
         }
+    }
+    updateShipLabels() {
+      const container = document.getElementById('ship-labels');
+      if (!container || !this.network?.connected || !this.flight) {
+        for (const label of this.shipLabels.values()) label.remove();
+        this.shipLabels.clear(); return;
+      }
+      const visible = new Set(), now = this.network.serverNow;
+      for (const {state:ship, position} of this.remoteShips.values()) {
+        if (ship.hp <= 0) continue;
+        const projected = this.project(position.map((value, i) => value + this.basis().up[i] * 4));
+        if (!projected || projected.x < 0 || projected.y < 75 || projected.x > this.width || projected.y > this.height - 65) continue;
+        visible.add(ship.id);
+        let label = this.shipLabels.get(ship.id);
+        if (!label) {
+          label = document.createElement('span'); label.className = 'ship-label';
+          const name = document.createElement('span'); name.className = 'ship-name';
+          const hp = document.createElement('progress'); hp.className = 'ship-hp'; hp.max = 100; hp.value = 0;
+          label.append(name, hp); container.append(label); this.shipLabels.set(ship.id, label);
+        }
+        label.firstElementChild.textContent = ship.handle;
+        label.lastElementChild.value = ship.hp;
+        label.dataset.self = String(ship.id === this.network.self?.id);
+        label.dataset.shielded = String(ship.shield_until_ms > now);
+        label.style.transform = `translate(${Math.round(projected.x)}px,${Math.round(projected.y)}px)`;
+      }
+      for (const [id, label] of this.shipLabels) if (!visible.has(id)) { label.remove(); this.shipLabels.delete(id); }
     }
   }
   globalThis.MSGUniverseFlight = Object.freeze({ Flight, flightBasis, tokenNebula, planetMesh });
