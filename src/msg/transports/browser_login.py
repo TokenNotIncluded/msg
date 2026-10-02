@@ -4,7 +4,7 @@ LOGIN_POLL_SCRIPT = r"""(() => {
   const status = document.getElementById('status');
   if (!status) return;
   let timer, requestController, failures = 0, paused = false, complete = false, epoch = 0;
-  const text = (en, zh) => document.documentElement.lang.startsWith('zh') ? zh : en;
+  const text = (en, zh) => globalThis.msgText?.(en, zh) ?? (document.documentElement.lang.startsWith('zh') ? zh : en);
   const show = (en, zh) => {
     status.removeAttribute('data-i18n');
     status.textContent = text(en, zh);
