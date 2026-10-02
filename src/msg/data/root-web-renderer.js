@@ -144,6 +144,35 @@
       }
       if (!corrected) break;
     }
+    if (wells.some(well => Math.hypot(...end.map((v, i) => v - well.position[i])) < well.radius + shipRadius + margin - 1e-9)) {
+      // Overlapping spheres can alternate projections forever. Exit their union
+      // on the shortest axis ray, with the same interval/tie order as authority.
+      let best = null;
+      for (let axis = 0; axis < 3; axis++) for (const sign of [-1, 1]) {
+        const intervals = [];
+        for (const well of wells) {
+          const offset = end.map((v, i) => v - well.position[i]), along = offset[axis] * sign;
+          const boundary = well.radius + shipRadius + margin;
+          const discriminant = boundary ** 2 - (dot(offset, offset) - along ** 2);
+          if (discriminant < 0) continue;
+          const half = Math.sqrt(discriminant), enter = -along - half, leave = -along + half;
+          if (leave >= 0) intervals.push([enter, leave]);
+        }
+        let distance = 0;
+        for (const [enter, leave] of intervals.sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
+          if (enter > distance + 1e-9) break;
+          if (leave >= distance) distance = leave + 1e-6;
+        }
+        if (!best || distance < best.distance) best = {distance, axis, sign};
+      }
+      end = [...end]; end[best.axis] += best.sign * best.distance;
+      for (const well of wells) {
+        const offset = end.map((v, i) => v - well.position[i]), distance = Math.hypot(...offset);
+        if (distance > well.radius + shipRadius + margin + 2e-6) continue;
+        const normal = offset.map(v => v / Math.max(distance, 1e-8)), inward = dot(velocity, normal);
+        if (inward < 0) velocity = velocity.map((v, i) => v - normal[i] * inward);
+      }
+    }
     return {position:end, velocity};
   }
   function integrateFlight(state, seconds, controls, limits = {}, now = 0, gravity = {}) {

@@ -131,6 +131,21 @@ test('visual fuel burn, coasting recovery and emergency recovery use advertised 
   close(exhausted.fuel,.08); assert.deepEqual(exhausted.velocity,[0,0,0]);
 });
 
+test('overlapping planet surfaces escape the union along the Python reference ray', () => {
+  const wells=[{id:'root',position:[0,0,0],radius:5.4,influence:43.2},{id:'u',position:[-8,0,0],radius:2.05,influence:36}];
+  const contact=planetContact([-6,0,0],[-6,0,0],[0,0,0],wells);
+  contact.position.forEach((value,i)=>close(value,[-4.73,-4.6315774055016945,0][i],1e-10));
+  assert.deepEqual(contact.velocity,[0,0,0]);
+  const clear=position=>wells.every(well=>Math.hypot(...position.map((value,i)=>value-well.position[i]))>=well.radius+1.2+.02-1e-9);
+  assert.ok(clear(contact.position));
+  const state=ship({position:[...contact.position]});
+  for(let tick=1;tick<=30;tick++) {
+    integrateFlight(state,1/30,{...neutral,throttle:1},{},tick*1000/30,{wells});
+    assert.ok(clear(state.position));
+  }
+  assert.ok(state.position[2]<-8);
+});
+
 test('gravity prediction attracts the living ship while braking hovers and a private home remains local', () => {
   const gravity={wells:[{id:'public',position:[0,0,0],radius:5.4,influence:43.2}]};
   const state=ship({position:[12,4,0],fuel:50}), start=[...state.position];
