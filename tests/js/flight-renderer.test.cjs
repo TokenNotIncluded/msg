@@ -8,6 +8,28 @@ const {Flight, flightBasis} = globalThis.MSGUniverseFlight;
 const self = () => ({id:'ship-own', handle:'pilot-own', guest:true, position:[0, 0, 16], velocity:[0, 0, 0],
   yaw:0, pitch:0, hp:100, fuel:80, laser_ready_ms:0, shield_ready_ms:0, dash_ready_ms:0,
   shield_until_ms:0, respawn_at_ms:0, region:0, score:0});
+test('first render before the public graph response has an empty pinned set', () => {
+  const methods = ['init', 'events', 'flightEvents', 'resize', 'wake'];
+  const saved = Object.fromEntries(methods.map(name => [name, Renderer.prototype[name]]));
+  const globals = ['document', 'matchMedia', 'ResizeObserver'];
+  const originals = Object.fromEntries(globals.map(name => [name, globalThis[name]]));
+  let firstFrames = 0;
+  try {
+    globalThis.document = {getElementById() {return null;}};
+    globalThis.matchMedia = () => ({matches:false});
+    globalThis.ResizeObserver = class {observe() {}};
+    for (const name of methods) Renderer.prototype[name] = function () {};
+    Renderer.prototype.wake = function () {
+      this.width = 1280; this.height = 800; this.prepareView(); firstFrames++;
+      assert.deepEqual(this.view.nodes, []);
+    };
+    const r = new Renderer({addEventListener() {}, dataset:{}}, {});
+    assert.deepEqual(r.pinned, []); assert.equal(firstFrames, 1);
+  } finally {
+    for (const [name, value] of Object.entries(saved)) Renderer.prototype[name] = value;
+    for (const [name, value] of Object.entries(originals)) globalThis[name] = value;
+  }
+});
 function renderer(ship = self()) {
   const canvas = {};
   const r = Object.create(Renderer.prototype);
