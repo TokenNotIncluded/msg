@@ -85,11 +85,13 @@ FIXTURE = r"""
 def assemble() -> str:
     page = (DATA / 'root-web.html').read_text()
     css = (DATA / 'root-web.css').read_text()
+    css += '\n' + (DATA / 'root-web-planets.css').read_text()
     # Font binaries are unnecessary for renderer contracts; use the CSS fallbacks.
     css = re.sub(r'@font-face\s*\{[^}]+\}', '', css)
     code = (
         '\n'.join(
-            (DATA / name).read_text() for name in ('root-web-model.js', 'root-web-renderer.js')
+            (DATA / name).read_text()
+            for name in ('root-web-model.js', 'root-web-planets.js', 'root-web-renderer.js')
         )
         + FIXTURE
     )
@@ -587,7 +589,7 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
             context.close()
 
 
-def run() -> None:
+def run(cases: set[str] | None = None) -> None:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     checks = []
     with sync_playwright() as pw:
@@ -623,6 +625,8 @@ def run() -> None:
             ('mobile-landscape', 844, 390, False, False),
             ('canvas', 1280, 800, False, True),
         ):
+            if cases is not None and label not in cases:
+                continue
             context = browser.new_context(
                 viewport={'width': width, 'height': height},
                 has_touch=label.startswith('mobile'),
@@ -655,17 +659,19 @@ def run() -> None:
             page.keyboard.up('w')
             page.screenshot(path=str(ARTIFACTS / f'{label}-flight.png'))
             page.keyboard.down(' ')
-            page.wait_for_timeout(1000)
+            page.wait_for_function('() => __renderer.flight.speed < 0.01')
             page.keyboard.up(' ')
-            assert page.evaluate('__renderer.flight.speed') < 0.01
-            # An input losing canvas focus must halt keys and inertia, not keep thrusting.
+            # Losing focus neutralizes intent and angular rates; translational
+            # momentum remains, so a focus change cannot act as a free brake.
             page.keyboard.down('w')
             page.wait_for_timeout(120)
             page.evaluate("document.getElementById('search-box').hidden = false")
             page.locator('#search').focus()
             page.keyboard.up('w')
-            assert page.evaluate('__renderer.flight.speed') == 0
+            assert page.evaluate('__renderer.flight.speed') > 0
             assert page.evaluate('__renderer.keys.size') == 0
+            assert page.evaluate("__renderer.flightSticks.every(s => !s.active && s.value === 0)")
+            assert page.evaluate('__renderer.flight.yawRate === 0 && __renderer.flight.pitchRate === 0')
             page.evaluate("document.getElementById('search-box').hidden = true")
             page.locator('#space').focus()
             page.keyboard.press('Escape')
@@ -685,9 +691,11 @@ def run() -> None:
                     event,
                 )
                 page.keyboard.up('w')
-                assert page.evaluate('__renderer.flight.speed') == 0
+                assert page.evaluate('__renderer.flight.speed') > 0
                 assert page.evaluate('__renderer.keys.size') == 0
                 assert page.evaluate('__renderer.flightControls.size') == 0
+                assert page.evaluate("__renderer.flightSticks.every(s => !s.active && s.value === 0)")
+                assert page.evaluate('__renderer.flight.yawRate === 0 && __renderer.flight.pitchRate === 0')
             page.evaluate('__renderer.setPilot(false)')
             # Nearby inspection resolves only a current graph identity, through the read callback.
             page.locator('#pilot-toggle').click()
@@ -731,7 +739,8 @@ def run() -> None:
                 page.evaluate('__renderer.setPilot(true); __renderer.stopFlightInput()')
                 cdp = context.new_cdp_session(page)
                 forward = page.locator('[data-flight-key="w"]').bounding_box()
-                right = page.locator('[data-flight-key="arrowright"]').bounding_box()
+                pitch = page.locator('[data-flight-axis="pitch"]').bounding_box()
+                yaw_stick = page.locator('[data-flight-axis="yaw"]').bounding_box()
                 points = [
                     {
                         'x': box['x'] + box['width'] / 2,
@@ -740,32 +749,45 @@ def run() -> None:
                         'radiusX': 3,
                         'radiusY': 3,
                     }
-                    for i, box in enumerate((forward, right))
+                    for i, box in enumerate((forward, pitch, yaw_stick))
                 ]
                 yaw = page.evaluate('__renderer.flight.yaw')
+                pitch_angle = page.evaluate('__renderer.flight.pitch')
                 cdp.send('Input.dispatchTouchEvent', {'type': 'touchStart', 'touchPoints': points})
+                points[1]['y'] += pitch['height'] * .34
+                points[2]['x'] += yaw_stick['width'] * .34
+                cdp.send('Input.dispatchTouchEvent', {'type': 'touchMove', 'touchPoints': points})
                 page.wait_for_timeout(300)
-                assert page.evaluate('__renderer.flightControls.size') == 2
+                assert page.evaluate('__renderer.flightControls.size') == 1
+                assert page.evaluate('__renderer.flightSticks.every(s => s.active && s.value > .5)')
                 assert page.evaluate('__renderer.flight.speed') > 0
-                assert page.evaluate('__renderer.flight.yaw') != yaw
+                assert page.evaluate('__renderer.flight.yaw') < yaw
+                assert page.evaluate('__renderer.flight.pitch') < pitch_angle
                 cdp.send(
                     'Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': points[1:]}
                 )
                 assert page.evaluate('[...__renderer.flightControls.values()]') == ['w']
+                assert page.evaluate('__renderer.flightSticks.every(s => !s.active && s.value === 0)')
                 cdp.send('Input.dispatchTouchEvent', {'type': 'touchEnd', 'touchPoints': []})
                 assert page.evaluate('__renderer.flightControls.size') == 0
-                assert page.locator('#catalog-toggle').is_visible()
-                assert page.locator('#compose-open').is_visible()
                 for selector in (
                     '#pilot-toggle',
-                    '#catalog-toggle',
-                    '#compose-open',
                     '[data-flight-key="w"]',
-                    '[data-flight-key="arrowleft"]',
+                    '[data-flight-axis="pitch"]',
+                    '[data-flight-axis="yaw"]',
                 ):
                     box = page.locator(selector).bounding_box()
                     assert box and box['x'] >= 0 and box['x'] + box['width'] <= width + 1
                     assert box['y'] >= 0 and box['y'] + box['height'] <= height + 1
+                # The focused cockpit hides exploration telemetry. Its entry
+                # points return when the user leaves the flight controls.
+                page.evaluate('__renderer.setPilot(false)')
+                for selector in ('#catalog-toggle', '#compose-open'):
+                    assert page.locator(selector).is_visible()
+                    box = page.locator(selector).bounding_box()
+                    assert box and box['x'] >= 0 and box['x'] + box['width'] <= width + 1
+                    if height >= 560:
+                        assert box['y'] >= 0 and box['y'] + box['height'] <= height + 1
             assert not errors, errors
             checks.append({
                 'case': label,
