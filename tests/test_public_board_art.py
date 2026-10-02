@@ -12,10 +12,21 @@ def test_default_art_is_deterministic_and_allowed():
     assert len(DEFAULT_SVG.encode()) < LIMITS['svg_bytes']
     root = ET.fromstring(DEFAULT_SVG)
     elements = list(root.iter())
-    animations = [element for element in elements if element.tag.endswith('}animate')]
+    animations = [
+        element
+        for element in elements
+        if element.tag.split('}')[-1] in {'animate', 'animateTransform'}
+    ]
     assert len(elements) <= LIMITS['elements']
-    assert len(animations) == 1
-    assert animations[0].get('dur') == '12s'
+    assert 18 < len(animations) <= LIMITS['animations']
+    assert {animation.get('dur') for animation in animations} == {'12s'}
+    assert {animation.get('repeatCount') for animation in animations} == {'indefinite'}
+    for animation in animations:
+        values = animation.get('values').split(';')
+        times = list(map(float, animation.get('keyTimes').split(';')))
+        assert values[0] == values[-1]
+        assert len(values) == len(times)
+        assert times[0] == 0 and times[-1] == 1 and times == sorted(times)
     assert root.get('viewBox') == '0 0 960 300'
     assert not any(element.tag.endswith('}rect') for element in elements)
 

@@ -25,14 +25,20 @@ const edit=panel.querySelector('[data-edit]'),refresh=form.querySelector('[data-
 const menu=panel.querySelector('[data-menu]'),menuToggle=menu.querySelector('summary');
 const closeMenu=focus=>{menu.open=false;if(focus)menuToggle.focus();};
 const motion=matchMedia('(prefers-reduced-motion: reduce)');
-let base={svg:fields.svg.value,text:fields.text.value},pending,busy=false,paused=motion.matches;
+let base={svg:fields.svg.value,text:fields.text.value},pending,busy=false,paused=motion.matches,userPaused=false;
+let inView=typeof IntersectionObserver==='undefined';
 const changed=()=>Object.keys(fields).filter(name=>fields[name].value!==base[name]);
 const editing=open=>{form.hidden=!open;edit.setAttribute('aria-expanded',String(open));};
 const setBusy=value=>{busy=value;button.disabled=value;refresh.disabled=value;Object.values(fields).forEach(field=>{field.disabled=value;});};
 const pause=panel.querySelector('[data-pause]');
-const art=()=>{image.src='/_public-board/art.svg?v='+panel.dataset.generation+(paused?'&motion=still':'');pause.textContent=paused?'播放动图 / Play':'暂停动图 / Pause';pause.setAttribute('aria-pressed',String(paused));};
-pause.addEventListener('click',()=>{paused=!paused;art();closeMenu(true);});art();
-motion.addEventListener('change',event=>{paused=event.matches;art();});
+const art=()=>{const src='/_public-board/art.svg?v='+panel.dataset.generation+(paused||!inView||document.hidden?'&motion=still':'');
+ if(image.getAttribute('src')!==src)image.src=src;
+ pause.textContent=paused?'播放动图 / Play':'暂停动图 / Pause';pause.setAttribute('aria-pressed',String(paused));};
+pause.addEventListener('click',()=>{paused=!paused;userPaused=paused;art();closeMenu(true);});
+motion.addEventListener('change',event=>{paused=userPaused||event.matches;art();});
+document.addEventListener('visibilitychange',art);
+if(typeof IntersectionObserver!=='undefined')new IntersectionObserver(entries=>{inView=entries.some(entry=>entry.isIntersecting);art();}).observe(image);
+art();
 edit.addEventListener('click',()=>{
  if(panel.dataset.signedIn!=='true'){location.assign('/login');return;}
  clearSuccess();
