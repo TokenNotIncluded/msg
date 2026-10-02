@@ -517,6 +517,7 @@ dev = [
     { name = "tiktoken" },
     { name = "uvicorn" },
     { name = "valkey" },
+    { name = "websockets" },
 ]
 fuse = [
     { name = "mfusepy" },
@@ -530,6 +531,7 @@ server = [
     { name = "starlette" },
     { name = "uvicorn" },
     { name = "valkey" },
+    { name = "websockets" },
 ]
 
 [package.metadata]
@@ -554,6 +556,7 @@ requires-dist = [
     { name = "tiktoken", marker = "extra == 'dev'", specifier = ">=0.12" },
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.38,<1" },
     { name = "valkey", marker = "extra == 'server'", specifier = ">=6.1,<7" },
+    { name = "websockets", marker = "extra == 'server'", specifier = ">=15,<17" },
     { name = "yubikey-manager", specifier = ">=5.8,<6" },
 ]
 provides-extras = ["fuse", "server", "dev"]
@@ -1053,6 +1056,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/c3/ee/7fd930fc712275084722ddd464a0ea296abdb997d2da396320507968daeb/valkey-6.1.1.tar.gz", hash = "sha256:5880792990c6c2b5eb604a5ed5f98f300880b6dd92d123819b66ed54bb259731", size = 4601372, upload-time = "2025-08-11T06:41:10.63Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/a2/252afa4da08c714460f49e943070f86a02931f99f886182765194002fe33/valkey-6.1.1-py3-none-any.whl", hash = "sha256:e2691541c6e1503b53c714ad9a35551ac9b7c0bbac93865f063dbc859a46de92", size = 259474, upload-time = "2025-08-11T06:41:08.769Z" },
+]
+
+[[package]]
+name = "websockets"
+version = "16.1.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/f7/bc3a25c5ec26ce62ce487690becc2f3710bbc7b33338f005ad390db0b986/websockets-16.1.1.tar.gz", hash = "sha256:db234eda965dcce15df96bb9709f587cd87d4d52aaf0e80e2f34ec04c7670c57", size = 182204, upload-time = "2026-07-17T22:51:05.858Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/be/4d/2d0d67834092e354d2b0498f014a41249a89556bc406cf86f3e1557bb463/websockets-16.1.1-py3-none-any.whl", hash = "sha256:6abbd3e82c731c8e531714466acd5d87b5e88ac3243465337ba71d68e23ae7e3", size = 173814, upload-time = "2026-07-17T22:51:04.184Z" },
 ]
 
 [[package]]
