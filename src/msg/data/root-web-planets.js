@@ -13,7 +13,7 @@
     surfaceMin: .952, surfaceMax: 1, cloudRadius: 1.008 });
   const meshes = new Map(), topologies = new Map(), pending = new Map();
   let buildTimer=null;
-  const lod=(pixelRadius,{software=false,mobile=false}={}) => pixelRadius>=60 && !software && !mobile ? 4 : pixelRadius>=14 ? 3 : 2;
+  const lod=pixelRadius => pixelRadius>=60 ? 4 : pixelRadius>=14 ? 3 : 2;
   function topology(level) {
     if (topologies.has(level)) return topologies.get(level);
     const top = [0,1,0], bottom = [0,-1,0], rim = [[1,0,0],[0,0,1],[-1,0,0],[0,0,-1]];
@@ -57,10 +57,14 @@
     const field=(frequency,offset=0) => noise(direction.map((v,i) => v*frequency+t.offset[i]+offset),t.seed);
     const continental=field(2.6)*.64+field(5.2)*.25+field(10.4)*.11;
     const ridge=(1-Math.abs(field(17)*2-1))**3;
-    let relief=.013*ridge+.009*(field(34)-.5), crater=0;
+    let relief=.013*ridge+.009*(field(34)-.5), crater=0, basin=0, craterRim=0;
     if (t.mode!==0) for (const c of t.craters) {
       const distance=Math.sqrt(Math.max(0,2-2*dot(direction,c.center)))/c.radius;
-      if (distance<1.35) crater += -.022*Math.exp(-distance*distance*5)+.009*Math.exp(-(((distance-.95)/.19)**2));
+      if (distance<1.35) {
+        const floor=Math.exp(-distance*distance*5), rim=Math.exp(-(((distance-.95)/.14)**2));
+        crater += -.022*floor+.009*rim;
+        basin=Math.max(basin,floor);craterRim=Math.max(craterRim,rim);
+      }
     }
     const water=continental<t.seaLevel;
     // All solid microterrain is INSIDE the existing spherical collider. Clouds are intangible.
@@ -70,8 +74,10 @@
     if (t.mode===1) color=blend(color,t.palette.sea,.12+.20*Math.sin(direction[1]*31+continental*9)**2);
     const ice=clamp((Math.abs(direction[1])-t.ice+field(13)*.045)*18,0,1);
     color=blend(color,[.86,.90,.88],ice);
-    if (crater<-.005) color=color.map(v=>v*.74);
-    return {radius,color,cloud:field(5,17)*.7+field(12,17)*.3};
+    // Material edges remain legible in earthshine, without lighting the night side like day.
+    color=blend(color,color.map(v=>v*.28),basin*.85);
+    color=blend(color,[.82,.83,.76],craterRim*.82);
+    return {radius,color};
   }
   function* generateSurface(id,level) {
     const t=traits(id), faces=[], verticesByDirection=new Map();
@@ -86,11 +92,16 @@
       faces.push({vertices,normal,color:id==='u_root' ? blend([.75,.74,.69],[1,.98,.89],terrain.color[0]) : terrain.color,cloud:false});
       yield;
     }
-    if (level>=3 && t.mode!==1 && id!=='u_root') for (const face of topology(3)) {
+    let clouds=0;
+    if (level>=3 && t.mode!==1 && id!=='u_root') for (const face of topology(level)) {
       const center=unit(face[0].map((v,i)=>v+face[1][i]+face[2][i]));
-      const density=sample(center,t).cloud;
-      if (density>.63) faces.push({vertices:face.map(v=>v.map(n=>n*BUDGET.cloudRadius)),normal:center,
-        color:[.82,.87,.87],alpha:clamp((density-.63)*2,.08,.42),cloud:true});
+      const cloud=frequency=>noise(center.map((v,i)=>v*frequency+t.offset[i]+17),t.seed);
+      const density=cloud(5)*.7+cloud(12)*.3;
+      if (density>.68 && clouds<512) {
+        faces.push({vertices:face.map(v=>v.map(n=>n*BUDGET.cloudRadius)),normal:center,
+          color:[.82,.87,.87],alpha:clamp((density-.68)*1.1,.025,.16),cloud:true});
+        clouds++;
+      }
       yield;
     }
     return {faces,traits:t,level};
@@ -143,7 +154,7 @@
       const rotate=v=>[v[0]*c-v[2]*s,v[1],v[0]*s+v[2]*c], normal=rotate(face.normal);
       if (dot(normal,towardEye)<-.08) continue;
       const diffuse=Math.max(0,dot(normal,sun)), rim=(1-Math.max(0,dot(normal,towardEye)))**3;
-      const shade=style.root ? .52+.45*diffuse : .19+.73*diffuse+.10*rim;
+      const shade=style.root ? .52+.45*diffuse : .34+.60*diffuse+.06*rim;
       const color=face.color.map(v=>clamp(v*shade,0,1));
       for (const v of face.vertices) solids.push(...rotate(v).map((n,i)=>node.position[i]+n*style.radius),
         ...color,face.alpha??1,1);
@@ -214,6 +225,36 @@
       globalThis.document?.addEventListener?.('visibilitychange',this.visibility);
       globalThis.addEventListener?.('pagehide',this.pagehide);
     }
+    obstacles() {
+      const box=this.container.getBoundingClientRect?.()||{left:0,top:0};
+      const doc=this.container.ownerDocument||globalThis.document;
+      const elements=[...(this.container.querySelectorAll?.('.star-label')||[]),
+        ...(doc?.querySelectorAll?.('#pilot-hud, #game-hud, #game-actions, .flightbar, .topbar, #region-map, #inspector, #catalog, #search-box')||[])];
+      const rects=[];
+      for(const element of elements) {
+        if(element.hidden)continue;
+        const style=globalThis.getComputedStyle?.(element);
+        if(style && (style.display==='none' || style.visibility==='hidden' || Number(style.opacity)===0))continue;
+        const rect=element.getBoundingClientRect?.();
+        if(!rect || rect.width<=0 || rect.height<=0)continue;
+        rects.push({left:rect.left-box.left,top:rect.top-box.top,right:rect.right-box.left,bottom:rect.bottom-box.top});
+      }
+      return rects;
+    }
+    placement(p,size,edge,width,height,obstacles) {
+      // Keep the same badge size and distance from its planet. Try the other
+      // side, then diagonals and poles; a crowded HUD wins over decoration.
+      const diagonal=Math.SQRT1_2;
+      for(const [dx,dy] of [[1,0],[-1,0],[diagonal,-diagonal],[-diagonal,-diagonal],
+        [diagonal,diagonal],[-diagonal,diagonal],[0,-1],[0,1]]) {
+        const left=Math.round(p.x+dx*edge-size/2),top=Math.round(p.y+dy*edge-size/2);
+        const right=left+size,bottom=top+size;
+        if(left<12 || top<12 || right>width-12 || bottom>height-12)continue;
+        if(obstacles.some(rect=>left<rect.right+6 && right>rect.left-6 && top<rect.bottom+6 && bottom>rect.top-6))continue;
+        return {left,top};
+      }
+      return null;
+    }
     update(state) {
       if(this.disposed)return; this.state=state;
       if(state.hidden || globalThis.document?.hidden || this.container.isConnected===false) {this.clear(); return;}
@@ -226,10 +267,16 @@
         candidates.push({node,url,p,radius});
       }
       candidates.sort((a,b)=>Number(b.node.id===focusId)-Number(a.node.id===focusId)||a.p.depth-b.p.depth||a.node.id.localeCompare(b.node.id));
-      const chosen=candidates.slice(0,mobile?BUDGET.mobileAvatars:BUDGET.avatars), visible=new Set();
+      // Batch current DOM measurements before changing any avatar styles.
+      // Labels have already been placed by the renderer in this container.
+      const obstacles=this.obstacles(), visible=new Set();
+      const chosen=candidates.slice(0,mobile?BUDGET.mobileAvatars:BUDGET.avatars).map(candidate=>{
+        const {p,radius}=candidate,size=clamp(p.scale*radius*.8,28,mobile?42:56),edge=p.scale*radius+size*.62+8;
+        return {...candidate,size,position:this.placement(p,size,edge,width,height,obstacles)};
+      }).filter(candidate=>candidate.position);
       this.wanted=new Set(chosen.map(c=>c.url));
       for(const [url,request] of this.requests) if(!this.wanted.has(url)) {request.controller.abort(); this.requests.delete(url);}
-      for(const {node,url,p,radius} of chosen) {
+      for(const {node,url,size,position} of chosen) {
         visible.add(node.id); let marker=this.nodes.get(node.id);
         if(!marker) {
           const el=document.createElement('span'),img=document.createElement('img'),fallback=document.createElement('span');
@@ -244,9 +291,7 @@
         if(marker.url!==url) {marker.url=url;marker.img.removeAttribute('src');marker.el.classList.remove('has-image');}
         marker.fallback.textContent=M.handle(node.name||'')[0]?.toUpperCase()||'·';
         marker.el.setAttribute('aria-label',M.handle(node.name||'Signal')+' avatar');
-        const size=clamp(p.scale*radius*.8,28,mobile?42:56), edge=p.scale*radius+size*.62+8;
-        const x=p.x+edge+size/2<width-12?p.x+edge:p.x-edge;
-        marker.el.style.transform=`translate(${Math.round(x-size/2)}px,${Math.round(p.y-size/2)}px)`;
+        marker.el.style.transform=`translate(${position.left}px,${position.top}px)`;
         marker.el.style.width=marker.el.style.height=size+'px';
         const saved=this.cache.get(url);
         if(saved?.data && marker.img.getAttribute('src')!==saved.data) {marker.img.src=saved.data;marker.el.classList.add('has-image');}
