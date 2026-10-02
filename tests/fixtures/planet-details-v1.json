@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "purpose": "Local planet/avatar rendering fixture. These identities are test inputs only.",
+  "camera": {"target": [0, 0, 0], "distance": 23, "yaw": 0, "pitch": 0},
+  "users": [
+    {"id":"u_ocean","kind":"user","name":"@planet-ocean","path":"/@planet-ocean","position":[-5,0,0],"artwork":{"avatar":{"url":"/@planet-ocean/art/avatar.svg"}}},
+    {"id":"u_rock","kind":"user","name":"@planet-rock","path":"/@planet-rock","position":[0,0,0],"artwork":{"avatar":{"url":"/@planet-rock/art/avatar.svg"}}},
+    {"id":"u_terrain","kind":"user","name":"@planet-ice","path":"/@planet-ice","position":[5,0,0],"artwork":{"avatar":{"url":"/@planet-ice/art/avatar.svg"}}}
+  ],
+  "avatar_responses": {
+    "/@planet-ocean/art/avatar.svg": {"media_type":"image/svg+xml","body":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"28\" fill=\"#6eaeab\"/><circle cx=\"32\" cy=\"32\" r=\"8\" fill=\"#172c37\"><animate attributeName=\"r\" values=\"8;17;8\" dur=\"2s\" repeatCount=\"indefinite\"/></circle></svg>"},
+    "/@planet-rock/art/avatar.svg": {"media_type":"image/svg+xml","body":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><rect x=\"6\" y=\"6\" width=\"52\" height=\"52\" rx=\"14\" fill=\"#ac7759\"/><path d=\"M18 43L32 17L46 43Z\" fill=\"#ffe1b4\"/></svg>"},
+    "/@planet-ice/art/avatar.svg": {"media_type":"image/svg+xml","body":"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><circle cx=\"32\" cy=\"32\" r=\"27\" fill=\"#aacacb\"/><path d=\"M32 11V53M11 32H53M17 17L47 47M47 17L17 47\" stroke=\"#356678\" stroke-width=\"4\"/></svg>"}
+  },
+  "checks": {"desktop_avatar_limit":8,"mobile_avatar_limit":4,"solid_radius_max":1,"cloud_radius":1.008,"desktop_near_faces":2048,"mobile_near_faces":512,"distant_faces":128}
+}

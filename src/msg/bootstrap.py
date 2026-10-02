@@ -44,7 +44,13 @@ ROOT_WEB_SAMPLE = (
     .joinpath('root-web.html')
     .read_text(encoding='utf-8')
     .replace('__LOGO__', ROOT_WEB_LOGO)
-    .replace('__UNIVERSE_STYLE__', files('msg.data').joinpath('root-web.css').read_text())
+    .replace(
+        '__UNIVERSE_STYLE__',
+        '\n'.join(
+            files('msg.data').joinpath(name).read_text()
+            for name in ('root-web.css', 'root-web-planets.css')
+        ),
+    )
     .replace(
         '__UNIVERSE_SCRIPT__',
         '\n'.join(
@@ -53,6 +59,7 @@ ROOT_WEB_SAMPLE = (
                 'root-web-model.js',
                 'root-web-map.js',
                 'root-web-flight-client.js',
+                'root-web-planets.js',
                 'root-web-renderer.js',
                 'root-web-app.js',
             )
