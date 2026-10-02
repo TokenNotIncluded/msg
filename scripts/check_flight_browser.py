@@ -337,17 +337,20 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
                 page,
                 f'__renderer.network.self.ack_seq >= {brake_frame["seq"]} && Math.hypot(...__renderer.network.self.velocity) < .1',
             )
-            page.evaluate(
-                """() => __renderer.network.setInput({throttle:0,strafe:0,lift:0,yaw:0,pitch:0,brake:false,actions:[]})"""
-            )
             assert math.dist(page.evaluate('__renderer.network.self.position'), destination) < 4.5
 
+        # Keep the waiting peer parked while the other uses ordinary navigation.
+        second.locator('#help-toggle').focus()
+        second.evaluate("""() => {
+          const n=__renderer.network; n.resume();
+          n.setInput({throttle:0,strafe:0,lift:0,yaw:0,pitch:0,brake:true,actions:[]});
+        }""")
         peer_position = second.evaluate('__renderer.network.self.position')
         target = first.evaluate(
             """peer => {
           const r=__renderer, own=r.network.self.position;
           return Array.from({length:2300},(_,id)=>({id,position:Array.from(r.dust.subarray(id*8,id*8+3))}))
-            .filter(glyph=>!r.glyphTaken(glyph.id) && Math.hypot(...glyph.position.map((v,i)=>v-own[i]))>8 && Math.hypot(...glyph.position.map((v,i)=>v-peer[i]))>8)
+            .filter(glyph=>!r.glyphTaken(glyph.id) && Math.hypot(...glyph.position.map((v,i)=>v-own[i]))>12 && Math.hypot(...glyph.position.map((v,i)=>v-peer[i]))>12)
             .sort((a,b)=> Math.hypot(...a.position.map((v,i)=>v-own[i]))+Math.hypot(...a.position.map((v,i)=>v-peer[i]))
               -Math.hypot(...b.position.map((v,i)=>v-own[i]))-Math.hypot(...b.position.map((v,i)=>v-peer[i])))[0];
         }""",
@@ -417,15 +420,42 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
             wait(first, 'Math.hypot(...__renderer.network.self.velocity) < .1')
             first.keyboard.up('b')
         aim(first)
+        first.keyboard.down('b')
+        wait(first, '__renderer.network.self.laser_ready_ms <= __renderer.network.serverNow')
+        first.evaluate("""() => {
+          document.getElementById('space').addEventListener('keydown', event => {
+            if (event.key !== ' ' || event.repeat) return;
+            const r=__renderer;
+            window.__fireIntent={visible:r.localShot?.intent===true,
+              fuel:r.network.self.fuel, hp:r.network.self.hp};
+          });
+        }""")
         first.keyboard.down(' ')
+        assert first.evaluate('window.__fireIntent?.visible === true')
+        wait(first, '__renderer.shotEvents.size > 0')
+        assert first.evaluate('__renderer.geometry().triangles.length > 0')
+        first.screenshot(path=str(ARTIFACTS / 'fire-desktop.png'))
         wait(
             first,
             '__renderer.network.snapshot.players.some(p => p.subject_id === window.__peerSubject && p.hp < 100)',
         )
         first.keyboard.up(' ')
         wait(second, '__renderer.network.self.hp < 100')
+        wait(first, "document.getElementById('game-combat').dataset.state === 'hit'")
+        wait(second, "document.getElementById('game-combat').dataset.state === 'damaged'")
+        assert first.evaluate("""() => {
+          const r=__renderer, snapshot=r.network.snapshot;
+          const seen=Array.from(r.combatSeen.keys()).join(',');
+          const active=Array.from(r.combatEvents.keys()).join(',');
+          r.receiveFlightSnapshot(snapshot);
+          return seen===Array.from(r.combatSeen.keys()).join(',') &&
+            active===Array.from(r.combatEvents.keys()).join(',');
+        }""")
+        second.screenshot(path=str(ARTIFACTS / 'hit-mobile.png'))
         assert first.locator('#ship-labels .ship-label').count() >= 1
-        checks.append('Space fires actual server laser and peer health decreases')
+        checks.append(
+            'Space shows immediate fire intent, a visible server beam, real hit/damage HUD and deduplicated snapshot effects'
+        )
         first.keyboard.down(' ')
         wait(
             first,
