@@ -16,6 +16,19 @@ from msg.client_subagents import normalize_agent
 from msg.core.codec import b64, canonical, loads, unb64
 from msg.core.errors import Failure, require
 
+PRIVATE_FIELDS = (
+    'id',
+    'type',
+    'name',
+    'owner',
+    'mode',
+    'state',
+    'parent',
+    'revision',
+    'generation',
+    'created_at',
+)
+
 
 class RemoteAgents:
     def __init__(self, client, username=None):
@@ -57,6 +70,9 @@ class RemoteAgents:
             if missing and exc.code == 'not_found':
                 return None
             raise
+        return self._private_meta(data)
+
+    def _private_meta(self, data):
         mode = data['mode']
         mode = int(mode, 8) if isinstance(mode, str) else mode
         require(
@@ -103,9 +119,11 @@ class RemoteAgents:
         return path
 
     async def _json(self, path):
-        meta = await self._meta(path)
+        # The server applies the current read ACL and returns metadata and
+        # content in one projection. Never cache namespace or privacy checks.
+        data = await self._call('file.read', {'id': path, 'fields': [*PRIVATE_FIELDS, 'content']})
+        meta = self._private_meta(data)
         require(meta['type'] == 'file', 'invalid_subagent_message')
-        data = await self._call('file.read', {'id': meta['id']})
         try:
             content = data['content']
             value = loads(canonical(content)) if isinstance(content, Mapping) else loads(content)
@@ -122,6 +140,7 @@ class RemoteAgents:
                 'data': b64(canonical(value)),
                 'media_type': 'application/json',
             },
+            return_fields=PRIVATE_FIELDS,
         )
         if result.status == 'error':
             if result.error.code != 'constraint_conflict':
@@ -132,7 +151,13 @@ class RemoteAgents:
                 'subagent_message_id_conflict',
             )
             return meta
-        meta = await self._meta(parent + '/' + name)
+        # The projection is checked inside the same write transaction, so the
+        # newly created file needs no second network read.
+        meta = (
+            await self._meta(parent + '/' + name)
+            if result.replayed
+            else self._private_meta(result.data['projection'][0])
+        )
         require(
             meta['mode'] == 0o600 or meta['mode'] == '0600', 'subagent_private_namespace_conflict'
         )
@@ -339,7 +364,7 @@ class RemoteAgents:
         root = await self._root()
         agent = self._label(agent)
         require(type(limit) is int and 1 <= limit <= 200, 'invalid_subagent_limit')
-        await self._agent(root, agent, active=False)
+        config_meta, _ = await self._agent(root, agent, active=False)
         scope = {
             'server': self.client.state.server,
             'owner': self.client.state.subject,
@@ -362,34 +387,72 @@ class RemoteAgents:
             except (ValueError, TypeError, KeyError) as exc:
                 raise Failure('invalid_subagent_cursor') from exc
         items, more = [], False
-        mailbox = (await self._directory(root + '/' + agent))['id']
+        mailbox = config_meta['parent']
+        page_limit = 1 if tail else limit
+        large_pages = True
         while True:
-            arguments = {'limit': limit if not tail else 200}
+            arguments = {'limit': page_limit}
             if sync_cursor is not None:
                 arguments['cursor'] = sync_cursor
             page = await self._call('communication.changes', arguments)
             require(not page.get('resync_required'), 'resync_required')
-            for event in page['items']:
+            if tail and isinstance(page.get('tail_cursor'), str):
+                sync_cursor = page['tail_cursor']
+                more = False
+                break
+            resumable = all(isinstance(event.get('resume_cursor'), str) for event in page['items'])
+            if not tail and page_limit > limit and not resumable:
+                # Rolling deployments can route the next request to an older
+                # worker. Re-read the unchanged cursor at the original bound
+                # before consuming any of that non-resumable large page.
+                page_limit = limit
+                large_pages = False
+                continue
+            for number, event in enumerate(page['items']):
                 if event['type'] not in {'file.create', 'content.file_put'}:
                     continue
                 for ref in event['resources']:
-                    # Check metadata and owner before ever reading the message body.
+                    hint = event.get('resource_parents', {}).get(ref['id'])
+                    if isinstance(hint, Mapping):
+                        if hint.get('parent') != mailbox or hint.get('name') == 'agent.json':
+                            continue
+                    else:
+                        try:
+                            meta = await self._call(
+                                'discovery.get', {'id': ref['id'], 'view': 'meta'}
+                            )
+                        except Failure as exc:
+                            if exc.code in {'not_found', 'subagent_archived'}:
+                                continue
+                            raise
+                        if meta['parent'] != mailbox or meta['name'] == 'agent.json':
+                            continue
                     try:
-                        meta = await self._call('discovery.get', {'id': ref['id'], 'view': 'meta'})
+                        meta, value = await self._json(ref['id'])
                     except Failure as exc:
                         if exc.code in {'not_found', 'subagent_archived'}:
                             continue
                         raise
                     if meta['parent'] != mailbox or meta['name'] == 'agent.json':
                         continue
-                    meta, value = await self._json(meta['id'])
                     value = self._event(meta, value, agent)
                     if not tail:
                         items.append(value)
-            sync_cursor = page['sync_cursor']
-            more = len(page['items']) == arguments['limit']
+                if resumable and len(items) >= limit:
+                    # A protected cursor after this event keeps the remaining
+                    # large page unread, without embedding messages in a cursor.
+                    sync_cursor = event['resume_cursor']
+                    more = number + 1 < len(page['items']) or len(page['items']) == page_limit
+                    break
+            else:
+                sync_cursor = page['sync_cursor']
+                more = len(page['items']) == page_limit
             if not more or (items and not tail):
                 break
+            # Only servers with event resume markers can enlarge a page without
+            # consuming messages beyond the caller's bound. Old servers keep
+            # their original bounded scan. A legacy tail can safely use 200.
+            page_limit = 200 if tail or resumable and large_pages else limit
         return {
             'items': items,
             'cursor': b64(canonical({'version': 1, 'scope': scope, 'sync_cursor': sync_cursor})),

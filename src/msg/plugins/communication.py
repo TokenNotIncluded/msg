@@ -1115,6 +1115,21 @@ def install(app):
         )
         items = []
         limit = request.arguments.get('limit', 50)
+        # Additive output hints leave the published input schema and existing
+        # cursor semantics intact. Every hint below is restricted to visible refs.
+        tail_position = max(position, tx.one('SELECT COALESCE(MAX(seq),0) FROM events')[0])
+
+        def resume(sequence):
+            return app.cursors.encode(
+                'sync',
+                subject,
+                {
+                    'seq': sequence,
+                    'authorization_epoch': epoch,
+                    'watch_digest': watch_digest,
+                },
+            )
+
         for seq, raw in tx.execute(
             'SELECT seq,body FROM events WHERE seq>? ORDER BY seq', (position,)
         ):
@@ -1129,9 +1144,12 @@ def install(app):
                     event['data'].pop('reason', None)
             references = event['resources']
             permitted = []
+            parents = {}
             for ref in references:
                 if await visible(app, ctx, request, tx, ref['id']):
                     permitted.append(ref)
+                    resource = await tx.resource(ref['id'])
+                    parents[ref['id']] = {'parent': resource.parent, 'name': resource.name}
             relevant = event['subject'] == subject or event['subject'] in watches
             if event['type'].startswith('topic.'):
                 topic = event.get('data', {}).get('topic_id')
@@ -1155,17 +1173,19 @@ def install(app):
                     relevant = True
             if relevant and (permitted or not references and event['subject'] == subject):
                 event['resources'] = permitted
-                items.append({'seq': seq, **event})
+                items.append({
+                    'seq': seq,
+                    **event,
+                    'resource_parents': parents,
+                    'resume_cursor': resume(seq),
+                })
             if len(items) >= limit:
                 break
         return HandlerOutput(
             data={
                 'items': items,
-                'sync_cursor': app.cursors.encode(
-                    'sync',
-                    subject,
-                    {'seq': position, 'authorization_epoch': epoch, 'watch_digest': watch_digest},
-                ),
+                'sync_cursor': resume(position),
+                'tail_cursor': resume(tail_position),
             }
         )
 
