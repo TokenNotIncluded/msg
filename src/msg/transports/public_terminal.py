@@ -19,6 +19,7 @@ from msg.transports.read_representation import representation
 MAX_ITEMS = 20
 MAX_COMMAND_BYTES = 1024
 MAX_READ_BYTES = 4096
+MAX_READ_SEGMENTS = 8
 MAX_OUTPUT_BYTES = 8192
 COMMANDS = {
     'help': 'Show command usage and examples',
@@ -62,7 +63,7 @@ def _bounded(value, maximum=MAX_OUTPUT_BYTES):
 
 
 def _reference(value, *, path_only=False):
-    require(0 < len(value.encode('utf-8')) <= 160, 'invalid_command')
+    require(0 < len(value) <= 160, 'invalid_command')
     require(not any(char in value for char in ' ?#%'), 'invalid_command')
     if value.startswith('/'):
         require(not value.startswith(('//', '/-/', '/!', '/~')), 'invalid_command')
@@ -140,17 +141,26 @@ async def _read(service, operation, arguments, version=1):
     return wire(result.data)
 
 
-def _link(links, label, path):
+def _link(links, label, path, resource_id=None):
     # Paths come from an already-authorized projection, never from HTML output.
     if (
         not isinstance(path, str)
         or not path.startswith('/')
         or path.startswith(('//', '/-/', '/!', '/~'))
-        or len(path.encode('utf-8')) > 240
         or any(unicodedata.category(char).startswith('C') or char == '\\' for char in path)
         or any(part in {'.', '..'} for part in path.split('/'))
     ):
         return
+    try:
+        parse_command('read ' + path)
+    except Failure:
+        if not isinstance(resource_id, str) or not _ID.fullmatch(resource_id):
+            return
+        path = '/_id/' + resource_id
+        try:
+            parse_command('read ' + path)
+        except Failure:
+            return
     href = quote(path, safe='/@*')
     if len(links) < MAX_ITEMS and not any(link['href'] == href for link in links):
         links.append({'label': _bounded(label, 160), 'href': href})
@@ -163,7 +173,7 @@ def _rows(data, links):
         lines.append(
             f'{item.get("type", "resource"):<10} {_bounded(path, 320)}\n  {name}\n  id: {item["id"]}'
         )
-        _link(links, name or path, path)
+        _link(links, name or path, path, item['id'])
         snippet = item.get('snippet')
         if isinstance(snippet, dict):
             snippet = snippet.get('text', '')
@@ -178,7 +188,7 @@ async def _content(service, reference, links):
     if _SHORT.fullmatch(reference):
         reference = reference.removesuffix('.md')
     meta = await _read(service, 'discovery.get', {'id': reference, 'view': 'meta'})
-    _link(links, meta['name'] or meta['id'], meta['path'])
+    _link(links, meta['name'] or meta['id'], meta['path'], meta['id'])
     heading = f'{_bounded(meta["path"], 320)}\nid: {meta["id"]}\ntype: {meta["type"]}'
     if not meta.get('revision'):
         return heading + '\n\nUse ls with this MSG path to browse public children.'
@@ -189,6 +199,7 @@ async def _content(service, reference, links):
             'discovery.read_segment',
             {
                 'id': meta['id'],
+                'revision': meta['revision'],
                 'max_bytes': max_bytes,
             },
         )
@@ -196,9 +207,27 @@ async def _content(service, reference, links):
         if exc.code != 'text_required':
             raise
         return heading + '\n\nBinary resource. Open the resource link to inspect it.'
-    output = heading + '\n\n' + segment['text']
-    if segment.get('next'):
-        output += f'\n[Text truncated at {max_bytes} bytes. Open the resource to continue.]'
+    chunks = []
+    used = 0
+    truncated = False
+    for index in range(MAX_READ_SEGMENTS):
+        raw = segment['text'].encode('utf-8')
+        remaining = max_bytes - used
+        text = raw[:remaining].decode('utf-8', errors='ignore')
+        chunks.append(text)
+        used += len(text.encode('utf-8'))
+        next_path = segment.get('next')
+        truncated = bool(next_path) or len(raw) > remaining
+        if not next_path or len(raw) >= remaining or index + 1 == MAX_READ_SEGMENTS:
+            break
+        require(next_path.startswith('/_r/c/'), 'invalid_cursor')
+        segment = await _read(
+            service, 'discovery.read_segment', {'cursor': next_path.removeprefix('/_r/c/')}
+        )
+    output = heading + '\n\n' + ''.join(chunks)
+    if truncated:
+        limit = f'{max_bytes} bytes' if used >= max_bytes - 3 else f'{MAX_READ_SEGMENTS} segments'
+        output += f'\n[Text truncated at {limit}. Open the resource to continue.]'
     return output
 
 
