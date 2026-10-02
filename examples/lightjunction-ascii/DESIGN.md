@@ -96,7 +96,7 @@ The scene's forms are boxes, ellipsoids, the ground ring and fragments expressed
 
 ### ASCII stage
 
-The projection has an image role and a Chinese accessible description; individual frame text is hidden from assistive technology. All 64 animated frames occupy the same space and switch visibility through `steps(1,end)` animations. A separate opening-chair frame supplies the reduced-motion still. The sequence loops at 18 seconds; the first detonation is authored at 3.6 seconds. There are no whole-screen flashes, transformed frame strips or scripted playback.
+The projection has an image role and a Chinese accessible description; individual frame text is hidden from assistive technology. All 64 frames occupy the same space. One parent projection clock animates the inherited integer property `--frame` with `steps(64,end)`; each frame uses its fixed index and `calc`/`max` opacity to display exactly one frame. The clock stays paused at frame 0 until the footer's `#scene-ready` marker is parsed after all frames, so streamed downloads show the opening chair before playback starts. A separate opening-chair frame supplies the reduced-motion still. The sequence loops at 18 seconds; the first detonation is authored at 3.6 seconds. There are no independent frame animations, whole-screen flashes, transformed frame strips or scripted playback.
 
 ### Native pause and motion controls
 
@@ -104,7 +104,7 @@ Each label is an inline flex target with `44px` minimum height and `7px` interna
 
 The pause checkbox holds the current frame through `animation-play-state:paused!important`. Keep that priority: it must override the restored animation after reduced-motion opt-in. Space toggles the focused native checkbox.
 
-For `prefers-reduced-motion:reduce`, animated frames have `animation:none!important` and the opening chair stays visible. Only then is the “播放动画” checkbox displayed. Explicit opt-in restores each named frame animation, its 18-second duration, discrete timing and infinite loop, and hides the still. Pause and resume continue to work in that mode.
+For `prefers-reduced-motion:reduce`, the parent projection has `animation:none!important` and the opening chair stays visible. Only then is the “播放动画” checkbox displayed. Explicit opt-in restores the same parent clock, its 18-second duration, discrete timing and infinite loop, and hides the still. Pause and resume continue to work in that mode.
 
 ### Replay and profile links
 
