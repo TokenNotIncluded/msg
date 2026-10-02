@@ -6,10 +6,22 @@ from msg.core.models import ResourceRef
 from msg.core.profile_art import MAX_SVG_BYTES
 
 
+def artwork_url(name, kind):
+    path = quote('/' + name, safe='/@')
+    return path + '/art/' + kind + '.svg'
+
+
+async def profile_avatar_reference(tx, subject_id):
+    """A current public endpoint, without inspecting custom files or SVG bytes."""
+    resource = await tx.resource(subject_id)
+    return {'avatar': {'url': artwork_url(resource.name, 'avatar')}}
+
+
 async def profile_artwork(app, ctx, request, tx, subject_id):
     from msg.plugins.discovery import visible
 
-    path = quote('/' + (await tx.resource(subject_id)).name, safe='/@')
+    subject = await tx.resource(subject_id)
+    path = quote('/' + subject.name, safe='/@')
     artwork = {}
     for kind, name in (
         ('avatar', 'AVATAR.svg'),
@@ -28,5 +40,5 @@ async def profile_artwork(app, ctx, request, tx, subject_id):
                 blob = revision.content
                 if blob.media_type == 'image/svg+xml' and blob.size <= MAX_SVG_BYTES:
                     custom = path + '/' + name
-        artwork[kind] = {'url': path + '/art/' + kind + '.svg', 'file': custom}
+        artwork[kind] = {'url': artwork_url(subject.name, kind), 'file': custom}
     return artwork

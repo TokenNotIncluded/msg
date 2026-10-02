@@ -420,6 +420,10 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
             from msg.plugins.star_projection import public_star_batch
 
             meta['star_batch'] = await public_star_batch(app, ctx, request, tx)
+        if not fields or 'artwork' in fields:
+            from msg.plugins.profile_art import profile_avatar_reference
+
+            meta['artwork'] = await profile_avatar_reference(tx, rid)
         if ctx.principal.subject == rid and (not fields or 'groups' in fields):
             meta['groups'] = []
             for membership in await tx.memberships(rid):
@@ -575,6 +579,7 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'kind',
         'local_only',
         'profile',
+        'artwork',
         'groups',
         'list_operation',
         'board_rules',
@@ -1109,6 +1114,10 @@ def install(app):
                         from msg.plugins.star_projection import star_projection
 
                         data['star'] = await star_projection(app, ctx, request, tx, rid)
+                    if resource.type == 'user' and 'artwork' in chosen:
+                        from msg.plugins.profile_art import profile_avatar_reference
+
+                        data['artwork'] = await profile_avatar_reference(tx, rid)
                     require(set(chosen) <= set(data), 'unknown_projection_field')
                     values.append({k: data[k] for k in chosen})
                     position = last_position
