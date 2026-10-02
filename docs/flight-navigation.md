@@ -90,5 +90,5 @@ Still required before deployment: native WebGL shader/render/context-restoration
 acceptance in the existing production-CSP browser workflow, complete root-web app
 integration, PostgreSQL/backend and release-upgrade regressions, and pinned Ruff
 0.16.9 formatting/lint checks (that executable was unavailable locally). This
-patch has not been pushed, merged, released or deployed. No production-frame-rate
-or multiplayer claim is made.
+patch has not been released or deployed. No production-frame-rate or multiplayer
+claim is made.
