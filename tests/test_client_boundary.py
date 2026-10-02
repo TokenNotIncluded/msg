@@ -143,9 +143,10 @@ def test_fresh_client_import_guard_covers_actual_four_transport_calls():
     report = json.loads(completed.stdout)
     assert report['transports'] == ['graphql', 'http', 'mcp_http', 'path_get']
     assert report['server_implementation_imported'] is False
+    assert report['hardware_signer_descriptor_checked'] is True
 
 
-def test_install_metadata_separates_roles_but_dev_keeps_full_server():
+def test_install_metadata_separates_roles_but_dev_keeps_server_and_hardware():
     project = tomllib.loads((ROOT / 'pyproject.toml').read_text())['project']
 
     def name(requirement):
@@ -161,9 +162,12 @@ def test_install_metadata_separates_roles_but_dev_keeps_full_server():
         'graphql-core',
     }
     assert not server_names & {name(value) for value in project['dependencies']}
+    assert 'yubikey-manager' not in {name(value) for value in project['dependencies']}
     extras = project['optional-dependencies']
     assert server_names <= {name(value) for value in extras['server']}
+    assert {name(value) for value in extras['hardware']} == {'yubikey-manager'}
     assert 'msgctl[server]' in extras['dev']
+    assert 'msgctl[hardware]' in extras['dev']
     assert project['scripts'] == {'msg': 'msg.cli:main', 'msgd': 'msg.daemon:main'}
 
 

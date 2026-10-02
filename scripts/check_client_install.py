@@ -13,11 +13,13 @@ import importlib.abc
 import importlib.util
 import json
 import stat
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 SERVER_DEPENDENCIES = ('starlette', 'uvicorn', 'psycopg', 'valkey', 'aiohttp', 'dns', 'graphql')
+HARDWARE_DEPENDENCIES = ('smartcard', 'ykman', 'yubikit')
 FORBIDDEN = (
     'msg.application',
     'msg.core.executor',
@@ -37,6 +39,64 @@ class ClientBoundary(importlib.abc.MetaPathFinder):
         if any(fullname == name or fullname.startswith(name + '.') for name in FORBIDDEN):
             raise RuntimeError('client imported a server implementation: ' + fullname)
         return None
+
+
+def check_hardware_boundary(directory, public_key):
+    """Descriptors need no SDK; absent drivers fail before any device interaction."""
+    from msg import client_yubikey as hardware
+    from msg.client import ClientState
+    from msg.core.errors import Failure
+
+    signer = hardware.YubiKeySigner(public_key, '83')
+    assert hardware.YubiKeySigner.from_descriptor(signer.descriptor()) == signer
+    if any(importlib.util.find_spec(name) is not None for name in HARDWARE_DEPENDENCIES):
+        return False  # Never probe devices in an environment with installed card drivers.
+    empty = ClientState(directory / 'unconfigured', server='https://unit.invalid')
+    saved = ClientState(directory / 'hardware', server='https://unit.invalid')
+    saved.save_signer(signer)
+    saved.data.update(subject_id='u_test', handle='test', certificates=[])
+    saved._save()
+    operations = {
+        'sdk': hardware.sdk,
+        'initialize': lambda: hardware.initialize(empty, '83'),
+        'attach': lambda: hardware.attach(empty, '83'),
+        'load_profile': lambda: hardware.load_profile(empty.server, '83'),
+        'sign': lambda: signer.sign(b'client boundary', purpose='request'),
+        'save_profile': lambda: hardware.save_profile(saved),
+    }
+    for name, operation in operations.items():
+        try:
+            operation()
+        except Failure as exc:
+            assert exc.code == 'yubikey_driver_unavailable', (name, exc.code)
+        else:
+            raise AssertionError('missing hardware driver did not fail: ' + name)
+    assert empty.signer is None
+    assert isinstance(ClientState(directory / 'hardware').signer, hardware.YubiKeySigner)
+    assert not any(path.exists() for path in (empty.key_path, saved.key_path, saved.age_key_path))
+    cli = subprocess.run(
+        [
+            sys.executable,
+            '-I',
+            '-m',
+            'msg.cli',
+            '--config-dir',
+            str(directory / 'cli-no-driver'),
+            '--server',
+            empty.server,
+            'yubikey',
+            'init',
+            '--slot',
+            '83',
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert cli.returncode == 1 and not cli.stdout, cli.stdout + cli.stderr
+    assert json.loads(cli.stderr)['error']['code'] == 'yubikey_driver_unavailable'
+    return True
 
 
 async def check(directory):
@@ -153,7 +213,8 @@ async def check(directory):
         any(name == prefix or name.startswith(prefix + '.') for prefix in FORBIDDEN)
         for name in sys.modules
     )
-    return calls
+    hardware_checked = check_hardware_boundary(directory, signer.public_key)
+    return calls, hardware_checked
 
 
 def main():
@@ -169,13 +230,15 @@ def main():
         )
     sys.meta_path.insert(0, ClientBoundary())
     with tempfile.TemporaryDirectory(prefix='msg-client-install-') as folder:
-        calls = asyncio.run(check(Path(folder) / 'client'))
+        calls, hardware_checked = asyncio.run(check(Path(folder) / 'client'))
     print(
         json.dumps({
             'status': 'ok',
             'transports': sorted(calls),
             'server_implementation_imported': False,
             'minimal_install': args.minimal_install,
+            'hardware_signer_descriptor_checked': True,
+            'hardware_driver_unavailable_checked': hardware_checked,
         })
     )
 

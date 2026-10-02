@@ -498,7 +498,6 @@ dependencies = [
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "referencing" },
-    { name = "yubikey-manager" },
 ]
 
 [package.optional-dependencies]
@@ -518,9 +517,13 @@ dev = [
     { name = "uvicorn" },
     { name = "valkey" },
     { name = "websockets" },
+    { name = "yubikey-manager" },
 ]
 fuse = [
     { name = "mfusepy" },
+]
+hardware = [
+    { name = "yubikey-manager" },
 ]
 server = [
     { name = "aiohttp" },
@@ -545,6 +548,7 @@ requires-dist = [
     { name = "jsonschema", specifier = ">=4.25,<5" },
     { name = "markdown-it-py", marker = "extra == 'server'", specifier = ">=4,<5" },
     { name = "mfusepy", marker = "extra == 'fuse'", specifier = ">=3.1.1,<4" },
+    { name = "msgctl", extras = ["hardware"], marker = "extra == 'dev'" },
     { name = "msgctl", extras = ["server"], marker = "extra == 'dev'" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'server'", specifier = ">=3.3,<4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.4" },
@@ -557,9 +561,9 @@ requires-dist = [
     { name = "uvicorn", marker = "extra == 'server'", specifier = ">=0.38,<1" },
     { name = "valkey", marker = "extra == 'server'", specifier = ">=6.1,<7" },
     { name = "websockets", marker = "extra == 'server'", specifier = ">=15,<17" },
-    { name = "yubikey-manager", specifier = ">=5.8,<6" },
+    { name = "yubikey-manager", marker = "extra == 'hardware'", specifier = ">=5.8,<6" },
 ]
-provides-extras = ["fuse", "server", "dev"]
+provides-extras = ["fuse", "hardware", "server", "dev"]
 
 [[package]]
 name = "multidict"
