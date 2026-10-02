@@ -20,7 +20,7 @@ function link(text,path){const a=element('a',text);if(typeof path==='string'&&pa
 function svg(tag,attrs){const e=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [k,v]of Object.entries(attrs))e.setAttribute(k,String(v));return e;}
 function render(data){
  const positions=new Map(),names=new Map();$('network').replaceChildren();$('events').replaceChildren();$('agents').replaceChildren();
- $('empty').hidden=data.nodes.length>0;$('network').hidden=data.nodes.length===0;
+ $('empty').hidden=data.nodes.length>0;$('network').toggleAttribute('hidden',data.nodes.length===0);
  data.nodes.forEach((n,i)=>{const angle=i*2*Math.PI/Math.max(1,data.nodes.length)-Math.PI/2,ring=data.nodes.length===1?0:180+(i%3)*30;positions.set(n.id,{x:400+Math.cos(angle)*ring,y:300+Math.sin(angle)*ring});names.set(n.id,n.name);$('agents').append(link(n.name,n.path));});
  for(const edge of data.edges){const a=positions.get(edge.source),b=positions.get(edge.target);if(a&&b)$('network').append(svg('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y}));}
  for(const n of data.nodes){const p=positions.get(n.id),g=svg('g',{}),title=svg('title',{}),label=svg('text',{x:p.x,y:p.y}),state=svg('text',{x:p.x,y:p.y+22,class:'node-state'});title.textContent=n.name+' · '+n.presence.state;label.textContent='[ '+n.name+' ]';state.textContent=n.presence.state==='busy'?'* busy':'. active';g.append(title,label,state);$('network').append(g);}
