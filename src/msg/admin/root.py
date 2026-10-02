@@ -577,6 +577,63 @@ class RootAdmin:
 
         return asyncio.run(execute())
 
+    def repair_follows(self, subject, *, key_id=None, apply=False, expected_digest=None):
+        from msg.admin.follow_authority import (
+            follow_preview,
+            open_for_repair,
+            preview_configuration,
+            repair_follows,
+        )
+
+        require(
+            (apply and type(expected_digest) is str and bool(expected_digest))
+            or (not apply and expected_digest is None),
+            'follow_repair_expected_preview_required',
+        )
+        if not apply:
+            return asyncio.run(preview_configuration(self.config_dir, subject, key_id=key_id))
+        operator = self._provisioning_operator()
+        from msg.security.root_files import read_private
+
+        async def execute():
+            app = await open_for_repair(self.config_dir)
+            try:
+                async with app.metadata.transaction(write=False) as tx:
+                    preview = await follow_preview(app, tx, subject, key_id)
+                fingerprint = digest(preview)
+                require(fingerprint == expected_digest, 'follow_repair_preview_changed')
+                print(canonical({'preview': preview, 'digest': fingerprint}).decode())
+                if not preview['additions']:
+                    return {
+                        'subject_id': preview['subject_id'],
+                        'key_id': preview['key_id'],
+                        'changed': False,
+                        'additions': [],
+                    }
+                require(
+                    input('Type REPAIR FOLLOWS ' + fingerprint + ': ')
+                    == 'REPAIR FOLLOWS ' + fingerprint,
+                    'approval_cancelled',
+                )
+                signer = Ed25519Signer.from_bytes(
+                    open_private_key(
+                        loads(read_private(root_envelope(self.config_dir))),
+                        getpass.getpass('Root PIN/passphrase: '),
+                    )
+                )
+                return await repair_follows(
+                    app,
+                    subject,
+                    signer,
+                    key_id=key_id,
+                    expected_digest=fingerprint,
+                    operator=operator,
+                )
+            finally:
+                await app.close()
+
+        return asyncio.run(execute())
+
     def sign_recovery_proof(self, source_backup_sha256, sequence, destination):
         require_local_console(self.config_dir)
         from msg.admin.backup_retirement import write_record

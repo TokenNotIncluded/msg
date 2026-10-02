@@ -215,6 +215,24 @@ def parser():
         action='store_true',
         help='Allow an OS root SSH terminal for this archival only; requires PIN and exact preview confirmation',
     )
+    repair = account_sub.add_parser(
+        'repair-follows',
+        help='Preview or explicitly repair two follow operations on an existing primary key',
+    )
+    repair.add_argument('subject_id', help='Registered account @handle or subject ID')
+    repair.add_argument('--key-id', help='Require this exact current primary signing key')
+    repair.add_argument(
+        '--apply', action='store_true', help='Apply after Root PIN and exact preview confirmation'
+    )
+    repair.add_argument(
+        '--expected-digest',
+        help='Exact digest returned by the read-only preview; required with --apply',
+    )
+    repair.add_argument(
+        '--allow-ssh',
+        action='store_true',
+        help='Allow an OS root SSH terminal for this repair only; Root PIN required',
+    )
     board = sub.add_parser('board', help='Local Root channel administration')
     board_sub = board.add_subparsers(dest='board_command', required=True)
     appoint = board_sub.add_parser('appoint', help='Appoint or replace channel administrators')
@@ -403,7 +421,16 @@ def main(argv=None):
                     args.topic, args.subject, replace_admins=args.replace_admins
                 )
             elif args.command == 'account':
-                result = admin.archive_account(args.subject_id)
+                result = (
+                    admin.archive_account(args.subject_id)
+                    if args.account_command == 'archive'
+                    else admin.repair_follows(
+                        args.subject_id,
+                        key_id=args.key_id,
+                        apply=args.apply,
+                        expected_digest=args.expected_digest,
+                    )
+                )
             elif args.command == 'cert':
                 result = (
                     admin.issue(args.csr_id)
