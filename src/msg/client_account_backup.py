@@ -170,7 +170,10 @@ def _snapshot(paths):
 def _identity(files, server):
     require('state/client.json' in files, 'local_account_not_found')
     state = loads(files['state/client.json'])
-    require(isinstance(state, dict) and state.get('version') == 1, 'invalid_account_backup_state')
+    require(
+        isinstance(state, dict) and type(state.get('version')) is int and state['version'] == 1,
+        'invalid_account_backup_state',
+    )
     require(service_origin(state.get('server')) == server, 'client_server_mismatch')
     subject = state.get('subject_id')
     require(
@@ -224,6 +227,7 @@ def _write_new(parent, name, raw):
     except FileExistsError:
         raise Failure('account_backup_destination_exists') from None
     try:
+        os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, 'wb', closefd=False) as stream:
             stream.write(raw)
             stream.flush()
@@ -278,7 +282,10 @@ def backup_account(server, account, recipients, output):
     require(
         1 <= len(recipients) <= 8
         and len(set(recipients)) == len(recipients)
-        and all(isinstance(r, str) and 1 <= len(r) <= 4096 and '\n' not in r for r in recipients),
+        and all(
+            isinstance(r, str) and 1 <= len(r) <= 4096 and not any(ord(c) < 32 for c in r)
+            for r in recipients
+        ),
         'invalid_recovery_recipients',
     )
     output = _path(output)
@@ -436,7 +443,7 @@ def _remove_contents(descriptor):
 
 
 def _install(paths, directories, files):
-    roots, parents = {}, {}
+    roots, parents, created = {}, {}, {}
     try:
         for scope in SCOPES:
             path = getattr(paths, scope)
@@ -446,10 +453,15 @@ def _install(paths, directories, files):
                 os.mkdir(path.name, 0o700, dir_fd=parent)
             except FileExistsError:
                 raise Failure('account_restore_destination_exists') from None
+            info = os.stat(path.name, dir_fd=parent, follow_symlinks=False)
+            require(stat.S_ISDIR(info.st_mode), 'unsafe_account_backup_path')
+            created[scope] = (info.st_dev, info.st_ino)
             descriptor = os.open(
                 path.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent
             )
             roots[scope] = descriptor
+            opened = os.fstat(descriptor)
+            require((opened.st_dev, opened.st_ino) == created[scope], 'unsafe_account_backup_path')
         for name in sorted(directories, key=lambda n: (len(n.split('/')), n)):
             parts = _relative(name)
             if len(parts) == 1:
@@ -481,12 +493,21 @@ def _install(paths, directories, files):
         for descriptor in roots.values():
             os.fsync(descriptor)
     except BaseException:
-        for scope, descriptor in roots.items():
-            _remove_contents(descriptor)
-            info = os.stat(getattr(paths, scope).name, dir_fd=parents[scope], follow_symlinks=False)
-            opened = os.fstat(descriptor)
-            if (info.st_dev, info.st_ino) == (opened.st_dev, opened.st_ino):
-                os.rmdir(getattr(paths, scope).name, dir_fd=parents[scope])
+        for scope, identity in created.items():
+            parent = parents[scope]
+            name = getattr(paths, scope).name
+            try:
+                info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != identity:
+                continue
+            if scope in roots:
+                opened = os.fstat(roots[scope])
+                if (opened.st_dev, opened.st_ino) != identity:
+                    continue
+                _remove_contents(roots[scope])
+            os.rmdir(name, dir_fd=parent)
         raise
     finally:
         for descriptor in (*roots.values(), *parents.values()):
@@ -515,7 +536,13 @@ def restore_account(
         expected_sha256 is None or digest(ciphertext) == expected_sha256,
         'account_backup_ciphertext_mismatch',
     )
-    require(ciphertext.startswith(b'age-encryption.org/v1\n'), 'invalid_account_backup_ciphertext')
+    require(
+        ciphertext.startswith((
+            b'age-encryption.org/v1\n',
+            b'-----BEGIN AGE ENCRYPTED FILE-----\n',
+        )),
+        'invalid_account_backup_ciphertext',
+    )
     arguments, descriptors = ['--decrypt'], []
     try:
         for identity in identities:
