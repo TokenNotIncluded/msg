@@ -39,6 +39,51 @@ def _inside(point, bound=WORLD_BOUND):
     return [value * min(1, bound / max(length, 0.001)) for value in point]
 
 
+def _separate_systems(result, components, root_component):
+    """Place colliding systems rigidly; Root and within-system offsets stay fixed.
+
+    The public graph is bounded to 256 nodes. Eight world units also cover the
+    largest Root/user entity pair; post rings may cross each other.
+    """
+    placed = []
+    order = sorted(range(len(components)), key=lambda index: (index != root_component, index))
+    for index in order:
+        members = components[index]
+        original = result[members[0]]['orbit']['center']
+        offsets = [
+            [left - right for left, right in zip(result[rid]['position'], original, strict=True)]
+            for rid in members
+        ]
+
+        def available(points):
+            return all(math.dist(point, previous) >= 8 for point in points for previous in placed)
+
+        points = [result[rid]['position'] for rid in members]
+        if index != root_component and not available(points):
+            extent = max(math.hypot(*offset) for offset in offsets)
+            bound = max(0, WORLD_BOUND - extent - 0.000001)
+            seed = 'separate:v4:' + '|'.join(members)
+            # A deterministic rejection pass is independent of request/page
+            # order and does not move one member away from its barycenter.
+            for attempt in range(4096):
+                probe = seed + ':' + str(attempt)
+                distance = bound * (0.15 + _numbers(probe)[2] * 0.85)
+                anchor = _vector(probe, distance)
+                candidates = [
+                    _rounded([left + right for left, right in zip(anchor, offset, strict=True)])
+                    for offset in offsets
+                ]
+                if available(candidates):
+                    points = candidates
+                    for rid, point in zip(members, points, strict=True):
+                        result[rid]['position'] = point
+                        result[rid]['orbit']['center'] = _rounded(anchor)
+                    break
+            else:
+                raise ValueError('bounded planet systems could not be separated')
+        placed.extend(points)
+
+
 def planet_layout(nodes, edges, *, root_id='u_root'):
     """Map visible IDs to layout facts; caller owns ACL and graph bounds.
 
@@ -230,6 +275,7 @@ def planet_layout(nodes, edges, *, root_id='u_root'):
                     'source_type': sources[index],
                 },
             }
+    _separate_systems(result, components, root_component)
     for value in result.values():
         orbit = value['orbit']
         if orbit['kind'] == 'orbit':
