@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import os
 import shutil
 import stat
 import subprocess
@@ -12,6 +13,7 @@ import pytest
 
 from msg.client_backup_remote import (
     MAX_MANIFEST_BYTES,
+    _read_ciphertext,
     detect_encryption,
     discover_backup,
     fetch_backup,
@@ -85,6 +87,14 @@ def test_real_age_binary_and_armor_structure(ciphertext):
 def test_plaintext_spoofed_headers_and_literal_packets_rejected(data):
     with pytest.raises(Failure):
         detect_encryption(data)
+
+
+def test_ciphertext_fifo_is_rejected_without_waiting_for_writer(tmp_path):
+    fifo = tmp_path / 'blocked.age'
+    os.mkfifo(fifo, mode=0o600)
+    # A plain O_RDONLY open would hang here because no writer exists.
+    with pytest.raises(Failure, match='unsafe_backup_file'):
+        _read_ciphertext(fifo)
 
 
 def test_real_gpg_encrypted_container_binary_and_armor(tmp_path):
