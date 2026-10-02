@@ -33,6 +33,7 @@ MAX_FRAME_BYTES = 2048
 MAX_SNAPSHOT_BYTES = 192 * 1024
 INPUT_HZ = 30
 INPUT_BURST = 45
+MAX_PENDING_COMMANDS = 8
 TICK_HZ = 15
 SNAPSHOT_HZ = 5
 REVALIDATE_SECONDS = 2.0
@@ -55,6 +56,9 @@ class Peer:
     last_input: float = field(default_factory=time.monotonic)
     bad_frames: int = 0
     pending: deque = field(default_factory=deque)
+    latest_control: tuple | None = None
+    input_seq: int = -1
+    arrival_order: int = 0
 
 
 class FlightHub:
@@ -309,7 +313,7 @@ class FlightHub:
                 self._allow_input(peer)
                 if packet.get('type') == 'input':
                     valid = valid_input(packet)
-                    if valid and packet['seq'] <= ship.ack_seq:
+                    if valid and packet['seq'] <= max(ship.ack_seq, peer.input_seq):
                         continue
                 elif packet.get('type') == 'region':
                     valid = (
@@ -320,8 +324,7 @@ class FlightHub:
                 else:
                     valid = False
                 if valid:
-                    require(len(peer.pending) < 8, 'flight_input_rate')
-                    peer.pending.append(packet)
+                    self._queue_controls(peer, packet)
                 if not valid:
                     peer.bad_frames += 1
                     self._enqueue(
@@ -367,9 +370,46 @@ class FlightHub:
                 peer.queue.get_nowait()
         peer.queue.put_nowait(packet)
 
+    def _queue_controls(self, peer, packet):
+        """Keep current movement even while authority validation is waiting.
+
+        Discrete actions retain their original aim and order. Repeated held
+        actions in one pending batch cannot fill the bounded command queue.
+        Nothing here advances the simulation before the runtime/auth fence.
+        """
+        peer.arrival_order += 1
+        order = peer.arrival_order
+        if packet['type'] == 'input':
+            peer.input_seq = packet['seq']
+            peer.latest_control = (order, {**packet, 'actions': []})
+            queued_actions = set()
+            for _, queued in reversed(peer.pending):
+                if queued['type'] == 'input':
+                    queued_actions.update(queued['actions'])
+            actions = [action for action in packet['actions'] if action not in queued_actions]
+            if not actions:
+                return
+            packet = {**packet, 'actions': actions}
+        if len(peer.pending) >= MAX_PENDING_COMMANDS:
+            self._enqueue(
+                peer,
+                {
+                    'v': 1,
+                    'type': 'error',
+                    'code': 'input_busy',
+                    'message': '操作等待处理，请稍后再使用技能或切换区域。',
+                },
+            )
+            return
+        peer.pending.append((order, packet))
+
     def _drain_inputs(self, peer):
-        while peer.pending:
-            packet = peer.pending.popleft()
+        pending = list(peer.pending)
+        peer.pending.clear()
+        if peer.latest_control is not None:
+            pending.append(peer.latest_control)
+            peer.latest_control = None
+        for _, packet in sorted(pending, key=lambda item: item[0]):
             if packet['type'] == 'input':
                 self.world.input(peer.ship_id, packet)
             elif not self.world.change_region(peer.ship_id, packet['region']):
@@ -453,6 +493,7 @@ class FlightHub:
         if self.peers.pop(peer.id, None) is None:
             return
         peer.pending.clear()
+        peer.latest_control = None
         if peer.ship_id:
             self.world.leave(peer.ship_id)
         count = self.addresses.get(peer.address, 1) - 1
