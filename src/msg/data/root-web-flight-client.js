@@ -201,7 +201,7 @@
       }
       const actions = new Set(value.actions ?? []);
       for (const action of actions) {
-        if (action !== 'laser' && !this._heldActions.has(action)) this._pendingActions.add(action);
+        if (!this._heldActions.has(action)) this._pendingActions.add(action);
       }
       this._heldActions = actions;
       const clamp = value => Math.max(-1, Math.min(1, value ?? 0));
@@ -270,7 +270,7 @@
     _sendInput(force = false) {
       if (!this.connected || (!force && (this._suspended || this._hidden()))) return;
       if (this._seq >= Number.MAX_SAFE_INTEGER) { this._badFrame(); return; }
-      const actions = force ? [] : [...this._input.actions, ...this._pendingActions];
+      const actions = force ? [] : [...new Set([...this._input.actions, ...this._pendingActions])];
       this._pendingActions.clear();
       this._send({ v: VERSION, type: 'input', seq: ++this._seq,
         throttle: this._input.throttle, strafe: this._input.strafe, lift: this._input.lift,
