@@ -3726,12 +3726,15 @@ def create_app(service):
                 from msg.core.wiki import in_wiki
                 from msg.transports.wiki_actions import wiki_history_content
 
-                history_id = value.get('id') if view == 'history' else value['to']['id']
-                async with service.metadata.transaction(write=False) as tx:
-                    shared_wiki = await in_wiki(tx, await tx.resource(history_id))
-                if shared_wiki:
+                if view == 'diff':
                     browser_html = True
                     wiki_history = wiki_history_content(value, view)
+                else:
+                    async with service.metadata.transaction(write=False) as tx:
+                        shared_wiki = await in_wiki(tx, await tx.resource(value['id']))
+                    if shared_wiki:
+                        browser_html = True
+                        wiki_history = wiki_history_content(value, view)
             etag = '"' + digest([value, browser_html, certificate_markup, wiki_history])[7:] + '"'
             headers = {**BASE_HEADERS, 'ETag': etag, 'Cache-Control': 'private, no-cache'}
             headers['Vary'] = 'Accept'
