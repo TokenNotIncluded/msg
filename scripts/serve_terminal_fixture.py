@@ -16,6 +16,7 @@ import signal
 import socket
 import tempfile
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -28,6 +29,7 @@ from msg.admin.root import _approve_csr, _provision
 from msg.application import Application
 from msg.config import write_example
 from msg.core.codec import b64
+from msg.core.requests import request_for
 from msg.oauth_config import OAuthConfig
 from msg.security.age_keys import generate_age_key
 from msg.security.crypto import Ed25519Signer, subject_id
@@ -57,14 +59,16 @@ async def seed(app):
         accounts.append({'handle': handle, 'subject_id': subject, 'key': key})
     owner = accounts[1]
     posts = {}
-    for visibility in ('public', 'private'):
+    for visibility in ('public', 'private', 'long'):
         marker = 'TERMINAL_' + visibility.upper() + '_BROWSER'
         result = await call(
             app,
             'content.post_create',
             {
                 'parent': '/main',
-                'name': 'terminal-browser-' + visibility + '.md',
+                'name': ('中文' * 32 + ' public.md')
+                if visibility == 'long'
+                else 'terminal-browser-' + visibility + '.md',
                 'body': '# Terminal browser post\n\n'
                 + marker
                 + '\n<script>window.__TERMINAL_XSS=1</script>',
@@ -74,14 +78,20 @@ async def seed(app):
         )
         ref = result.resources[0]
         if visibility == 'private':
-            await call(
-                app,
-                'content.chmod',
-                {'id': ref.id, 'mode': '0600'},
-                key=owner['key'],
-                subject=owner['subject_id'],
-                expected=((ref.id, result.data['generation']),),
+            changed = await app.executor.execute(
+                request_for(
+                    'content.chmod',
+                    {'id': ref.id, 'mode': '0600'},
+                    app.settings.service_url,
+                    signer=owner['key'],
+                    subject=owner['subject_id'],
+                    expected=((ref.id, result.data['generation']),),
+                    expires_at=app.clock() + timedelta(seconds=120),
+                ),
+                entry='network',
             )
+            if changed.status != 'ok':
+                raise RuntimeError('Could not make the fixture post private')
         meta = await call(
             app,
             'discovery.get',
