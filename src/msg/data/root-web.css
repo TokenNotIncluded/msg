@@ -984,8 +984,8 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 .game-session { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; margin-bottom: 12px; }
 #game-connection { color: var(--hud-muted); font-size: 11px; letter-spacing: .04em; }
 #game-connection[data-state="connected"] { color: var(--hud-signal); }
-#game-connection:is([data-state="stale"], [data-state="connecting"]) { color: var(--hud-warning); }
-#game-connection:is([data-state="disconnected"], [data-state="error"]) { color: var(--hud-danger); }
+#game-connection:is([data-state="stale"], [data-state="connecting"], [data-state="reconnecting"], [data-state="suspended"]) { color: var(--hud-warning); }
+#game-connection:is([data-state="disconnected"], [data-state="error"], [data-state="failed"]) { color: var(--hud-danger); }
 #game-region { color: var(--hud-text); min-height: 44px; pointer-events: auto; font: 12px var(--mono); padding: 8px 0; }
 #game-region:hover { text-decoration: underline; text-underline-offset: 5px; }
 .game-vitals { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 24px; max-width: 280px; }
