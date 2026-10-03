@@ -165,6 +165,71 @@
     }
   }
   const validTime = (value) => typeof value === 'string' ? Date.parse(value) : NaN;
+  const unit = value => Math.max(0, Math.min(1, value));
+  const orderedId = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  function freshFacts(facts, now) {
+    const checked = validTime(facts.checked_at);
+    return Number.isFinite(now) && Number.isFinite(checked) && checked <= now + 1000 && now - checked < 90000;
+  }
+  function publicActivity(facts, now) {
+    const activity = facts.activity, end = validTime(activity?.window_end);
+    const fields = ['recent_posts', 'previous_posts', 'active_days', 'previous_active_days'];
+    return freshFacts(facts, now) && activity?.exact === true && activity.window_days === 14 &&
+      end <= now + 1000 && now - end < 90000 && fields.every(field =>
+        Number.isSafeInteger(activity[field]) && activity[field] >= 0) &&
+      activity.active_days <= Math.min(7, activity.recent_posts) &&
+      activity.previous_active_days <= Math.min(7, activity.previous_posts) &&
+      facts.post_count?.exact === true && Number.isSafeInteger(facts.post_count.public) &&
+      activity.recent_posts + activity.previous_posts <= facts.post_count.public ? activity : null;
+  }
+  // Visual temperature is a bounded rendering scale, not a physical claim.
+  // Confirmed stars require activity in both seven-day windows and at least
+  // four distinct rolling 24-hour buckets in each. Lifetime totals alone can
+  // only provide a labelled compatibility estimate, never a confirmed star.
+  function stellarEvolution(node, now = Date.now(), { following = [] } = {}) {
+    const facts = node?.star || {}, root = node?.id === 'u_root';
+    if (root) return { heat: 1, temperature: 11000, stage: 'anchor', brightness: 1,
+      parentId: null, satelliteProgress: 0, approximate: false, known: true };
+    const fresh = freshFacts(facts, now), activity = publicActivity(facts, now);
+    const count = facts.post_count?.public;
+    const exactTotal = facts.post_count?.exact === true && Number.isSafeInteger(count) && count >= 0;
+    const posted = validTime(facts.last_public_post_at);
+    const validPost = Number.isFinite(posted) && posted <= now;
+    const known = fresh && exactTotal && (count === 0 || validPost);
+    const ageDays = validPost ? Math.max(0, (now - posted) / 86400000) : null;
+    const recency = ageDays === null ? 0 : Math.pow(2, -ageDays / 7);
+    const presence = facts.presence || {}, reported = validTime(presence.updated_at);
+    const live = fresh && presence.self_reported === true && reported <= now &&
+      validTime(presence.expires_at) > now && ['available', 'busy', 'away'].includes(presence.state);
+    const presenceHeat = live ? ({ available: 1, busy: .84, away: .35 })[presence.state] * .15 : 0;
+    const activityHeat = activity
+      ? .55 * unit(activity.recent_posts / 14) + .30 * unit(activity.previous_posts / 14)
+      : exactTotal ? .85 * unit(Math.log2(1 + count) / Math.log2(257)) : 0;
+    const heat = known ? unit(activityHeat * recency + presenceHeat) : 0;
+    const sustained = activity && activity.recent_posts >= 14 && activity.previous_posts >= 14 &&
+      activity.active_days >= 4 && activity.previous_active_days >= 4;
+    let stage = !known ? 'unknown' : sustained && heat >= .68 ? 'star' : heat >= .30 ? 'warming' : 'cooling';
+    let parentId = null, satelliteProgress = 0;
+    const orbit = facts.layout?.orbit;
+    if (known && ageDays !== null && ageDays >= 14 && heat <= .12 &&
+        !['binary', 'multi'].includes(orbit?.kind)) {
+      const candidates = new Map();
+      for (const candidate of Array.isArray(following) ? following : []) {
+        if (!candidate || typeof candidate.id !== 'string' || !candidate.id || candidate.id === node.id || candidate.visibility === 'private' || candidate.private === true ||
+            ['private', 'private-message'].includes(candidate.kind) || candidates.has(candidate.id)) continue;
+        const style = stellarEvolution(candidate, now);
+        if (['star', 'anchor'].includes(style.stage)) candidates.set(candidate.id, { id: candidate.id, heat: style.heat });
+      }
+      const parent = candidates.get(orbit?.parent_id) || [...candidates.values()].sort((a, b) => b.heat - a.heat || orderedId(a, b))[0];
+      if (parent) {
+        stage = 'satellite'; parentId = parent.id;
+        satelliteProgress = unit((ageDays - 14) / 28) * (1 - unit(heat / .12));
+      }
+    }
+    return { heat, temperature: 800 + 10200 * Math.pow(heat, 1.35), stage,
+      brightness: known ? .10 + .90 * Math.sqrt(heat) : .25,
+      parentId, satelliteProgress, approximate: activity === null, known };
+  }
   function reserve(value) {
     const hidden = { known: false, label: 'Not public', fraction: 0 };
     if (!value || !['public', 'self'].includes(value.visibility)) return hidden;
@@ -183,7 +248,7 @@
       fraction: amount === 0n ? 0 : Math.min(1, .08 + .92 * Math.log10(1 + units) / 4),
       visibility: value.visibility };
   }
-  function appearance(node, now = Date.now()) {
+  function appearance(node, now = Date.now(), context = {}) {
     const facts = node.star || {}, root = node.id === 'u_root';
     const checked = validTime(facts.checked_at);
     const fresh = Number.isFinite(checked) && checked <= now + 1000 && now - checked < 90000;
@@ -208,6 +273,7 @@
       presenceLabel: live ? presence.state[0].toUpperCase() + presence.state.slice(1) + ' · self-reported' : 'Presence unknown',
       certificateLabel: certified ? 'Valid certificate' : fresh && certificate.state === 'none' ? 'No active public certificate' : 'Certificate status unknown',
       reserve: reserve(balance),
+      stellar: stellarEvolution(node, now, context),
     };
   }
   function graph(users, posts, time = 0, focus = null, topology = null) {
@@ -264,6 +330,25 @@
         occupied.add(slot); links.push([index.get(node.author.id), node, 'orbit']);
       }
     }
+    const interactionPairs = new Map(), interactionIds = new Set();
+    const pairKey = (a, b) => [a, b].sort().join(':');
+    const addInteraction = (source, target) => {
+      if (!source || !target || source === target) return;
+      const key = pairKey(source, target), previous = interactionPairs.get(key);
+      const count = Math.min(65, (previous?.interactionCount || 0) + 1);
+      interactionPairs.set(key, { interactionCount: Math.min(64, count),
+        interactionWeight: Math.min(1, Math.log2(1 + count) / Math.log2(65)),
+        interactionCoverage: 'loaded-public', interactionExact: false,
+        interactionCapped: count > 64 || previous?.interactionCapped === true });
+    };
+    for (const post of visiblePosts) {
+      const a = index.get(post.id), b = index.get(post.reply_to?.id);
+      if (!a || !b || interactionIds.has(post.id)) continue;
+      interactionIds.add(post.id);
+      addInteraction(a.author?.id, b.author?.id);
+    }
+    const interaction = (a, b) => interactionPairs.get(pairKey(a.id, b.id)) || {
+      interactionCount: 0, interactionWeight: 0, interactionCoverage: 'loaded-public', interactionExact: false, interactionCapped: false };
     const pairs = new Set();
     for (const post of visiblePosts) {
       const a = index.get(post.id),
@@ -274,7 +359,7 @@
       if (from && to && from !== to) {
         const pair = [from.id, to.id].sort().join(":");
         if (!pairs.has(pair)) {
-          links.push([from, to, "discussion"]);
+          links.push([from, to, "discussion", interaction(from, to)]);
           pairs.add(pair);
         }
       }
@@ -282,19 +367,35 @@
         if (add(a) && add(b)) links.push([a, b, "reply"]);
       }
     }
-    const followPairs = new Set();
-    const explicit = new Set((topology?.edges || []).filter(edge => edge.source_type === 'explicit')
-      .map(edge => edge.source + ':' + edge.target));
-    for (const edge of topology?.edges || []) {
+    const followPairs = new Set(), explicitEdges = new Map();
+    const edges = (topology?.edges || []).filter(publicOnly);
+    for (const star of stars) star.relations = { following: [], followers: [], coverage: 'loaded-public', complete: false };
+    for (const edge of edges) {
+      const source = index.get(edge.source), target = index.get(edge.target);
+      if (edge.source_type !== 'explicit' || !source || !target || source.kind !== 'user' || target.kind !== 'user' || source === target) continue;
+      const key = edge.source + ':' + edge.target;
+      if (explicitEdges.has(key)) continue;
+      explicitEdges.set(key, { source: edge.source, target: edge.target });
+      source.relations.following.push(target.id); target.relations.followers.push(source.id);
+    }
+    for (const star of stars) {
+      star.relations.following.sort(); star.relations.followers.sort();
+    }
+    for (const edge of edges) {
       const source = index.get(edge.source), target = index.get(edge.target);
       if (!source || !target || source.kind !== 'user' || target.kind !== 'user' || source === target) continue;
       if (!['explicit', 'default'].includes(edge.source_type)) continue;
       if (edge.source_type === 'default' && target.id !== 'u_root') continue;
-      const mutual = edge.mutual === true || explicit.has(edge.target + ':' + edge.source);
+      const reverse = explicitEdges.get(edge.target + ':' + edge.source);
+      const mutual = edge.mutual === true || Boolean(reverse);
       const type = edge.source_type === 'default' ? 'root-attachment' : mutual ? 'mutual' : 'follow';
       const key = type === 'mutual' ? [source.id, target.id].sort().join(':') : source.id + ':' + target.id;
       if (followPairs.has(type + ':' + key)) continue;
-      followPairs.add(type + ':' + key); links.push([source, target, type, { source_type: edge.source_type }]);
+      const directions = edge.source_type === 'explicit'
+        ? [explicitEdges.get(edge.source + ':' + edge.target), ...(reverse ? [reverse] : [])].sort((a, b) =>
+          a.source < b.source ? -1 : a.source > b.source ? 1 : a.target < b.target ? -1 : a.target > b.target ? 1 : 0) : [];
+      followPairs.add(type + ':' + key); links.push([source, target, type,
+        { source_type: edge.source_type, directions, ...interaction(source, target) }]);
     }
     return { nodes, links, layoutVersion: LAYOUT_VERSION,
       rings: stars.filter(star => star.post_ring.visible).map(star => ({ id: star.id, ...star.post_ring })) };
@@ -446,6 +547,7 @@
     SpatialIndex,
     trimMap,
     appearance,
+    stellarEvolution,
     reserve,
     satellite,
     graph,
