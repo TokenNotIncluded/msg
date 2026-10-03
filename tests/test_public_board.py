@@ -60,7 +60,10 @@ async def test_every_user_edits_both_parts_and_limits_are_atomic(installed):
     assert before.status == 'ok', before.error
     denied = await call(app, 'content.public_board_update', {'generation': 0, 'text': 'anonymous'})
     assert denied.error.code == 'authentication_required'
-    svg = DEFAULT_SVG.replace('>svg + text<', '>shared + text<')
+    svg = (
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300">'
+        '<circle cx="480" cy="150" r="60" fill="#ddd"/></svg>'
+    )
     assert svg != DEFAULT_SVG
     changed = await call(
         app,
