@@ -484,6 +484,91 @@ test('actual server event ids and code-only recoverable errors are accepted with
   assert.ok(b.errors[0].includes('燃料'));
 });
 
+test('hello normalizes negotiated laser range and exposes the old-server 60u fallback to views', () => {
+  for (const range of [undefined, 1, 180, 1000, 180.5]) {
+    const limits = { ...hello().limits, ...(range === undefined ? {} : { laser_range: range }) };
+    const b = browser(); b.join(hello({ limits }));
+    assert.equal(b.client.connected, true);
+    assert.equal(b.client.limits.laser_range, range ?? 60);
+    assert.equal(b.hellos[0].limits.laser_range, range ?? 60);
+    assert.ok(Object.isFrozen(b.client.limits));
+    assert.equal(limits.laser_range, range, 'normalization must not mutate the received hello');
+  }
+});
+
+test('explicit laser range must be finite and between 1u and 1000u', () => {
+  for (const range of [0, -1, .999999, 1000.000001, NaN, Infinity, null, '180', true]) {
+    const b = browser(); b.join(hello({ limits: { ...hello().limits, laser_range: range } }));
+    assert.equal(b.client.connected, false, String(range));
+    assert.equal(b.hellos.length, 0);
+    assert.equal(b.client.snapshot, null);
+  }
+});
+
+test('negotiated 180u rays can end beyond the world edge in any direction', () => {
+  for (const axis of [0, 1, 2]) for (const sign of [-1, 1]) {
+    const position = [0, 0, 0], end = [0, 0, 0];
+    position[axis] = 480 * sign; end[axis] = 660 * sign;
+    const b = browser(), ws = b.join(hello({ limits: { ...hello().limits, laser_range: 180 } }));
+    const ray = { id: 'evt_1', type: 'laser', player_id: SELF_ID, at_ms: BASE_TIME, position, end };
+    ws.receive(snapshot({ events: [ray] }));
+    assert.equal(b.client.connected, true);
+    assert.deepEqual(plain(b.client.snapshot.events[0].end), end);
+    assert.ok(Object.isFrozen(b.client.snapshot.events[0].end));
+  }
+  const b = browser(), ws = b.join(hello({ limits: { ...hello().limits, laser_range: 180 } }));
+  ws.receive(snapshot({ events: [{ id: 'evt_1', type: 'laser', player_id: SELF_ID, at_ms: BASE_TIME,
+    position: [479.5, 0, 0], end: [659.5000005, 0, 0] }] }));
+  assert.equal(b.client.connected, true, 'sub-micro-unit floating point roundoff is tolerated');
+});
+
+test('laser vectors must be finite, start inside the world and fit the negotiated Euclidean range', () => {
+  const base = { id: 'evt_1', type: 'laser', player_id: SELF_ID, at_ms: BASE_TIME,
+    position: [479, 0, 0], end: [659, 0, 0] };
+  for (const patch of [
+    { position: [481, 0, 0] }, { end: [661, 0, 0] }, { end: [659.000002, 0, 0] },
+    { position: [0, 0, 0], end: [110, 110, 110] },
+    { position: [NaN, 0, 0] }, { end: [Infinity, 0, 0] }, { end: [0, 0] },
+    { position: null }, { end: null }, { position: undefined }, { end: undefined },
+  ]) {
+    const b = browser(), ws = b.join(hello({ limits: { ...hello().limits, laser_range: 180 } }));
+    ws.receive(snapshot({ events: [{ ...base, ...patch }] }));
+    assert.equal(b.client.connected, false, JSON.stringify(patch));
+    assert.equal(b.client.snapshot, null);
+  }
+});
+
+test('old-server rays keep 60u validation including endpoints outside its 480u world', () => {
+  for (const length of [60, 60.000002]) {
+    const b = browser(), ws = b.join();
+    ws.receive(snapshot({ events: [{ id: 'evt_1', type: 'laser', player_id: SELF_ID, at_ms: BASE_TIME,
+      position: [479, 0, 0], end: [479 + length, 0, 0] }] }));
+    assert.equal(b.client.connected, length === 60);
+    if (length === 60) assert.equal(b.client.snapshot.events[0].end[0], 539);
+    else assert.equal(b.client.snapshot, null);
+  }
+});
+
+test('laser endpoint allowance does not enlarge player bounds or change other events legacy bounds', () => {
+  const invalid = browser(), invalidSocket = invalid.join(hello({ limits: { ...hello().limits, laser_range: 180 } }));
+  invalidSocket.receive(snapshot({ players: [ship({ position: [481, 0, 0] })] }));
+  assert.equal(invalid.client.connected, false); assert.equal(invalid.client.snapshot, null);
+  for (const frame of [
+    snapshot({ events: [{ id: 'evt_1', type: 'hit', player_id: SELF_ID, at_ms: BASE_TIME, position: [481, 0, 0] }] }),
+    snapshot({ events: [{ id: 'evt_1', type: 'hit', player_id: SELF_ID, at_ms: BASE_TIME, position: [0, 0, 0], end: [481, 0, 0] }] }),
+  ]) {
+    const b = browser(), ws = b.join(hello({ limits: { ...hello().limits, laser_range: 180 } }));
+    ws.receive(frame); assert.equal(b.client.connected, true, 'non-laser legacy bounds stay unchanged');
+  }
+  const oversized = browser(), oversizedSocket = oversized.join();
+  oversizedSocket.receive(snapshot({ events: [{ id: 'evt_1', type: 'hit', player_id: SELF_ID, at_ms: BASE_TIME, position: [100001, 0, 0] }] }));
+  assert.equal(oversized.client.connected, false, 'non-laser legacy bounds remain finite and bounded');
+  const b = browser(), ws = b.join(hello({ limits: { ...hello().limits, world_extent: 1000, laser_range: 180 } }));
+  ws.receive(snapshot({ events: [{ id: 'evt_1', type: 'laser', player_id: SELF_ID, at_ms: BASE_TIME,
+    position: [1000, 0, 0], end: [1180, 0, 0] }] }));
+  assert.equal(b.client.connected, true, 'both origin and endpoint follow the hello world bound');
+});
+
 test('view callback exceptions do not turn a good server frame into a protocol failure', () => {
   const fail = () => { throw new Error('synthetic view failure'); };
   const b = browser({ callbackOverrides: { onStatus: fail, onHello: fail, onSnapshot: fail } }), ws = b.join();
