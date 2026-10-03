@@ -282,9 +282,12 @@ async def public_topology(app, ctx, request, tx, max_users=256, max_edges=2048):
     async def shown(rid):
         if blocked(tx, ctx.principal.subject, rid):
             return False
-        return await visible(app, public, request, tx, rid) and await visible(
-            app, ctx, request, tx, rid
-        )
+        if not await visible(app, public, request, tx, rid):
+            return False
+        # An already anonymous caller has the exact same authority as public.
+        # Reuse only this decision in this transaction; signed callers still
+        # need both checks, and every new projection reads current ACLs again.
+        return public.principal == ctx.principal or await visible(app, ctx, request, tx, rid)
 
     nodes = []
     root = tx.one(
