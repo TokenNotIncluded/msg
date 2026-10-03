@@ -215,6 +215,10 @@ console.log('PASS physical colored MSG and API relay posters');
 """
     result = subprocess.run(
         [shutil.which('node'), '-e', script],
-        input=functions, text=True, capture_output=True, check=False, timeout=15,
+        input=functions,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=15,
     )
     assert result.returncode == 0, result.stdout + result.stderr
