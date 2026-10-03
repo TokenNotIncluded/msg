@@ -254,12 +254,15 @@ test('blur sends a neutral frame immediately, stops the pump and requires explic
   assert.equal(ws.sent.at(-1).throttle, 0); assert.deepEqual(ws.sent.at(-1).actions, []);
 });
 
-test('hidden pages neither connect nor silently restart combat when made visible', () => {
+test('hidden pages pause transport and visibility restores only a neutral connection', () => {
   const b = browser({ hidden: true });
   b.client.connect(); b.clock.advance(10000); assert.equal(b.sockets.length, 0);
-  assert.equal(b.client.resume(), false); b.show(); b.clock.advance(10000); assert.equal(b.sockets.length, 0);
-  assert.equal(b.client.resume(), true);
+  assert.equal(b.client.resume(), false); b.show(); b.clock.advance(499); assert.equal(b.sockets.length, 0);
+  b.clock.advance(1);
   const ws = b.sockets[0]; ws.open(); ws.receive(hello());
+  assert.equal(b.client.canPredict, false); assert.equal(b.client.setInput({ throttle: 1 }), false);
+  b.clock.advance(1000); assert.deepEqual(ws.sent, [{ v: 1, type: 'join' }]);
+  assert.equal(b.client.resume(), true);
   b.client.setInput({ actions: ['laser', 'dash'] }); b.clock.advance(50); b.hide();
   assert.deepEqual(ws.sent.at(-1).actions, []);
   const count = ws.sent.length; b.show(); b.clock.advance(1000); assert.equal(ws.sent.length, count);
@@ -282,11 +285,15 @@ test('disconnect removes stale ships and input, ignores late frames and does not
   assert.deepEqual(ws.sent.at(-1).actions, []);
 });
 
-test('connection loss clears all state and reconnects with resume and acknowledged sequence', () => {
+test('connection loss retains verified state locally and resumes with neutral controls only', () => {
   const b = browser(), ws = b.join(); ws.receive(snapshot());
+  const verifiedSelf = b.client.self, verifiedSnapshot = b.client.snapshot;
   b.client.setInput({ throttle: 1, actions: ['shield', 'laser'] }); b.clock.advance(50);
   ws.remoteClose();
-  assert.equal(b.client.self, null); assert.equal(b.client.snapshot, null);
+  assert.equal(b.client.self, verifiedSelf); assert.equal(b.client.snapshot, verifiedSnapshot);
+  assert.equal(b.client.connected, false); assert.equal(b.client.localSession, true);
+  assert.equal(b.client.canPredict, true); assert.equal(b.client.reconnecting, true);
+  assert.equal(b.client.setInput({ throttle: 1, actions: ['dash'] }), false);
   const count = ws.sent.length; b.clock.advance(499); assert.equal(b.sockets.length, 1); assert.equal(ws.sent.length, count);
   b.clock.advance(1); const resumed = b.sockets.at(-1); resumed.open();
   assert.equal(resumed.sent[0].resume, RESUME);
@@ -295,20 +302,26 @@ test('connection loss clears all state and reconnects with resume and acknowledg
   assert.deepEqual(resumed.sent.at(-1).actions, []);
 });
 
-test('reconnect is bounded even if the server repeatedly accepts hello then drops the connection', () => {
+test('reconnect delay is capped while transient failures can recover after any retry count', () => {
   const b = browser(); let ws = b.join();
-  for (const delay of [500, 1000, 2000, 4000, 8000]) {
-    ws.remoteClose(); b.clock.advance(delay); ws = b.sockets.at(-1); ws.open(); ws.receive(hello());
+  for (const delay of [500, 1000, 2000, 4000, 8000, 8000, 8000, 8000]) {
+    ws.remoteClose(); const count = b.sockets.length;
+    b.client.connect(); // Repeated start requests must not bypass retry backoff.
+    b.clock.advance(delay - 1); assert.equal(b.sockets.length, count);
+    b.clock.advance(1); ws = b.sockets.at(-1); ws.open(); ws.receive(hello());
   }
-  ws.remoteClose(); b.clock.advance(60000);
-  assert.equal(b.sockets.length, 6); assert.equal(b.statuses.at(-1)[0], 'failed');
-  assert.equal(b.client.connected, false); assert.equal(b.client.resume(), false);
+  assert.equal(b.sockets.length, 9); assert.equal(b.client.connected, true);
+  assert.equal(b.statuses.some(([state]) => state === 'failed'), false);
+  b.client.disconnect(); b.clock.advance(60000); assert.equal(b.sockets.length, 9);
 });
 
-test('losing visibility cancels a reconnect and visible focus is required to retry', () => {
+test('losing visibility cancels a reconnect and visible retry keeps controls suspended', () => {
   const b = browser(), ws = b.join(); ws.remoteClose(); b.hide(); b.clock.advance(10000);
-  assert.equal(b.sockets.length, 1); b.show(); b.clock.advance(10000); assert.equal(b.sockets.length, 1);
-  b.client.resume(); assert.equal(b.sockets.length, 2);
+  assert.equal(b.sockets.length, 1); b.show(); b.clock.advance(999); assert.equal(b.sockets.length, 1);
+  b.clock.advance(1); assert.equal(b.sockets.length, 2);
+  const next = b.sockets.at(-1); next.open(); next.receive(hello());
+  b.clock.advance(1000); assert.equal(next.sent.length, 1); assert.equal(b.client.canPredict, false);
+  b.client.resume(); b.clock.advance(50); assert.equal(next.sent.at(-1).throttle, 0);
 });
 
 test('policy rejection forgets only the game ticket and never loops an invalid resume', () => {
@@ -342,7 +355,8 @@ test('an open but silent server stops controls and reconnects after the snapshot
   const b = browser(), ws = b.join(); ws.receive(snapshot());
   b.client.setInput({ throttle: 1, actions: ['laser'] });
   b.clock.advance(4999); assert.equal(b.client.connected, true);
-  b.clock.advance(1); assert.equal(b.client.connected, false); assert.equal(b.client.snapshot, null);
+  const cached = b.client.snapshot;
+  b.clock.advance(1); assert.equal(b.client.connected, false); assert.equal(b.client.snapshot, cached);
   const count = ws.sent.length; b.clock.advance(500); assert.equal(ws.sent.length, count);
   assert.equal(b.sockets.length, 2);
 });
@@ -526,7 +540,7 @@ test('late bitmap revisions cannot rewind a field; live revisions and physical t
 test('backpressure reconnect rebinds seed and bitmap without stale pickups or resource claims', () => {
   const b=browser(),ws=b.join(hello({collectibles:field()}));
   ws.bufferedAmount=16385; b.clock.advance(50); assert.equal(b.client.connected,false);
-  assert.equal(b.client.self,null); assert.equal(b.client.snapshot,null);
+  assert.deepEqual(plain(b.client.self), ship()); assert.equal(b.client.snapshot,null);
   b.clock.advance(500); const next=b.sockets.at(-1); next.open();
   next.receive(hello({collectibles:field({seed:'1'.repeat(32),revision:9}),self:ship({collected:12})}));
   assert.equal(b.hellos.at(-1).collectibles.seed,'1'.repeat(32)); assert.equal(b.client.self.collected,12);
@@ -564,4 +578,122 @@ test('same-seed geometry migration and private metadata cannot enter shared well
   assert.equal(b.client.connected,false);
   const c=browser(),socket=c.join(hello({gravity:gravityFrame()}));
   socket.receive(snapshot()); assert.equal(c.client.connected,false);
+});
+
+test('initial connection delays allow local play without inventing authoritative self or sending local results', () => {
+  const b = browser();
+  assert.equal(b.client.localSession, false); assert.equal(b.client.canPredict, false);
+  b.client.connect();
+  assert.equal(b.client.localSession, true); assert.equal(b.client.canPredict, true);
+  assert.equal(b.client.self, null); assert.equal(b.client.snapshot, null);
+  assert.deepEqual(plain(b.client.limits), {}); assert.equal(b.client.gravity, null);
+  const first = b.sockets[0];
+  assert.equal(b.client.setInput({ throttle: 1, position: [1, 2, 3], fuel: 100, collected: 99 }), false);
+  b.clock.advance(8000); assert.equal(b.client.reconnecting, true);
+  assert.equal(b.client.localSession, true); assert.equal(b.client.self, null);
+  b.clock.advance(500); const next = b.sockets.at(-1); next.open();
+  assert.deepEqual(next.sent, [{ v: 1, type: 'join' }]);
+  next.receive(hello()); b.clock.advance(50);
+  assert.deepEqual(Object.keys(next.sent.at(-1)).sort(),
+    ['actions', 'brake', 'lift', 'pitch', 'seq', 'strafe', 'throttle', 'type', 'v', 'yaw']);
+  assert.equal(next.sent.at(-1).throttle, 0); assert.deepEqual(next.sent.at(-1).actions, []);
+  assert.equal(first.sent.length, 0);
+});
+
+test('temporary loss retains exact immutable physics metadata and blur pauses only local controls', () => {
+  const b = browser(), ws = b.join(hello({ gravity: gravityFrame(), collectibles: highway() }));
+  ws.receive(snapshot({ gravity: gravityFrame(), collectibles: highway() }));
+  const prior = { self: b.client.self, snapshot: b.client.snapshot,
+    gravity: b.client.gravity, limits: b.client.limits };
+  ws.remoteClose();
+  for (const [key, value] of Object.entries(prior)) {
+    assert.equal(b.client[key], value); assert.ok(Object.isFrozen(value));
+  }
+  assert.equal(b.client.serverNow, BASE_TIME + 100);
+  b.blur(); assert.equal(b.client.canPredict, false);
+  b.clock.advance(500); const next = b.sockets.at(-1); next.open(); next.receive(hello());
+  b.clock.advance(1000); assert.equal(next.sent.length, 1, 'blurred reconnect never pumps controls');
+  assert.equal(b.client.canPredict, false);
+  assert.equal(b.client.resume(), true); assert.equal(b.client.canPredict, true);
+  b.clock.advance(50); assert.equal(next.sent.at(-1).throttle, 0);
+});
+
+test('a new hello resets stream ticks, world metadata and self identity without uploading offline state', () => {
+  const b = browser(), ws = b.join(hello({ gravity: gravityFrame(), collectibles: highway() }));
+  ws.receive(snapshot({ tick: 900, gravity: gravityFrame(), collectibles: highway() }));
+  const lateSnapshot = ws.onmessage;
+  ws.remoteClose(); b.clock.advance(500); const next = b.sockets.at(-1); next.open();
+  const replacement = ship({ id: OTHER_ID, position: [90, 80, 70], fuel: 40, score: 2, ack_seq: -1 });
+  next.receive(hello({ self: replacement, gravity: { version: 1, wells: [] },
+    collectibles: field({ seed: '2'.repeat(32), revision: 0 }), limits: { world_extent: 600 } }));
+  assert.equal(b.client.snapshot, null); assert.equal(b.client.self.id, OTHER_ID);
+  assert.equal(b.client.gravity.wells.length, 0); assert.equal(b.client.limits.world_extent, 600);
+  next.receive(snapshot({ tick: 1, self_id: OTHER_ID, players: [replacement],
+    gravity: { version: 1, wells: [] }, collectibles: field({ seed: '2'.repeat(32) }) }));
+  assert.equal(b.client.snapshot.tick, 1);
+  lateSnapshot({ data: JSON.stringify(snapshot({ tick: 901, gravity: gravityFrame(), collectibles: highway() })) });
+  assert.equal(b.client.snapshot.tick, 1); assert.equal(b.client.self.id, OTHER_ID);
+  b.clock.advance(50);
+  assert.deepEqual(next.sent[0], { v: 1, type: 'join', resume: RESUME });
+  assert.equal(next.sent.at(-1).type, 'input'); assert.equal(next.sent.at(-1).throttle, 0);
+  assert.equal(Object.hasOwn(next.sent.at(-1), 'position'), false);
+  assert.equal(Object.hasOwn(next.sent.at(-1), 'score'), false);
+});
+
+test('a terminal rejection permits local visuals but cannot reopen transport through local resume', () => {
+  for (const code of [1002, 1003, 1008, 1009, 4013]) {
+    const b = browser(), ws = b.join(hello({ gravity: gravityFrame() }));
+    ws.remoteClose(code);
+    assert.equal(b.client.localSession, true); assert.equal(b.client.reconnecting, false);
+    assert.equal(b.client.self, null); assert.equal(b.client.snapshot, null); assert.equal(b.client.gravity, null);
+    assert.deepEqual(plain(b.client.limits), {});
+    b.blur(); assert.equal(b.client.canPredict, false);
+    assert.equal(b.client.resume(), true); assert.equal(b.client.canPredict, true);
+    b.hide(); b.show(); b.clock.advance(60000);
+    assert.equal(b.sockets.length, 1); assert.equal(b.client.setInput({ throttle: 1 }), false);
+    b.client.disconnect(); assert.equal(b.client.localSession, false); assert.equal(b.client.canPredict, false);
+    assert.equal(b.client.resume(), false);
+  }
+});
+
+test('explicit exit during backoff clears retained world and cancels every future connection attempt', () => {
+  const b = browser(), ws = b.join(hello({ gravity: gravityFrame() }));
+  ws.remoteClose(); assert.equal(b.client.localSession, true);
+  b.client.disconnect(); b.show(); b.clock.advance(120000);
+  assert.equal(b.sockets.length, 1); assert.equal(b.client.self, null); assert.equal(b.client.gravity, null);
+  assert.equal(b.client.localSession, false); assert.equal(b.client.reconnecting, false);
+  assert.equal(b.client.resume(), false);
+});
+
+test('a stable connection resets retry delay after fresh snapshots keep it alive', () => {
+  const b = browser(); let ws = b.join();
+  for (const delay of [500, 1000, 2000]) {
+    ws.remoteClose(); b.clock.advance(delay); ws = b.sockets.at(-1); ws.open(); ws.receive(hello());
+  }
+  for (let tick = 1; tick <= 8; tick++) {
+    b.clock.advance(4000); ws.receive(snapshot({ tick, server_time_ms: BASE_TIME + b.clock.now }));
+  }
+  ws.remoteClose(); const count = b.sockets.length;
+  b.clock.advance(499); assert.equal(b.sockets.length, count);
+  b.clock.advance(1); assert.equal(b.sockets.length, count + 1);
+});
+
+test('a view entering local flight during connecting cannot recursively open another socket', () => {
+  let b;
+  b = browser({ callbackOverrides: { onStatus: state => {
+    if (state === 'connecting' || state === 'reconnecting') b.client.resume();
+  } } });
+  const ws = b.join(); assert.equal(b.sockets.length, 1);
+  ws.remoteClose(); b.clock.advance(500); assert.equal(b.sockets.length, 2);
+  const next = b.sockets.at(-1); next.open(); next.receive(hello());
+  assert.equal(b.client.connected, true);
+});
+
+test('an explicit exit inside a connecting callback prevents a socket being constructed', () => {
+  let b;
+  b = browser({ callbackOverrides: { onStatus: state => {
+    if (state === 'connecting') b.client.disconnect();
+  } } });
+  b.client.connect(); b.clock.advance(60000);
+  assert.equal(b.sockets.length, 0); assert.equal(b.client.localSession, false);
 });
