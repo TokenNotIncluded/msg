@@ -69,6 +69,21 @@ class CertificateValidator:
         self.service = service
         self.clock = clock
 
+    @property
+    def root_certificate(self):
+        return self._root_anchor[0]
+
+    @root_certificate.setter
+    def root_certificate(self, certificate):
+        # Certificate records freeze nested JSON constraints as well as their
+        # dataclass fields. Keep the existing replacement interface, publishing
+        # its immutable value and both encodings together, never mixed anchors.
+        self._root_anchor = (
+            certificate,
+            canonical(certificate),
+            canonical(certificate_body(certificate)),
+        )
+
     async def validate_grant(self, grant, session):
         spec = self.registry.capability(grant.capability, grant.version)
         resource = await session.resource(grant.scope.resource_id)
@@ -106,8 +121,9 @@ class CertificateValidator:
         require(cert.not_before <= now < cert.expires_at, 'certificate_expired')
         if certificate is None:
             require(not await session.certificate_revoked(id), 'certificate_revoked')
-        if id == self.root_certificate.resource_id:
-            require(canonical(cert) == canonical(self.root_certificate), 'trust_anchor_mismatch')
+        root_certificate, root_bytes, root_body_bytes = self._root_anchor
+        if id == root_certificate.resource_id:
+            require(canonical(cert) == root_bytes, 'trust_anchor_mismatch')
             require(
                 cert.subject_id == ROOT_SUBJECT
                 and cert.issuer_id == ROOT_SUBJECT
@@ -117,7 +133,7 @@ class CertificateValidator:
             )
             verify(
                 self.root_public_key,
-                canonical(certificate_body(cert)),
+                root_body_bytes,
                 cert.signature,
                 purpose='certificate',
             )
