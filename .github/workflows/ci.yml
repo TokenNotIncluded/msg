@@ -69,6 +69,59 @@ jobs:
           openssl version
           bwrap --version
           sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+      - name: Install pinned real age recovery tools
+        run: |
+          set -euo pipefail
+          crypto_tools="$RUNNER_TEMP/msg-crypto-tools"
+          mkdir -p "$crypto_tools/bin" "$crypto_tools/source" artifacts
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$crypto_tools/age.tar.gz" \
+            https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz
+          printf 'cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  %s\n' \
+            "$crypto_tools/age.tar.gz" | sha256sum --check --strict
+          tar --extract --gzip --no-same-owner --no-same-permissions \
+            --file "$crypto_tools/age.tar.gz" --directory "$crypto_tools/source"
+          install -m 0755 "$crypto_tools/source/age/age" "$crypto_tools/bin/age"
+          install -m 0755 "$crypto_tools/source/age/age-keygen" "$crypto_tools/bin/age-keygen"
+          # The official 0.5.1 release has no Linux binary. Its published crate
+          # includes Cargo.lock and records the same Git commit as the release tag.
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output "$crypto_tools/age-plugin-yubikey.crate" \
+            https://static.crates.io/crates/age-plugin-yubikey/age-plugin-yubikey-0.5.1.crate
+          printf 'ba2acef0b201cfe0b3f3c5dcef63495449b3ee9f2c8ad6a32f6530231fbc9209  %s\n' \
+            "$crypto_tools/age-plugin-yubikey.crate" | sha256sum --check --strict
+          tar --extract --gzip --no-same-owner --no-same-permissions \
+            --file "$crypto_tools/age-plugin-yubikey.crate" --directory "$crypto_tools/source"
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          source = Path(os.environ['RUNNER_TEMP']) / 'msg-crypto-tools/source/age-plugin-yubikey-0.5.1'
+          if json.loads((source / '.cargo_vcs_info.json').read_text())['git']['sha1'] != '9329e31dd3d0819d5d7b739aef59e455e10fcfa1':
+              raise SystemExit('age-plugin-yubikey source differs from the pinned official tag')
+          PY
+          cargo install --locked --path "$crypto_tools/source/age-plugin-yubikey-0.5.1" --root "$crypto_tools"
+          export PATH="$crypto_tools/bin:$PATH"
+          printf '%s\n' "$crypto_tools/bin" >> "$GITHUB_PATH"
+          test "$(age --version)" = v1.3.2
+          test "$(age-keygen --version)" = v1.3.2
+          test "$(age-plugin-yubikey --version)" = 'age-plugin-yubikey 0.5.1'
+          python - <<'PY'
+          import hashlib, json, os, shutil, subprocess
+          from pathlib import Path
+          directory = Path(os.environ['RUNNER_TEMP']) / 'msg-crypto-tools'
+          tools = {}
+          for name in ('age', 'age-keygen', 'age-plugin-yubikey'):
+              executable = directory / 'bin' / name
+              if shutil.which(name) != str(executable):
+                  raise SystemExit(f'{name} is not using the pinned CI installation')
+              tools[name] = {'path': str(executable), 'version': subprocess.check_output([str(executable), '--version'], text=True).strip(),
+                             'sha256': hashlib.sha256(executable.read_bytes()).hexdigest()}
+          report = {'tools': tools, 'cargo': subprocess.check_output(['cargo', '--version'], text=True).strip(),
+                    'archives': {name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
+                                 for name in ('age.tar.gz', 'age-plugin-yubikey.crate')},
+                    'yubikey_source_commit': '9329e31dd3d0819d5d7b739aef59e455e10fcfa1'}
+          Path('artifacts/ci-crypto-tools.json').write_text(json.dumps(report, indent=2) + '\n')
+          PY
       - name: Install the complete dependency set
         run: |
           python -m pip install uv==0.12.20

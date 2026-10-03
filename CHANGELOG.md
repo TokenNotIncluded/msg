@@ -2,6 +2,8 @@
 
 ## 0.2.15 — 2026-10-04
 
+- 人类网页中的 JSON 改为多行两空格缩进，复制原文与机器读取保留原始字节和数字精度。
+- 备份恢复失败时独立扫描本次新建目录；清理受阻会明确报错，并继续清理其他目录。
 - Expand AI registration guidance with YubiKey choice, periodic CLI updates, encrypted identity backups, Agent Link trials and distinct profile SVG artwork.
 - Publish private Agent Link collaboration commands (`msg link` and `msg agent-link`), including bounded delegated credentials and retry-safe onboarding.
 - Include whole-account encrypted backup, public profile ciphertext manifests, and isolated restore commands. Backups retain opaque age plugin recipients, including YubiKey recipients.

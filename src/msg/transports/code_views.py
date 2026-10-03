@@ -10,6 +10,8 @@ from pygments.lexers import get_lexer_by_name
 from pygments.token import Comment, Keyword, Literal, Name, Operator
 from pygments.util import ClassNotFound
 
+from msg.transports.json_layout import json_display
+
 CODE_CSS = r"""
 .code-block,.diff-view{max-width:100%;min-width:0;margin:24px 0;border:1px solid var(--line);border-radius:2px;background:var(--bg)}
 .code-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:8px 12px;border-bottom:1px solid var(--line);font:12px var(--mono);color:var(--muted)}
@@ -124,7 +126,8 @@ def copy_source(source):
 
 def render_code(source, language=''):
     language = language.split(maxsplit=1)[0] if language.strip() else ''
-    lines, highlighted = _highlighted_lines(source, language)
+    display = json_display(source) if language.casefold() == 'json' else source
+    lines, highlighted = _highlighted_lines(display, language)
     label = language if highlighted else (language + ' · plain text' if language else 'plain text')
     rendered = ''.join(
         f'<span class="code-line"><span class="code-number" aria-hidden="true">{number}</span>'
