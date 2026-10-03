@@ -99,3 +99,39 @@ def test_absent_runtime_and_guest_tick_hooks_are_noops():
     assert not emit_game_event(service, 'u_owner', 'game.joined', {})
     assert capture_game_events(service, hub) is None
     assert not hasattr(service, '_game_runtime')
+
+
+async def test_world_hit_projects_whole_float_hp_without_other_ship_or_position():
+    from msg.transports.flight_simulation import FlightWorld, Ship
+
+    service = SimpleNamespace()
+    runtime = service._game_runtime = GameRuntime(service)
+    runtime.configure(
+        'u_owner',
+        {'enabled': True, 'events': ['game.hit'], 'generation': 7, 'endpoint_generation': 2},
+    )
+    runtime.consumer = asyncio.create_task(asyncio.Event().wait())
+    world = FlightWorld()
+    ship = Ship('ship_' + '1' * 24, 'u_owner', '@owner', False, [1.0, 2.0, 3.0], 4, hp=85.0)
+    world.ships[ship.id] = ship
+    world.active.add(ship.id)
+    world._event('hit', ship, world.clock(), target_id='ship_' + '2' * 24)
+    hub = SimpleNamespace(
+        world=world,
+        peers={
+            'peer': SimpleNamespace(
+                ship_id=ship.id, subject='u_owner', machine_principal=principal()
+            )
+        },
+    )
+    capture_game_events(service, hub)
+    capture_game_events(service, hub)
+    assert runtime.queue.qsize() == 1
+    subject, event, generation, endpoint = runtime.queue.get_nowait()
+    runtime.queue.task_done()
+    assert (subject, generation, endpoint) == ('u_owner', 7, 2)
+    assert event['hp'] == 85 and type(event['hp']) is int
+    assert event['type'] == 'game.hit' and event['ship_id'] == ship.id
+    assert set(event) == {'id', 'type', 'ship_id', 'time_ms', 'region', 'score', 'collected', 'hp'}
+    assert 'ship_' + '2' * 24 not in str(event) and 'position' not in event
+    await close_game_api(service)
