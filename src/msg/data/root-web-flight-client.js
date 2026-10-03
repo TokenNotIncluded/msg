@@ -252,7 +252,7 @@
       this._suspended = false;
       this.clearInput();
       if (!this._wanted) return true; // Local play never reopens a rejected transport.
-      if (!this._socket) { this._clearRetry(); this._open(); }
+      if (!this._socket && !this._retryTimer) this._open();
       else if (this.connected) {
         this._startInputs();
         this._status('connected', 'Live flight connected.');
@@ -428,8 +428,8 @@
       // Cap the delay, not the retry lifetime: a temporary outage must not strand the flight.
       const delay = RETRY_MS[Math.min(this._retryCount, RETRY_MS.length - 1)];
       this._retryCount = Math.min(this._retryCount + 1, RETRY_MS.length);
-      this._status('reconnecting', 'Flight disconnected; reconnecting…');
       this._retryTimer = globalThis.setTimeout(() => { this._retryTimer = null; this._open(); }, delay);
+      this._status('reconnecting', 'Flight disconnected; reconnecting…');
     }
 
     _badFrame() {
