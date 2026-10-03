@@ -446,3 +446,18 @@ test('preview and FX share negotiated range measured from ship center, including
     assert.equal(r.localShot.position[2],12.8);assert.equal(r.shotEvents.size,0);assert.equal(r.network.self.fuel,80);
   }
 });
+test('label obstacle rectangles move each frame while dimensions remeasure on text, viewport or observer invalidation', () => {
+  let reads=0,x=300,width=110;
+  const el={textContent:'',classList:{toggle(){}},style:{setProperty(){},opacity:0},
+    getBoundingClientRect(){reads++;return {width,height:14};},remove(){}};
+  globalThis.document={hidden:false,createElement:()=>el};
+  const node={id:'u_root',kind:'user',name:'root',position:[0,0,0]}, r=Object.create(Renderer.prototype);
+  Object.assign(r,{view:{nodes:[node]},width:1000,height:700,labelNodes:new Map(),labelSizes:new WeakMap(),labels:{append(){}},
+    project:()=>({x,y:300,depth:30}),style:()=>({root:true,certified:false,color:[1,1,1],light:1}),
+    avatars:{update(value){this.state=value;}}});
+  r.updateLabels();assert.equal(reads,1);assert.deepEqual(r.avatars.state.labelRects,[{left:312,top:293,right:422,bottom:307}]);
+  x+=100;r.updateLabels();assert.equal(reads,1);assert.equal(r.avatars.state.labelRects[0].left,412);
+  node.name='root-extended';width=180;r.updateLabels();assert.equal(reads,2);assert.equal(r.avatars.state.labelRects[0].right,592);
+  r.width=1100;r.updateLabels();assert.equal(reads,3);
+  r.labelSizes.delete(el);width=190;r.updateLabels();assert.equal(reads,4);assert.equal(r.avatars.state.labelRects[0].right,602);
+});
