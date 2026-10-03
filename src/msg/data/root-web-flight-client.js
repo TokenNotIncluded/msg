@@ -131,7 +131,7 @@
     return Object.freeze(result);
   }
 
-  function event(value) {
+  function event(value, extent, laserRange) {
     const validId = object(value) && (integer(value.id, 0) ||
       (typeof value.id === 'string' && /^evt_[1-9][0-9]{0,15}$/.test(value.id) &&
         Number.isSafeInteger(Number(value.id.slice(4)))));
@@ -139,8 +139,11 @@
         !id(value.player_id) || !time(value.at_ms) ||
         (value.region !== undefined && !region(value.region)) ||
         (value.target_id !== undefined && !id(value.target_id)) ||
-        (value.position !== undefined && !vector(value.position, 100000)) ||
-        (value.end !== undefined && !vector(value.end, 100000))) return null;
+        (value.position !== undefined && !vector(value.position, value.type === 'laser' ? extent : 100000)) ||
+        (value.end !== undefined && !vector(value.end, value.type === 'laser' ? extent + laserRange : 100000))) return null;
+    // A ray can leave the world, but its origin and negotiated Euclidean length cannot.
+    if (value.type === 'laser' && (!value.position || !value.end ||
+        Math.hypot(...value.end.map((component, axis) => component - value.position[axis])) > laserRange + 1e-6)) return null;
     const result = { id: value.id, type: value.type, player_id: value.player_id, at_ms: value.at_ms };
     if (value.target_id !== undefined) result.target_id = value.target_id;
     if (value.position !== undefined) result.position = frozenVector(value.position);
@@ -460,7 +463,8 @@
 
     _receiveHello(value) {
       if (!object(value.limits) || !time(value.server_time_ms) ||
-          (value.limits.world_extent !== undefined && !finite(value.limits.world_extent, 1, 100000))) {
+          (value.limits.world_extent !== undefined && !finite(value.limits.world_extent, 1, 100000)) ||
+          (value.limits.laser_range !== undefined && !finite(value.limits.laser_range, 1, 1000))) {
         this._badFrame(); return;
       }
       const self = ship(value.self, value.limits.world_extent ?? 480, true);
@@ -484,6 +488,8 @@
         if (!/^[a-z][a-z0-9_]{0,63}$/.test(key) || !finite(limit, 0, 1e9)) { this._badFrame(); return; }
         limits[key] = limit;
       }
+      // Old servers used 60u rays. Views consume the same normalized range as validation.
+      limits.laser_range = value.limits.laser_range ?? 60;
       const field = value.collectibles === undefined ? null : collectibles(value.collectibles, true);
       if (value.collectibles !== undefined && !field) { this._badFrame(); return; }
       const wells = value.gravity === undefined ? null : gravity(value.gravity);
@@ -535,7 +541,7 @@
       }
       const events = [], eventIds = new Set();
       for (const candidate of value.events) {
-        const item = event(candidate);
+        const item = event(candidate, this._hello.limits.world_extent ?? 480, this._hello.limits.laser_range);
         if (!item || eventIds.has(item.id)) { this._badFrame(); return; }
         eventIds.add(item.id); events.push(item);
       }
