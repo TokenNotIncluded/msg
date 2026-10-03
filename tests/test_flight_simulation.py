@@ -10,6 +10,7 @@ import pytest
 
 from msg.transports.flight_collectibles import CollectibleField
 from msg.transports.flight_simulation import (
+    LASER_RANGE,
     MAX_GRAVITY_WELLS,
     SHIP_RADIUS,
     FlightWorld,
@@ -453,13 +454,32 @@ def test_laser_is_hitscan_with_range_nearest_target_and_cross_region_hits(world)
     assert world.input(attacker.id, packet(1, actions=['laser']))
     assert target.hp == 85
     world.clock.now += 0.41
-    target.position = [0, 7, -64]
+    target.position = [0, 7, -(LASER_RANGE + 4)]
     assert world.input(attacker.id, packet(2, actions=['laser']))
     assert target.hp == 85
     world.clock.now += 0.41
     target.position = [0, 7, 1]
     assert world.input(attacker.id, packet(3, actions=['laser']))
     assert target.hp == 85
+
+
+@pytest.mark.parametrize(
+    ('center_distance', 'expected_hp', 'expected_length'),
+    [(100, 85, 97), (180, 85, 177), (183, 85, 180), (183.001, 100, 180)],
+)
+def test_laser_range_uses_target_surface_contact_at_the_180_unit_boundary(
+    world, center_distance, expected_hp, expected_length
+):
+    attacker, target = combat(world)
+    target.position = [0, 7, -center_distance]
+    assert world.input(attacker.id, packet(actions=['laser']))
+    assert target.hp == expected_hp
+    laser = next(
+        event for event in world.snapshot(attacker.id)['events'] if event['type'] == 'laser'
+    )
+    assert math.dist(laser['position'], laser['end']) == pytest.approx(expected_length)
+    assert ('target_id' in laser) == (expected_hp < 100)
+    assert attacker.fuel == 99
 
 
 def test_shield_reduces_damage_and_expiry_cooldown_and_cost_are_server_owned(world):
