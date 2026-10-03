@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import hashlib
 import hmac
+import math
 import secrets
 import time
 from collections import OrderedDict
@@ -263,7 +264,14 @@ def capture_game_events(service, hub):
                         'region': ship.region,
                         'score': ship.score,
                         'collected': ship.collected,
-                        'hp': ship.hp,
+                        # Simulation HP is a float even for whole damage units.
+                        # Normalize only the trusted producer; public ingress
+                        # continues to reject arbitrary floating-point facts.
+                        'hp': int(ship.hp)
+                        if type(ship.hp) is float
+                        and math.isfinite(ship.hp)
+                        and ship.hp.is_integer()
+                        else ship.hp,
                     },
                 )
     except Exception:
