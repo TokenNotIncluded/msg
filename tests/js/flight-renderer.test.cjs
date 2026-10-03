@@ -417,3 +417,32 @@ test('network loss preserves local throttle and held steering, then same-region 
   r.sendFlightInput(); assert.equal(r.network.input.throttle,.75);
   r.stopFlightInput(false); assert.equal(r.flightThrottle.value,0);
 });
+
+
+test('camera basis reuse follows exact yaw and pitch changes without stale projection', () => {
+  const r = Object.create(Renderer.prototype); r.camera={yaw:.6,pitch:-.2};
+  const first=r.basis(); assert.equal(r.basis(),first);
+  r.camera.yaw+=1e-10; const turned=r.basis(); assert.notEqual(turned,first);
+  assert.deepEqual(turned,flightBasis(r.camera.yaw,r.camera.pitch));
+  r.camera.pitch+=.1; assert.notEqual(r.basis(),turned);
+});
+test('parsed planet radius facts preserve exact freshness, expiry and live metadata transitions', () => {
+  const r=Object.create(Renderer.prototype), checked=100000;
+  const node={id:'u_test',star:{checked_at:new Date(checked).toISOString(),certificate:{state:'valid',expires_at:new Date(checked+200000).toISOString()}}};
+  const radius=now=>{assert.equal(r.planetRadius(node,now),globalThis.MSGUniverse.appearance(node,now).radius);return r.planetRadius(node,now);};
+  assert.equal(radius(checked-1001),1.5);assert.equal(radius(checked-1000),2.05);
+  assert.equal(radius(checked+89999),2.05);assert.equal(radius(checked+90000),1.5);
+  node.star.checked_at=new Date(checked+90000).toISOString();assert.equal(radius(checked+90000),2.05);
+  node.star.certificate.expires_at=new Date(checked+90001).toISOString();assert.equal(radius(checked+90000),2.05);assert.equal(radius(checked+90001),1.5);
+  node.star.certificate.state='none';assert.equal(radius(checked+90000),1.5);
+  node.star={checked_at:null,certificate:{state:'valid',expires_at:null}};assert.equal(radius(NaN),1.5);
+  node.id='u_root';assert.equal(r.planetRadius(node,NaN),5.4);
+});
+test('preview and FX share negotiated range measured from ship center, including old-server60 and offline180', () => {
+  for(const [connected,range,expected] of [[true,180,180],[true,60,60],[true,undefined,60],[false,60,60],[false,undefined,180],[true,NaN,60]]) {
+    const r=renderer();r.network.connected=connected;r.network.localSession=!connected;r.network.limits={laser_range:range};
+    let effect;r.effects={fire:value=>{effect=value;},sample:()=>({})};
+    r.previewLaser();assert.equal(r.localShot.end[2],16-expected);assert.equal(effect.range,expected);
+    assert.equal(r.localShot.position[2],12.8);assert.equal(r.shotEvents.size,0);assert.equal(r.network.self.fuel,80);
+  }
+});

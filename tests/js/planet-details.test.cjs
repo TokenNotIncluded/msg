@@ -200,3 +200,36 @@ test('mobile edge placement stays inside the viewport and keeps its 42px size ca
     assert.equal(badge.width,42);assert.ok(badge.left>=12&&badge.right<=378);
   } finally {layer.dispose();}
 });
+
+test('offscreen avatars skip DOM obstacle layout and cancel departed requests', () => {
+  dom();const layer=new P.AvatarLayer(new Element(),{origin:'https://msg.example',fetcher:()=>new Promise(()=>{})});
+  let measurements=0;layer.obstacles=()=>{measurements++;return [];};
+  try {
+    layer.update(view([user(1)]));assert.equal(measurements,1);assert.equal(layer.requests.size,1);
+    const request=[...layer.requests.values()][0];
+    layer.update(view([user(1)],{project:()=>null}));assert.equal(measurements,1);
+    assert.equal(layer.nodes.size,0);assert.equal(layer.requests.size,0);assert.ok(request.controller.signal.aborted);
+  }finally{layer.dispose();}
+});
+test('avatar source memoization still rejects in-place privacy and path changes', () => {
+  dom();const layer=new P.AvatarLayer(new Element(),{origin:'https://msg.example'}),node=user(1);
+  try {
+    const source=layer.source(node);assert.ok(source);assert.equal(layer.source(node),source);
+    node.private=true;assert.equal(layer.source(node),null);node.private=false;assert.equal(layer.source(node),source);
+    node.visibility='private';assert.equal(layer.source(node),null);node.visibility='public';
+    node.artwork.avatar.url='https://other.example/avatar.svg';assert.equal(layer.source(node),null);
+    node.artwork.avatar.url='/@different/art/avatar.svg';assert.equal(layer.source(node),null);
+    node.path='/@different';assert.equal(layer.source(node),'https://msg.example/@different/art/avatar.svg');
+  }finally{layer.dispose();}
+});
+
+test('renderer-projected moving label rectangles avoid DOM reads and remain current per frame',async()=>{
+  dom();const container=new Element(),label=new Element();label.className='star-label';container.append(label);
+  label.getBoundingClientRect=()=>{throw Error('moving label must not be read from DOM');};
+  const layer=new P.AvatarLayer(container,{origin:'https://msg.example',fetcher:async()=>response()});
+  try {
+    const scene=view([user(1)],{project:()=>({x:450,y:320,depth:40,scale:30}),labelRects:[rectangle(462,312,240,18)]});
+    layer.update(scene);await drained(layer);assert.ok(markerRectangle(layer.nodes.get('u_1')).right<450);
+    scene.labelRects=[rectangle(250,312,190,18)];layer.update(scene);assert.ok(markerRectangle(layer.nodes.get('u_1')).left>450);
+  }finally{layer.dispose();}
+});

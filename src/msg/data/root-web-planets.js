@@ -255,18 +255,27 @@
   class AvatarLayer {
     constructor(container,{wake=()=>{},fetcher=globalThis.fetch?.bind(globalThis),now=()=>Date.now(),origin=globalThis.location?.origin}={}) {
       this.container=container; this.wake=wake; this.fetcher=fetcher; this.now=now; this.origin=origin;
-      this.nodes=new Map(); this.cache=new Map(); this.requests=new Map(); this.wanted=new Set(); this.timer=0; this.disposed=false;
+      this.nodes=new Map(); this.cache=new Map(); this.requests=new Map(); this.wanted=new Set(); this.timer=0; this.disposed=false; this.sources=new WeakMap();
       this.visibility=()=>{if(document.hidden)this.clear(); else if(this.state)this.update({...this.state,hidden:false});};
       this.pagehide=()=>this.clear();
       globalThis.document?.addEventListener?.('visibilitychange',this.visibility);
       globalThis.addEventListener?.('pagehide',this.pagehide);
     }
-    obstacles() {
+    source(node) {
+      const raw=node.artwork?.avatar?.url, path=node.path, kind=node.kind, visibility=node.visibility, privateValue=node.private;
+      let saved=this.sources.get(node);
+      if (!saved || saved.raw!==raw || saved.path!==path || saved.kind!==kind || saved.visibility!==visibility || saved.privateValue!==privateValue || saved.origin!==this.origin) {
+        saved={raw,path,kind,visibility,privateValue,origin:this.origin,url:avatarURL(node,this.origin)};
+        this.sources.set(node,saved);
+      }
+      return saved.url;
+    }
+    obstacles(labelRects) {
       const box=this.container.getBoundingClientRect?.()||{left:0,top:0};
       const doc=this.container.ownerDocument||globalThis.document;
-      const elements=[...(this.container.querySelectorAll?.('.star-label')||[]),
+      const elements=[...(Array.isArray(labelRects) ? [] : this.container.querySelectorAll?.('.star-label')||[]),
         ...(doc?.querySelectorAll?.('#pilot-hud, #game-hud, #game-actions, .flightbar, .topbar, #region-map, #inspector, #catalog, #search-box')||[])];
-      const rects=[];
+      const rects=Array.isArray(labelRects) ? [...labelRects] : [];
       for(const element of elements) {
         if(element.hidden)continue;
         const style=globalThis.getComputedStyle?.(element);
@@ -295,17 +304,17 @@
       if(this.disposed)return; this.state=state;
       if(state.hidden || globalThis.document?.hidden || this.container.isConnected===false) {this.clear(); return;}
       const {nodes,project,width,height,focusId}=state, mobile=width<700 || state.software;
-      const candidates=[];
+      const candidates=[], now=this.now();
       for (const node of nodes) {
-        const url=avatarURL(node,this.origin); if(!url)continue;
-        const p=project(node.position),radius=M.appearance(node,this.now()).radius;
+        const url=this.source(node); if(!url)continue;
+        const p=project(node.position),radius=state.radius ? state.radius(node,now) : M.appearance(node,now).radius;
         if(!p || p.depth<=radius || p.scale*radius<7 || p.x<16 || p.x>width-16 || p.y<100 || p.y>height-120)continue;
         candidates.push({node,url,p,radius});
       }
       candidates.sort((a,b)=>Number(b.node.id===focusId)-Number(a.node.id===focusId)||a.p.depth-b.p.depth||a.node.id.localeCompare(b.node.id));
       // Batch current DOM measurements before changing any avatar styles.
       // Labels have already been placed by the renderer in this container.
-      const obstacles=this.obstacles(), visible=new Set();
+      const obstacles=candidates.length ? this.obstacles(state.labelRects) : [], visible=new Set();
       const chosen=candidates.slice(0,mobile?BUDGET.mobileAvatars:BUDGET.avatars).map(candidate=>{
         const {p,radius}=candidate,size=clamp(p.scale*radius*.8,28,mobile?42:56),edge=p.scale*radius+size*.62+8;
         return {...candidate,size,position:this.placement(p,size,edge,width,height,obstacles)};

@@ -105,3 +105,23 @@ test('non-flight canvas drag keeps the existing orbit behavior instead of changi
   assert.notEqual(r.camera.yaw,0);assert.notEqual(r.camera.pitch,0);assert.equal(r.flightPointers.size,0);
   canvas.emit('pointerup',{clientX:500,clientY:250});assert.equal(r.pointers.size,0);
 });
+
+test('focus transfers among gameplay controls retain oil; other UI and window loss still cancel',()=>{
+  const {r,canvas,throttle,doc,win}=fixture();
+  r.camera={target:[0,0,0],distance:34,yaw:0,pitch:0};r.reduced.addEventListener=()=>{};r.events();
+  const action={closest:q=>q.includes('[data-game-action]')?action:null};
+  r.flightThrottle.set(.75);throttle.emit('blur',{relatedTarget:canvas});assert.equal(r.flightThrottle.value,.75);
+  r.keys.add('w');canvas.emit('blur',{relatedTarget:action});doc.emit('focusin',{target:action});
+  assert.equal(r.keys.size,0);assert.equal(r.flightThrottle.value,.75);assert.equal(r.network.suspended,undefined);
+  document.activeElement=action;assert.equal(r.flightControlled(),true);
+  doc.emit('focusin',{target:{closest:()=>null}});assert.equal(r.flightThrottle.value,0);
+  r.flightThrottle.set(.75);win.emit('blur');assert.equal(r.flightThrottle.value,0);
+});
+test('resting steering spring does not rewrite controls every animation frame',()=>{
+  const {r}=fixture(),stick=r.flightSticks[0];let paints=0;const original=stick.paint.bind(stick);
+  stick.paint=()=>{paints++;original();};
+  for(let i=0;i<120;i++)stick.frame(1/60,0);assert.equal(paints,0);
+  stick.frame(1/60,1);assert.ok(paints>0);for(let i=0;i<180;i++)stick.frame(1/60,0);
+  assert.equal(stick.display,0);assert.equal(stick.velocity,0);const settled=paints;
+  for(let i=0;i<120;i++)stick.frame(1/60,0);assert.equal(paints,settled);
+});
