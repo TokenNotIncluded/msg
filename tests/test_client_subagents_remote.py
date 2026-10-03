@@ -62,8 +62,29 @@ async def test_remote_private_delivery_tail_restart_and_archive(installed, tmp_p
             await agents.send('bot1', 'bot2', 'private handoff', message_id='stable-message')
             == event
         )
+        receipt = await agents.send(
+            'bot1', 'bot2', 'private handoff', message_id='stable-message', receipt=True
+        )
+        assert receipt['type'] == 'subagent.receipt'
+        assert receipt['id'] == event['id']
+        assert receipt['from'] == event['from'] and receipt['to'] == event['to']
+        assert receipt['created_at'] == event['created_at']
+        assert 'message' not in receipt
+        assert receipt['body_bytes'] == len(b'private handoff')
+        assert receipt['path'] == '/@online-bots/files/agents/bot2/msg-stable-message.json'
+        saved_meta, saved_body = await agents._json(receipt['resource']['id'])
+        assert saved_meta['revision'] == receipt['resource']['revision']
+        assert saved_body['message'] == 'private handoff'
+        assert (
+            await agents.send(
+                'bot1', 'bot2', 'private handoff', message_id='stable-message', receipt=True
+            )
+            == receipt
+        )
         with pytest.raises(Failure, match='subagent_message_id_conflict'):
-            await agents.send('bot1', 'bot2', 'different', message_id='stable-message')
+            await agents.send(
+                'bot1', 'bot2', 'different', message_id='stable-message', receipt=True
+            )
         restarted = RemoteAgents(client)
         page = await restarted.inbox('bot2', cursor=tail['cursor'])
         assert [x['id'] for x in page['items']] == ['stable-message']
@@ -216,6 +237,9 @@ async def test_remote_labels_legacy_messages_and_cursor_survive_account_rename(i
             },
         )
         await agents.send('bot1', 'bot2', 'stable account record', message_id='stable')
+        receipt_before = await agents.send(
+            'bot1', 'bot2', 'stable account record', message_id='stable', receipt=True
+        )
         before = await agents.inbox('bot2', tail=True)
         assert agents.username == 'bots-before'
         # The old persisted cursor also embedded a handle. Its stable owner,
@@ -235,6 +259,11 @@ async def test_remote_labels_legacy_messages_and_cursor_survive_account_rename(i
             '@bots-after#bot2',
         ]
         assert (await agents.create('bot1'))['identity'] == '@bots-after#bot1'
+        receipt_after = await agents.send(
+            'bot1', 'bot2', 'stable account record', message_id='stable', receipt=True
+        )
+        assert receipt_before['resource'] == receipt_after['resource']
+        assert receipt_after['path'] == '/@bots-after/files/agents/bot2/msg-stable.json'
         history = await all_messages(agents, 'bot2')
         assert {x['id'] for x in history} == {'legacy', 'stable'}
         assert all(

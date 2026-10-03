@@ -386,7 +386,7 @@ class RemoteAgents:
             )
         return {'name': name, 'identity': self._full(name), 'archived': True}
 
-    async def send(self, sender, recipient, message, message_id=None):
+    async def send(self, sender, recipient, message, message_id=None, *, receipt=False):
         root = await self._identity()
         sender, recipient = self._label(sender), self._label(recipient)
         require(isinstance(message, str) and bool(message.strip()), 'invalid_subagent_message')
@@ -413,7 +413,19 @@ class RemoteAgents:
                 self._event(meta, existing, recipient) == self._event(meta, value, recipient)
             ),
         )
-        return self._event(meta, value, recipient)
+        event = self._event(meta, value, recipient)
+        if receipt:
+            return {
+                'type': 'subagent.receipt',
+                'id': event['id'],
+                'from': event['from'],
+                'to': event['to'],
+                'created_at': event['created_at'],
+                'resource': {'id': meta['id'], 'revision': meta['revision']},
+                'path': root + '/' + recipient + '/' + meta['name'],
+                'body_bytes': len(message.encode()),
+            }
+        return event
 
     def _event(self, meta, value, recipient):
         require(meta['owner'] == self.client.state.subject, 'subagent_private_namespace_conflict')

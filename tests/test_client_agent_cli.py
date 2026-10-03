@@ -129,6 +129,26 @@ def test_agent_address_and_host_expansion():
     assert args.message == 'hello'
 
 
+def test_remote_receipt_parses_without_changing_default_send():
+    command = ['--agent', 'bot1', 'agent', 'send', '@alice#bot2', 'hello', '--remote']
+    assert parser().parse_args(command + ['--receipt']).receipt is True
+    assert parser().parse_args(command).receipt is False
+
+
+def test_receipt_requires_remote_before_creating_local_state(tmp_path):
+    result = subprocess.run(
+        invocation(
+            tmp_path, '--agent', 'bot1', 'agent', 'send', '@alice#bot2', 'hello', '--receipt'
+        ),
+        capture_output=True,
+        text=True,
+        timeout=8,
+    )
+    assert result.returncode == 1
+    assert json.loads(result.stderr)['error']['code'] == 'receipt_requires_remote'
+    assert not (tmp_path / 'identity').exists()
+
+
 @pytest.mark.parametrize(
     'command',
     [['--agent', 'bot1', 'post', '/main', '--text', 'bad'], ['--offline', 'listen', '--once']],
