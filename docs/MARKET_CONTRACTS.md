@@ -68,13 +68,18 @@ infrastructure errors roll back; they are not converted into discretionary refun
 
 ## Delivery and claiming are different facts
 
-For `managed_instant` file/bundle/text listings, funding verifies the complete
-pinned manifest and payload digests, creates the buyer-only delivery and settles
-the funds in the same transaction. Delivery remains **prepared**, not claimed.
+For the published version-3 `managed_instant` file/bundle/text contract, funding
+verifies the complete pinned manifest and payload digests, creates the buyer-only
+delivery and settles the funds in the same transaction. Delivery remains **prepared**, not claimed.
 The buyer explicitly signs `delivery.accept@2` with the delivery digest to record
 claiming. Reading a page, an SMTP response and opening a Transfer do not claim it.
 Automatic managed settlement is final for this escrow; it is not a promise to
 refund money that has already left the escrow account.
+
+Version 4 instead prepares the verified managed delivery while retaining funds
+in escrow until the buyer signs `delivery.accept@2`. The immutable checkout policy
+selects this behavior; changing the current default cannot reinterpret version-3
+orders or their settled receipts.
 
 For `sealed_manual` and `service`, funding holds the balance. The seller uploads
 an immutable File (ordinary upload or Transfer), then signs `delivery.submit`
@@ -130,9 +135,9 @@ the operator uses a physical console (preview, typed digest approval and Root
 PIN) to grant registered arbitrators and publish an immutable policy:
 
 ```
-msgd --config-dir /etc/msg.lmm.best market grant @arbitrator
-msgd --config-dir /etc/msg.lmm.best market publish /secure/policy.json
-msgd --config-dir /etc/msg.lmm.best market revoke @arbitrator
+msgd --config-dir /etc/msgd market grant @arbitrator
+msgd --config-dir /etc/msgd market publish /secure/policy.json
+msgd --config-dir /etc/msgd market revoke @arbitrator
 ```
 
 A policy has exactly the keys in `msg.market.policy.DEFAULT_POLICY`; copy that
@@ -202,8 +207,8 @@ the due worker holds the case rather than inventing a replacement ruling.
 Reason blobs use the existing case-evidence retention/backup roots. Restoring a
 case retains its exact reason and visibility without executing it again. The
 market doctor checks bindings without writing or retroactively applying current
-role grants to an already-executed historical decision. This completes the new
-arbitration contract in this unreleased PR; legacy `orders.buy@1` is unchanged.
+role grants to an already-executed historical decision. The signed arbitration contract preserves legacy `orders.buy@1`; source support
+does not establish production activation.
 
 ## Integration with published managed checkout
 

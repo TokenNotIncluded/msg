@@ -1,11 +1,15 @@
 # Post universe
 
-`/@root/web/` is an interactive view of the existing MSG resource graph, not a
-separate social network or a simulated chat. Every publicly readable account is
-a star with an ID-derived, stable position. Selected accounts reveal their posts
-as satellites. Reply relations form arcs; unrelated users are not connected just
-because their positions are close. Decorative dust is not a user and cannot be
-selected. The counter describes the loaded sector, not global activity.
+`/@root/web/` is an interactive view of the existing MSG resource graph. Publicly
+readable accounts are planets laid out from the current public follow graph;
+the same graph produces the same coordinates, with Root fixed at the origin.
+Selected accounts reveal their posts as satellites. Reply relations form arcs;
+unrelated users are not connected just
+because their positions are close. Token particles are not users and cannot be
+selected as accounts. The counter describes the loaded sector, not global activity.
+
+This document describes the current source contract. Deployment and runtime
+performance require evidence for the specific installed release.
 
 ## Explore and participate
 
@@ -16,6 +20,10 @@ a real loaded user. The small expedition tracks three visited stars, two opened
 posts and one followed reply in memory for this visit; reading does not submit
 ACKs, follows, likes, or other writes. Pause and reduced motion stop ambient motion.
 
+Pilot mode uses the shared server-controlled flight world. See [flight controls,
+combat, collection and capacity](LIVE_FLIGHT.md) for the current inputs and limits,
+and [planet surfaces and avatars](PLANET_DETAILS.md) for rendering budgets.
+
 The native WebGL renderer has no third-party script or CDN dependency. Where
 WebGL is unavailable a Canvas renderer projects the same 3D geometry and camera.
 Loss of a running WebGL context exposes the catalog until restoration. No graphics
@@ -25,14 +33,15 @@ pages stop rendering.
 ## Public read boundary
 
 `GET /_universe?kind=users|posts` uses the existing anonymous read executor even
-when a browser session exists. Users are paged at 100, posts at 24. Selecting a star loads its own public
-posts with an optional author filter and independently bound pagination. A continuation
+when a browser session exists. Users are paged at 100, posts at 24. Selecting a star
+loads its own public posts with an optional author filter and independently bound pagination. A continuation
 is accepted only for exactly that projection; the existing cursor machinery also
 checks principal, snapshot and expiration. Post previews are bounded. Authors and
 reply targets must pass a separate current anonymous read before their identifiers
 or links enter the projection. The next sector is loaded explicitly, and current
 page content is refreshed after successful writes. Search is over loaded content.
-No cached public graph or search index is persisted by the browser.
+No cached public graph or search index is persisted by the browser. Public
+projections use anonymous authority; they reject explicit credential headers.
 
 `GET /_universe/me` takes no subject or other query parameters. It obtains the
 current browser account from the existing read-only session adapter, executes
@@ -60,41 +69,55 @@ promise about browser/OS copies of the original file.
 
 The packet uses the existing v1 payload digest, six-digit UTC timestamp,
 domain-separated request signature and certificate list. Writes omit cookies.
-Only the six explicit content/communication operations are available. An uncertain
-delivery retains its request ID; an explicit unchanged retry is idempotent. There
+The available writes are `content.post_create`, `discussion.reply`,
+`communication.dm_request`, `communication.dm_accept`, `communication.dm_reject`
+and `communication.dm_send`. An uncertain delivery retains its request ID;
+an explicit unchanged retry is idempotent. There
 are no automatic retries or optimistic “sent” messages. Server rejection stays
 visible. The account matching a private view must also match the connected key.
 
-## Trusted release page, untrusted hosted content
+## Trusted release pages and hosted content
 
-The old release-owned introduction was an offline game. Live data requires a
-narrow new trust exception: only `w_root_web/index.html` whose complete blob
-digest equals the assembled release page gets `sandbox allow-scripts
+Arbitrary hosted HTML receives an opaque sandbox with scripts and networking
+disabled. There are two separate fixed-resource, whole-file-digest exceptions.
+
+Only `w_root_web/index.html` whose complete blob digest equals the assembled
+Root release page gets `sandbox allow-scripts
 allow-same-origin` and `connect-src 'self'`. Executable script bytes are separately
 SHA-256 pinned. This applies to the release file, not arbitrary root-uploaded or
-user-hosted HTML. A different path, website, or modified byte receives the original
-opaque sandbox with no scripts/networking. External assets, forms, framing and
-base URLs remain forbidden. User text is inserted with `textContent`, never HTML.
+user-hosted HTML.
+
+The ASCII exception applies only to website `r_27e7106a06c8432187567cb506cf7f6f`,
+`index.html`, and the reviewed packaged bytes selected by
+`msg.transports.hosted_release.ascii_bundle`. Its whole-file fingerprint must
+match `ASCII_RELEASE_DIGEST`, and each inline script is SHA-256 pinned. It grants
+`sandbox allow-scripts allow-pointer-lock`, retains an opaque origin and forbids
+networking with `connect-src 'none'`; it does not grant same-origin access.
+
+A different path, website, modified file or mismatched package receives the default
+sandbox. Website ownership and mutable metadata cannot grant either exception.
+External assets, forms, framing and base URLs remain forbidden. User text is
+inserted with `textContent`, never HTML. The process and deployment boundary is
+documented in [Hosting runtime](HOSTING_RUNTIME.md).
 
 Tests cover anonymous projections, hidden ancestors, hidden reply targets, cursor
 binding/pagination, authenticated private views, wrong-subject rejection, exact
 CSP pins and cross-language browser signatures against the real executor. Browser
 fixtures are explicitly synthetic and exist only in the verification script.
 
-## Token field refinement (local changes, 2026-10-01)
+## Public identity markers
 
 The stage is neutral black, not blue; the scenery is a folded, deterministic
 field of small monochrome token glyphs, not a simulated galaxy or extra accounts.
-A new layout version places the real `u_root` at the origin and keeps an inner
-clearance around it. Coordinates are visual, not a protocol or stored identity
-attribute. Colors belong to identities, not to the background.
+The real `u_root` stays at the origin. Coordinates are visual, not a protocol or
+stored identity attribute. Colors belong to identities, not to the background.
 
 Independent visual channels prevent money, presence and authority being confused:
 
 - Root: white geometric core, layered corona and radial rays; always prominent,
   never an assertion that the administrator is currently online. Identification
   uses the reserved subject ID, never a display name or user-controlled role.
-- Certificate: a 1.37× body, quiet colored crystal, hexagonal seal and diamond
+- Certificate: an enlarged body, quiet color, hexagonal seal and diamond
   badge. A current publicly readable certificate must pass the existing complete
   chain validator, including expiry, issuer/key revocation and scope validity.
   This is a scoped authority marker, not a reputation rating. All unverified,
@@ -112,22 +135,21 @@ Independent visual channels prevent money, presence and authority being confused
 `discovery.get` and the existing flat user read query accept an explicit `star`
 field; default responses are unchanged. It is an anonymous-only projection so a
 privileged reader cannot accidentally populate a shared graph with private facts.
-Each subject summary scans at most 32 candidate certificates and 64 recent post
-candidates, checks current access and the execution deadline, and whitelists
-presence fields. No presence message, capability hint or hidden certificate path
+Subject summaries use bounded certificate and recent-public-post scans, check
+current access and the execution deadline, and whitelist presence fields.
+No presence message, capability hint or hidden certificate path
 is included. A bounded scan without an observation is not proof of inactivity.
 
 `/_universe?kind=users` requests that field; the initial page also returns a
 separately authorized root `anchor`, even if root sorts beyond the loaded page.
 `/_universe?ids=u_...,...` refreshes up to 100 unique user IDs, with at most four
 concurrent executor reads. It cannot be combined with a cursor or author filter.
-Every response is still read-only, no-store, and uses anonymous authority. Page
-cursors issued for the earlier, smaller projection must be restarted on upgrade.
+Every response is still read-only, no-store, and uses anonymous authority.
 
 Visible public scenes refresh at most 192 loaded identities every 30 seconds,
 prioritizing root, the open identity and visible individual stars, then rotating
-through a background slice. An observation
-older than 90 seconds stops supporting a certificate, presence or balance display;
+through a background slice. An observation older than 90 seconds stops supporting
+a certificate, presence or balance display;
 expired certificates and presence stop immediately, even in paused scenes. The
 server's observation time prevents a skewed device clock from inventing status.
 A user that becomes unreadable disappears on the next successful refresh. This
@@ -148,7 +170,7 @@ legend and current expedition progress. Reduced motion removes the fade and
 ambient movement. Selected mobile stars are framed above the inspector; software
 Canvas projects the same certificate seals, balance arcs and root geometry.
 
-### Local validation
+### Source validation
 
 ```
 node --test tests/js/nebula.test.cjs
@@ -165,14 +187,18 @@ validate the HTTP response sandbox, real sessions, the database, WebCrypto write
 or WebGL. No browser policy is disabled. PostgreSQL, Python 3.15 and the pinned
 project dependencies remain necessary for full backend acceptance.
 
-## Bounded exploration and randomized scenery
+## Bounded exploration and relation geometry
 
-Layout v3 uses identity-seeded, uneven 3D regions with diffuse outliers rather
-than a uniform fixed shell. Position does not change when pagination or account
-status changes. Crystals have independent orientation, proportions, rotation and
-pulse phase; satellite orbits vary in tilt, eccentricity, direction and speed.
-The decorative token field receives a fresh random seed per visit. These visual
-variations do not invent activity, relationships or users.
+Current layout v4 uses public follow relations: one-way follows orbit a selected
+parent system, mutual follows form binaries, and mutually reachable groups form
+multiple-star systems. Root's default attachment remains distinguishable from a
+user-signed follow. Changing the public graph may change positions; pagination
+does not randomly rearrange the same graph. Public post counts determine bounded
+post rings, with unknown counts shown as unknown. See [relations and post rings](LIVE_FLIGHT.md#关系与星环).
+
+The overview token field has a per-visit seed; joining flight replaces it with
+the server's shared collectible field and availability state. Visual variation
+does not invent activity, relationships or users.
 
 The public window retains at most 1,000 identities and 256 posts. Root, the open
 identity/post and its loaded reply target are protected during eviction. Further
@@ -185,8 +211,8 @@ Faraway cells become selectable clusters labelled with their **loaded** identity
 count, without certificate, presence or monetary status. Approaching resolves
 them into the original identities. The WebGL identity budget is 256 representatives
 (128 on Canvas), plus root/open node and the bounded set of satellites. Detailed
-crystal geometry is limited to 96 nodes plus root/open/hovered nodes. Offscreen
-cells are culled, and satellites update in place instead of rebuilding the whole
+planet geometry has the separate budgets in [Planet details](PLANET_DETAILS.md).
+Offscreen cells are culled, and satellites update in place instead of rebuilding the whole
 graph each frame. Aggregate counts preserve the represented population even when
 the refinement budget is exhausted. Clusters do not imply social relationships.
 

@@ -1,4 +1,14 @@
-# Issues #75–77: local implementation and acceptance boundary
+# Historical: issues #75–77 local verification — 2026-09-28
+
+Historical upstream base: `ad256d037ec4febbee95f03b7044f13b9eebb485`.
+
+This frozen record preserves the limited test environment and the old unknown
+escrow/dispute-policy reconciliation risk. Its implemented/missing lists refer
+only to the base and increment below; they are not current issue status.
+Current behavior is documented in [market contracts](../MARKET_CONTRACTS.md),
+[authorization sources](../AUTHORIZATION_SOURCES.md) and
+[release acceptance](../RELEASE_ACCEPTANCE.md). Review actual retained orders
+before applying any historical migration advice.
 
 Repository: `TokenNotIncluded/msg.lmm.best`
 Upstream base: `ad256d037ec4febbee95f03b7044f13b9eebb485`

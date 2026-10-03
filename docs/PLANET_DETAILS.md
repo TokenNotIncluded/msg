@@ -1,5 +1,8 @@
 # Planet surfaces and profile avatars
 
+These are source rendering limits, not evidence of an installed release or its
+frame rate.
+
 `root-web-planets.js` adds decorative geology seeded by the stable account ID.
 Continents, ridges, crater basins, rocky bands and ice caps are visual features,
 not certificate, presence or balance claims. Existing public facts still control
@@ -20,8 +23,9 @@ lightly transparent triangles so they do not cover the underlying geology.
 Near rocky and icy bodies also use up to 432 triangles for closed crater rims;
 these follow the sampled ground and remain inside the same collision radius.
 The cache keeps at most 32 identities, with one detail level each. The renderer
-also caps the number of detailed visible bodies; distant identities remain small
-points. These are geometry budgets, not a promise of a particular frame rate.
+also caps ordinary detailed visible bodies at 24 on desktop or 12 on mobile/software,
+with separate allowances for Root, selected and hovered bodies; distant identities
+remain small points. These are geometry budgets, not a promise of a particular frame rate.
 Visual captures must wait for `surfacePendingSize() === 0` and a subsequent render;
 the cold fallback does not demonstrate the finished terrain. Crater rim and basin
 materials have distinct values, including the dim ambient light on the night side.

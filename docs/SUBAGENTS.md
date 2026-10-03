@@ -12,66 +12,11 @@ For independent keys, expiring permissions, revocation or a one-success task, us
 [delegated task identities](DELEGATED_IDENTITIES.md) (`@alice~<suffix>`). A `#bot`
 label and a task identity can be used together; the label itself never limits authority.
 
-The examples below assume an existing MSG account called `alice`. Use the same
-profile/server selection for every participating process. First use with an older
-client identity may require `--username alice`; this name is remembered locally.
-New registrations retain the username for offline use.
-
-## Local collaboration, including offline operation
-
-```sh
-msg --offline --username alice agent create bot1
-msg --offline --username alice agent create bot2
-msg --offline --username alice --agent bot1 agent send '@alice#bot2' 'Review the patch and reply.'
-msg --offline --username alice --agent bot2 agent inbox
-msg --offline --username alice --agent bot2 agent send '@alice#bot1' 'Reviewed: tests pass.'
-```
-
-These commands never connect to MSG. Private SQLite state lives under the client's
-account/origin data directory, with directory permissions `0700` and files `0600`.
-Processes using that same directory can exchange messages. Without an existing
-login, `--username alice` also permits a purely local label namespace; this does
-not register or reserve `alice` on any server.
-
-## Wait in the background
-
-```sh
-msg --offline --username alice --agent bot2 listen \
-  --cursor-file ./bot2.cursor.json > ./bot2.events.jsonl &
-```
-
-The command stays running. Each matching event is one JSON line, flushed as soon
-as it is read. No empty page or polling response is written to stdout. The queue
-is checked once per second by default; this is a blocking CLI backed by polling,
-not an SSE or WebSocket connection.
-
-`--event subagent.message` filters event types. `--from-now` skips old events when
-starting with a **new** cursor file; omit it when resuming an existing checkpoint.
-`--once` drains available events and exits; `--max-events 1` waits for one matching
-event and exits. `--interval 0.5` changes the polling interval. Stop with Ctrl-C or
-SIGINT.
-
-For a task runner that needs one result before continuing, omit `&` and wait for
-one event:
-
-```sh
-msg --offline --username alice --agent bot2 listen --max-events 1
-```
-
-The process waits silently while the mailbox is empty and exits successfully
-after writing one matching event. Another process can send the task or result
-while it waits. For continuous asynchronous cooperation, keep the background
-listener above running and consume its JSONL output incrementally; do not wait
-for that process to exit before reading it.
-
-Start each worker's independent fresh-tail listener before reading its initial
-task reference, so `--from-now` cannot skip follow-up messages sent during setup.
-
-A cursor belongs to its server, account, mailbox and event filters. Each listener
-has its own checkpoint by default; specify different files for independent
-readers. Simultaneous use of the same file fails with `cursor_in_use`. Reading
-never marks an entire account's messages consumed. A crash between output and
-checkpoint persistence can replay an event: deduplicate by message `id`.
+The examples below assume an existing authenticated MSG username `alice`. Use
+the same account and service selection for every participating process; local
+account labels selected with `--account NAME` may differ from the server username.
+Remote mailboxes carry collaboration between authorized machines. Local queues
+are a separate offline option, not an automatic fallback.
 
 ## Remote private mailboxes
 
@@ -81,6 +26,11 @@ msg --agent bot2 agent create bot2 --remote
 msg --agent bot1 agent send '@alice#bot2' 'Run the integration checks.' --remote
 msg --agent bot2 listen --remote --cursor-file ./remote-bot2.cursor.json
 ```
+
+Clients whose `msg agent send --help` lists `--receipt` can add it to a remote
+send to return the saved message reference without echoing the body. Keep
+`--message-id ID` for retries. This is a delivery reference, not evidence that the
+recipient read the message; local queues reject `--receipt`.
 
 Each participating machine needs explicit authorization for the **same** account.
 The suffix does not authorize a new machine: use the existing account authorization
@@ -95,17 +45,61 @@ rejects a namespace that belongs to another account or is publicly accessible.
 No public message, profile or feed entry is created. Local and remote queues are
 separate; there is no automatic sync or silent fallback between them.
 
-Each inbox call freshly reads the account identity, then checks the three private
-namespace directories and the label configuration. A supporting HTTP adapter
-combines those four checks in one existing read query, with a separate signed and
-authorized envelope for each read. No identity, ACL or configuration is cached.
-A warm empty poll needs three HTTP requests instead of six; each message body
-still needs its own authorized read. Unsupported or temporarily unavailable read
-queries use the original serial checks. Permanent authority or privacy failures
+Each inbox call freshly reads the account identity, checks the private namespace
+and label configuration, and authorizes each message-body read. A supporting HTTP
+adapter batches namespace checks with a separately signed envelope for each read;
+unsupported or temporarily unavailable read queries use serial checks. No
+identity, ACL or configuration is cached. Permanent authority or privacy failures
 stop before change-stream reads; a transient sibling cannot hide them. Archived
 label history stays readable while a physically archived namespace is rejected.
-This reduces per-poll overhead; it does not change the bounded global event scan
-or add a mailbox index.
+
+## Listen and resume
+
+Start each worker's independent fresh-tail listener before reading its known
+initial task reference, so follow-up messages sent during setup are retained:
+
+```sh
+msg --agent bot2 listen --remote --from-now --once \
+  --cursor-file ./remote-bot2.cursor.json
+msg --agent bot2 listen --remote --cursor-file ./remote-bot2.cursor.json \
+  > ./remote-bot2.events.jsonl &
+```
+
+Each matching event is one flushed JSON line; empty polls produce no stdout.
+The queue is checked once per second by default. This is a blocking CLI backed
+by polling, not SSE or WebSocket. Consume background JSONL output incrementally.
+
+`--event subagent.message` filters events. `--from-now` skips old events only with
+a **new** cursor file; omit it when resuming. `--once` drains available events
+and exits; `--max-events 1` waits for one matching event and exits. For a task
+runner waiting for one result, run this without `&`:
+
+```sh
+msg --agent bot2 listen --remote --cursor-file ./remote-bot2.cursor.json --max-events 1
+```
+
+Clients whose `msg listen --help` lists `--max-pages` can bound a single drain:
+
+```sh
+msg --agent bot2 listen --remote --once --max-pages 8 \
+  --cursor-file ./remote-bot2.cursor.json
+```
+
+`N` must be a positive integer and requires `--once`. It counts source pages,
+not seconds or HTTP requests; one remote mailbox page can involve several reads.
+The client preserves its cursor, pending events and `has_more`. When the budget
+ends with more pages, stderr says so and the command exits normally. Inspect the
+checkpoint's `has_more` and resume the same cursor; exit 0 alone does not establish
+catch-up. Omitting the flag preserves the existing continuous and once behavior.
+This client addition does not establish a production rollout; older clients
+without the flag still use direct references and their independent reader.
+
+`--interval 0.5` changes the polling interval. Stop with Ctrl-C or SIGINT. A cursor
+belongs to its server, account, mailbox and event filters. Use different cursor
+files for independent readers; simultaneous use of one file fails with
+`cursor_in_use`. Reading never implies ACK. A crash between output and checkpoint
+persistence can replay an event: deduplicate by message `id`. Retry sends with
+the same `agent send --message-id ID` and message content.
 
 A remote listener retries interrupted reads, including bounded non-JSON responses
 with HTTP status 502, 503 or 504 during gateway or server restarts. The operation
@@ -136,15 +130,19 @@ cursor with `resync_required`; choose a new cursor and replay deliberately.
 Keep the returned cursor when checking an inbox repeatedly. A fresh inbox starts
 at the account's event history; `tail=True` in the client API, or `listen
 --from-now` with a new checkpoint, deliberately starts at the current end.
-Newer servers attach authorized current-parent hints and protected event resume
-cursors to the existing change-stream output. The client can skip unrelated
-message-body reads, fetch larger internal pages without exceeding the requested
-message limit, and obtain the tail without reading old message bodies. Older
-servers retain the original output. These additions preserve the published
-operation inputs and short codes; they do not add a server-side mailbox index, so
-a cold scan can still require linear database work.
+When the server provides current-parent hints and protected event resume cursors,
+the client skips unrelated message-body reads and can fetch larger internal pages
+without exceeding the requested message limit. A `tail_cursor` lets it start at
+the end without reading old message bodies. Servers without these output hints
+use the original scan. There is no server-side mailbox index, so a cold scan can
+still require linear database work.
 
-The change stream now scans at most 64 stored events per page and yields during
+`listen --once` follows `has_more` until caught up, including pages of unrelated
+activity. Even an existing cursor can take time to drain on a busy account. Read
+known task/result Resource references directly and retain the independent
+listener cursor for follow-up messages; do not restart from account history.
+
+The current change stream scans at most 64 stored events per page and yields during
 current permission checks. It can return an empty or short page with
 `has_more=true`; resume its protected `sync_cursor` to continue. Remote inbox
 calls scan at most eight pages before returning their progressed cursor and
@@ -157,6 +155,24 @@ infer completion from a short page can pause before reaching the current end on
 newer servers. Update those readers to follow `has_more` rather than treating an
 empty page as proof that the account history is drained.
 
+## Local collaboration, including offline operation
+
+```sh
+msg --offline --username alice agent create bot1
+msg --offline --username alice agent create bot2
+msg --offline --username alice --agent bot1 agent send '@alice#bot2' 'Review the patch and reply.'
+msg --offline --username alice --agent bot2 agent inbox
+msg --offline --username alice --agent bot2 agent send '@alice#bot1' 'Reviewed: tests pass.'
+```
+
+These commands never connect to MSG. Private SQLite state lives under the client's
+account/origin data directory, with directory permissions `0700` and files `0600`.
+Processes using that same directory can exchange messages. Without an existing
+login, `--username alice` permits a purely local label namespace; this does not
+register or reserve `alice` on a server. An older local identity may need this
+explicit username; the client remembers it. Local listeners use the same flags
+above with `--offline --username alice` and without `--remote`.
+
 ## Existing account events
 
 ```sh
@@ -167,7 +183,8 @@ Without `--agent`, `msg listen` reads the account's existing authorized change
 stream. It does not create a resource subscription or expand access. Continue to
 use the existing watch commands for resources you want to subscribe to.
 
-The CLI and JSONL format do not depend on a particular agent software. An agent
-that can run commands or read a file can participate. The tested software and
-network environments, including external-model failures, are recorded separately
-in the [release acceptance evidence](SUBAGENT_ACCEPTANCE_20261001.md).
+The CLI and JSONL format do not depend on particular agent software. An agent
+that can run commands or read a file can participate. Historical environment
+evidence is recorded separately in
+[release acceptance evidence](archive/20261001-subagent-acceptance.md); it is not a claim
+about the current deployment or every model environment.

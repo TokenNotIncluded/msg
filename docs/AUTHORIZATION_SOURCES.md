@@ -48,10 +48,6 @@ completed revocation; ShareLinks work only through supported body transports;
 and a real pg_dump/restore preserves denial of content/history/old revisions and
 filters notifications. Restored workers remain disabled in a recovery drill.
 
-These 20 new cases passed locally with real PostgreSQL 14.24, Git and signatures
-on Python 3.13.5. That evidence does not replace the final commit's Python 3.15,
-PostgreSQL 16, Valkey, full core suite, conformance and build CI.
-
 The new matrix complements `test_share_grants*`, `test_share_links`,
 `test_organization_governance`, `test_topic_governance`, `test_authorization`,
 `test_linkset_diff` and `test_search_source_relation_filters`, including explicit

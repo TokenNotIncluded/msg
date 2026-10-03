@@ -27,12 +27,14 @@ remain unchanged. The notification read path checks the linked job's order,
 endpoint, kind and principal before displaying it. Seller views still exclude
 buyer email addresses.
 
-## Remaining convergence
+## Model convergence
 
-ServerOffer should become a Listing compatibility view, Purchase an Order,
-and subject/order/bounty accounts use one protected ledger implementation.
-Retain typed account purposes, server entitlement authority, atomic accounting
-and explicit migrations. This slice does not implement those model migrations.
+The staged [offer resource migration](OFFER_RESOURCE_MIGRATION.md) maps new
+ServerOffers to Resources and new `money.redeem@3` purchases to Orders; published
+legacy versions retain their compatibility paths. The [compatibility guide](OFFER_ORDER_COMPATIBILITY.md)
+describes read projections and unmapped legacy rows. Keep typed account purposes,
+server entitlement authority, atomic accounting and explicit migrations; shared
+helpers do not prove that every legacy row or production instance has migrated.
 
 ConsignmentPackage is immutable content; Delivery is a recipient-bound fact.
 Recovery and delivery envelopes can share codecs, not authority or secret-release

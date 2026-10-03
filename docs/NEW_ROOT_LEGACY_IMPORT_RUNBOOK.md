@@ -20,9 +20,9 @@
 
 下文 `CFG`、`MATERIALS`、`CLIENT`、`HOLDER`、三个 `*_PARENT` 都由部署记录明确赋值。`CFG` 是候选配置目录；`MATERIALS` 是上述受保护目录。不要将示例变量直接当成生产路径。
 
-## 2. 新 Root 与在线 CA（必须本机控制台）
+## 2. 新 Root 与在线 CA
 
-操作系统 root 在物理、KVM 或串口控制台执行。SSH/PTTY 会被拒绝；不要绕过检查。PIN 只在 `getpass` 提示时本机输入，不通过聊天、参数、环境变量或管道传递。
+默认由操作系统 root 在物理、KVM 或串口控制台执行。`init` 与 `cert issue` 另支持经明确授权的 OS-root SSH 交互终端和显式 `--allow-ssh`；仍要求交互 PIN。下文旧内容/Git/身份迁移批准的签署仍仅限物理控制台，不能套用此选项。PIN 只在 `getpass` 提示时输入，不通过聊天、参数、环境变量或管道传递。
 
 ```sh
 msgd --config-dir "$CFG" init --data-dir "$NEW_DATA" --service-url https://msg.lmm.best

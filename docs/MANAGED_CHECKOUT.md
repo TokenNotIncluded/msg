@@ -1,6 +1,9 @@
 # Managed checkout contracts
 
-This describes the bounded implementation for issues #74–76, not completion of the entire market or authorization design. No deployment or authority-policy change is implied.
+This documents the published version-2 compatibility contract for issues #74–76.
+New CLI checkout defaults and version-3/version-4 behavior are in
+[market contracts](MARKET_CONTRACTS.md). Version-2 limitations below do not describe
+the whole current platform. No deployment or authority-policy change is implied.
 
 ## Versioned purchase and acknowledgement
 

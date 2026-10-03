@@ -107,7 +107,7 @@ msgd backup /secure-backup/service.zip
 msgd --config-dir /new/etc/msgd restore /secure-backup/service.zip --data-dir /new/var/lib/msgd
 ```
 
-`msgd backup` 的 v4 归档包含 PostgreSQL dump、内部文本 Git、公开仓库、Blob/CAS、可恢复暂存、公共信任及服务密钥，**不含根私钥**；恢复只接受v4，旧SQLite、v2/v3归档不能直接恢复。恢复命令默认使用 libpq 的 `service=msgd`，该 service 必须指向新建的空目标数据库；目标配置目录与数据目录也必须不存在。v4核验PostgreSQL/Git/CAS/LFS引用。隔离restore默认写暂停，并设置worker/daemon禁外发marker；必须显式人工核验并提升后才能运行或切流，不能恢复完自动作为生产启动。生产在线备份尚未演练，外部Git写可能使一致性检查fail-closed。Valkey 的短期数据无需备份。备份是敏感文件，保存为 0600 并在外部加密。根材料单独从本机控制台执行 `msgd root backup PATH`，恢复时核验现有信任锚。
+`msgd backup` 的 v4 归档包含 PostgreSQL dump、内部文本 Git、公开仓库、Blob/CAS、可恢复暂存、公共信任及服务密钥，**不含根私钥**；恢复只接受v4，旧SQLite、v2/v3归档不能直接恢复。恢复命令默认使用 libpq 的 `service=msgd`，该 service 必须指向新建的空目标数据库；目标配置目录与数据目录也必须不存在。v4核验PostgreSQL/Git/CAS/LFS引用。隔离restore默认写暂停，并设置worker/daemon禁外发marker；必须显式人工核验并提升后才能运行或切流，不能恢复完自动作为生产启动。目标部署的在线备份必须单独演练；外部Git写可能使一致性检查fail-closed。Valkey 的短期数据无需备份。备份是敏感文件，保存为 0600 并在外部加密。根材料单独从本机控制台执行 `msgd root backup PATH`，恢复时核验现有信任锚。
 
 改 PIN 使用 `msgd root change-pin`，不改变公钥。轮换使用 `msgd root rotate`，根遗失则显式 `--lost-key`，中断恢复用 `--resume`。轮换前停止服务和 worker，完成后重新签发基础在线 CA、复核权限、重启，通知客户端更新信任 / 重新申请授权。普通账号可以 `msg cert renew` 获取新的基础证书；特殊授权与下级 CA 仍需重新审核。
 

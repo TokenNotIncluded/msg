@@ -1,4 +1,7 @@
-# Hosting runtime boundary (#161)
+# Hosting runtime boundary
+
+This is the current source contract and deployment runbook. It does not establish
+that a particular release or independent hosting process is running in production.
 
 ## Runtime roles
 
@@ -31,8 +34,9 @@ A PostgreSQL service entry `msgd-hosting` plus a reader-owned 0600 pgpass/peer m
 supplies the dedicated database credential. Protect those files and the config.
 
 The SQL template grants only SELECT on schema_version, resources, revisions,
-identities, memberships, credentials, certificates, settings, share_grants,
-share_grants_v2, dm_conversations and system_sources. It does not grant table
+identities, memberships, credentials, certificates, oauth_states, settings,
+share_grants, share_grants_v2, dm_conversations, system_sources and
+resource_path_aliases. It does not grant table
 ownership, sequence use, CREATE, role membership or token delivery/vault/job/ledger
 reads. Existing PUBLIC grants must be reviewed separately; the template does not
 revoke other applications' permissions. The runtime refuses an overpowered login.
@@ -76,19 +80,27 @@ and restore quarantine; repeat the operator review before read service promotion
 
 This does not change the current **same-origin** contract. The edge proxy sends only
 hosted-content paths to the loopback hosting listener; ordinary API/operation routes
-remain on the main service. Response-level CSP sandbox, no same-origin allowance,
-no-store/nosniff, signed private preview, current revocation, history, HEAD/Range/304
-and explicit publish/rollback semantics are preserved. Unknown host/path/methods do
-not open a write route. Startup never generates a key, creates content directories,
-repairs missing tables or publishes release revisions.
+remain on the main service. Arbitrary hosted HTML uses a response-level opaque CSP
+sandbox with scripts and networking disabled. Exact release-owned bundles have
+separate fixed-resource exceptions: the assembled `w_root_web/index.html` grants
+pinned scripts, same-origin access and `connect-src 'self'`; the packaged ASCII
+bundle selected by `msg.transports.hosted_release.ascii_bundle` grants pinned scripts
+and pointer lock, retains an opaque origin and uses `connect-src 'none'`. Both
+require the exact whole-file digest. Root ownership or mutable website metadata
+does not grant either exception. See [the hosted-page contract](post-universe.md#trusted-release-pages-and-hosted-content).
+
+No-store/nosniff, signed private preview, current revocation, history, HEAD/Range/304
+and explicit publish/rollback semantics are preserved. Unknown host/path/methods
+do not open a write route. Startup never generates a key, creates content
+directories, repairs missing tables or publishes release revisions.
 
 `tests/test_hosting_runtime.py` exercises the actual SELECT-only PostgreSQL login,
 an OS-unreadable service-key directory, unchanged business facts, denied writes,
 missing/stale prerequisites and current authorization/quarantine. Permission tests
 check new text/binary/index publication under umask 0077 and refusal to alter an
-existing private installation. Existing transport/CLI checks and full four-shard
-CI remain required. Evidence and outstanding checks: `HOSTING_RUNTIME_PROGRESS.md`.
-Green isolated CI is not a production deployment or completion of #80/#84.
+existing private installation. Existing transport/CLI checks and the current CI
+workflow remain required for runtime changes. Source tests do not establish a
+production deployment.
 
 ### Resource path migration table
 

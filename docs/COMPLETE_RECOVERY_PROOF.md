@@ -8,7 +8,7 @@ is never written to a proof, receipt, log, or command argument.
 ## What this path proves
 
 The current authoritative instance signs a separate, versioned
-`complete-recovery-state-v1` statement. It commits to all 86 supported metadata
+`complete-recovery-state-v1` statement. It commits to every supported metadata
 tables, exact columns and schema definitions, typed row counts/digests (including
 duplicates), sequence positions, storage references, actual content/Git/LFS trees,
 trust document, normalized configuration policy, and random service-key digests.

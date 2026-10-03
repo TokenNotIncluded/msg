@@ -1,4 +1,14 @@
-# Subagent release acceptance — 2026-10-01
+# Historical: subagent release acceptance — 2026-10-01
+
+Historical initial source: `dba81fe150c4ef9d215c3e8bd5c526984d8764e1`;
+later UI refinements below identify their own separate artifacts.
+
+This frozen release record preserves the actual communication cases and failed
+external-software attempts. Every version, test count, installer observation and
+deployment statement below belongs to the named historical artifact. It is not
+a current service inventory or a claim of current cross-vendor support.
+Use [subagents](../SUBAGENTS.md) for current commands and boundaries and
+[release acceptance](../RELEASE_ACCEPTANCE.md) for a new candidate.
 
 ## Delivered versions
 
@@ -35,7 +45,7 @@ These cases verify Codex parent/child cooperation and desktop/cloud-host communi
 
 OpenCode returned HTTP 429 before completing the CLI task. Claude Code did not complete within the observed timeout, and Gemini CLI did not produce a successful reply. Cross-vendor agent interoperability is therefore **not verified**. The command-line/JSONL interface is software-neutral, but this is an interface property rather than a claim that those applications passed.
 
-Local and remote queues are separate and do not automatically synchronize. Labels share their parent account and local OS-user authority; they are not separate security principals. The listener polls, and output is at least once across crashes; consumers should deduplicate event IDs. See [subagent usage](SUBAGENTS.md).
+Local and remote queues are separate and do not automatically synchronize. Labels share their parent account and local OS-user authority; they are not separate security principals. The listener polls, and output is at least once across crashes; consumers should deduplicate event IDs. See [subagent usage](../SUBAGENTS.md).
 
 ## Later homepage refinement
 

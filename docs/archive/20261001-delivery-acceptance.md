@@ -1,11 +1,16 @@
-# Delivery progress · 2026-10-01
+# Historical delivery acceptance · 2026-10-01
 
 The goal is to resolve every open issue against its original requirements.
 Implementation, isolated acceptance, target-host evidence and deployment are
-separate facts. [The current issue ledger](docs/ISSUE_RESOLUTION.md) records the
+separate facts. [The issue ledger](../ISSUE_RESOLUTION.md) records the
 remaining work; historical runs retain their original source provenance.
 
-## Current source and verification
+This is the October 1 snapshot, not the current deployment status or account
+layout. Use [release acceptance](../RELEASE_ACCEPTANCE.md),
+[filesystem layout](../FILESYSTEM_LAYOUT.md) and the issue ledger for current
+contracts and independently required target-host evidence.
+
+## Source and verification at the time
 
 - Main includes PR #206 at `5688012eaa4b588950aba5087de16dfe035dcd71`.
   Its tree matches the tested PR head `ab301ca4b770f5917f2c57c2a09aa2313ef543b9`.
@@ -36,9 +41,9 @@ remaining work; historical runs retain their original source provenance.
   official selftest passed all 42 checks on the deployed release. This does not
   claim physical-console, production-funding or external-mail acceptance.
 
-## Target host
+## Target host snapshot
 
-`archczy` currently runs native package `msgctl-server 0.2.0-20261001.1`, source
+At this observation, `archczy` ran native package `msgctl-server 0.2.0-20261001.1`, source
 `46b7cbf7a157012a9dea62a2bf3a9e330079cfd6`. Main is newer than deployment.
 Package integrity, health, doctor and isolated official selftest were verified
 for that installed release. Root trust and existing account keys were preserved.
@@ -49,7 +54,7 @@ CA certificates. This current database is not a legacy production snapshot. The 
 backup is SQLite (33 tables, no financial tables), so it cannot satisfy the old
 PostgreSQL escrow migration scenario.
 
-The older deployed dictionary currently returns `published_operation_changed`; main restores the immutable v1 contract. The compatible upgrade makes homepage v4 genuinely anonymous-only and excludes it from credential ceilings. An explicit `[identity] handle_rename_enabled = false` disables new rename authority where the installed signed CA has not authorized it. Existing grants, certificates, trust and Root keys are retained; enabling renaming still requires the appropriate signed CA policy. Production rollout and its doctor result remain separate verification steps.
+At this observation, the older deployed dictionary returned `published_operation_changed`; main restores the immutable v1 contract. The compatible upgrade makes homepage v4 genuinely anonymous-only and excludes it from credential ceilings. An explicit `[identity] handle_rename_enabled = false` disables new rename authority where the installed signed CA has not authorized it. Existing grants, certificates, trust and Root keys are retained; enabling renaming still requires the appropriate signed CA policy. Production rollout and its doctor result remain separate verification steps.
 
 The shared Nginx global/pre-Host policy is now installed: inherited access logs
 keep only time/configured server/status/bytes and error text is suppressed.
@@ -60,7 +65,7 @@ so #64 remains open. See the issue ledger for all other unresolved conditions.
 ## Completion gate
 
 New changes require their own verification. The PR #206 results do not certify
-later changes. [Release acceptance](docs/RELEASE_ACCEPTANCE.md) defines the full
+later changes. [Release acceptance](../RELEASE_ACCEPTANCE.md) defines the full
 suite, exact node-ID gate, installed package checks and applicable specialized
 checks. A legacy snapshot, independent current checkpoint, real retained-ciphertext
 and backup-retirement evidence, physical/serial console, controlled notification
@@ -71,7 +76,7 @@ its historical test counts must not be added to the current run.
 
 ## SSH-inspired connections
 
-[Issue #221](https://github.com/TokenNotIncluded/msg.lmm.best/issues/221) tracks `msg user@host "command"`, SSH-style host aliases/configuration, one identity per canonical service domain and durable legacy migration. Empty commands open the TUI; destination usernames are checked through signed reads before requested actions. Domain paths isolate keys, tokens, certificates, journals and cache. The first connection requires an explicit service rather than defaulting to the public domain.
+[Issue #221](https://github.com/TokenNotIncluded/msg.lmm.best/issues/221) tracks `msg user@host "command"`, SSH-style host aliases/configuration, the then-current per-domain identity layout and durable legacy migration. Empty commands open the TUI; destination usernames are checked through signed reads before requested actions. Domain paths isolate keys, tokens, certificates, journals and cache. The first connection requires an explicit service rather than defaulting to the public domain.
 
 The focused connection/config/path/registry regression selection passed 98 tests, including a real isolated signed post and wrong-user denial. Broader exact-head CI and installed-package acceptance are tracked separately. README, connection instructions and filesystem documentation are updated in English.
 

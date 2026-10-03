@@ -1,6 +1,6 @@
 # Legacy SQLite 0.22.1 offline preservation
 
-The existing archczy service uses SQLite, unlike the earlier rewrite's PostgreSQL
+The legacy 0.22.1 service used SQLite, unlike the rewrite's PostgreSQL
 market migration. This tool provides a bounded offline preflight and a transactional
 **inert preservation import**. Its output is not a v4 restore archive and must never
 be passed to the daemon. It does not complete the deployment migration.
@@ -84,7 +84,8 @@ required/missing/unexpected author mapping counts and a digest without exposing
 author IDs, post bodies or keys. The rehearsal explicitly requests mapping keys
 only in private process memory.
 Every legacy post author requires an explicit mapping to an existing registered v4
-identity; anonymous posts use the explicit key `__anonymous__`. Mapping records
+identity or JSON null for an unmapped historical author; anonymous posts use the
+explicit key `__anonymous__`. Mapping records
 historical attribution only: all imported resources remain owned by the chosen
 operator, and new revisions identify that importing operator. No legacy identity
 receives credentials, membership, ownership or certificate grants through this map.

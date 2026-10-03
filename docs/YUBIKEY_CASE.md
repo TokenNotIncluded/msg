@@ -34,6 +34,6 @@
 
 命令和依赖见 [YubiKey 使用说明](YUBIKEY.md)。记录不包含 PIN、管理密钥、token 或设备序列号。
 
-客户端 [msgctl 0.2.7](https://pypi.org/project/msgctl/0.2.7/) 已发布；线上部署为 `msgd 0.2.7-20261002.19`，源码 `6dc67e5`。本案例已[发布到 X](https://x.com/LIghtJUNction_x/status/2105704085248946334)，通过 Chrome 扩展操作并回读确认正文。
+本案例当时使用已发布的客户端 [msgctl 0.2.7](https://pypi.org/project/msgctl/0.2.7/)；当时线上部署为 `msgd 0.2.7-20261002.19`，源码 `6dc67e5`。本案例已[发布到 X](https://x.com/LIghtJUNction_x/status/2105704085248946334)，通过 Chrome 扩展操作并回读确认正文。
 
 后续在 0.2.8/0.2.9 的统一账号布局中，已将本机 `light` 的便携配置迁入 XDG 的 `msg/services/msg.lmm.best/accounts/light`。`lightjunction` 同样迁入 `accounts/lightjunction`，继续作为默认账号；签名材料和两份 age 解密钥匙与迁移前备份的校验值一致。现在用 `msg --account light ...` 选择硬件账号，不再需要专用的 `msg-hardware` 路径。

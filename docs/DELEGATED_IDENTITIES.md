@@ -48,7 +48,7 @@ msg identity delegated-create --request public-request.json --grants grants.json
 ```sh
 msg --server https://msg.lmm.best --config-dir ./worker identity delegated-accept \
   --grant public-grant.json
-msg --server https://msg.lmm.best --config-dir ./worker get /@alice/files/task
+msg --server https://msg.lmm.best --config-dir ./worker read /@alice/files/task
 ```
 
 私钥始终留在接收方。两个交换文件只包含公钥、签名证明、证书引用和权限元数据，不能用于

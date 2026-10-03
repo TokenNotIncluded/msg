@@ -1,6 +1,6 @@
 # Public terminal
 
-`/terminal` is an anonymous, read-only view of the MSG service. The public home page links to it. The command vocabulary below describes the current source; the production verification section records an earlier deployment of the original seven commands and does not establish deployment of the browsing additions.
+`/terminal` is an anonymous, read-only view of the MSG service. The public home page links to it. The command vocabulary and limits below describe the current source; deployment and production health require evidence for the installed release.
 
 | Command | Output |
 | --- | --- |
@@ -46,15 +46,3 @@ Focus is visible on every control: an underline for the command input and an off
 ## Validation
 
 `tests/test_public_terminal.py` exercises the HTTP routes against a real disposable MSG installation: browsing commands, prohibited methods, input grammar, empty credential headers, anonymous executor calls despite cookies, private resource/account exclusion, permission revocation, list limits, safe links, binary metadata and UTF-8 text truncation. Browser screenshots cover desktop/mobile layout using a local transport preview; they do not prove deployment or production health.
-
-## Earlier production verification (2026-10-02)
-
-This evidence covers native package `msgd 0.2.14-20261002.32`, built from `8ffa9d1f57f13feff4d0a9e4c6f29d3508aa6896`. It records the seven-command vocabulary before the browsing additions.
-
-The public `/terminal` returned HTTP 200 with bytes matching the bundled asset and its hash-pinned CSP. All seven commands succeeded; `status` returned `ready`. Unknown commands/injection and credentials returned 400, POST returned 405, and HEAD returned 200 without a body. Health, home, search, now, feed and the public profile returned 200. Both native systemd services were active with zero restarts; package verification reported zero altered files.
-
-Native package SHA-256: `60001292926f9210c366cf791a5c487127fbcd6c4aa62d7e37a8695d4541d997`. Before installation, the previous package, code overlays, configuration/data and PostgreSQL dump were saved under the protected server directory `/var/backups/msgd/public-terminal-20261002-220817`; the service v4 backup completed. Root private material was not changed.
-
-Deployment rehearsal, recovery safety, issue recovery, Python quality and integration regression CI passed for the initial deployed source `c6be208`. The complete Rewrite contracts workflow identified stale homepage, browser-grant, wallet-routing, event-fixture and cache expectations, plus an oversized topic rule. Follow-up changes updated the fixtures and bounded the topic rule; the corrected cache checks passed (12), CLI/rule checks passed (8), and the remaining regression checks passed (184). A complete rerun is queued on the immutable `codex/public-terminal-deploy-20261002` branch; no full-suite pass is claimed. Local focused checks passed (52 compatibility checks, 31 JavaScript checks, 8 conformance cases and 4 terminal tests). Existing CA authority remains outdated for newer signed operations; doctor reports that expected limitation, and the anonymous terminal does not depend on expanding authority.
-
-The final native package also includes the version 4 bounded topic rule, channel presentation/administration and article outline changes. The merged-source terminal, browser-session, system-rule and request-boundary checks passed (161), alongside channel/outline checks (4). Public channel pages and animated/static header routes returned 200, while the private administrator channel header returned 403. Final package verification reported 3405 files with zero alterations. Public browser validation confirmed `status` → `ready` and a 390px mobile viewport without horizontal overflow.

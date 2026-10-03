@@ -1,7 +1,7 @@
 # 发布验收与现场交接
 
 本页是发布验收的入口，取代把历史进度数字当作当前部署结论的做法。
-历史集成、验收与现场交付记录见 `PROGRESS.md` 及对应专题文档。
+历史集成、验收与现场交付记录见[归档](archive/README.md)及对应专题文档。
 这些记录只证明其标明的源码和产物，不替代当前候选的检查。
 每次最终验证以产物 `source.json` 中的 commit/tree、对应 workflow 和完整 JUnit
 node-ID 为准。PR 的模拟 merge commit 与分支 head 可不同，必须核对实际 tree。
@@ -9,13 +9,10 @@ node-ID 为准。PR 的模拟 merge commit 与分支 head 可不同，必须核�
 
 ## 包名与已发布版本
 
-项目与 PyPI 包名为 `msgctl`，入口命令为 `msg` 和 `msgd`；服务器原生软件包名为 `msgd`。
-2026-09-30 只读核对 [PyPI JSON 元数据](https://pypi.org/pypi/msgctl/json)：
-已发布 `0.1.0a1` 的 wheel SHA-256 为
-`5cf46a7a663f90c53e50d141ba8b09ff544681a2885b65cf04dff56ef0949612`，
-sdist 为 `ed2ad98a30a79c1af4f8ea10b8cc6e5e262bd7c25ed65f626c23bf05dbb3c0ac`。
-此记录只识别已发布包，不代替当前源码的验收。当前 CI 候选仍须按各自 `source.json`
-及 release 摘要识别；不能以相同版本号视为 PyPI 已包含所有修复。
+项目名为 `msg`，PyPI 包名为 `msgctl`，入口命令为 `msg` 和 `msgd`；服务器原生软件包名为 `msgd`。
+PyPI、原生服务包和源码安装器分别交付。核对实际发行文件的摘要与对应源码，
+不能以相同版本号视为已包含某个修复；当前 CI 候选按各自 `source.json`
+及 release 摘要识别。
 再次发布须采用未发布的新版本，保持 pyproject、运行时版本与锁文件一致，
 对实际发布文件重新执行所有闸门。PyPI 上传与生产切换分别需要该次交付的明确授权；
 通过演练本身不会自动执行它们。
@@ -67,7 +64,7 @@ client-only 包不得安装或导入 server runtime；其传输检查使用 Mock
 | #80 | `test_transfer_status_cursors`、真实 `test_git_http_push/git_lfs`、`test_storage_commit_faults/lfs_shared_gc_quota`、真实 sshd 演练 | 目标共享卷/多实例拓扑的容量、断电、GC 与一致恢复 |
 | #81 | `test_smtp_socket_acceptance`、`test_webhook_*`、`test_effect_completion_fencing`、`test_collaboration_*`、`test_lease_list_bounds/deadline` | 受控外发接收端及实际部署开关；lease 不授权或充当排他锁 |
 | #82 | CLI/TUI/stdio 回归、`test_tool_sandbox_acceptance`、真实 sshd 演练、client-only 安装 | 目标机实际路径/PAM/systemd/隔离；TUI 只读导航，正式写入走签名 CLI |
-| #83 | `DESIGN_CONTRACT_INVENTORY`、`test_configuration_field_contracts`、`test_manifest_feature_linkage`、Registry/route 矩阵、正式 selftest | 导航/正则匹配不等于逐条断言；现场闸门保留 |
+| #83 | [历史设计契约映射](archive/20260929-design-contract-inventory.md)、`test_configuration_field_contracts`、`test_manifest_feature_linkage`、Registry/route 矩阵、正式 selftest | 导航/正则匹配不等于逐条断言；现场闸门保留 |
 | #84 | 本页三层闸门、`test_capacity_bounds`、`test_restore_physical_failure`、只读 preflight | 真实主机、旧数据、Root、日志、容量、备份/切流与回滚批准 |
 | #85 | `test_market_boundaries`、`test_architecture_ports`、`test_client_boundary`、session/storage 边界、严格 Ruff | 保留唯一 owner 和兼容导出；不以删断言/unsafe fix/skip 换通过 |
 
@@ -81,8 +78,10 @@ client-only 包不得安装或导入 server runtime；其传输检查使用 Mock
    所有 listener/vhost/upstream/日志和 APM 链清单。公开 health 200 不能证明新版本就绪。
 2. 真实旧安装的受保护备份及 manifest、来源/冻结时间、旧 Root/CA 公开清单和
    已批准的新 Root 导入/身份映射。不要将备份、PIN、私钥或凭据贴到公开 issue。
-3. 授权操作者在真实 VT/串口完成 Root/CA 审核；独立 current pin 和实际备份
-   退役证明。SSH、TTY 伪装、数据库布尔值或删除 quarantine 文件均不能代替。
+3. 按操作的管理边界完成 Root/CA 审核；默认真实 VT/串口，仅明确支持的
+   初始化、签发和日常管理命令可显式选择 OS-root SSH。完整恢复提升和备份
+   退役仍要求物理控制台、独立 current pin 和实际备份退役证明。TTY 伪装、
+   数据库布尔值或删除 quarantine 文件均不能代替。
 4. 目标拓扑的隔离容量/崩溃/恢复演练、适用 SMTP/Webhook 的受控接收端；未启用
    渠道仍验证零外发。提供切流/停止/回滚条件；产生新写入后不得直接退回旧 SQLite。
 

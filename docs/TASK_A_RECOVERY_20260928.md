@@ -1,18 +1,9 @@
-# Task A：身份、Root 与隔离恢复增量
+# 部分当前权限重放与只读预检
 
-Refs #64, #65, #68, #69, #70, #84, #85；接续 #112，不关闭现场验收项。
-
-## 基线与协作
-
-读取 main ref 得到 `67401759a853c69fc5cb234982e1f7020b650542`，而不是 PR 元数据中较旧的 base_sha。
-本增量以 #112 已整合该 main 的 `512bb9b1e163151d66b94a5bc26f4b3cc6415070` 为基线；
-未向 #112 或 C 的分支推送。C 是唯一串行合并负责人。
-
-本组新增 `admin/preflight.py`、`admin/recovery_replay.py`、`security/root_files.py`
-及 `tests/test_task_a_*`；窄改动为 `security/custodial_migration.py`、
-`plugins/custodial_lifecycle.py`、`admin/rotation.py`。
-唯一公共测试接线补丁是 `test_authorization_recovery_boundaries.py`，需由 C 审查采用。
-没有修改公共 DDL、executor、application、worker、配置默认值、已发布 operation/schema/短码或现有 CI。
+本页保留部分权限重放、Root 文件和 preflight 的边界。文中早期修复说明归属
+2026-09-28 增量，不能当作当前全部验收状态。这里的 partial replay 始终隔离，
+不提供 promotion；另有已实现的严格全状态匹配路径，见[完整恢复证明](COMPLETE_RECOVERY_PROOF.md)。
+当前测试入口和现场要求见[发布验收](RELEASE_ACCEPTANCE.md)。
 
 ## #68：空清单也验证签名挑战
 
@@ -106,30 +97,15 @@ Application/MetadataStore，不做 DDL、迁移、计数器推进、目录修复
 空数据库明确报告 `empty`，不创建表。缺配置/数据库、材料不一致和缺现场证据分别保持 blocked。
 命令输出 JSON；blocked 的进程退出码为 **2**，不是绿色放行。
 
-该报告永远区分代码一致性与现场证据。以下材料本轮均未取得：实际部署版本/配置、全链路日志/APM、
-受保护的真实旧库快照及来源、真实数据迁移/回滚守恒、独立当前撤销检查点、物理本机控制台、
-存量 CA 逐项重签/撤销批准、B 的 bank fund 现场边界、实际容量/崩溃恢复测量。
-因此 #64/#65/#70/#84 现场项继续 open/blocked，不以 fixture、SMTP sink 或 CI 成功补齐。
+该报告区分代码一致性与现场证据。实际部署版本/配置、全链路日志/APM、
+受保护的真实旧库及来源、迁移/回滚守恒、独立当前撤销检查点、物理控制台、
+CA 逐项重签/撤销批准和目标容量/恢复测量，均须按当前候选独立提供。
+缺少这些材料时不能以 fixture、SMTP sink 或 CI 成功代替现场放行。
 
 #103 `money_purchases.escrow_account` 为 NOT NULL 且指向 LedgerAccount；`purchase_escrow` 不是 Subject。
 其 market DDL 在同一初始化事务内先于 `_migrate_ledger_accounts`，并保留未知 body 表拒绝。
 `store_order_events.actor` 属身份引用，receipt_refs 为历史财务引用。
 该只读复核不代表 #103 与本增量已组合验收；最终合并后仍须运行真实旧代码迁移/回滚用例。
-
-## 验证记录与交付条件
-
-本地隔离环境：Python 3.13.5、PostgreSQL 17.11、age 1.2.1、Git、Valkey 8.1.1。
-它不是项目最终目标 Python 3.15/PostgreSQL 16/Valkey 9 的替代品。
-
-初始失败证据：空历史绑定 9 failed/1 passed；Root 文件/并发问题失败；
-恢复授权交集 1 failed（精确 `recovery_quarantined`）；新增 checkpoint/preflight 模块在实施前无法导入。
-实施后：空历史/检查点/preflight 独立组 29 passed；Root 新旧回归 12 passed；
-既有 v1 与完整托管生命周期兼容组 14 passed；恢复交集先通过 1 项，后续另加未撤销源阳性对照。
-这些分组有重叠，不能相加冒充完整测试总数。
-
-最终远端 head 必须另外完成现有完整四分片、精确 JUnit node-ID gate、conformance 及 wheel/sdist。
-最终 source SHA、CI run 与实际数量在 PR/issue 的验收评论中记录；未得到最终结果前不声明成功。
-没有部署、生产迁移/恢复、生产 Root/PIN/私钥访问、真实资金或真实邮件/Webhook 外发。
 
 ## Typed policy ceiling checkpoint v2 (partial, not promotion)
 

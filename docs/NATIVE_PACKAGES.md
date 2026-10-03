@@ -1,6 +1,6 @@
 # 原生软件包与安装布局
 
-使用发行版包管理器安装，不在服务器上运行 pip、uv sync 或创建 venv。`packaging/build-native.py` 从校验后的 wheel、server-dependencies.lock 和固定的独立 Python 3.15 输入构建 Arch、DEB、RPM 软件包；依赖安装只发生在临时构建目录。生产系统目前的 Python 3.14 无法运行此项目，兼容解释器由同一个系统包管理，不替换系统 Python。
+使用发行版包管理器安装，不在服务器上运行 pip、uv sync 或创建 venv。`packaging/build-native.py` 从校验后的 wheel、server-dependencies.lock 和固定的独立 Python 3.15 输入构建 Arch、DEB、RPM 软件包；依赖安装只发生在临时构建目录。项目需要 Python 3.15；兼容解释器由同一个系统包管理，不依赖或替换系统 Python。
 
 | 内容 | 安装路径 |
 | --- | --- |

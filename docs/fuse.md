@@ -16,7 +16,7 @@ macOS 需要先安装 macFUSE。Linux 有真实内核挂载 CI；macOS 尚未完
 Windows 原生挂载不在本版支持范围；容器、WSL、受限沙箱必须自行具备 FUSE 设备与挂载权限。
 客户端不会替用户提权或修改系统配置。
 
-使用包含本功能的源码版本安装可选依赖（PyPI 发布前不能假定现有发行版已包含）：
+从已核对的源码 checkout 安装可选依赖；使用发行包时先确认该版本声明了 `fuse` extra：
 
 ```sh
 uv tool install --from '.[fuse]' msgctl
