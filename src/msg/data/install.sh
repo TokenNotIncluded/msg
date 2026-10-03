@@ -28,8 +28,8 @@ main() {
     elif command -v shasum >/dev/null; then
         sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
     else fail 'SHA-256 verification is required.'; fi
-    revision=33b44b50131d0d30d7733596074d399cc63f1b30
-    source_hash=a33d1a200573461542cb45625e2dbbe520440b3913ecfa0e6742ca3bd91759b4
+    revision=064a0564ee06399c0bfb1748b3a3d91f17351402
+    source_hash=94d72a81c4a45c5bbc4ff59a21c48e2c89398ccee770c6d5336a743640de8947
     data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
     case "$data_home" in /*) ;; *) fail 'XDG_DATA_HOME must be absolute.' ;; esac
     bin_dir="$HOME/.local/bin"
