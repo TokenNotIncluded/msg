@@ -129,6 +129,12 @@ msg --server https://msg.lmm.best --account restored-lightjunction \
 
 需要与 recipient 配对的 YubiKey、age、`age-plugin-yubikey` 和 `yubikey-identity.txt`。插件必须在 `PATH`；Linux 还需可用的 PC/SC 服务。具体安装及支持的设备见 [插件官方说明](https://github.com/str4d/age-plugin-yubikey)。
 
+备份时可把插件提供的公开 recipient 原样传给 `--recipient`。旧的 `age1yubikey1…` 格式需要 `age-plugin-yubikey`；新的 `age1tag1…` 格式可由 age 1.3 或更新版原生加密，旧 age 可使用官方 `age-plugin-tag`。加密兼容不代表插件可解密：YubiKey 插件 v0.5.1 尚未支持新的 tagged 密文，须按 [插件官方版本说明](https://github.com/str4d/age-plugin-yubikey/blob/main/CHANGELOG.md) 核对恢复能力，不能给旧插件改名后就假定兼容。向公开 recipient 加密不需要接触 YubiKey，恢复时才需要原卡及其定位文件。不要把 `AGE-PLUGIN-…` 定位信息或 `AGE-SECRET-KEY-…` 当作公开 recipient。
+
+旧的 `msg recovery` 封包和恢复策略也支持公开插件 recipient。服务器只检查有界的公开 Bech32 编码；本地 age 插件负责校验其具体公钥。原生 X25519 recipient 保留原 `ek_…` 指纹，插件 recipient 使用绑定完整公开编码的 `rr_…` 指纹；设置策略与创建封包须使用同一 recipient。不同格式即使对应同一卡内钥，也分别登记，不能相互替代。这些记录仍是本人声明的元数据，不证明解密能力，也不授予账号权限。
+
+插件恢复策略使用新增的 `identity.recovery_policy_set@2`；`@1` 保留只接受原生 X25519 的既有契约。CLI 遇到插件 recipient 时显式选择 v2，原生 recipient 和 `--clear` 继续使用 v1。服务器也必须部署 v2；只覆盖 v1 的旧凭据不会自动获得 v2 权限，需由原授权方明确授予。完整账号的 `account backup` 不调用这项策略操作。
+
 `yubikey-identity.txt` 是指向卡内密钥的定位信息，不是卡内私钥。定位文件丢失、卡和原 slot 仍在时，可按已记录的 serial / slot 重建：
 
 ```sh

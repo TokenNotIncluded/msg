@@ -18,12 +18,14 @@ from msg.client_account_backup import backup_account, restore_account
 from msg.core.codec import b64, canonical, digest, loads
 from msg.core.errors import Failure
 from msg.paths import ClientPaths
-from msg.security.age_keys import generate_age_key
+from msg.security.age_keys import _encode, generate_age_key
 from msg.security.crypto import Ed25519Signer, subject_id, verify
 from msg.transports.client import HTTPTransport
 from msg.transports.http import create_app
 
 SERVER = 'https://example.org'
+# Public encryption-only vector from age-plugin-yubikey tests/integration.rs.
+YUBIKEY_RECIPIENT = 'age1yubikey1q2w7u3vpya839jxxuq8g0sedh3d740d4xvn639sqhr95ejj8vu3hyfumptt'
 
 
 def environment(monkeypatch, directory):
@@ -428,6 +430,74 @@ def test_opaque_plugin_recipient_is_passed_to_age_not_parsed_as_x25519(
     monkeypatch.setattr(module, '_age', plugin)
     backup_account(SERVER, state.account, ['age1yubikey1opaque'], tmp_path / 'opaque.age')
     assert seen == ['--encrypt', '--recipient', 'age1yubikey1opaque']
+
+
+def test_real_plugin_account_backup_and_independent_native_restore(local, tmp_path):
+    if shutil.which('age-plugin-yubikey') is None:
+        pytest.skip('real age-plugin-yubikey is required')
+    state, recovery, native = local
+    original = {
+        path: path.read_bytes()
+        for root in (state.paths.config, state.paths.data, state.paths.state)
+        for path in root.rglob('*')
+        if path.is_file()
+    }
+    plugin_only = tmp_path / 'plugin-only.age'
+    backup_account(SERVER, state.account, [YUBIKEY_RECIPIENT], plugin_only)
+    assert plugin_only.read_bytes().startswith(b'age-encryption.org/v1\n')
+    mixed = tmp_path / 'plugin-and-native.age'
+    backup_account(SERVER, state.account, [YUBIKEY_RECIPIENT, native], mixed)
+    restore_account(SERVER, 'plugin-restored', mixed, [recovery], expected_subject=state.subject)
+    restored = ClientState(server=SERVER, account='plugin-restored')
+    assert restored.signer.private_bytes() == state.signer.private_bytes()
+    assert restored.encryption_recipient == state.encryption_recipient
+    assert original == {path: path.read_bytes() for path in original}
+    assert state.signer.private_bytes() not in plugin_only.read_bytes()
+
+
+@pytest.mark.parametrize('failure', ['invalid-recipient', 'missing-plugin', 'plugin-error'])
+def test_real_plugin_backup_failure_has_no_output_or_private_stderr(
+    local, tmp_path, monkeypatch, capsys, failure
+):
+    from msg import client_account_backup as module
+
+    state, _, _ = local
+    executable = shutil.which('age')
+    canary = 'PRIVATE_PLUGIN_STDERR_CANARY'
+    directory = tmp_path / 'plugins'
+    directory.mkdir()
+    recipient = _encode('age1msg-test', b'public')
+    if failure == 'invalid-recipient':
+        recipient = 'age1yubikey1opaque'
+    elif failure == 'plugin-error':
+        plugin = directory / 'age-plugin-msg-test'
+        plugin.write_text(
+            f'#!{sys.executable}\nimport sys\nsys.stderr.write({canary!r})\nsys.exit(1)\n'
+        )
+        plugin.chmod(0o700)
+    monkeypatch.setenv('PATH', str(directory))
+    monkeypatch.setattr(module.shutil, 'which', lambda name: executable if name == 'age' else None)
+    output = tmp_path / 'must-not-exist.age'
+    before = state.key_path.read_bytes()
+    assert (
+        cli.main([
+            '--server',
+            SERVER,
+            '--account',
+            state.account,
+            'account',
+            'backup',
+            '--recipient',
+            recipient,
+            '--output',
+            str(output),
+        ])
+        == 1
+    )
+    captured = capsys.readouterr()
+    assert captured.out == '' and canary not in captured.err
+    assert loads(captured.err)['error']['code'] == 'age_operation_failed'
+    assert not output.exists() and state.key_path.read_bytes() == before
 
 
 def test_real_age_ascii_armor_is_accepted(local, tmp_path):

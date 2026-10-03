@@ -6,13 +6,114 @@ import pytest
 from test_service import call, register
 
 from msg.core.codec import b64, wire
-from msg.security.age_keys import encryption_key_id, generate_age_key, public_from_recipient
+from msg.security.age_keys import (
+    _encode,
+    encryption_key_id,
+    generate_age_key,
+    public_from_recipient,
+)
+from msg.security.age_recipients import recovery_recipient_fingerprint
 
 
 async def current_key(app, subject):
     result = await call(app, 'identity.encryption_key_get', {'subject_id': subject})
     assert result.status == 'ok'
     return result.data['key_id']
+
+
+@pytest.mark.asyncio
+async def test_plugin_recovery_policy_keeps_exact_fingerprint_and_owner_binding(installed):
+    app, _ = installed
+    key, owner, _ = await register(app, 'plugin-policy-owner')
+    own_key = await current_key(app, owner)
+    native = generate_age_key()[1]
+    legacy = _encode('age1yubikey', b'owner-declared public data')
+    tag = _encode('age1tag', b'owner-declared public data')
+    recipients = [native, legacy, tag]
+    fingerprints = [recovery_recipient_fingerprint(recipient) for recipient in recipients]
+    legacy_rejected = await call(
+        app,
+        'identity.recovery_policy_set',
+        {
+            'expected_version': 0,
+            'encryption_key_id': own_key,
+            'recipients': [{'recipient': legacy}],
+        },
+        key=key,
+        subject=owner,
+    )
+    assert legacy_rejected.status == 'error'
+    assert legacy_rejected.error.code == 'invalid_age_recipient'
+    chosen = await call(
+        app,
+        'identity.recovery_policy_set',
+        {
+            'expected_version': 0,
+            'encryption_key_id': own_key,
+            'recipients': [{'recipient': recipient} for recipient in recipients],
+        },
+        key=key,
+        subject=owner,
+        contract_version=2,
+    )
+    assert chosen.status == 'ok', wire(chosen)
+    assert [item['fingerprint'] for item in chosen.data['recipients']] == fingerprints
+    assert chosen.data['recipient_claim'] == 'owner_declared_unverified'
+    assert fingerprints[0].startswith('ek_') and all(
+        fingerprint.startswith('rr_') for fingerprint in fingerprints[1:]
+    )
+    assert fingerprints[1] != fingerprints[2]
+    for entries, error in (
+        ([{'recipient': legacy}, {'recipient': legacy}], 'duplicate_recovery_recipient'),
+        ([{'recipient': 'age1yubikey1opaque'}], 'invalid_age_recipient'),
+    ):
+        rejected = await call(
+            app,
+            'identity.recovery_policy_set',
+            {'expected_version': 1, 'encryption_key_id': own_key, 'recipients': entries},
+            key=key,
+            subject=owner,
+            contract_version=2,
+        )
+        assert rejected.status == 'error' and rejected.error.code == error
+    current = await call(app, 'identity.recovery_policy_get', {}, key=key, subject=owner)
+    assert current.data['version'] == 1
+    stored = await call(
+        app,
+        'keystore.put',
+        {
+            'name': 'plugin-recovery-metadata',
+            'format': 'age',
+            'ciphertext': b64(b'age-encryption.org/v1\nowner-declared-metadata-only'),
+        },
+        key=key,
+        subject=owner,
+    )
+    assert stored.status == 'ok', wire(stored)
+    arguments = {
+        'ciphertext_ref': wire(stored.resources[0]),
+        'encryption_key_id': own_key,
+        'policy_version': 1,
+        'recipient_fingerprints': fingerprints[1:],
+        'purpose': 'encryption-subkey-recovery',
+    }
+    registered = await call(
+        app, 'identity.recovery_envelope_register', arguments, key=key, subject=owner
+    )
+    assert registered.status == 'ok', wire(registered)
+    wrong = await call(
+        app,
+        'identity.recovery_envelope_register',
+        {
+            **arguments,
+            'recipient_fingerprints': [
+                recovery_recipient_fingerprint(_encode('age1tag', b'different public data'))
+            ],
+        },
+        key=key,
+        subject=owner,
+    )
+    assert wrong.status == 'error' and wrong.error.code == 'recovery_recipient_not_in_policy'
 
 
 @pytest.mark.asyncio
