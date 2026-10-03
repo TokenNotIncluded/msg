@@ -311,9 +311,24 @@ async def test_game_webhook_signed_http_pg_tls_delivery_and_current_authority(
             pending = await enqueue_game_event(
                 app, subject, event('game.left'), *await generations()
             )
-            await enable()
+            # Capacity is shared with the pre-existing webhook job kind.
+            with monkeypatch.context() as limited:
+                limited.setattr('msg.storage.capacity.MAX_QUEUED_WEBHOOKS', 1)
+                with pytest.raises(Failure, match='storage_capacity_exceeded'):
+                    await enqueue_game_event(
+                        app, subject, event('game.collect'), *await generations()
+                    )
+            rotated = await post(
+                'communication.webhook_set',
+                {'url': 'https://hooks.example.org/hook', 'secret': b64(secret)},
+            )
+            assert rotated['status'] == 'ok'
             assert await worker.run_once()
             assert (await job(pending)).state == 'failed' and len(received) == 1
+            async with app.metadata.transaction(write=False) as tx:
+                assert tx.setting('job_status:' + pending)['code'] == 'webhook_disabled'
+            subscribed = await post(OPERATION, {'events': sorted(EVENT_TYPES)})
+            assert subscribed['status'] == 'ok'
             pending = await enqueue_game_event(
                 app, subject, event('game.region'), *await generations()
             )
