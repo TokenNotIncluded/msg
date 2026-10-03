@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 
 from msg.core.codec import canonical, decode, loads
 from msg.core.errors import require
@@ -29,7 +30,7 @@ _MAX_INTEGER = 2**53 - 1
 def bounded_game_event(event):
     """Copy a closed, owner-only vocabulary before crossing an async boundary."""
     require(
-        type(event) is dict and _REQUIRED <= event.keys() <= _REQUIRED | _OPTIONAL,
+        isinstance(event, Mapping) and _REQUIRED <= event.keys() <= _REQUIRED | _OPTIONAL,
         'invalid_game_event',
     )
     require(
@@ -172,7 +173,7 @@ async def deliver_game_webhook(worker, job):
     require(
         job.kind == 'webhook'
         and job.operation == OPERATION
-        and type(job.arguments) is dict
+        and isinstance(job.arguments, Mapping)
         and set(job.arguments)
         == {
             'contract_version',
