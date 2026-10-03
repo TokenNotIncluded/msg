@@ -97,3 +97,12 @@ test('screen-space culling retains a visible limb and near-plane intersection bu
   assert.equal(r.sphereVisible([1000,0,0],3),false);
   assert.equal(r.sphereVisible([0,0,40],3),false);
 });
+
+test('a selected post keeps its visible corner frame when its center is outside the viewport', () => {
+  const r = Object.create(Renderer.prototype), post = {id:'r_edge',kind:'post',position:[35,0,0],title:'Edge'};
+  Object.assign(r,{width:1280,height:800,camera:{target:[0,0,0],distance:34,yaw:0,pitch:0},
+    view:{nodes:[post],links:[]},callbacks:{now:()=>1000},visualTraits:new WeakMap(),
+    clock:0,paused:true,focusId:post.id,flight:null});
+  assert.ok(r.project(post.position).x > r.width);
+  assert.ok(r.geometry().lines.length > 0,'selected corner crosses back into the viewport');
+});

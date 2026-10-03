@@ -1647,11 +1647,15 @@
         const pulse = 1 + (this.paused ? 0 : Math.sin(this.clock * (1 + traits.speed * 8) + traits.phase) * style.pulse);
         points.push(...vertex(p, col, light * pulse * (isStar ? .38 : 1), style.root ? 25 : isStar ? 5.5 : 2.2));
         const projected = this.project(p, b);
-        let extent = isStar ? style.radius * 4 : 2;
+        const selectionExtent = selected || hovered ? (style.root ? 17 : 6.7) * Math.SQRT2 : 0;
+        // Balance arcs sit below the body; selection corners extend farther
+        // than the solid planet. Cull the body separately with its exact size.
+        let extent = Math.max(isStar ? style.radius * 6 : 2, selectionExtent);
         for (const descriptor of [node.post_ring, node.orbit]) {
           const center = descriptor?.center;
           const radius = Math.max(descriptor?.radius || 0, ...(descriptor?.ring_radii || [0]));
-          if (center?.length === 3) extent = Math.max(extent, Math.hypot(center[0] - p[0], center[1] - p[1], center[2] - p[2]) + radius);
+          const offset = center?.length === 3 ? Math.hypot(center[0] - p[0], center[1] - p[1], center[2] - p[2]) : 0;
+          extent = Math.max(extent, offset + radius);
         }
         // Pinned selection/root nodes remain in the readable view. Their
         // offscreen decoration need not consume a detail slot or CPU geometry.
