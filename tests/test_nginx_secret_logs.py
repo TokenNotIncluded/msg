@@ -47,7 +47,10 @@ def test_nginx_policy_covers_pre_host_parsing_and_both_default_listeners():
     assert not re.search(r'\breturn\s+30[1278]\b', source)
     assert 'proxy_pass http://127.0.0.1:8042;' in source
     assert 'proxy_set_header Referer "";' in source
-    assert '$request_uri' not in source
+    # The original target is used only by the cache allowlist, never by a log,
+    # redirect or response header. Normalized $uri could admit encoded aliases.
+    assert source.count('$request_uri') == 1
+    assert re.search(r'(?m)^\s+map "\$request_method:\$request_uri:', source)
 
 
 @contextmanager
