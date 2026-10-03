@@ -1143,3 +1143,98 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 .ship-label[data-self="true"] { color: var(--hud-text); }
 .ship-label[data-self="true"] .ship-hp { color: var(--hud-signal); }
 .ship-label[data-shielded="true"] .ship-hp { color: #b4c7ed; }
+
+/* Reading and touch pass. Controls are at least 44px and supporting copy at least
+   11px, as the Root brief requires; fine borders stay visible on the black field.
+   Flight HUD rules above are intentionally untouched. */
+.top-actions > button, .top-actions > a, .switcher button,
+.panel-top > button, .actions button, .actions a, .search-row button,
+.catalog #more, .catalog #shuffle, .empty button, .telemetry button, dialog .actions button {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.panel-top > button { min-width: 44px; }
+.top-actions > button { min-width: 44px; }
+.brand { min-height: 44px; display: inline-flex; align-items: center; }
+.top-actions > a { padding: 0 8px; }
+.catalog #shuffle { width: 100%; }
+.post-item, .catalog-item { min-height: 44px; }
+
+.eyebrow, .mono, .identity-status, kbd { font-size: 11px; }
+.coordinates .mono { font-size: 11px; color: #8a8a8a; }
+.expedition > .mono, .telemetry .mono { font-size: 11px; }
+.expedition > div:not(.progress-track) { font-size: 12px; }
+.flight-controls > p { font-size: 11px; }
+.star-label { font-size: 11px; }
+.post-item small, .catalog-item small, .inspector article small, .identity-facts small { font-size: 11px; }
+.identity-facts dt, .identity-facts dd { font-size: 12px; }
+
+.inspector, .catalog, .search-box { border-color: #ffffff1f; }
+.control-capsule { border-color: #ffffff1f; }
+dialog { border-color: #ffffff29; }
+input, textarea { background: #ffffff0a; border-color: #ffffff2e; }
+input:hover, textarea:hover { border-color: #ffffff4d; }
+input:focus-visible, textarea:focus-visible { border-color: var(--ink); outline-offset: 2px; }
+
+.actions button, .actions a, .catalog #more, .catalog #shuffle {
+  border: 1px solid #ffffff1f;
+  background: #ffffff0a;
+  padding: 0 16px;
+}
+.actions .primary { border-color: var(--ink); }
+.actions button:hover, .actions a:hover, .catalog #more:hover, .catalog #shuffle:hover {
+  background: #ffffff17;
+  border-color: #ffffff47;
+}
+.actions .primary:hover { background: #fff; border-color: #fff; color: #111; }
+
+:is(.topbar, .telemetry, .inspector, .catalog, .search-box, dialog, .empty) button,
+.actions a {
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+:is(.topbar, .telemetry, .inspector, .catalog, .search-box, dialog, .empty) button:active:not(:disabled) {
+  background: #ffffff1f;
+}
+
+/* Bottom-right status and actions: one clear primary, equal-weight secondaries. */
+.telemetry { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; min-width: 0; }
+.telemetry .mono { margin: 0; }
+.telemetry > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.telemetry button {
+  padding: 0 14px;
+  font-size: 12px;
+  border: 1px solid #ffffff1f;
+  border-radius: 7px;
+}
+.telemetry button:hover { border-color: #ffffff47; color: var(--ink); }
+.telemetry #compose-open { background: var(--ink); border-color: var(--ink); color: #111; font-weight: 600; }
+.telemetry #compose-open:hover { background: #fff; border-color: #fff; color: #111; }
+.telemetry #observer-status { color: var(--muted); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .inspector:not([hidden]), .catalog:not([hidden]), .search-box:not([hidden]) {
+    animation: panel-in .18s cubic-bezier(.16, 1, .3, 1);
+  }
+  dialog[open] { animation: panel-in .2s cubic-bezier(.16, 1, .3, 1); }
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+}
+.search-box:not([hidden]) { animation-name: panel-in-centered; }
+@keyframes panel-in-centered {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+}
+
+@media (max-width: 600px) {
+  .eyebrow, .coordinates .mono, .telemetry .mono, .expedition > .mono, .identity-status { font-size: 11px; }
+  .expedition { grid-column: 1 / -1; width: auto; }
+  .expedition > div:not(.progress-track) { max-width: none; }
+  .telemetry { grid-column: 1 / -1; align-items: stretch; text-align: left; }
+  .telemetry > div { justify-content: stretch; }
+  .telemetry > div > button { flex: 1 1 0; padding: 0 8px; }
+  .top-actions > a { padding: 0 6px; }
+  .top-actions > button { padding: 0 8px; }
+  body.exploring [data-intro] { display: none; }
+}
