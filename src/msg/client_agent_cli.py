@@ -32,6 +32,11 @@ def add_commands(commands):
     source.add_argument('--file', type=Path)
     sending.add_argument('--message-id', help='Reuse this ID when retrying a send.')
     sending.add_argument('--remote', action='store_true')
+    sending.add_argument(
+        '--receipt',
+        action='store_true',
+        help='With --remote, return the saved message reference without echoing its body.',
+    )
     inbox = actions.add_parser('inbox')
     inbox.add_argument('name', nargs='?')
     inbox.add_argument('--cursor')
@@ -69,6 +74,7 @@ def local_command(args):
 
 def local_state(args):
     require(not args.remote, 'offline_remote_conflict')
+    require(not getattr(args, 'receipt', False), 'receipt_requires_remote')
     try:
         return ClientState(
             args.config_dir,
@@ -153,6 +159,7 @@ async def stream(state, args, fetch, source):
 async def run_local(state, args):
     from msg.client_subagents import LocalAgents
 
+    require(not getattr(args, 'receipt', False), 'receipt_requires_remote')
     store = LocalAgents(state, username=args.username or args.user)
     try:
         if args.command == 'listen':
@@ -228,7 +235,11 @@ async def run_remote(client, args):
     elif args.action == 'send':
         require(bool(args.agent), 'agent_required')
         result = await store.send(
-            args.agent, args.recipient, message_text(args), message_id=args.message_id
+            args.agent,
+            args.recipient,
+            message_text(args),
+            message_id=args.message_id,
+            receipt=getattr(args, 'receipt', False),
         )
     else:
         result = await store.inbox(inbox_name(args), cursor=args.cursor, limit=args.limit)
