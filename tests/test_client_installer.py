@@ -22,7 +22,7 @@ async def test_install_endpoint_is_packaged_read_only_and_head_matches(installed
         assert response.content == script
         assert response.headers['content-type'].startswith('text/plain')
         assert response.headers['x-content-type-options'] == 'nosniff'
-        assert response.headers['cache-control'] == 'no-cache'
+        assert response.headers['cache-control'] == 'public, max-age=300'
         head = await http.head('/install')
         assert head.status_code == 200 and not head.content
         assert head.headers['content-length'] == str(len(script))
