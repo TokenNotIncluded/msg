@@ -160,9 +160,12 @@
       this._callbacks = Object.fromEntries(['onStatus', 'onSnapshot', 'onHello', 'onError']
         .map(key => [key, typeof callbacks[key] === 'function' ? callbacks[key] : noop]));
       this._socket = null;
+      this._opening = false;
       this._wanted = false;
+      this._localSession = false;
       this._suspended = false;
       this._hello = null;
+      this._lastHello = null;
       this._snapshot = null;
       this._self = null;
       this._anchor = null;
@@ -173,17 +176,24 @@
       this._pendingActions = new Set();
       this._ticket = this._readTicket();
       this._onBlur = () => this.suspend();
-      this._onVisibility = () => { if (this._hidden()) this.suspend(); };
+      this._onVisibility = () => {
+        if (this._hidden()) this.suspend();
+        else if (this._wanted && !this._socket && !this._retryTimer) this._retry();
+      };
       globalThis.addEventListener?.('blur', this._onBlur);
       globalThis.document?.addEventListener('visibilitychange', this._onVisibility);
       globalThis.addEventListener?.('pagehide', () => this.disconnect());
     }
 
     get connected() { return Boolean(this._hello && this._socket?.readyState === 1); }
+    // Local play may start before hello; self remains server-validated data or null.
+    get localSession() { return this._localSession; }
+    get canPredict() { return Boolean(this.localSession && (!this._self || this._self.hp > 0) && !this._suspended && !this._hidden()); }
+    get reconnecting() { return Boolean(this._wanted && !this.connected && this._retryCount); }
     get self() { return this._self; }
-    get limits() { return this._hello?.limits ?? {}; }
+    get limits() { return this._hello?.limits ?? this._lastHello?.limits ?? {}; }
     get snapshot() { return this._snapshot; }
-    get gravity() { return this._snapshot?.gravity ?? this._hello?.gravity ?? null; }
+    get gravity() { return this._snapshot?.gravity ?? this._hello?.gravity ?? this._lastHello?.gravity ?? null; }
     get serverNow() {
       return this._anchor ? this._anchor.server + Math.max(0, clock() - this._anchor.local) : Date.now();
     }
@@ -210,7 +220,8 @@
     }
 
     connect() {
-      if (this._wanted && this._socket) return;
+      if (this._wanted) return;
+      this._localSession = true;
       this._wanted = true;
       this._retryCount = 0;
       this._suspended = this._hidden();
@@ -220,6 +231,7 @@
     }
 
     disconnect() {
+      this._localSession = false;
       this._wanted = false;
       this._clearRetry();
       this.clearInput();
@@ -231,15 +243,16 @@
       this.clearInput();
       this._suspended = true;
       this._stopInputs();
-      this._clearRetry();
+      if (this._hidden()) this._clearRetry();
       if (this._wanted) this._status('suspended', 'Focus the flight canvas to resume.');
     }
 
     resume() {
-      if (!this._wanted || this._hidden()) return false;
+      if (!this._localSession || this._hidden()) return false;
       this._suspended = false;
       this.clearInput();
-      if (!this._socket) this._open();
+      if (!this._wanted) return true; // Local play never reopens a rejected transport.
+      if (!this._socket) { this._clearRetry(); this._open(); }
       else if (this.connected) {
         this._startInputs();
         this._status('connected', 'Live flight connected.');
@@ -290,23 +303,27 @@
     }
 
     _open() {
-      if (!this._wanted || this._hidden() || this._suspended || this._socket) return;
+      if (!this._wanted || this._hidden() || this._socket || this._opening) return;
       const location = globalThis.location;
       if (!location || !['http:', 'https:'].includes(location.protocol) || !location.host ||
           typeof globalThis.WebSocket !== 'function') {
         this._wanted = false;
+        this._close(1000, 'Flight unavailable');
         this._status('failed', 'Live flight is unavailable in this browser.');
         return;
       }
+      this._opening = true;
       this._status(this._retryCount ? 'reconnecting' : 'connecting', 'Connecting to live flight…');
+      if (!this._wanted || this._hidden()) { this._opening = false; return; }
       let socket;
       try { socket = new globalThis.WebSocket(`${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/_flight`); }
-      catch (_) { this._retry(); return; }
+      catch (_) { this._opening = false; this._retry(); return; }
       this._socket = socket;
+      this._opening = false;
       socket.onopen = () => {
         if (socket !== this._socket || !this._wanted) return;
-        if (this._hidden() || this._suspended) {
-          this._close(1000, 'Flight suspended');
+        if (this._hidden()) {
+          this._close(1000, 'Flight suspended', true);
           this._status('suspended', 'Focus the flight canvas to reconnect.');
           return;
         }
@@ -367,14 +384,15 @@
     }
     _clearRetry() { globalThis.clearTimeout(this._retryTimer); this._retryTimer = null; }
 
-    _close(code, reason) {
+    _close(code, reason, retainSession = false) {
       const socket = this._socket;
       this._socket = null;
       this._stopInputs();
       globalThis.clearTimeout(this._helloTimer);
       globalThis.clearTimeout(this._stableTimer);
       this._helloTimer = this._stableTimer = null;
-      this._hello = this._snapshot = this._self = this._anchor = null;
+      this._hello = null;
+      if (!retainSession) this._lastHello = this._snapshot = this._self = this._anchor = null;
       this._input = neutral();
       this._heldActions.clear();
       this._pendingActions.clear();
@@ -386,16 +404,17 @@
 
     _lost(socket, code) {
       if (socket !== this._socket) return;
-      this._close(1000, 'Flight reconnect');
+      const rejected = [1002, 1003, 1008, 1009, 4013].includes(code);
+      this._close(1000, 'Flight reconnect', this._wanted && !rejected);
       if (!this._wanted) return;
-      if ([1002, 1003, 1008, 1009, 4013].includes(code)) {
+      if (rejected) {
         this._wanted = false;
         if ([1008, 4013].includes(code)) this._forgetTicket();
         this._status('failed', code === 4013 ? 'Your login expired. Sign in again to re-enter flight.' :
           'Flight connection was rejected. Re-enter flight to try again.');
         return;
       }
-      if (this._hidden() || this._suspended) {
+      if (this._hidden()) {
         this._suspended = true;
         this._status('suspended', 'Focus the flight canvas to reconnect.');
         return;
@@ -405,13 +424,10 @@
 
     _retry() {
       this._clearRetry();
-      if (!this._wanted || this._hidden() || this._suspended) return;
-      if (this._retryCount >= RETRY_MS.length) {
-        this._wanted = false;
-        this._status('failed', 'Flight is unavailable. Re-enter flight to try again.');
-        return;
-      }
-      const delay = RETRY_MS[this._retryCount++];
+      if (!this._wanted || this._hidden()) return;
+      // Cap the delay, not the retry lifetime: a temporary outage must not strand the flight.
+      const delay = RETRY_MS[Math.min(this._retryCount, RETRY_MS.length - 1)];
+      this._retryCount = Math.min(this._retryCount + 1, RETRY_MS.length);
       this._status('reconnecting', 'Flight disconnected; reconnecting…');
       this._retryTimer = globalThis.setTimeout(() => { this._retryTimer = null; this._open(); }, delay);
     }
@@ -477,6 +493,9 @@
         tick_hz: value.tick_hz, region: value.region,
         regions: Object.freeze(regions), limits: Object.freeze(limits), ...(field ? { collectibles: field } : {}),
         ...(wells ? { gravity: wells } : {}) });
+      this._lastHello = this._hello;
+      // Hello starts a fresh authoritative stream, including after a server restart.
+      this._snapshot = null;
       this._self = self;
       this._anchor = { server: value.server_time_ms, local: clock() };
       this._seq = Math.max(this._seq, self.ack_seq);
