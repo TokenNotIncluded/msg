@@ -50,7 +50,7 @@ test('renderer sends control intent without position, health, identity or damage
   r.sendFlightInput();
   assert.deepEqual(Object.keys(r.network.input).sort(), ['actions','brake','lift','pitch','strafe','throttle','yaw']);
   assert.deepEqual(r.network.input.actions, ['shield','laser']);
-  assert.equal(r.network.input.brake, true); assert.equal(r.network.input.throttle, 1);
+  assert.equal(r.network.input.brake, true); assert.equal(r.network.input.throttle, 0,'brake overrides thrust');
   assert.equal(r.network.input.lift, -1); assert.equal(r.network.input.strafe, 1);
   assert.equal(r.gameActions.size, 0);
 });

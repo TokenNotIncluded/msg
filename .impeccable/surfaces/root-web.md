@@ -48,12 +48,20 @@ after real interaction for the visit; `?` recovers help and progress. Mobile
 selection frames the planet above the detail sheet. Reduced motion and Pause
 stop ambient motion. Canvas projects the same 3D scene when WebGL is unavailable.
 
-Flight uses independent single-axis controls: a vertical pitch stick on the
-left, a horizontal yaw stick on the right, and separate thrust/brake buttons.
-Pull pitch down to raise the nose; push up to lower it. Touch pointers are
-independent so both sticks and an action can be held together. Release/cancel,
-blur and page hiding clear held input. The sticks expose slider values and
-keyboard alternatives; controls avoid search/composer typing.
+Desktop fine-pointer flight uses a left-button drag on the scene: drag up to
+raise the nose and right to turn right; releasing holds the attitude without
+continued mouse rotation. Fine-pointer/hover layouts hide the touch direction
+sticks. Touch layouts retain an independent vertical pitch stick on the left
+and a horizontal yaw stick on the right: pull pitch down to raise the nose;
+push up to lower it. Each pointer owns its control independently.
+
+Both layouts have a separate 0–100% throttle stick with a visible zero button.
+Normal pointer release preserves its explicit setting; W/S temporarily override
+it and release restores the setting. Brake also zeros the throttle. Slider
+arrows adjust by 1%, Home zeros and End selects full thrust. Cancel, lost capture,
+blur, hiding, disconnect and exit clear persistent throttle and held input.
+Controls remain at least 44px and avoid search/composer typing. The server still
+owns physics; these controls use the existing intent protocol.
 
 Flight connects to the server-owned world. Position, collisions, hits, pickups,
 health, fuel, cooldowns and respawn are server decisions. Local flashes show
