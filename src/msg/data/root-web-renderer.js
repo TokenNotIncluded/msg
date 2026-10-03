@@ -1128,15 +1128,16 @@
       this.homeBody = hello.self.home_body?.private ? hello.self.home_body : null;
       this.homeMesh = this.homeBody ? planetMesh(this.homeBody.id) : null;
       if (this.flight) {
-        this.stopFlightInput(false);
+        const resumeControls = this.offlineMode && this.prediction?.state.region === hello.self.region &&
+          (this.prediction.state.hp <= 0) === (hello.self.hp <= 0);
+        if (!resumeControls) this.stopFlightInput(false);
         if (this.offlineMode && this.prediction && !this.reduced.matches) {
           this.prediction.position = [...this.flight.position];
           this.prediction.reconcile(hello.self, false, 0, null, this.network.limits, this.network.serverNow, this.network.gravity, true);
           this.flight.position = [...this.prediction.position];
         } else { this.prediction = new FlightPrediction(hello.self); this.flight.position = [...hello.self.position]; }
         this.flight.velocity = [...hello.self.velocity];
-        this.flight.yaw = -hello.self.yaw; this.flight.pitch = -hello.self.pitch;
-        this.flight.neutral();
+        if (!resumeControls) { this.flight.yaw = -hello.self.yaw; this.flight.pitch = -hello.self.pitch; this.flight.neutral(); }
       }
       this.offlineMode = false;
       this.rebuildRenderDust();
@@ -1239,7 +1240,7 @@
           flight.bank = 0;
           this.offlineMode = false;
         } else if (this.network.localSession && !(this.network.self?.hp <= 0)) {
-          if (!this.offlineMode) { this.stopFlightInput(false); this.offlineMode = true; }
+          this.offlineMode = true;
           this.prediction ??= new FlightPrediction(this.network.self ?? {position:[...flight.position], velocity:[...flight.velocity], hp:100, fuel:100, region:0});
           if (controlled) flight.steer(dt, steering); else flight.neutral();
           this.sendFlightInput();
