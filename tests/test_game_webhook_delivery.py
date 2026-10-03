@@ -22,8 +22,9 @@ import uvicorn
 from aiohttp import web
 from test_service import NOW, register
 
-from msg.core.codec import b64, canonical, loads
+from msg.core.codec import b64, canonical, decode, loads
 from msg.core.errors import Failure
+from msg.core.models import JsonMap
 from msg.core.requests import request_for
 from msg.transports.http import create_app
 from msg.workers.effects import EffectWorker
@@ -73,6 +74,12 @@ def test_game_event_is_copied_and_keeps_only_small_discrete_owner_facts():
     original['hp'] = 0
     assert copied['hp'] == 40.5
     assert len(canonical(copied)) < 2048
+
+
+def test_game_event_accepts_the_storage_codecs_frozen_json_map():
+    original = event('game.collect', score=1, collected=1)
+    stored = decode(JsonMap, original)
+    assert bounded_game_event(stored) == original
 
 
 @asynccontextmanager
@@ -216,6 +223,12 @@ async def test_game_webhook_signed_http_pg_tls_delivery_and_current_authority(
         async with app.metadata.transaction(write=False) as tx:
             return await tx.job(job_id)
 
+    async def assert_job_state(job_id, expected):
+        async with app.metadata.transaction(write=False) as tx:
+            value = await tx.job(job_id)
+            status = tx.setting('job_status:' + job_id)
+        assert value.state == expected, {'state': value.state, 'status': status}
+
     try:
         async with signed_http_server(app) as http:
 
@@ -259,11 +272,11 @@ async def test_game_webhook_signed_http_pg_tls_delivery_and_current_authority(
             assert (await job(first)).arguments['event']['region'] == 2
             worker = EffectWorker(app, webhook_sender=WebhookSender())
             assert await worker.run_once()
-            assert (await job(first)).state == 'pending'
+            await assert_job_state(first, 'pending')
             assert (await job(first)).attempts == 1
             app.clock = lambda: NOW + timedelta(seconds=31)
             assert await worker.run_once()
-            assert (await job(first)).state == 'done'
+            await assert_job_state(first, 'done')
             assert len(attempts) == 2 and len(received) == 1
             assert attempts[0][0]['Msg-Delivery-Id'] == attempts[1][0]['Msg-Delivery-Id'] == first
             assert set(received[0]) == {
