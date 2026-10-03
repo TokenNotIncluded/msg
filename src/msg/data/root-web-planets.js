@@ -133,8 +133,11 @@
   }
   function saveMesh(key,result) {
     const identity=key.slice(0,key.lastIndexOf(':')+1);
-    for(const previous of meshes.keys())if(previous!==key && previous.startsWith(identity))meshes.delete(previous);
     meshes.delete(key);meshes.set(key,result);
+    // Keep the adjacent LOD when the projected radius crosses a boundary.
+    // Repeatedly rebuilding both sides of that boundary causes visible stalls.
+    const siblings=[...meshes.keys()].filter(previous=>previous.startsWith(identity));
+    while(siblings.length>2)meshes.delete(siblings.shift());
     while(meshes.size>BUDGET.meshEntries) meshes.delete(meshes.keys().next().value);
     return result;
   }
@@ -165,6 +168,9 @@
     if(level>2 && !pending.has(key) && pending.size<BUDGET.meshPending) {
       pending.set(key,{builder:generateSurface(id,level),wake});queueBuild();
     }
+    // Use already finished geology while the requested detail builds; a new
+    // coarse fallback must not evict the previous finished near mesh.
+    for(const [saved,body] of meshes)if(saved.startsWith(id+':'))return body;
     return surface(id,0);
   }
   function clearSurfaceCache() {
@@ -173,16 +179,20 @@
   }
   function appendSurface(solids,{node,style,clock=0,towardEye=[0,0,1],sun=[0,0,1],pixelRadius=10,software=false,mobile=false,wake,defer=true}) {
     const options={software,mobile,wake},body=(defer?renderSurface:surface)(node.id,pixelRadius,options), t=body.traits;
+    const angle=t.phase+clock*t.speed,cloudAngle=t.phase+clock*t.speed*1.24;
+    const rotation=[Math.cos(angle),Math.sin(angle)],cloudRotation=[Math.cos(cloudAngle),Math.sin(cloudAngle)];
+    const px=node.position[0],py=node.position[1],pz=node.position[2],radius=style.radius;
     let count=0;
     for (const face of body.faces) {
-      const angle=t.phase+clock*t.speed*(face.cloud ? 1.24 : 1), c=Math.cos(angle),s=Math.sin(angle);
-      const rotate=v=>[v[0]*c-v[2]*s,v[1],v[0]*s+v[2]*c], normal=rotate(face.normal);
-      if (dot(normal,towardEye)<-.08) continue;
-      const diffuse=Math.max(0,dot(normal,sun)), rim=(1-Math.max(0,dot(normal,towardEye)))**3;
+      const [c,s]=face.cloud?cloudRotation:rotation,n=face.normal;
+      const nx=n[0]*c-n[2]*s,ny=n[1],nz=n[0]*s+n[2]*c;
+      const facing=nx*towardEye[0]+ny*towardEye[1]+nz*towardEye[2];
+      if (facing<-.08) continue;
+      const diffuse=Math.max(0,nx*sun[0]+ny*sun[1]+nz*sun[2]),rim=(1-Math.max(0,facing))**3;
       const shade=style.root ? .52+.45*diffuse : .34+.60*diffuse+.06*rim;
-      const color=face.color.map(v=>clamp(v*shade,0,1));
-      for (const v of face.vertices) solids.push(...rotate(v).map((n,i)=>node.position[i]+n*style.radius),
-        ...color,face.alpha??1,1);
+      const red=clamp(face.color[0]*shade,0,1),green=clamp(face.color[1]*shade,0,1),blue=clamp(face.color[2]*shade,0,1),alpha=face.alpha??1;
+      for(const v of face.vertices)solids.push(px+(v[0]*c-v[2]*s)*radius,py+v[1]*radius,pz+(v[0]*s+v[2]*c)*radius,
+        red,green,blue,alpha,1);
       count++;
     }
     return count;
@@ -314,8 +324,9 @@
           });
         }
         if(marker.url!==url) {marker.url=url;marker.img.removeAttribute('src');marker.el.classList.remove('has-image');}
-        marker.fallback.textContent=M.handle(node.name||'')[0]?.toUpperCase()||'·';
-        marker.el.setAttribute('aria-label',M.handle(node.name||'Signal')+' avatar');
+        const initial=M.handle(node.name||'')[0]?.toUpperCase()||'·',label=M.handle(node.name||'Signal')+' avatar';
+        if(marker.fallback.textContent!==initial)marker.fallback.textContent=initial;
+        if(marker.el.getAttribute('aria-label')!==label)marker.el.setAttribute('aria-label',label);
         marker.el.style.transform=`translate(${position.left}px,${position.top}px)`;
         marker.el.style.width=marker.el.style.height=size+'px';
         const saved=this.cache.get(url);
