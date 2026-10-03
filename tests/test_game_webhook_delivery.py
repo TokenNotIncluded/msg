@@ -232,7 +232,15 @@ async def test_game_webhook_signed_http_pg_tls_delivery_and_current_authority(
     try:
         async with signed_http_server(app) as http:
 
-            async def post(operation, arguments, *, signer=key, owner=subject, cert=certificate):
+            async def post(
+                operation,
+                arguments,
+                *,
+                signer=key,
+                owner=subject,
+                cert=certificate,
+                expected_http=200,
+            ):
                 packet = request_for(
                     operation,
                     arguments,
@@ -243,7 +251,7 @@ async def test_game_webhook_signed_http_pg_tls_delivery_and_current_authority(
                     expires_at=app.clock() + timedelta(seconds=120),
                 )
                 response = await http.post('/-/p/' + operation, content=canonical(packet))
-                assert response.status_code == 200, response.status_code
+                assert response.status_code == expected_http, response.status_code
                 return response.json()
 
             endpoint = await post(
@@ -389,7 +397,7 @@ async def test_game_webhook_signed_http_pg_tls_delivery_and_current_authority(
                 await tx.save_credential(
                     replace(credential, ceiling=ceiling), identity.auth_version
                 )
-            denied = await post(OPERATION, {'events': ['game.joined']})
+            denied = await post(OPERATION, {'events': ['game.joined']}, expected_http=403)
             assert denied['status'] == 'error' and denied['error']['code'] == 'credential_ceiling'
             with pytest.raises(Failure, match='credential_ceiling'):
                 await enqueue_game_event(app, subject, event(), *await generations())
