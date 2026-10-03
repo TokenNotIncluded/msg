@@ -1,6 +1,8 @@
 """Observers use real TCP/OAuth, never a hidden guest player or test principal."""
 
 import json
+import subprocess
+from pathlib import Path
 
 import aiohttp
 import pytest
@@ -173,3 +175,47 @@ async def test_observer_receives_current_public_geometry_after_acl_removal(fligh
     )
     assert subject not in json.dumps(state)
     assert state['total_players'] == 0
+
+
+async def test_real_network_observer_packets_are_accepted_by_the_actual_js_client(flight_server):
+    """Replay real public frames, rather than JS fixtures that could drift.
+
+    TCP, cookies, world join and snapshots remain the real server above. Only
+    the JS socket delivery is replayed so a browser is not needed for this
+    cross-language contract check. Assembled browser rendering is separate.
+    """
+    await flight_server.join()
+    await flight_server.join()
+    observer, hello = await observe(flight_server)
+    state = await observed(observer, lambda body: body['total_players'] == 2)
+    module = Path(__file__).parents[1] / 'src/msg/data/root-web-observer-client.js'
+    replay = """
+const assert = require('node:assert/strict'), fs = require('node:fs'), vm = require('node:vm');
+const frames = JSON.parse(fs.readFileSync(0, 'utf8')), sent = [], snapshots = [];
+let socket;
+class Socket {
+  constructor() { socket = this; this.readyState = 0; }
+  send(raw) { sent.push(JSON.parse(raw)); }
+  close() { this.readyState = 3; }
+}
+const context = vm.createContext({ WebSocket: Socket, location: {protocol:'http:',host:'testserver'},
+  document:{hidden:false,visibilityState:'visible',addEventListener(){},removeEventListener(){}},
+  setTimeout(){return 1;},clearTimeout(){},performance:{now(){return 0;}},Date });
+vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
+const client = new context.MSGFlightObserver.Client({onSnapshot(value){snapshots.push(value);}});
+client.connect(); socket.readyState = 1; socket.onopen();
+for (const frame of frames) socket.onmessage({data:JSON.stringify(frame)});
+assert.equal(client.connected,true); assert.equal(snapshots.length,1);
+assert.equal(client.snapshot.total_players,2);
+assert.deepEqual(sent,[{v:1,type:'observe'}]);
+process.stdout.write(JSON.stringify({accepted:2,only_observe:true})); client.destroy();
+"""
+    result = subprocess.run(
+        ['node', '-e', replay, str(module)],
+        input=json.dumps([hello, state]),
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=True,
+    )
+    assert json.loads(result.stdout) == {'accepted': 2, 'only_observe': True}
