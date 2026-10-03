@@ -459,6 +459,11 @@ class EffectWorker:
         await self._finish(job, 'done' if state == 'sent' else 'uncertain', state)
 
     async def _webhook(self, job):
+        if job.operation == 'communication.game_webhook_subscribe':
+            from msg.workers.game_webhook import deliver_game_webhook
+
+            return await deliver_game_webhook(self, job)
+
         from msg.core.codec import canonical, decode, loads
         from msg.core.models import Event
         from msg.plugins.communication import WEBHOOK_DOMAIN_EVENTS, _webhook_subscription_key

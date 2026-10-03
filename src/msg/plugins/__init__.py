@@ -53,5 +53,7 @@ def install_registry(context, plugins):
             importlib.import_module('msg.plugins.' + name).install(context)
     if {'content', 'discovery', 'batch'} <= configured:
         importlib.import_module('msg.plugins.files').install(context)
+    if 'communication' in configured:
+        importlib.import_module('msg.plugins.game').install(context)
     install_capabilities(context.registry)
     context.registry.freeze()
