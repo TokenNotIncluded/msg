@@ -100,6 +100,7 @@
       this.actions.append(this.tools, this.regionList, this.note);
     }
     update(data = {}) {
+      if (own(data, 'observer')) this.observer = data.observer === true;
       if (this.destroyed) return;
       if (own(data, "graph")) {
         this.stars = publicStars(data.graph);
@@ -181,6 +182,7 @@
     }
     unavailableReason(id) {
       if (!this.connected) return this.connectionMessage || "连接后才能选择区域。";
+      if (this.observer) return id === this.currentRegion ? '正在观察此区域。' : '';
       if (this.pendingRegion !== null) return "等待服务器确认进入区域 " + String(this.pendingRegion).padStart(2, "0") + "…";
       if (this.hp === null || this.fuel === null) return "等待飞船状态。";
       if (this.hp <= 0) return "重生后才能选择区域。";

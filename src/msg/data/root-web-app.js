@@ -54,8 +54,9 @@
     if (!$('help-dialog').open) $('help-dialog').showModal();
   }
   function drawFacts(node, target) {
-    const look = M.appearance(node, now());
-    const signature = JSON.stringify([node.id, look.stale, look.certified, look.presenceLabel, look.certificateLabel, look.reserve, !look.stale && node.star?.last_public_post_at, look.certified && node.star?.certificate?.expires_at, node.star?.balance?.visibility, node.star?.post_count]);
+    const visual = renderer?.nodeById?.get(node.id) || node;
+    const look = renderer?.style(visual) || M.appearance(node, now());
+    const signature = JSON.stringify([node.id, look.stale, look.certified, look.presenceLabel, look.certificateLabel, look.reserve, !look.stale && node.star?.last_public_post_at, look.certified && node.star?.certificate?.expires_at, node.star?.balance?.visibility, node.star?.post_count, look.stellar, visual.relations]);
     if (factSnapshots.get(target) === signature) return;
     factSnapshots.set(target, signature);
     target.replaceChildren();
@@ -67,6 +68,16 @@
     row('Presence', look.presenceLabel);
     const publicPosts = node.star?.post_count;
     row('公开帖子', publicPosts?.exact === true && Number.isSafeInteger(publicPosts.public) && publicPosts.public >= 0 ? publicPosts.public.toLocaleString() + ' 条' : '数量未知');
+    const stellar = look.stellar;
+    if (stellar) {
+      const stages = {anchor:'Root 锚点',unknown:'活动未知',cooling:'冷却行星',warming:'升温行星',star:'持续活跃恒星',satellite:'冷却卫星'};
+      row('演化', stages[stellar.stage] + (stellar.approximate && stellar.known ? ' · 公开指标近似' : ''));
+      if (stellar.known) row('视觉色温', Math.round(stellar.temperature).toLocaleString() + ' K · 视觉尺度');
+      const activity = node.star?.activity;
+      row('近7天 / 前7天', activity?.exact ? activity.recent_posts + ' / ' + activity.previous_posts + ' 条公开帖' : '数量未知');
+      if (stellar.parentId) row('卫星依附', M.handle(renderer.nodeById.get(stellar.parentId)?.name || stellar.parentId));
+    }
+    if (visual.relations) row('关注 / 粉丝', visual.relations.following.length + ' / ' + visual.relations.followers.length + ' · 已加载公开关系');
     const at = node.star?.last_public_post_at;
     row('Public signal', !look.stale && at && Date.parse(at) <= now() ? new Date(at).toLocaleString() : 'Not observed');
     row('Certificate', look.certificateLabel);
@@ -129,7 +140,7 @@
   }
 
   const requests = new Set();
-  let toastTimer, renderer, privacyTimer, flightClient, flatMap;
+  let toastTimer, renderer, privacyTimer, flightClient, observerClient, flatMap;
   const text = (tag, value, className) => {
     const el = document.createElement(tag);
     el.textContent = value;
@@ -303,6 +314,9 @@
         );
   }
   function renderGraph() {
+    if (renderer) renderer.observing = state.mode === 'public';
+    if (state.mode === 'public' && !renderer?.wantFlight) observerClient?.connect();
+    else observerClient?.disconnect();
     renderer?.setGraph(graph(renderer.clock));
     // The region map never receives positions from private conversations.
     flatMap?.update({graph:M.graph([...state.users.values()], [...state.posts.values()], renderer.clock, state.selected?.id, state.topology)});
@@ -1139,6 +1153,7 @@
           el.title = local || lostWhilePaused ? mapMessage : connection === 'suspended' ? '点击飞行画面继续控制。' : message || '';
         }
         if (!connected) renderer?.clearRemoteShips();
+        if (local && !flightClient.self && renderer) { renderer.homeBody = null; renderer.prediction = null; }
         flatMap?.update({connected, connectionMessage:mapMessage});
         if (!connected && (renderer?.wasConnected || !local)) renderer?.stopFlightInput(false);
         if (renderer) renderer.wasConnected = connected;
@@ -1163,8 +1178,36 @@
       },
     });
   }
+  function updateObserver(snapshot = observerClient?.snapshot) {
+    if (renderer?.wantFlight || state.mode !== 'public') return;
+    const button = $('observer-status');
+    const connected = Boolean(observerClient?.connected);
+    if (button) {
+      button.hidden = false;
+      button.textContent = connected ? '旁观 · 区域 ' + String(renderer?.observeRegion ?? 0).padStart(2,'0') + ' · ' + (snapshot?.region_counts?.[String(renderer?.observeRegion ?? 0)] ?? renderer?.remoteShips.size ?? 0) + ' 人' : '旁观连接中';
+      button.disabled = !connected;
+    }
+    if (snapshot) {
+      renderer?.receiveObserverSnapshot(snapshot);
+      flatMap?.update({observer:true, players:snapshot.players, selfId:null,
+        currentRegion:renderer?.observeRegion ?? 0, connected, regionCounts:snapshot.region_counts,
+        connectionMessage:'只读旁观。选择区域只移动观察窗口，不加入玩家。', serverTimeMs:observerClient.serverNow});
+    }
+  }
+  if (globalThis.MSGFlightObserver?.Client) observerClient = new globalThis.MSGFlightObserver.Client({
+    onHello(hello) { renderer?.syncCollectibles(hello.collectibles); flatMap?.update({regions:hello.regions}); updateObserver(); },
+    onSnapshot(snapshot) { updateObserver(snapshot); },
+    onStatus() { if (!renderer?.wantFlight) { if (!observerClient?.connected) renderer?.clearRemoteShips(); updateObserver(); } },
+  });
   renderer = new globalThis.MSGUniverseRenderer($("space"), $("labels"), {
     flight:flightClient,
+    observer:observerClient,
+    pilot(active) {
+      $('observer-status').hidden = active;
+      renderer?.clearRemoteShips();
+      if (active) observerClient?.disconnect();
+      else if (state.mode === 'public') observerClient?.connect();
+    },
     prepareFlight() { if (state.mode === 'private') publicMode(false); },
     now,
     select: (item) => select(item, true),
@@ -1197,6 +1240,9 @@
     flatMap = new globalThis.MSGFlatMap.Map($('region-map-canvas'), {
       container:$('region-map'), status:$('region-map-status'), actions:$('region-map-actions'),
       onSelectRegion(region) {
+        if (!renderer.wantFlight && observerClient?.connected) {
+          renderer.observeRegion = region; renderer.clearRemoteShips(); updateObserver(); return;
+        }
         if (!flightClient?.connected) { flatMap.update({connected:false}); return; }
         renderer.stopFlightInput();
         if (!flightClient.chooseRegion(region)) flatMap.rejectRegion('区域切换请求未发出，请重试。');
@@ -1208,9 +1254,11 @@
       onReturn3D() { flatMap.hide(); $('space').focus({preventScroll:true}); if (renderer.flight) flightClient?.resume(); },
       onRegionFocus() { renderer.stopFlightInput(); },
     });
-    $('game-region').onclick = () => { renderer.stopFlightInput(); flatMap.show(); };
+    $('game-region').onclick = () => { renderer.stopFlightInput(); flatMap.update({observer:false}); flatMap.show(); };
+    $('observer-status').onclick = () => { updateObserver(); flatMap.show(); };
     $('region-map-close').onclick = () => { flatMap.hide(); $('space').focus({preventScroll:true}); if (renderer.flight) flightClient?.resume(); };
   } else $('game-region').disabled = true;
+  observerClient?.connect();
   $("pause").setAttribute("aria-pressed", String(renderer.paused));
   $("pause").textContent = renderer.paused ? "▷" : "Ⅱ";
   for (const event of ['pointermove', 'pointerdown', 'wheel', 'keydown'])

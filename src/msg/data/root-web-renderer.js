@@ -613,6 +613,9 @@
       this.clouds = scenery.clouds;
       this.flight = null;
       this.network = callbacks.flight || null;
+      this.observerClient = callbacks.observer || null;
+      this.observing = true;
+      this.observeRegion = 0;
       this.wantFlight = false;
       this.remoteShips = new Map();
       this.shipLabels = new Map();
@@ -758,11 +761,16 @@
       this.wake();
     }
     setPilot(active) {
+      if (this.settingPilot) return;
+      this.settingPilot = true;
+      try {
       if (active && (!this.available || this.lost)) return;
       if (active && this.network && !this.wantFlight) this.callbacks.prepareFlight?.();
+      const changed = active !== this.wantFlight;
       this.wantFlight = active;
+      if (changed) this.callbacks.pilot?.(active);
       if (active && this.network && (!this.network.connected || !this.network.self)) {
-        this.network.connect();
+        if (!this.network.localSession) this.network.connect();
         if (!this.network.localSession) {
           document.getElementById('game-hud').hidden = false;
           if (this.flightButton) this.flightButton.textContent = '取消连接';
@@ -815,6 +823,7 @@
       this.updateFlightHud(true);
       if (active) this.canvas.focus({ preventScroll: true });
       this.wake();
+      } finally { this.settingPilot = false; }
     }
     stopFlightInput(notifyNetwork = true) {
       this.keys.clear();
@@ -1023,6 +1032,8 @@
           else if (event.target_id === own) this.combatMessage(event.type === 'death' ? '击毁确认' : '命中确认', event.type === 'death' ? 'kill' : 'hit', event.at_ms + 1400);
         }
       }
+      const feedback = this.effects?.sample(now).feedback;
+      if (feedback) this.combatMessage(feedback.text, feedback.kind, feedback.until);
     }
     flightIntent(controlled = true) {
       const keys = new Set([...this.keys, ...this.flightControls.values()]);
@@ -1107,6 +1118,7 @@
     receiveFlightHello(hello) {
       this.authorityAt = this.network.serverNow;
       this.offlineTaken?.clear(); this.offlinePickup = null;
+      this.effects?.clear({keepSeen:this.combatSelfId === hello.self.id});
       if (this.combatSelfId !== hello.self.id) {
         this.combatSeen?.clear(); this.combatSince = hello.server_time_ms ?? this.network.serverNow;
         this.combatSelfId = hello.self.id;
@@ -1153,6 +1165,7 @@
         this.prediction ??= new FlightPrediction(ship);
         const correction = reset.has(ship.id) || ship.region !== this.prediction.state.region || (ship.hp <= 0) !== (this.prediction.state.hp <= 0);
         if (correction) {
+          this.effects?.clear({keepSeen:true});
           this.stopFlightInput(false);
           this.flight.yaw = -ship.yaw; this.flight.pitch = -ship.pitch;
           // Clear both continuous input and pending one-shot actions, even at HP 0.
@@ -1172,12 +1185,30 @@
       for (const [id, event] of this.shotEvents) if (now - event.at_ms > 400) this.shotEvents.delete(id);
       this.wake();
     }
+    receiveObserverSnapshot(snapshot) {
+      if (this.wantFlight || !this.observing || !this.observerClient?.connected) return;
+      const now = this.observerClient.serverNow, time = snapshot.state_time_ms ?? snapshot.server_time_ms ?? now;
+      const players = snapshot.players.filter(ship => ship.region === this.observeRegion);
+      const live = new Set(players.map(ship => ship.id));
+      for (const [id] of this.remoteShips) if (!live.has(id)) this.remoteShips.delete(id);
+      for (const ship of players) {
+        const previous = this.remoteShips.get(ship.id), track = previous?.track ?? new MotionTrack();
+        const reset = previous && (previous.state.region !== ship.region || (previous.state.hp <= 0) !== (ship.hp <= 0));
+        track.push(ship, time, reset);
+        this.remoteShips.set(ship.id, {state:ship, track, position:previous && !reset ? previous.position : [...ship.position], yaw:ship.yaw, pitch:ship.pitch});
+      }
+      this.syncCollectibles(snapshot.collectibles);
+      this.wake();
+    }
+    sceneConnection() {
+      return this.flight && this.network?.connected ? this.network : !this.wantFlight && this.observing && this.observerClient?.connected ? this.observerClient : null;
+    }
     clearRemoteShips() {
       this.remoteShips.clear(); this.shotEvents.clear();
       this.collectEvents?.clear(); this.motionEvents?.clear();
       this.combatEvents?.clear();
       this.localShot = null; this.localLaserAt = -Infinity; this.combatStatus = null;
-      this.effects?.clear();
+      this.effects?.clear({keepSeen:true});
       this.updateCombatHud();
       for (const label of this.shipLabels.values()) label.remove();
       this.shipLabels.clear(); this.wake();
@@ -1316,12 +1347,27 @@
     }
     setGraph(graph) {
       this.graph = graph;
+      this.styleCache = new Map();
+      this.nodeById = new Map(graph.nodes.map(node => [node.id,node]));
       this.nearby = null;
       if (this.flight) this.updateFlightHud(true);
       this.satellites = graph.nodes.filter(n => n.orbitCenter);
       this.signals = graph.nodes.filter(n => n.kind !== 'user' && n.kind !== 'private');
       this.reindex();
       this.wake();
+    }
+    style(node, now = this.callbacks.now?.() ?? Date.now()) {
+      const second = Math.floor(now / 1000);
+      if (!this.styleCache || this.styleCacheSecond !== second) { this.styleCache = new Map(); this.styleCacheSecond = second; }
+      if (this.styleCache.has(node)) return this.styleCache.get(node);
+      const following = (node.relations?.following || []).map(id => this.nodeById?.get(id)).filter(Boolean);
+      const style = M.appearance(node, now, {following}), stellar = style.stellar;
+      if (!style.root && (node.kind === 'user' || node.kind === 'private')) {
+        const warmth = stellar.known ? stellar.heat : 0, warm = [1,.76,.42];
+        style.color = style.color.map((value,i) => mix(value,warm[i],warmth * .8));
+        style.light = stellar.brightness;
+      }
+      this.styleCache.set(node,style); return style;
     }
     reindex() {
       this.pinned = this.graph.nodes.filter(n => n.id === 'u_root' || n.id === this.focusId);
@@ -1645,6 +1691,12 @@
           900,
         );
       }
+      if (!this.flight && this.sceneConnection()) {
+        for (const remote of this.remoteShips.values()) {
+          const sample = remote.track?.sample(this.observerClient.serverNow - 240);
+          if (sample) { remote.position = sample.position; remote.yaw = sample.yaw; remote.pitch = sample.pitch; }
+        }
+      }
       this.callbacks.tick?.(this.clock);
       for (const node of this.satellites) node.position = M.satellite(node.id, node.orbitCenter, this.clock, node.orbit);
       this.prepareView();
@@ -1719,7 +1771,7 @@
       this.dirty = false;
       if (!this.paused || this.destination || this.keys.size || this.flightControls.size || this.flightThrottle?.value > 0 ||
           (this.flight && (this.flight.speed > .01 || this.flight.trail.length || this.localShot ||
-            this.shotEvents.size || this.combatEvents?.size || this.combatStatus?.until > this.network?.serverNow)))
+            this.shotEvents.size || this.combatEvents?.size || this.combatStatus?.until > this.network?.serverNow || this.effects?.sample(this.network?.serverNow ?? Date.now()).active)))
         this.frame = requestAnimationFrame((t) => this.render(t));
     }
     geometry() {
@@ -1753,7 +1805,8 @@
           }
         }
       }
-      for (const [a, z, type] of this.view.links) {
+      let interactionEdges = 0;
+      for (const [a, z, type, meta] of this.view.links) {
         const related = [a.id, z.id, a.author?.id, z.author?.id].includes(this.focusId);
         const col = type.startsWith('private') ? palette.private : palette.reply;
         const alpha = type === 'mutual' ? related ? .7 : .4 : type === 'follow' ? related ? .3 : .13 : type === 'root-attachment' ? .07 : type === 'orbit' ? .10 : related ? .33 : .08;
@@ -1763,6 +1816,26 @@
           const p = a.position.map((n, i) => mix(n, z.position[i], t) + (i === 1 ? Math.sin(t * Math.PI) * 10 : 0));
           line(last, p, col, alpha);
           last = p;
+        }
+        if (related) for (const direction of meta?.directions || []) {
+          const forward = direction.source === a.id, t = forward ? .64 : .36;
+          const at = t => a.position.map((v,i) => mix(v,z.position[i],t)+(i===1?Math.sin(t*Math.PI)*10:0));
+          const tip = at(t), tail = at(t+(forward?-.035:.035));
+          const color = direction.source === this.focusId ? [.98,.77,.42] : [.55,.83,.90];
+          for (const sign of [-1,1]) line(tip,tail.map((v,i)=>v+b.right[i]*sign*1.2),color,.85);
+        }
+        const weight = meta?.interactionWeight || 0;
+        if (!type.startsWith('private') && weight > 0 && interactionEdges++ < (this.width < 600 ? 12 : 32)) {
+          const strands = 1 + Math.ceil(weight * 3), color = [.87,.72,.49];
+          for (let strand=0;strand<strands;strand++) {
+            const side = (strand-(strands-1)/2)*(1.2+weight*1.5);
+            let prior = a.position;
+            for(let j=1;j<=24;j++) {
+              const t=j/24, envelope=Math.sin(t*Math.PI), phase=this.paused||this.reduced.matches?0:this.clock*.9;
+              const p=a.position.map((v,i)=>mix(v,z.position[i],t)+(i===1?envelope*10:0)+b.right[i]*side*envelope+b.up[i]*Math.sin(t*M.TAU+phase+strand)*envelope*weight);
+              line(prior,p,color,.12+weight*.22); prior=p;
+            }
+          }
         }
       }
       let detailed = 0;
@@ -1774,7 +1847,7 @@
           points.push(...vertex(node.position, [.67, .73, .70], .38, Math.min(18, 4 + Math.log2(node.count))));
           continue;
         }
-        const p = node.position, style = M.appearance(node, now);
+        const p = node.position, style = this.style(node, now);
         const selected = node.id === this.focusId, hovered = node.id === this.hoverId;
         const isStar = node.kind === 'user' || node.kind === 'private';
         const col = isStar ? style.color : palette[node.kind] || palette.post;
@@ -1847,6 +1920,13 @@
               const to = p.map((v, i) => v + axis[i] * r * 3.9 * sign);
               line(from, to, col, .26);
             }
+          } else if (style.stellar?.stage === 'star') {
+            ring(p,r*2.0,col,.28,{tilt:.35,sides:48});
+            ring(p,r*2.7,col,.12,{tilt:-.65,sides:48,dashed:true});
+            for (const axis of [b.right,b.up]) for (const sign of [-1,1])
+              line(p.map((v,i)=>v+axis[i]*r*1.5*sign),p.map((v,i)=>v+axis[i]*r*3.0*sign),col,.24);
+          } else if (style.stellar?.stage === 'satellite') {
+            ring(p,r*1.8,[.58,.66,.73],.12+style.stellar.satelliteProgress*.15,{tilt:.6,sides:32,dashed:true});
           } else if (style.certified) {
             // An angular seal is distinct from the round balance arc.
             ring(p, r * 2.3, col, .38, { sides: 6, tilt: -.55 });
@@ -1884,16 +1964,17 @@
         ring(body.position, body.radius * 1.5, [.67, .75, .7], .3, {tilt:.15});
       }
       if (this.flight && (!this.network || (this.network.connected || this.network.localSession) && !(this.network.self?.hp <= 0))) this.shipGeometry({ lines, points, solids });
-      if (this.flight && this.network?.connected) {
-        const serverNow = this.network.serverNow;
+      const scene = this.sceneConnection();
+      if (scene) {
+        const serverNow = scene.serverNow;
         for (const {state:ship, position, yaw = ship.yaw, pitch = ship.pitch} of this.remoteShips.values()) {
-          if (ship.id === this.network.self?.id || ship.hp <= 0) continue;
+          if (this.flight && ship.id === this.network.self?.id || ship.hp <= 0) continue;
           const flight = {position, yaw:-yaw, pitch:-pitch, bank:0, trail:[],
             thrust:Math.hypot(...ship.velocity) > 2 ? 1 : 0, boost:false};
           this.shipGeometry({lines, points, solids}, flight, ship.guest ? [.74, .77, .80] : [.8, .87, .84]);
           if (ship.shield_until_ms > serverNow) ring(position, 4.5, [.6, .87, .95], .6, {tilt:.4, sides:32});
         }
-        const own = this.network.self;
+        const own = this.flight && this.network.self;
         if (own?.shield_until_ms > serverNow) ring(this.flight.position, 4.5, [.6, .87, .95], .6, {tilt:.4, sides:32});
       }
       if (this.flight) {
@@ -2108,9 +2189,9 @@
           this.labels.append(el);
           this.labelNodes.set(n.id, el);
         }
-        const look = M.appearance(n, this.callbacks.now?.() ?? Date.now());
+        const look = this.style(n);
         const labelText =
-          (n.kind === 'cluster' ? '⋯ ' : look.root ? '✦ ' : look.certified ? '◇ ' : '') +
+          (n.kind === 'cluster' ? '⋯ ' : look.root ? '✦ ' : look.stellar?.stage === 'star' ? '☼ ' : look.stellar?.stage === 'satellite' ? '◦ ' : look.certified ? '◇ ' : '') +
           (n.kind === 'user'
             ? M.handle(n.name || n.title || 'Signal')
             : n.name || n.title || 'Signal');
@@ -2132,11 +2213,12 @@
     }
     updateShipLabels() {
       const container = document.getElementById('ship-labels');
-      if (!container || !this.network?.connected || !this.flight) {
+      const scene = this.sceneConnection();
+      if (!container || !scene) {
         for (const label of this.shipLabels.values()) label.remove();
         this.shipLabels.clear(); return;
       }
-      const visible = new Set(), now = this.network.serverNow, up = this.basis().up;
+      const visible = new Set(), now = scene.serverNow, up = this.basis().up;
       for (const {state:ship, position} of this.remoteShips.values()) {
         if (ship.hp <= 0) continue;
         const projected = this.project(position.map((value, i) => value + up[i] * 4));
@@ -2151,7 +2233,7 @@
         }
         if (label.firstElementChild.textContent !== ship.handle) label.firstElementChild.textContent = ship.handle;
         if (label.lastElementChild.value !== ship.hp) label.lastElementChild.value = ship.hp;
-        const own = String(ship.id === this.network.self?.id), shielded = String(ship.shield_until_ms > now);
+        const own = String(Boolean(this.flight && ship.id === this.network.self?.id)), shielded = String(ship.shield_until_ms > now);
         if (label.dataset.self !== own) label.dataset.self = own;
         if (label.dataset.shielded !== shielded) label.dataset.shielded = shielded;
         const transform = `translate(${Math.round(projected.x)}px,${Math.round(projected.y)}px)`;

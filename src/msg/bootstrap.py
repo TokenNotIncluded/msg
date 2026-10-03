@@ -59,6 +59,8 @@ ROOT_WEB_SAMPLE = (
                 'root-web-model.js',
                 'root-web-map.js',
                 'root-web-flight-client.js',
+                'root-web-observer-client.js',
+                'root-web-flight-effects.js',
                 'root-web-planets.js',
                 'root-web-renderer.js',
                 'root-web-app.js',

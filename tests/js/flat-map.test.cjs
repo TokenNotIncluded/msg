@@ -255,7 +255,7 @@ function appFlightMap() {
       resume() { this.resumed++; }
     } },
   };
-  vm.runInNewContext('let flightClient, flatMap;\n' + source.slice(clientStart, clientEnd) + source.slice(mapStart, mapEnd) +
+  vm.runInNewContext('let flightClient, observerClient, flatMap;\n' + source.slice(clientStart, clientEnd) + source.slice(mapStart, mapEnd) +
     '\nglobalThis.client = flightClient;', context);
   const client = context.client;
   client.handlers.onHello({ self: client.self, region: 2, regions });
@@ -304,4 +304,12 @@ test('failed sends stay in the map and a late server confirmation cannot steal f
   t.client.self = { ...t.client.self, region: 1 }; t.client.handlers.onSnapshot(t.snapshot(1));
   assert.equal(t.map.currentRegion, 1); assert.equal(t.client.resumed, 1);
   assert.notEqual(t.canvas.ownerDocument.activeElement, focused); t.map.destroy();
+});
+
+
+test('read-only observation can change regions without fuel, health or a self ship', () => {
+  const {map,selected}=setup(); map.update({regions,observer:true,connected:true,currentRegion:0,hp:null,fuel:null,selfId:null});
+  assert.equal(map.unavailableReason(1),''); map.select(1); assert.deepEqual(selected,[1]);
+  map.update({currentRegion:1}); assert.equal(map.pendingRegion,null);
+  map.update({observer:false}); assert.equal(map.unavailableReason(2),'等待飞船状态。');
 });

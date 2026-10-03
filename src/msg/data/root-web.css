@@ -1066,7 +1066,7 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
   #game-hud { top: 122px; width: calc(100% - 32px); }
   .game-session { justify-content: space-between; gap: 4px 12px; margin-bottom: 8px; }
   .game-vitals { max-width: 260px; gap: 8px 24px; }
-  #game-actions { left: auto; top: auto; right: max(16px, env(safe-area-inset-right)); bottom: max(352px, calc(env(safe-area-inset-bottom) + 338px)); transform: none; gap: 6px; }
+  #game-actions { left: auto; top: auto; right: max(16px, env(safe-area-inset-right)); bottom: max(405px, calc(env(safe-area-inset-bottom) + 391px)); transform: none; gap: 6px; }
   .game-action { min-width: 62px; min-height: 48px; padding: 8px; grid-template-columns: 1fr; gap: 2px; text-align: center; }
   .game-action kbd { display: none; }
   .game-combat-controls { gap: 6px; }

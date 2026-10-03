@@ -189,6 +189,15 @@ async def public_page(service, query):
                 'presence': {'state': 'unknown'},
                 'last_public_post_at': None,
                 'post_count': {'public': None, 'exact': False, 'scanned': 0},
+                'activity': {
+                    'window_days': 14,
+                    'window_end': batch['checked_at'] if batch else wire(service.clock()),
+                    'recent_posts': None,
+                    'previous_posts': None,
+                    'active_days': None,
+                    'previous_active_days': None,
+                    'exact': False,
+                },
                 'layout': positions.get(item['id'])
                 or {
                     'version': 4,
