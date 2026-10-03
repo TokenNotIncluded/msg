@@ -49,6 +49,7 @@ from msg.transports.flight_simulation import (
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
 
 MAX_CLIENTS = 96
+MAX_OBSERVERS = 32
 MAX_PER_ADDRESS = 8
 MAX_FRAME_BYTES = 2048
 MAX_SNAPSHOT_BYTES = 192 * 1024
@@ -81,6 +82,7 @@ class Peer:
     latest_control: tuple | None = None
     input_seq: int = -1
     arrival_order: int = 0
+    observer: bool = False
 
 
 class FlightHub:
@@ -132,9 +134,10 @@ class FlightHub:
 
         async with self.geometry_lock:
             now = time.monotonic()
+            observing = any(peer.observer for peer in self.peers.values())
             if (
                 self.geometry_initialized
-                and self.world.active_count
+                and (self.world.active_count or observing)
                 and now < self.next_geometry_check
             ):
                 return
@@ -156,7 +159,7 @@ class FlightHub:
             current_ids = set(graph['nodes'])
             rebuild = (
                 not self.geometry_initialized
-                or not self.world.active_count
+                or (not self.world.active_count and not observing)
                 or any(well.id not in current_ids for well in self.world.gravity_wells)
             )
             if rebuild:
@@ -184,7 +187,7 @@ class FlightHub:
             self.next_geometry_check = checked_at + REVALIDATE_SECONDS
 
     def _reserve(self, websocket):
-        require(not self.closed and len(self.peers) < MAX_CLIENTS, 'server_busy')
+        require(not self.closed and len(self.peers) < MAX_CLIENTS + MAX_OBSERVERS, 'server_busy')
         address = websocket.client.host if websocket.client else 'unknown'
         require(self.addresses.get(address, 0) < MAX_PER_ADDRESS, 'server_busy')
         # Connection attempts are bounded independently of incoming control frames.
@@ -361,8 +364,10 @@ class FlightHub:
             await websocket.accept()
             accepted = True
             packet = await self._packet(peer, timeout=JOIN_TIMEOUT)
+            observe = packet.get('type') == 'observe'
             require(
-                set(packet) <= {'v', 'type', 'resume'} and packet.get('type') == 'join',
+                (observe and set(packet) == {'v', 'type'})
+                or (set(packet) <= {'v', 'type', 'resume'} and packet.get('type') == 'join'),
                 'invalid_request',
             )
             resume = packet.get('resume')
@@ -382,6 +387,9 @@ class FlightHub:
                         'invalid_grant',
                     )
             await self._refresh_geometry()
+            if observe:
+                await self._observe(peer)
+                return
             ship, resume = self.world.join(identity, resume=resume if identity['guest'] else None)
             peer.ship_id = ship.id
             own = ship.wire()
@@ -500,6 +508,77 @@ class FlightHub:
             if peer:
                 await self._drop(peer, close=accepted)
 
+    def _observer_snapshot(self):
+        """Reuse the public game projection; never fabricate an observer ship.
+
+        Private pilots already have an anonymous public game identity and a
+        neutral spawn. Own home metadata only exists in the driving hello and
+        never in FlightWorld.snapshot. No profile topology is read here.
+        """
+        if self.world.active:
+            packet = self.world.snapshot(min(self.world.active))
+            players = sorted(packet['players'], key=lambda player: player['id'])
+            counts = packet['region_counts']
+            server_time = packet['server_time_ms']
+            state_time = packet['state_time_ms']
+            gravity = packet['gravity']
+            collectibles = packet['collectibles']
+        else:
+            players = []
+            counts = {str(region): 0 for region in range(19)}
+            server_time = self.world._ms(self.world.clock())
+            state_time = self.world._ms(self.world._simulated_at)
+            gravity = self.world.gravity_descriptor()
+            collectibles = self.world.collectibles.descriptor(self.world.clock())
+        return {
+            'v': 1,
+            'type': 'observer_snapshot',
+            'tick': self.world.tick,
+            'server_time_ms': server_time,
+            'state_time_ms': state_time,
+            'players': players,
+            'events': [],
+            'total_players': len(players),
+            'region_counts': counts,
+            'gravity': gravity,
+            'collectibles': collectibles,
+        }
+
+    async def _observe(self, peer):
+        require(
+            sum(other.observer for other in self.peers.values()) < MAX_OBSERVERS,
+            'server_busy',
+        )
+        peer.observer = True
+        snapshot = self._observer_snapshot()
+        await self._send(
+            peer.websocket,
+            {
+                'v': 1,
+                'type': 'observer_hello',
+                'regions': region_centers(),
+                'server_time_ms': snapshot['server_time_ms'],
+                'state_time_ms': snapshot['state_time_ms'],
+                'tick_hz': TICK_HZ,
+                'gravity': snapshot['gravity'],
+                'collectibles': snapshot['collectibles'],
+                'limits': {
+                    'max_players': MAX_CLIENTS,
+                    'max_snapshot_bytes': MAX_SNAPSHOT_BYTES,
+                    'snapshot_hz': SNAPSHOT_HZ,
+                    'world_extent': 480,
+                },
+            },
+        )
+        peer.writer = asyncio.create_task(self._writer(peer), name='flight-observer-writer')
+        self._enqueue(peer, snapshot)
+        if self.runner is None or self.runner.done():
+            self.runner = asyncio.create_task(self._run(), name='flight-authoritative-tick')
+        # A read-only connection has no commands, ACK, resume ticket or ping
+        # packet. WebSocket protocol pings are handled by the transport itself.
+        await self._packet(peer)
+        raise Failure('invalid_request')
+
     def _enqueue(self, peer, packet):
         if peer.queue.full():
             with contextlib.suppress(asyncio.QueueEmpty):
@@ -572,7 +651,7 @@ class FlightHub:
             self._fence(tx)
             if identities:
                 for peer in tuple(self.peers.values()):
-                    if not peer.ship_id or not peer.cookie:
+                    if (not peer.ship_id and not peer.observer) or not peer.cookie:
                         continue
                     try:
                         subject, _, _ = await self.oauth.browser_credentials(tx, peer.cookie)
@@ -587,7 +666,7 @@ class FlightHub:
                             await self._public_identity(tx, subject) == peer.public_identity,
                             'invalid_grant',
                         )
-                        if peer.public_identity:
+                        if peer.public_identity and peer.ship_id:
                             self.world.ships[peer.ship_id].handle = resource.name
                     except Failure:
                         invalid.append(peer)
@@ -619,9 +698,14 @@ class FlightHub:
                 self.world.step()
                 if now >= next_snapshot:
                     next_snapshot = now + 1 / SNAPSHOT_HZ
+                    observer_snapshot = None
                     for peer in tuple(self.peers.values()):
                         if peer.ship_id and peer.writer:
                             self._enqueue(peer, self.world.snapshot(peer.ship_id))
+                        elif peer.observer and peer.writer:
+                            if observer_snapshot is None:
+                                observer_snapshot = self._observer_snapshot()
+                            self._enqueue(peer, observer_snapshot)
                 deadline = max(deadline + 1 / TICK_HZ, time.monotonic())
                 await asyncio.sleep(max(0, deadline - time.monotonic()))
         except asyncio.CancelledError:
