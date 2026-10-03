@@ -1155,7 +1155,7 @@
         if (!connected) renderer?.clearRemoteShips();
         if (local && !flightClient.self && renderer) { renderer.homeBody = null; renderer.prediction = null; }
         flatMap?.update({connected, connectionMessage:mapMessage});
-        if (!connected && (renderer?.wasConnected || !local)) renderer?.stopFlightInput(false);
+        if (!connected && !local) renderer?.stopFlightInput(false);
         if (renderer) renderer.wasConnected = connected;
         if (local && renderer?.wantFlight && !renderer.flight) renderer.setPilot(true);
         renderer?.updateGameHud();

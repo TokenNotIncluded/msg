@@ -405,3 +405,15 @@ test('stellar tint and brightness share a bounded per-second cache and preserve 
   assert.equal(r.style(node,now+400),first); assert.notEqual(r.style(node,now+1100),first);
   const root=r.style({...node,id:'u_root'},now); assert.deepEqual(root.color,[1,.98,.94]);
 });
+
+
+test('network loss preserves local throttle and held steering, then same-region recovery continues that intent', () => {
+  const r=renderer(); r.updateFlight(0); r.flightThrottle={value:.75,reset(){this.value=0;}};
+  r.keys.add('arrowright'); r.network.connected=false; r.network.localSession=true;
+  r.updateFlight(.04); assert.equal(r.flightThrottle.value,.75); assert.ok(r.keys.has('arrowright'));
+  const heading=r.flight.yaw; r.network.connected=true;
+  r.receiveFlightHello({self:r.network.self,server_time_ms:1000});
+  assert.equal(r.flightThrottle.value,.75); assert.ok(r.keys.has('arrowright')); assert.equal(r.flight.yaw,heading);
+  r.sendFlightInput(); assert.equal(r.network.input.throttle,.75);
+  r.stopFlightInput(false); assert.equal(r.flightThrottle.value,0);
+});
