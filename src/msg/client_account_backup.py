@@ -558,17 +558,28 @@ def _validate(plaintext, server, expected_subject, expected_key_id):
 
 
 def _remove_contents(descriptor):
-    for name in os.listdir(descriptor):
-        info = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
-        if stat.S_ISDIR(info.st_mode):
-            child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
-            try:
-                _remove_contents(child)
-            finally:
-                os.close(child)
-            os.rmdir(name, dir_fd=descriptor)
-        else:
-            os.unlink(name, dir_fd=descriptor)
+    # dup shares the caller's directory offset; start an independent scan of
+    # the already-held directory instead of relying on that offset being zero.
+    scan = os.open('.', os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
+    try:
+        original, opened = os.fstat(descriptor), os.fstat(scan)
+        require(
+            (original.st_dev, original.st_ino) == (opened.st_dev, opened.st_ino),
+            'unsafe_account_backup_path',
+        )
+        for name in os.listdir(scan):
+            info = os.stat(name, dir_fd=scan, follow_symlinks=False)
+            if stat.S_ISDIR(info.st_mode):
+                child = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=scan)
+                try:
+                    _remove_contents(child)
+                finally:
+                    os.close(child)
+                os.rmdir(name, dir_fd=scan)
+            else:
+                os.unlink(name, dir_fd=scan)
+    finally:
+        os.close(scan)
 
 
 def _install(paths, directories, files):
@@ -622,21 +633,27 @@ def _install(paths, directories, files):
         for descriptor in roots.values():
             os.fsync(descriptor)
     except BaseException:
+        cleanup_failed = False
         for scope, identity in created.items():
             parent = parents[scope]
             name = getattr(paths, scope).name
             try:
-                info = os.stat(name, dir_fd=parent, follow_symlinks=False)
-            except FileNotFoundError:
-                continue
-            if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != identity:
-                continue
-            if scope in roots:
-                opened = os.fstat(roots[scope])
-                if (opened.st_dev, opened.st_ino) != identity:
+                try:
+                    info = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                except FileNotFoundError:
                     continue
-                _remove_contents(roots[scope])
-            os.rmdir(name, dir_fd=parent)
+                if not stat.S_ISDIR(info.st_mode) or (info.st_dev, info.st_ino) != identity:
+                    continue
+                if scope in roots:
+                    opened = os.fstat(roots[scope])
+                    if (opened.st_dev, opened.st_ino) != identity:
+                        continue
+                    _remove_contents(roots[scope])
+                os.rmdir(name, dir_fd=parent)
+            except OSError, Failure:
+                cleanup_failed = True
+        if cleanup_failed:
+            raise Failure('account_restore_cleanup_failed') from None
         raise
     finally:
         for descriptor in (*roots.values(), *parents.values()):

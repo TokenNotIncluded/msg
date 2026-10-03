@@ -373,6 +373,127 @@ def test_partial_install_failure_removes_only_new_account(local, tmp_path, monke
     assert existing.path.read_bytes() == marker
 
 
+@pytest.fixture
+def public_install_paths(tmp_path):
+    paths = ClientPaths(
+        *(tmp_path / scope / 'recovered' for scope in ('config', 'data', 'state', 'cache'))
+    )
+    existing = tmp_path / 'data' / 'untouched'
+    existing.mkdir(parents=True, mode=0o700)
+    marker = existing / 'public.txt'
+    marker.write_bytes(b'keep existing account')
+    return paths, marker
+
+
+def test_partial_install_cleanup_ignores_shared_directory_offset(public_install_paths, monkeypatch):
+    from msg import client_account_backup as module
+
+    paths, marker = public_install_paths
+    real_write = module._write_new
+    count = 0
+
+    def broken(parent, name, raw):
+        nonlocal count
+        count += 1
+        if count == 2:
+            raise Failure('injected_install_failure')
+        real_write(parent, name, raw)
+        # _install passes dup(root), so this also advances the held root's offset.
+        assert os.lseek(parent, (1 << 63) - 1, os.SEEK_SET) == (1 << 63) - 1
+
+    monkeypatch.setattr(module, '_write_new', broken)
+    with pytest.raises(Failure, match='injected_install_failure'):
+        module._install(
+            paths,
+            set(module.SCOPES),
+            {'data/public.txt': b'first public file', 'data/second.txt': b'second public file'},
+        )
+    assert count == 2
+    assert not any(getattr(paths, scope).exists() for scope in module.SCOPES)
+    assert marker.read_bytes() == b'keep existing account'
+
+
+def test_partial_install_cleanup_failure_is_explicit_and_other_roots_are_cleaned(
+    public_install_paths, monkeypatch
+):
+    from msg import client_account_backup as module
+
+    paths, marker = public_install_paths
+    real_write, real_unlink = module._write_new, module.os.unlink
+    count = 0
+    detail = 'PUBLIC_CLEANUP_FAULT_DETAIL'
+
+    def broken(parent, name, raw):
+        nonlocal count
+        count += 1
+        if count == 3:
+            raise Failure('injected_install_failure')
+        return real_write(parent, name, raw)
+
+    def denied(name, *args, **kwargs):
+        if name == 'blocked.txt':
+            raise PermissionError(detail)
+        return real_unlink(name, *args, **kwargs)
+
+    monkeypatch.setattr(module, '_write_new', broken)
+    monkeypatch.setattr(module.os, 'unlink', denied)
+    with pytest.raises(Failure, match='account_restore_cleanup_failed') as error:
+        module._install(
+            paths,
+            set(module.SCOPES),
+            {
+                'data/blocked.txt': b'public file that cannot be removed',
+                'state/public.txt': b'public file that can be removed',
+                'data/second.txt': b'never written',
+            },
+        )
+    assert not paths.config.exists() and not paths.state.exists()
+    assert (paths.data / 'blocked.txt').read_bytes() == b'public file that cannot be removed'
+    assert error.value.__suppress_context__ is True
+    assert 'details' not in error.value.as_dict() and detail not in str(error.value.as_dict())
+    assert marker.read_bytes() == b'keep existing account'
+
+
+@pytest.mark.parametrize('replacement', ['directory', 'symlink'])
+def test_partial_install_cleanup_preserves_replaced_root(
+    public_install_paths, monkeypatch, replacement
+):
+    from msg import client_account_backup as module
+
+    paths, marker = public_install_paths
+    real_write = module._write_new
+    moved = paths.data.with_name('moved-partial')
+    count = 0
+
+    def broken(parent, name, raw):
+        nonlocal count
+        count += 1
+        if count == 2:
+            paths.data.rename(moved)
+            if replacement == 'directory':
+                paths.data.mkdir(mode=0o700)
+                (paths.data / 'public.txt').write_bytes(b'keep replacement')
+            else:
+                paths.data.symlink_to(marker.parent, target_is_directory=True)
+            raise Failure('injected_install_failure')
+        return real_write(parent, name, raw)
+
+    monkeypatch.setattr(module, '_write_new', broken)
+    with pytest.raises(Failure, match='injected_install_failure'):
+        module._install(
+            paths,
+            set(module.SCOPES),
+            {'data/public.txt': b'first public file', 'data/second.txt': b'never written'},
+        )
+    assert not paths.config.exists() and not paths.state.exists()
+    assert (moved / 'public.txt').read_bytes() == b'first public file'
+    if replacement == 'directory':
+        assert (paths.data / 'public.txt').read_bytes() == b'keep replacement'
+    else:
+        assert paths.data.is_symlink() and paths.data.readlink() == marker.parent
+    assert marker.read_bytes() == b'keep existing account'
+
+
 def test_new_directory_open_failure_cleans_account_root(local, tmp_path, monkeypatch):
     from msg import client_account_backup as module
 
