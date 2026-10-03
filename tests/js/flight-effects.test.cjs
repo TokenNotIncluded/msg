@@ -165,3 +165,10 @@ test('invalid local inputs produce no geometry, feedback or non-finite vertices'
   }
   assert.equal(effects.sample(1000).active, false); assert.ok(empty(effects.geometry(1000)));
 });
+
+test('local FX respects finite negotiated beam range and keeps invalid values bounded', () => {
+  for(const [range,expected] of [[60,60],[180,180],[1000,1000],[0,180],[Infinity,180],[1001,180]]) {
+    const effects=new Effects();fire(effects,{range});assert.deepEqual(effects.shots[0].end,[0,0,16-expected]);
+    assert.equal(effects.impacts.length,0);
+  }
+});

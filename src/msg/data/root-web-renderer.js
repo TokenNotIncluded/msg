@@ -507,6 +507,7 @@
     frame(seconds, keyboardValue = 0) {
       if (this.pointerId !== null) return;
       const target = this.keyboard.size ? this.value : keyboardValue, dt = clamp(seconds || 0, 0, .04);
+      if (this.display === target && this.velocity === 0 && this.feedback === target) return;
       this.feedback = target;
       const error = this.display - target, rate = this.velocity + 18 * error, decay = Math.exp(-18 * dt);
       this.display = target + (error + rate * dt) * decay;
@@ -532,7 +533,7 @@
     }
   }
   class FlightThrottle {
-    constructor(element, {enabled, engage, change, cancel}) {
+    constructor(element, {enabled, engage, change, cancel, retainsFocus = () => false}) {
       this.element = element; this.enabled = enabled; this.engage = engage; this.change = change; this.cancel = cancel;
       this.value = 0; this.pointerId = null;
       element.addEventListener('pointerdown', e => {
@@ -559,7 +560,7 @@
         if (!Object.hasOwn(steps,key) && !['home','end'].includes(key)) return;
         e.preventDefault(); engage(false); this.set(key === 'home' ? 0 : key === 'end' ? 1 : this.value + steps[key]);
       });
-      element.addEventListener('blur', () => { this.reset(); cancel(); });
+      element.addEventListener('blur', e => { if (!retainsFocus(e.relatedTarget)) { this.reset(); cancel(); } });
       this.paint();
     }
     get active() { return this.pointerId !== null; }
@@ -598,6 +599,11 @@
       this.keys = new Set();
       this.pointers = new Map();
       this.labelNodes = new Map();
+      this.labelSizes = new WeakMap();
+      this.labelObserver = new ResizeObserver(entries => {
+        for (const {target} of entries) this.labelSizes.delete(target);
+        this.wake();
+      });
       this.avatars = globalThis.MSGUniversePlanets?.AvatarLayer ? new globalThis.MSGUniversePlanets.AvatarLayer(labels, {wake:() => this.wake(), now:() => this.callbacks.now?.() ?? Date.now()}) : null;
       this.dirty = true;
       this.reduced = matchMedia("(prefers-reduced-motion: reduce)");
@@ -875,7 +881,7 @@
         cancelAnimationFrame(this.frame); this.frame = 0;
       });
       document.addEventListener('focusin', e => {
-        if (this.flight && e.target !== canvas && !e.target.closest?.('[data-flight-axis], [data-flight-throttle], [data-throttle-zero]')) this.stopFlightInput();
+        if (this.flight && !this.isFlightInputTarget(e.target)) this.stopFlightInput();
       });
       canvas.addEventListener('focus', () => { if (this.flight && !document.hidden) this.network?.resume(); });
       canvas.addEventListener('pointerdown', e => {
@@ -908,6 +914,7 @@
         engage: pointer => { if (pointer) canvas.focus({preventScroll:true}); this.network?.resume(); },
         change: () => { this.sendFlightInput(); this.wake(); },
         cancel: () => this.stopFlightInput(),
+        retainsFocus: target => this.isFlightInputTarget(target),
       };
       this.flightSticks = [...document.querySelectorAll('[data-flight-axis]')].map(element => new FlightStick(element, {
         ...controls,
@@ -986,9 +993,11 @@
       }
       const b = flightBasis(this.flight.yaw, this.flight.pitch);
       const position = this.flight.position.map((v, i) => v - b.eye[i] * 3.2);
-      this.localShot = {position, end:position.map((v, i) => v - b.eye[i] * 60), at_ms:now, intent:true};
+      const offeredRange = this.network?.limits?.laser_range;
+      const range = Number.isFinite(offeredRange) && offeredRange >= 1 && offeredRange <= 1000 ? offeredRange : this.network?.connected ? 60 : 180;
+      this.localShot = {position, end:this.flight.position.map((v, i) => v - b.eye[i] * range), at_ms:now, intent:true};
       this.localLaserAt = now;
-      this.effects?.fire({position:this.flight.position, yaw:this.flight.yaw, pitch:this.flight.pitch, now, reduced:this.reduced.matches});
+      this.effects?.fire({position:this.flight.position, yaw:this.flight.yaw, pitch:this.flight.pitch, now, range, reduced:this.reduced.matches});
       this.combatMessage(ship ? '开火请求' : '本地开火 · 未确认命中', 'intent', now + 700);
       return true;
     }
@@ -1045,9 +1054,12 @@
     flightEnabled() {
       return Boolean(this.flight && !document.hidden && (!this.network || (this.network.connected || this.network.localSession) && !(this.network.self?.hp <= 0)) && !document.querySelector('dialog[open]'));
     }
+    isFlightInputTarget(target) {
+      return target === this.canvas || Boolean(target?.closest?.('[data-flight-axis], [data-flight-throttle], [data-throttle-zero], [data-flight-key], [data-game-action]'));
+    }
     flightControlled() {
       return !document.hidden && !document.querySelector?.('dialog[open]') &&
-        (document.activeElement === this.canvas || this.flightControls.size > 0 || this.flightSticks?.some(stick => stick.active) ||
+        (this.isFlightInputTarget(document.activeElement) || this.flightControls.size > 0 || this.flightSticks?.some(stick => stick.active) ||
           this.flightThrottle?.active || document.activeElement?.closest?.('[data-flight-throttle], [data-throttle-zero]'));
     }
     flightSteering(controlled = true) {
@@ -1217,7 +1229,7 @@
     updateFlight(dt) {
       const flight = this.flight, now = this.callbacks.now?.() ?? Date.now();
       const bodies = this.graph.nodes.filter(node => node.kind === 'user' || node.kind === 'private')
-        .map(node => ({ node, position: node.position, radius: M.appearance(node, now).radius * 1.07 }));
+        .map(node => ({ node, position: node.position, radius: this.planetRadius(node, now) * 1.07 }));
       const keys = new Set([...this.keys, ...this.flightControls.values()]);
       const controlled = this.flightControlled();
       const steering = this.flightSteering(controlled);
@@ -1436,17 +1448,33 @@
       if (!this.frame && this.available && !document.hidden && !this.lost)
         this.frame = requestAnimationFrame((t) => this.render(t));
     }
+    planetRadius(node, now) {
+      if (node.id === 'u_root') return 5.4;
+      const facts = node.star || {}, certificate = facts.certificate || {};
+      this.radiusFacts ??= new WeakMap();
+      let saved = this.radiusFacts.get(node);
+      if (!saved || saved.checked !== facts.checked_at || saved.expires !== certificate.expires_at) {
+        saved = {checked:facts.checked_at, expires:certificate.expires_at,
+          checkedAt:typeof facts.checked_at === 'string' ? Date.parse(facts.checked_at) : NaN,
+          expiresAt:typeof certificate.expires_at === 'string' ? Date.parse(certificate.expires_at) : NaN};
+        this.radiusFacts.set(node,saved);
+      }
+      // Only timestamp parsing is cached. Freshness and certificate boundaries
+      // are tested against the current time, including updates to the facts.
+      const fresh = Number.isFinite(saved.checkedAt) && saved.checkedAt <= now + 1000 && now - saved.checkedAt < 90000;
+      return fresh && certificate.state === 'valid' && saved.expiresAt > now ? 2.05 : 1.5;
+    }
     basis() {
-      const c = this.camera,
+      const c = this.camera;
+      if (this.cameraBasis?.yaw === c.yaw && this.cameraBasis.pitch === c.pitch) return this.cameraBasis.value;
+      const
         sy = Math.sin(c.yaw),
         cy = Math.cos(c.yaw),
         sp = Math.sin(c.pitch),
         cp = Math.cos(c.pitch);
-      return {
-        right: [cy, 0, -sy],
-        up: [-sp * sy, cp, -sp * cy],
-        eye: [cp * sy, sp, cp * cy],
-      };
+      const value = {right:[cy,0,-sy], up:[-sp*sy,cp,-sp*cy], eye:[cp*sy,sp,cp*cy]};
+      this.cameraBasis = {yaw:c.yaw,pitch:c.pitch,value};
+      return value;
     }
     verticalShift() {
       // Leave the selected star above the mobile inspector, not underneath it.
@@ -1622,7 +1650,10 @@
         }
       });
       c.addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
-      c.addEventListener("blur", () => this.stopFlightInput());
+      c.addEventListener("blur", e => {
+        if (this.isFlightInputTarget(e.relatedTarget)) { this.keys.clear(); this.sendFlightInput(); }
+        else this.stopFlightInput();
+      });
       document.addEventListener("visibilitychange", () => {
         this.stopFlightInput();
         this.keys.clear();
@@ -2170,7 +2201,7 @@
             (b.n.id === this.hoverId) - (a.n.id === this.hoverId) ||
             a.p.depth - b.p.depth,
         );
-      const used = [],
+      const used = [], labelRects = [],
         visible = new Set();
       for (const { n, p } of candidates) {
         if (used.length >= (this.width < 600 ? 5 : 8)) break;
@@ -2189,6 +2220,7 @@
 
           this.labels.append(el);
           this.labelNodes.set(n.id, el);
+          this.labelObserver?.observe(el);
         }
         const look = this.style(n);
         const labelText =
@@ -2196,21 +2228,31 @@
           (n.kind === 'user'
             ? M.handle(n.name || n.title || 'Signal')
             : n.name || n.title || 'Signal');
+        const sizeKey = [labelText,look.root,look.certified,this.width].join('|');
+        let measured = this.labelSizes?.get(el);
         if (el.textContent !== labelText) el.textContent = labelText;
         el.classList.toggle('root-label', look.root);
         el.classList.toggle('certified-label', look.certified);
         el.style.setProperty('--star-color', `rgb(${look.color.map(v => Math.round(v * 255)).join(',')})`);
         el.style.opacity = n.id === this.focusId || look.root ? 1 : .35 + look.light * .45;
         el.classList.toggle("selected", n.id === this.focusId);
-        el.style.transform = `translate(${Math.round(p.x + 12)}px,${Math.round(p.y - 7)}px)`;
+        const left=Math.round(p.x+12),top=Math.round(p.y-7);
+        if (!measured || measured.key !== sizeKey) {
+          const rect=el.getBoundingClientRect();
+          measured={key:sizeKey,width:rect.width,height:rect.height};
+          this.labelSizes ??= new WeakMap();this.labelSizes.set(el,measured);
+        }
+        labelRects.push({left,top,right:left+measured.width,bottom:top+measured.height});
+        el.style.transform = `translate(${left}px,${top}px)`;
       }
       for (const [id, el] of this.labelNodes)
         if (!visible.has(id)) {
+          this.labelObserver?.unobserve?.(el);
           el.remove();
           this.labelNodes.delete(id);
         }
       this.avatars?.update({nodes:this.view.nodes, project:p => this.project(p), width:this.width, height:this.height,
-        focusId:this.focusId, software:this.software, hidden:document.hidden});
+        focusId:this.focusId, labelRects, radius:(node,now) => this.planetRadius(node,now), software:this.software, hidden:document.hidden});
     }
     updateShipLabels() {
       const container = document.getElementById('ship-labels');

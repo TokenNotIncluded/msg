@@ -60,11 +60,12 @@
       this.flashAt = now; this.flashStrength = reduced ? 0 : strength;
       this.kickAt = now; this.kickStrength = reduced ? 0 : strength;
     }
-    fire({position, yaw, pitch, now, reduced = false} = {}) {
+    fire({position, yaw, pitch, now, range = 180, reduced = false} = {}) {
       if (!validPoint(position) || !Number.isFinite(yaw) || !Number.isFinite(pitch) || !validTime(now)) return false;
       this.prune(now);
       const axes = basis(yaw, pitch), origin = [...position];
-      const shot = {origin, end:at(origin, axes.forward, 60), axes, at:now, flashAt:now, local:true, reduced};
+      const distance = Number.isFinite(range) && range >= 1 && range <= 1000 ? range : 180;
+      const shot = {origin, end:at(origin, axes.forward, distance), axes, at:now, flashAt:now, local:true, reduced};
       this.shots.push(shot); this.previews.push(shot);
       if (this.shots.length > limits.shots) this.shots.shift();
       if (this.previews.length > limits.shots) this.previews.shift();
