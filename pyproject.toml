@@ -56,7 +56,7 @@ module-name = "msg"
 source-include = [
     "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
     "conftest.py", "tests/**", "conformance/**", "scripts/**",
-    "docs/*.md", "deploy/**", "packaging/**", "uv.lock", ".python-version",
+    "docs/*.md", "docs/archive/*.md", "deploy/**", "packaging/**", "uv.lock", ".python-version",
 ]
 
 [tool.pytest.ini_options]
