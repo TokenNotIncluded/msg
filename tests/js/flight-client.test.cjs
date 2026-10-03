@@ -272,7 +272,7 @@ test('hidden pages pause transport and visibility restores only a neutral connec
 test('an in-flight handshake is closed if focus or visibility is lost before it opens', () => {
   const b = browser(); b.client.connect(); const ws = b.sockets[0]; b.hide(); ws.open();
   assert.deepEqual(ws.sent, []); assert.equal(ws.closed.code, 1000);
-  b.show(); b.client.resume(); assert.equal(b.sockets.length, 2);
+  b.show(); b.client.resume(); b.clock.advance(500); assert.equal(b.sockets.length, 2);
 });
 
 test('disconnect removes stale ships and input, ignores late frames and does not reconnect', () => {
@@ -684,7 +684,8 @@ test('a view entering local flight during connecting cannot recursively open ano
     if (state === 'connecting' || state === 'reconnecting') b.client.resume();
   } } });
   const ws = b.join(); assert.equal(b.sockets.length, 1);
-  ws.remoteClose(); b.clock.advance(500); assert.equal(b.sockets.length, 2);
+  ws.remoteClose(); b.clock.advance(499); assert.equal(b.sockets.length, 1);
+  b.clock.advance(1); assert.equal(b.sockets.length, 2);
   const next = b.sockets.at(-1); next.open(); next.receive(hello());
   assert.equal(b.client.connected, true);
 });
@@ -696,4 +697,14 @@ test('an explicit exit inside a connecting callback prevents a socket being cons
   } } });
   b.client.connect(); b.clock.advance(60000);
   assert.equal(b.sockets.length, 0); assert.equal(b.client.localSession, false);
+});
+
+test('an explicit exit inside reconnect status cancels the already scheduled backoff', () => {
+  let b;
+  b = browser({ callbackOverrides: { onStatus: state => {
+    if (state === 'reconnecting') b.client.disconnect();
+  } } });
+  const ws = b.join(); ws.remoteClose(); b.clock.advance(60000);
+  assert.equal(b.sockets.length, 1); assert.equal(b.client.localSession, false);
+  assert.equal(b.client._retryTimer, null);
 });
