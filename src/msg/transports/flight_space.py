@@ -83,6 +83,7 @@ class Peer:
     input_seq: int = -1
     arrival_order: int = 0
     observer: bool = False
+    machine_principal: Principal | None = None
 
 
 class FlightHub:
@@ -285,6 +286,22 @@ class FlightHub:
                 peer.subject = subject
                 name = resource.name
                 peer.public_identity = await self._public_identity(tx, subject)
+        return await self._project_identity(peer, subject, name)
+
+    async def _machine_identity(self, peer):
+        subject = peer.machine_principal.subject
+        require(subject is not None, 'invalid_grant')
+        async with self.auth_slots:
+            async with self.service.metadata.transaction(write=False) as tx:
+                self._fence(tx)
+                resource = await tx.resource(subject)
+                require(resource.type == 'user' and resource.state == 'active', 'invalid_grant')
+                peer.subject = subject
+                name = resource.name
+                peer.public_identity = await self._public_identity(tx, subject)
+        return await self._project_identity(peer, subject, name)
+
+    async def _project_identity(self, peer, subject, name):
         # The central anonymous authorizer preserves profile and ancestor ACLs.
         # A verified login is not permission to reveal a private profile to peers.
         if not peer.public_identity:
@@ -367,9 +384,19 @@ class FlightHub:
             observe = packet.get('type') == 'observe'
             require(
                 (observe and set(packet) == {'v', 'type'})
-                or (set(packet) <= {'v', 'type', 'resume'} and packet.get('type') == 'join'),
+                or (
+                    set(packet) <= {'v', 'type', 'resume', 'ticket'}
+                    and packet.get('type') == 'join'
+                ),
                 'invalid_request',
             )
+            if 'ticket' in packet:
+                from msg.transports.game_api import consume_join_ticket
+
+                require(not websocket.headers.getlist('cookie'), 'ambiguous_credentials')
+                require('resume' not in packet, 'ambiguous_credentials')
+                peer.machine_principal = await consume_join_ticket(self.service, packet['ticket'])
+                identity = await self._machine_identity(peer)
             resume = packet.get('resume')
             require(
                 resume is None or (type(resume) is str and 16 <= len(resume) <= 128),
@@ -379,7 +406,18 @@ class FlightHub:
             # stale authenticated identity when the simulation record is made.
             async with self.service.metadata.transaction(write=False) as tx:
                 self._fence(tx)
-                if peer.cookie:
+                if peer.machine_principal:
+                    from msg.transports.game_api import validate_machine
+
+                    peer.machine_principal = await validate_machine(
+                        self.service, peer.machine_principal, tx
+                    )
+                    require(peer.machine_principal.subject == peer.subject, 'invalid_grant')
+                    require(
+                        await self._public_identity(tx, peer.subject) == peer.public_identity,
+                        'invalid_grant',
+                    )
+                elif peer.cookie:
                     subject, _, _ = await self.oauth.browser_credentials(tx, peer.cookie)
                     require(subject == peer.subject, 'invalid_grant')
                     require(
@@ -449,6 +487,15 @@ class FlightHub:
                     },
                 },
             )
+            if peer.subject:
+                from msg.transports.game_api import emit_game_event
+
+                emit_game_event(
+                    self.service,
+                    peer.subject,
+                    'game.joined',
+                    {'ship_id': ship.id, 'region': ship.region},
+                )
             peer.writer = asyncio.create_task(self._writer(peer), name='flight-snapshot-writer')
             if self.runner is None or self.runner.done():
                 self.runner = asyncio.create_task(self._run(), name='flight-authoritative-tick')
@@ -489,6 +536,7 @@ class FlightHub:
                 if exc.code == 'flight_frame_too_large'
                 else 4013
                 if exc.code in {'invalid_grant', 'credential_not_found', 'oauth_disabled'}
+                or exc.code.startswith(('credential_', 'certificate_'))
                 else 1013
                 if exc.code in {'server_busy', 'recovery_quarantined', 'recovery_runtime_stale'}
                 else 1008
@@ -651,10 +699,20 @@ class FlightHub:
             self._fence(tx)
             if identities:
                 for peer in tuple(self.peers.values()):
-                    if (not peer.ship_id and not peer.observer) or not peer.cookie:
+                    if (not peer.ship_id and not peer.observer) or not (
+                        peer.cookie or peer.machine_principal
+                    ):
                         continue
                     try:
-                        subject, _, _ = await self.oauth.browser_credentials(tx, peer.cookie)
+                        if peer.machine_principal:
+                            from msg.transports.game_api import validate_machine
+
+                            peer.machine_principal = await validate_machine(
+                                self.service, peer.machine_principal, tx
+                            )
+                            subject = peer.machine_principal.subject
+                        else:
+                            subject, _, _ = await self.oauth.browser_credentials(tx, peer.cookie)
                         resource = await tx.resource(subject)
                         require(
                             subject == peer.subject
@@ -675,6 +733,8 @@ class FlightHub:
 
     async def _run(self):
         try:
+            from msg.transports.game_api import capture_game_events
+
             deadline = time.monotonic()
             next_snapshot = deadline
             while self.peers and not self.closed:
@@ -696,6 +756,7 @@ class FlightHub:
                 # Apply them after the fence and before this physics tick rather
                 # than first simulating an expired control for another frame.
                 self.world.step()
+                capture_game_events(self.service, self)
                 if now >= next_snapshot:
                     next_snapshot = now + 1 / SNAPSHOT_HZ
                     observer_snapshot = None
@@ -723,7 +784,18 @@ class FlightHub:
         peer.pending.clear()
         peer.latest_control = None
         if peer.ship_id:
+            ship = self.world.ships.get(peer.ship_id)
+            region = ship.region if ship else None
             self.world.leave(peer.ship_id)
+            if peer.subject and region is not None:
+                from msg.transports.game_api import emit_game_event
+
+                emit_game_event(
+                    self.service,
+                    peer.subject,
+                    'game.left',
+                    {'ship_id': peer.ship_id, 'region': region},
+                )
         count = self.addresses.get(peer.address, 1) - 1
         if count:
             self.addresses[peer.address] = count
@@ -739,6 +811,8 @@ class FlightHub:
                 await asyncio.wait_for(peer.websocket.close(code=code), SEND_TIMEOUT)
 
     async def close(self):
+        from msg.transports.game_api import close_game_api
+
         self.closed = True
         if self.runner:
             self.runner.cancel()
@@ -749,3 +823,4 @@ class FlightHub:
         self.world.clear()
         self.addresses.clear()
         self.admissions.clear()
+        await close_game_api(self.service)
