@@ -12,7 +12,15 @@ msgd money bank remove @bank-test
 
 `bank fund` resolves the stable subject, displays **two** separately digest-bound previews (grant BankRole; transfer existing Root funds), then requests the hidden PIN. Both confirmations precede unlock. The role, transfer and two audit records commit together; rejection, changed preview state or insufficient funds leaves neither a new role nor a transfer. Removing BankRole does not confiscate a balance. Mint/burn, ordinary Root transfer and offer changes retain their own confirmation.
 
-The production command requires the existing OS-root physical-console gate. SSH, PTYs, network adapters, `--yes`, PIN arguments, environment variables and piped confirmation are not substitutes. `_confirmed_money` is an internal use-case, not a remotely registered operation. Its isolated selftest replaces only console IO and the disposable Test Root unlock; production keeps `require_local_console` before loading the use-case.
+The command defaults to the existing OS-root physical-console gate. Only mint,
+burn, transfer, bank-add, bank-remove and bank-fund accept an explicit
+`--allow-ssh` with the OS-root SSH-terminal check. They still require interactive
+confirmation and Root PIN entry. Other money actions and market administration
+remain physical-console-only. Network adapters, `--yes`, PIN arguments,
+environment variables and piped confirmation are not substitutes.
+`_confirmed_money` is an internal use-case, not a remotely registered operation.
+Its isolated selftest replaces only console IO and the disposable Test Root
+unlock; production performs the applicable administrator check before loading it.
 
 `ClearingPolicy` v2 is a pure integer decision with no bank/CA/priority exception. Local issuance and ordinary settlement share posting invariants. Each signed ledger receipt includes actor, request ID, named posting leg, policy version/digest and sequence. `(actor, request_id, entry_key)` is unique: one purchase request may fund and release escrow, but may not post either leg twice. Historical v1 receipts remain unchanged. Corrections append refunds; ledger and order transition history reject UPDATE/DELETE.
 

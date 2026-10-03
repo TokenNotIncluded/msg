@@ -1,4 +1,13 @@
-# Task A source and verification record — 2026-09-28
+# Historical: Task A verification — 2026-09-28
+
+Historical source tree: `ff7c49364227b9d2a0e4fabdcdbe4208c811c094`.
+
+This frozen record preserves the independently identified local PostgreSQL/age
+test evidence below. Its source, counts and pending gates describe that earlier
+candidate; they do not describe the current checkout or authorize recovery.
+Current operator instructions are in [recovery](../TASK_A_RECOVERY_20260928.md),
+[complete recovery proof](../COMPLETE_RECOVERY_PROOF.md) and
+[release acceptance](../RELEASE_ACCEPTANCE.md).
 
 Refs #64, #65, #68, #69, #70, #84, #85. Incremental PR #116 is stacked on #112. C remains the sole serial merger. This record is not production approval.
 

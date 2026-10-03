@@ -88,11 +88,12 @@ attribute traversal, template files or external access. Malformed placeholders,
 invalid escapes, and missing pointers give `invalid_output_template`, not empty
 success. Template text is limited to 4 KiB and the result to 1 MiB.
 
-This slice does not implement global output flags on every shortcut or automatic
-pagination. Existing `read --field`, `search --fields`, mutation calls,
-authentication and signing stay intact. Default output remains the unchanged
-JSON envelope; templates explicitly opt into literal text output. Issue #82
-remains open for the other command and pagination contracts.
+Field selection does not add automatic pagination or change authentication and
+signing. Existing `read --field` and `search --fields` keep their own projection
+options. The result envelope is unchanged: ordinary commands use readable text
+on a terminal and JSON in a pipe; `--format json` explicitly requests JSON.
+`call --json`, `--jq` and `--template` retain their explicit formatting behavior.
+See [connections and output modes](CLIENT_CONNECTIONS.md).
 
 ## Test prerequisites
 

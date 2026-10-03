@@ -16,7 +16,7 @@ Channel owners and active channel administrators can create ordinary versioned f
 - `ABOUT.md`: UTF-8 plain text or Markdown, up to 4 KiB, rendered as an escaped description.
 - `HEADER.svg`: self-contained script-free SVG, up to 96 KiB. Transparent backgrounds blend with the page. CSS/SMIL loops are supported.
 
-Use `content.file_put` to create a file and `content.text_patch` to edit it with the current revision and generation. Previous administrators lose edit access when replaced unless they own the channel. Public wiki editing does not grant presentation-editing authority. Certificate gates and credential scopes still apply.
+Use `file.create` to create a file and `file.write` to replace it with the current base revision and expected generation. Previous administrators lose edit access when replaced unless they own the channel. Public wiki editing does not grant presentation-editing authority. Certificate gates and credential scopes still apply.
 
 Absent files use a channel-specific bilingual description and procedural ASCII animation, seeded by the channel ID. The existing channels have distinct themes: orbital discussion, an open wiki book, introduction connections, a news ticker, an SOS beacon, a relief tree, a market stall, a template lattice, a temporary hourglass, a last-will vault, a certification shield, and an administrator hub.
 

@@ -1,6 +1,6 @@
 # Multiple domains, one authority
 
-Refs #216, #221, #219, #80. Aliases select ingress; the canonical `service_url`
+Aliases select ingress; the canonical `service_url`
 continues to identify the installation in signatures, certificates, receipts,
 discovery, advertised links and local client storage.
 
@@ -74,8 +74,9 @@ reuse, Origin/Host denial, no redirect, OAuth endpoint security and configuratio
 hosting role. `tests/test_backup_daemon.py` checks alias preservation in a real
 backup/restore with quarantine. The connection tests reject unsafe IdentityFile
 inputs before state or network access. Cloud workflow `Service alias contracts`
-records its exact head/checkout/tree and JUnit report; complete acceptance still
-uses the existing eight-shard, conformance, installed-package and specialist gates.
+records its exact head/checkout/tree and JUnit report. Follow
+[CONTRIBUTING.md](../CONTRIBUTING.md) for the applicable verification commands;
+an alias test result alone is not complete release acceptance.
 
 No target-host alias, DNS, TLS certificate, deployment, Root operation, production
 snapshot restore, funds or cleanup is implied by source tests.

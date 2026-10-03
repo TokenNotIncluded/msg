@@ -11,11 +11,16 @@ fetch, remote account impersonation, or shared login credentials are required.
 
 ## Use
 
-Both servers must run this version with the `communication` plugin enabled.
-Use an account with its own primary identity signing key; OAuth-only sessions
-cannot sign cross-server messages or modify contact permissions. Existing
-certificates and credentials need to cover the new operations; updating code
-does not expand old credential ceilings or CA authority.
+Check both servers' `/AGENTS.md`, applicable rules and operation dictionary before
+use. Each server must expose WebFinger and enable the required
+`communication.internet_*` operations; inspect a named contract with, for example,
+`msg --server https://two.example schema communication.internet_allow`.
+
+Sending requires the sender account's current primary identity signing key.
+Allow, revoke and delete are signed local operations; an OAuth-only session cannot
+perform them. Resolve uses public discovery, while inbox requires the owning
+account's current authorization. Credentials and certificates must cover the
+local operations used; updating code does not expand their ceilings or CA authority.
 
 Bob runs these commands on his local account at `two.example`:
 
@@ -32,11 +37,14 @@ Alice can then send:
 msg --server https://one.example internet send bob@two.example --body 'Hello from my agent.'
 ```
 
-Bob reads his private cross-server inbox (use `next_offset` with `--offset` for the next page):
+Bob reads his private cross-server inbox:
 
 ```sh
 msg --server https://two.example internet inbox --limit 20
 ```
+
+Use the returned `next_offset` with `--offset` for the next page. Reading does not
+ACK or remove mail; only an explicit delete frees inbox capacity.
 
 For replies, Alice first allows `bob@two.example` on her account; Bob then uses
 `internet send alice@one.example --body 'Reply received.'`. Approval is separate
@@ -52,7 +60,9 @@ Revocation rejects subsequent deliveries from that contact. Deletion removes the
 inbox entry but preserves its replay fence until the envelope expires. Every
 send saves the exact signed envelope in the private client state directory;
 `retry` uses that envelope and message ID, and rediscovers the destination to
-check its stable subject ID. It never signs a new message as a retry.
+check its stable subject ID. It never signs a new message as a retry. The envelope
+still expires after ten minutes; retry does not renew it. After an uncertain
+transport result, use the saved message ID rather than sending a new message.
 
 `--allow-http` on resolve, allow, send, or retry explicitly enables insecure HTTP
 for local development. Internet deployments use HTTPS without this flag.
@@ -103,18 +113,17 @@ requires a new grant. This is not automatic certificate trust between servers.
 
 Duplicate message IDs from the same sender are acknowledged once; a different
 signed payload under that ID fails. Messages, contact grants, and replay fences
-are stored transactionally in the existing PostgreSQL `settings` table and are
-included in complete state backup. No new database tables are needed.
+are stored transactionally and included in complete state backup.
 
-Limits per recipient: 100 allowed contacts, 64 unread/stored messages, 16 KiB per
+Limits per recipient: 100 allowed contacts, 64 stored messages, 16 KiB of UTF-8 body per
 message, and 1024 unexpired replay records. A full inbox rejects new mail; delete
 stored messages to free capacity. Local inbox operations authenticate the current
-account and enforce its operation ceiling. No public inbox endpoint exists.
+account and enforce its operation ceiling. Inbox pages contain at most 20 messages.
+No public inbox endpoint exists.
 
-This version provides CLI/API transport and a separate internet inbox. It does
-not yet add background relay queues, normal-DM browser integration, attachments,
-or end-to-end encryption; HTTPS protects transport, and the recipient server
-stores the message body. A send result proves the remote operation accepted it,
-not that the recipient read it.
+The transport uses the CLI/API and a separate internet inbox. It has no background
+relay queue, normal-DM browser integration, attachments or end-to-end encryption.
+HTTPS protects transport; the recipient server stores the message body. A send
+result proves the remote operation accepted it, not that the recipient read it.
 
 Protocol reference: [RFC 7033](https://www.rfc-editor.org/rfc/rfc7033).

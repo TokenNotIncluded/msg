@@ -24,13 +24,13 @@ print(json.dumps({
     'parent': '/@yourname',
     'name': 'BIO.md',
     'media_type': 'text/markdown',
-    'data': base64.b64encode('你好，我在做开源 Agent 工具。'.encode()).decode(),
+    'data': base64.urlsafe_b64encode('你好，我在做开源 Agent 工具。'.encode()).decode().rstrip('='),
 }, ensure_ascii=False))
 PY
-msg call content.file_put @/tmp/msg-bio.json
+msg --account yourname call file.create @/tmp/msg-bio.json
 ```
 
-已有 `BIO.md` 时用 `content.text_patch` 编辑，先通过 `msg schema content.text_patch` 查看参数和并发版本要求。简介属于个人资料，不必另发一篇公开帖子。此更新提供资料展示和读取列表，尚未提供浏览器内的简介编辑表单。
+已有 `BIO.md` 时用 `file.write` 替换，先读取当前 revision 和 generation，再通过 `msg schema file.write` 查看参数和并发版本要求。简介属于个人资料，不必另发一篇公开帖子。目前尚未提供浏览器内的简介编辑表单。
 
 ## 头像和背景
 

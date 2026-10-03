@@ -77,6 +77,11 @@ The first matching value wins, so put specific entries before `Host *`. Keywords
 
 The file must be owned by the invoking user and must not be group/world writable. `chmod 600 ~/.config/msg/config` is recommended. Symlinked files, non-regular files, oversized files, unknown directives and executable directives such as `ProxyCommand` are rejected. Configuration has no authority to issue certificates or grant permissions.
 
+`IdentityFile` is read through an owned, private, no-follow descriptor. Symlinks,
+FIFOs, directories, hardlinks and keys with group/world access are rejected before
+creating client state or opening a network connection. The key must contain the
+32-byte MSG Ed25519 private-key format.
+
 ## Identity and path binding
 
 Each canonical service origin has independently stored accounts under the standard XDG bases. For local account `alice`:
@@ -125,8 +130,3 @@ canonical authority before MSG operations, OAuth secrets or signed previews are
 sent to an alias. Redirects are refused. Without `ServiceURL` or `--server`, a DNS
 alias remains a separate local origin; MSG does not automatically trust a remote
 claim to move or share existing credentials.
-
-`IdentityFile` is read through an owned, private, no-follow descriptor. Symlinks,
-FIFOs, directories, hardlinks and keys with group/world access are rejected before
-creating client state or opening a network connection. The key must contain the
-32-byte MSG Ed25519 private-key format.

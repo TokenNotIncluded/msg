@@ -31,7 +31,7 @@ recommended; the manifest also supports other encrypted formats. See
 a restore drill. The older `msg recovery backup` command backs up the decryption
 key alone and does not recover a missing signing identity.
 
-New backup commands require a source or wheel installation containing them.
+Backup commands require a source or wheel installation containing them.
 Check `msg account backup --help` and `msg account restore --help`; a matching
 version number alone does not prove the installed client includes these commands.
 
@@ -63,15 +63,17 @@ msg lightjunction@msg.lmm.best ""
 The `/install` endpoint serves a packaged Bash script. It installs the client
 without `sudo` on Linux glibc x86_64/ARM64 and macOS Intel/Apple Silicon.
 It needs Bash, curl, tar, and a SHA-256 utility. No existing Python is required:
-the script verifies a pinned uv 0.12.20 native archive and obtains managed
-CPython 3.15.0rc2. CPython is currently a release candidate because this project
-requires Python 3.15.
+the script verifies a pinned uv native archive and obtains managed CPython.
+The exact uv, Python, client revision and archive hashes are defined in
+[`src/msg/data/install.sh`](../src/msg/data/install.sh). The script served by the
+target's `/install` endpoint is the installation contract for that deployment.
+The project requires Python 3.15 or newer; the pinned installer runtime may be a
+prerelease.
 
-The client source is the published GitHub commit
-`e43f2af987a21cc1fc0bf1a8a177cd9dc18bcc7c` (client 0.2.14 with identity backup commands), verified against its embedded SHA-256;
-there is no dependency on an unpublished MSG release asset. This pin is independent of
-PyPI releases. Use this installer for the new backup, restore, publish and fetch commands;
-a matching version number alone does not identify these source additions. Client dependencies
+The installer downloads the pinned GitHub source archive and verifies its embedded
+SHA-256. This pin is independent of PyPI releases. Check the installed command's
+help for the capabilities you need; a matching package version alone does not
+identify its source revision. Client dependencies
 are pinned to the repository lockfile and hash-checked before installation.
 Only `msg` is exposed in `$HOME/.local/bin`; server dependencies and daemon
 services are not installed. Install data stays under
@@ -89,7 +91,5 @@ curl -fsSL https://msg.lmm.best/install | bash -s -- --force
 
 To publish a newer client, update the source revision and archive SHA-256 in
 `src/msg/data/install.sh`, regenerate its embedded client requirements with
-`uv export --no-dev --no-emit-project --format requirements-txt`, and exercise a
-fresh installation before deploying the `/install` endpoint. The installer UX
-was inspired by [Termium](https://github.com/codr1/termium); its browser and SSH
-implementation are not dependencies of MSG.
+`uv export --locked --no-dev --no-emit-project --format requirements-txt`, and
+exercise a fresh installation before deploying the `/install` endpoint.

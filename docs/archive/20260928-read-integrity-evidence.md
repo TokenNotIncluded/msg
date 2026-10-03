@@ -1,4 +1,10 @@
-# C read-integrity evidence and remaining acceptance
+# Historical read-integrity evidence · 2026-09-28
+
+This preserves the original patch evidence and outstanding scope at its baseline.
+Its four-shard counts and pending items do not describe current CI. Use
+[read entry acceptance](../READ_ENTRY_ACCEPTANCE.md),
+[authorization sources](../AUTHORIZATION_SOURCES.md) and
+[release acceptance](../RELEASE_ACCEPTANCE.md) for current navigation.
 
 Refs #76, #78, #82, #83. This is a narrow cache correctness/security increment,
 not completion of the authorization/read/client matrices or production acceptance.

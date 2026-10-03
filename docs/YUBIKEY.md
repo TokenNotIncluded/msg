@@ -14,7 +14,7 @@ sudo systemctl enable --now pcscd.socket
 sudo apt install pcscd libpcsclite-dev swig
 # Then install the client and hardware drivers from source:
 python -m pip install '.[hardware]'
-# Once a release with the hardware extra is published:
+# Install a release that declares the hardware extra:
 uv tool install --python 3.15 --force 'msgctl[hardware]'
 ```
 

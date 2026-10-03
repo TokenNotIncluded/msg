@@ -16,7 +16,7 @@ token、recovery_secret、私钥及等价可重放凭据不得进入 URL 的 pat
 
 客户端发行前保存独立恢复材料，或使用已有可验证的 IdentityKey、RecoveryPolicy 授权。默认恢复窗口为 15 分钟，从业务提交起算；配置必须有确定上限，失败重试不续期。恢复仅在原发行谱系中原子换发并撤销前代，不扩大权限或期限。恢复响应再次丢失时仍需预绑定材料或绑定密文；过期后走正式 RecoveryPolicy。
 
-executor 在幂等读取前拒绝旧版 `identity.temporary@1` token 发行；batch 拒绝 `identity.token_recover`、`identity.custodial_create` 等返回秘密的子操作。`@2` 与客户端 journal 已有一次领取及显式恢复切片。恢复响应再次丢失、当前授权不扩大、其他入口隔离，以及持久化和日志拒绝矩阵仍需验收。
+executor 在幂等读取前拒绝旧版秘密发行；batch 拒绝 `identity.token_recover`、`identity.custodial_create` 等返回秘密的子操作。当前操作版本、客户端 journal、恢复响应再次丢失及当前授权拒绝矩阵见[凭据交付](CREDENTIAL_DELIVERY.md)。这些源码和隔离测试依据不代替生产反向代理、访问日志及接收者绑定密文交付的独立验收。
 
 ## DCR-03：历史密文与密钥退役
 

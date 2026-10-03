@@ -21,8 +21,8 @@ Git/Git-LFS、age、OpenSSL、Nginx、bubblewrap。以普通用户运行。
 不提供该变量时，由 fixture 使用 initdb/pg_ctl 启动仅 Unix socket 可访问的临时集群。
 `MSG_TEST_VALKEY_URL` 必须指向专用本机测试 Valkey，不能复用生产缓存实例。
 
-旧版本测试需要准确的固定源码，本工作区已附 `.legacy-ledger`；
-在其他 checkout 中可以仅从已有 Git 对象恢复，无需提交：
+旧版本测试需要准确的固定源码。没有 `.legacy-ledger` 的 checkout
+可以从已有 Git 对象恢复，无需提交：
 
 ```sh
 mkdir -p .legacy-ledger
@@ -47,16 +47,3 @@ uv run --locked --extra dev --python 3.15 python scripts/verify_local.py --shard
 
 `result.json` 包含基线 commit、dirty 状态、实际文件清单/摘要、命令、日志和退出码。
 验证前后源码改变会使整个结果失败。所有这些结果仍然不等于生产部署验收。
-
-## 本次受限环境中的补充测试
-
-当前会话只有 Python 3.13，不能运行目标版本业务模块。实际通过的是以下
-工具与配置测试，不加载 PostgreSQL 全局 fixture，也不代替上面的完整命令：
-
-```sh
-PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest --noconftest \
-  -p pytest_asyncio.plugin \
-  tests/test_release_version.py tests/test_release_artifacts.py \
-  tests/test_ci_shards.py tests/test_local_verification.py \
-  tests/test_local_postgres_fixtures.py
-```
