@@ -301,7 +301,11 @@ async def universe_response(service, request, browser_account, execute_packet):
     pairs = request.query_params.multi_items()
     query = dict(pairs)
     require(len(pairs) == len(query), 'duplicate_query_parameter')
-    if request.url.path == '/_universe/me':
+    if request.url.path == '/_universe/account':
+        require(not query, 'unknown_query_parameter')
+        account = await browser_account(fields=('id', 'name'))
+        value = {'version': 1, 'account': account}
+    elif request.url.path == '/_universe/me':
         require(not query, 'unknown_query_parameter')
         account = await browser_account()
         conversations = []

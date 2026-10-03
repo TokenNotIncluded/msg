@@ -1,16 +1,103 @@
 """Universe is a public read projection, never a second identity/ACL system."""
 
 from dataclasses import replace
+from datetime import timedelta
 
 import httpx
 import pytest
+from read_only_evidence import readonly_evidence
 from test_oauth import browser_login, oauth as oauth
 from test_service import call, register
 
 from msg.bootstrap import ROOT_WEB_SAMPLE
 from msg.core.codec import digest
 from msg.extensions.hosting import HOSTED_HEADERS, hosted_headers
+from msg.security.oauth import get, state_id
 from msg.transports.http import create_app
+from msg.transports.oauth_http import csrf
+
+
+@pytest.mark.asyncio
+async def test_universe_account_hint_is_minimal_current_identity_without_private_reads(
+    oauth, monkeypatch
+):
+    app, key, subject, http = oauth
+    _, other, _ = await register(app, 'hint-private-contact')
+    private = await call(
+        app,
+        'communication.dm_request',
+        {'recipient': other, 'introduction': 'ACCOUNT HINT MUST NOT LOAD THIS DM'},
+        key=key,
+        subject=subject,
+        contract_version=2,
+    )
+    assert private.status == 'ok', private.error
+    assert (await http.get('/_universe/account')).json() == {'version': 1, 'account': None}
+    await browser_login(oauth)
+    async with app.metadata.transaction(write=True) as tx:
+        own = await tx.resource(subject)
+        await tx.replace(replace(own, mode=0o600, generation=own.generation + 1), own.generation)
+    requests = []
+    execute = app.executor.execute
+
+    async def tracked(request, **kwargs):
+        requests.append((request.operation, dict(request.arguments)))
+        return await execute(request, **kwargs)
+
+    monkeypatch.setattr(app.executor, 'execute', tracked)
+    async with readonly_evidence(app, monkeypatch):
+        response = await http.get('/_universe/account')
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            'version': 1,
+            'account': {'id': subject, 'name': '@oauth-owner'},
+        }
+        assert response.headers['cache-control'] == 'private, no-store'
+        assert {value.strip() for value in response.headers['vary'].split(',')} == {'Cookie'}
+        assert requests == [('discovery.get', {'id': subject, 'fields': ('id', 'name')})]
+        assert private.data['conversation_id'] not in response.text
+        assert 'ACCOUNT HINT MUST NOT LOAD THIS DM' not in response.text
+        assert (await http.head('/_universe/account')).content == b''
+        for query in ('subject=' + other, 'fields=star_private', 'kind=users', 'x=1&x=2'):
+            assert (await http.get('/_universe/account?' + query)).status_code == 400
+        assert (await http.post('/_universe/account')).status_code == 405
+        assert (
+            await http.get('/_universe/account', headers={'Authorization': 'Bearer inert'})
+        ).status_code == 400
+        assert (
+            await http.get('/_universe/account', headers={'x-msg-request': 'inert'})
+        ).status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('boundary', ['expired', 'logout', 'source_revoked'])
+async def test_universe_account_hint_clears_expired_or_revoked_browser_identity(oauth, boundary):
+    app, key, subject, http = oauth
+    cookie = await browser_login(oauth)
+    assert (await http.get('/_universe/account')).json()['account']['id'] == subject
+    if boundary == 'expired':
+        async with app.metadata.transaction(write=False) as tx:
+            expires, _ = get(tx, state_id('session', cookie), app.clock())
+        app._oauth_clock[0] = expires + timedelta(seconds=1)
+    elif boundary == 'logout':
+        result = await http.post(
+            '/oauth/logout',
+            json={'csrf': csrf(cookie)},
+            headers={'Origin': app.settings.service_url},
+        )
+        assert result.status_code == 200 and result.json() == {'logged_out': True}
+        http.cookies.set('msg_session', cookie)
+    else:
+        async with app.metadata.transaction(write=True) as tx:
+            credential = await tx.credential(key.key_id)
+            owner = await tx.subject(subject)
+            await tx.save_credential(
+                replace(credential, revoked_at=app.clock()), owner.auth_version
+            )
+    response = await http.get('/_universe/account')
+    assert response.status_code == 200, response.text
+    assert response.json() == {'version': 1, 'account': None}
+    assert response.headers['cache-control'] == 'private, no-store'
 
 
 @pytest.mark.asyncio

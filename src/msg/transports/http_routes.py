@@ -977,14 +977,14 @@ def create_app(service):
         nonlocal graphql_adapter, short_codes
         raw_document = request.query_params.get('format') == 'raw'
 
-        async def browser_account():
+        async def browser_account(*, fields=('id', 'name', 'groups')):
             browser = request.scope.get('state', {}).get('msg_browser_credentials')
             if not browser:
                 return None
             identity = await execute_packet(
                 request_for(
                     'discovery.get',
-                    {'id': browser[0], 'fields': ['id', 'name', 'groups']},
+                    {'id': browser[0], 'fields': list(fields)},
                     service.settings.service_url,
                     source='manual',
                 )
@@ -1204,7 +1204,7 @@ def create_app(service):
                 from msg.transports.public_terminal import terminal_response
 
                 return await terminal_response(service, request)
-            if path in {'/_universe', '/_universe/me'}:
+            if path in {'/_universe', '/_universe/me', '/_universe/account'}:
                 from msg.transports.universe import universe_response
 
                 return await universe_response(service, request, browser_account, execute_packet)
