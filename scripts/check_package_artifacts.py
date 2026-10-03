@@ -104,6 +104,11 @@ def check(root, dist):
                     'uv.lock',
                     '.python-version',
                     'docs/DEPLOYMENT.md',
+                    'docs/README.md',
+                    *sorted(
+                        path.relative_to(root).as_posix()
+                        for path in (root / 'docs/archive').glob('*.md')
+                    ),
                     'deploy/msgd.service',
                     'tests/test_system_rules.py',
                     'conformance/test_transports.py',
