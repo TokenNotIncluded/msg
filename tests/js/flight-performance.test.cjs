@@ -92,6 +92,7 @@ test('screen-space culling retains a visible limb and near-plane intersection bu
   Object.assign(r,{width:1280,height:800,camera:{target:[0,0,0],distance:34,yaw:0,pitch:0}});
   assert.equal(r.sphereVisible([0,0,0],3),true);
   assert.equal(r.sphereVisible([34,0,0],3),true,'planet limb touches the right edge');
+  assert.equal(r.sphereVisible([32.9,0,0],1),true,'an oblique limb survives outside the projected center margin');
   assert.equal(r.sphereVisible([0,0,34],3),true,'camera intersects the sphere');
   assert.equal(r.sphereVisible([1000,0,0],3),false);
   assert.equal(r.sphereVisible([0,0,40],3),false);

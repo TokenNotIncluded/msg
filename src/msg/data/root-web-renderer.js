@@ -1284,11 +1284,15 @@
       const c = this.camera, x = position[0] - c.target[0], y = position[1] - c.target[1], z = position[2] - c.target[2];
       const depth = c.distance - (x * b.eye[0] + y * b.eye[1] + z * b.eye[2]);
       if (depth + radius < 1) return false;
-      if (depth <= radius) return true;
-      const lens = this.height * .86, scale = lens / depth, margin = radius * lens / Math.max(1, depth - radius);
-      const sx = this.width / 2 + (x * b.right[0] + y * b.right[1] + z * b.right[2]) * scale;
-      const sy = this.height * (.5 - this.verticalShift() / 2) - (x * b.up[0] + y * b.up[1] + z * b.up[2]) * scale;
-      return sx + margin >= 0 && sx - margin <= this.width && sy + margin >= 0 && sy - margin <= this.height;
+      const horizontal = x * b.right[0] + y * b.right[1] + z * b.right[2];
+      const vertical = x * b.up[0] + y * b.up[1] + z * b.up[2];
+      const side = this.width / (this.height * 1.72), shift = this.verticalShift();
+      const top = (.5 - shift / 2) / .86, bottom = (.5 + shift / 2) / .86;
+      // Sphere/plane distances stay conservative at the perspective edges;
+      // a projected center plus a naive circular margin clips an oblique limb.
+      return Math.abs(horizontal) - depth * side <= radius * Math.hypot(1, side) &&
+        vertical - depth * top <= radius * Math.hypot(1, top) &&
+        -vertical - depth * bottom <= radius * Math.hypot(1, bottom);
     }
     hit(x, y) {
       let best = null,
