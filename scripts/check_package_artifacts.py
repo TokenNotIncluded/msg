@@ -105,6 +105,8 @@ def check(root, dist):
                     '.python-version',
                     'docs/DEPLOYMENT.md',
                     'docs/README.md',
+                    'docs/ai-game.md',
+                    'examples/game_bot.py',
                     *sorted(
                         path.relative_to(root).as_posix()
                         for path in (root / 'docs/archive').glob('*.md')
