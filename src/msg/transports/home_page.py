@@ -198,6 +198,9 @@ def home_html(
                 f'<time datetime="{escape(item["created_at"], quote=True)}" '
                 f'title="Asia/Taipei">{escape(stamp)}</time></div>',
             ])
+            parts.append(
+                f'<p class="muted" title="Approximate views / 近似浏览量">{int(item.get("view_count", 0))} 浏览 · views</p>'
+            )
             if item.get('excerpt'):
                 parts.append(f'<p>{escape(item["excerpt"])}</p>')
             parts.append('</li>')
@@ -283,6 +286,11 @@ def document_html(
             if key in {'author', 'channel'} and value.startswith('/'):
                 shown = f'<a href="{escape(quote(value, safe="/@*&"), quote=True)}">{shown}</a>'
             metadata += f'<p><span data-i18n="{key}">{label}</span>: {shown}</p>'
+        metadata += (
+            '<p title="Approximate views; one visitor per day / 近似浏览量，同一访客每天一次"><span data-msg-view-count>'
+            + str(int(resource.get('view_count', 0)))
+            + '</span> 浏览 · views</p>'
+        )
         metadata += '<details><summary data-i18n="metadata">Details</summary><dl>'
         for key in ['id', 'revision', 'modified_at']:
             metadata += f'<dt>{escape(key)}</dt><dd>{escape(str(resource.get(key, "")))}</dd>'
@@ -424,6 +432,8 @@ def resource_markdown(value, fallback):
                     markdown_text(preview.get('excerpt', '')),
                     '',
                 ])
+            if item.get('type') == 'post':
+                lines.extend([str(int(item.get('view_count', 0))) + ' 浏览 · views', ''])
         if not value['items']:
             lines.append('No posts yet.')
         return '\n'.join(lines)

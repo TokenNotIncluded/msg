@@ -595,6 +595,9 @@ class PostgresMetadataStore:
                 from msg.storage.topic_event_migration import migrate_topic_events
 
                 migrate_topic_events(conn, postgres=True)
+                from msg.storage.post_view_migration import migrate_post_views
+
+                migrate_post_views(conn, postgres=True)
 
     def _connect(self):
         return psycopg.connect(self.dsn, autocommit=False)

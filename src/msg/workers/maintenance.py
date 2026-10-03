@@ -8,6 +8,7 @@ import time
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from msg.constants import ONLINE_CA, ROOT_SPACE
 from msg.core.codec import canonical, decode, digest, loads, parse_time, wire
@@ -95,6 +96,11 @@ async def _cleanup(app, tx, *, scheduled):
     if not tx.setting('runtime_config', {}).get('cleanup_enabled', True):
         return counts
     now = app.clock()
+    tx.execute(
+        'DELETE FROM post_view_days WHERE day<?',
+        (now.astimezone(ZoneInfo('Asia/Taipei')).date().isoformat(),),
+        write=True,
+    )
     policies = tx.rows("SELECT key,value FROM settings WHERE key LIKE 'policy:%'")
     for key, raw in policies:
         policy = loads(raw)

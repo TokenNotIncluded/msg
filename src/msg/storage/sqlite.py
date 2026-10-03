@@ -270,6 +270,9 @@ class SqliteMetadataStore:
             conn.execute('BEGIN IMMEDIATE')
             try:
                 migrate_topic_events(conn)
+                from msg.storage.post_view_migration import migrate_post_views
+
+                migrate_post_views(conn)
                 conn.execute('COMMIT')
             except BaseException:
                 conn.execute('ROLLBACK')

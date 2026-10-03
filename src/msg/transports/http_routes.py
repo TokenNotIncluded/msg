@@ -927,6 +927,7 @@ def parse_stable_view(path, raw_path):
 def create_app(service):
     from msg.transports.flight_space import FlightHub
     from msg.transports.home_cache import PublicHomeCache, not_modified, render_snapshot
+    from msg.transports.post_views import ENDPOINT as VIEW_ENDPOINT, PostViews
 
     async def load_public_home():
         import asyncio
@@ -956,6 +957,7 @@ def create_app(service):
     install_source = files('msg.data').joinpath('install.sh').read_bytes()
 
     flight_hub = FlightHub(service)
+    post_views = PostViews(service)
     mcp = MCPServer(service)
     graphql_adapter = None
     short_codes = None
@@ -3998,7 +4000,7 @@ def create_app(service):
                 else resource_markdown(value, describe_resource(value)).encode()
             )
             require(len(body) <= limits.max_response_bytes, 'response_too_large')
-            return Response(
+            response = Response(
                 b'' if request.method == 'HEAD' else body,
                 media_type='text/html'
                 if wiki_history or thread_markup is not None
@@ -4013,6 +4015,18 @@ def create_app(service):
                 else 'text/markdown',
                 headers=headers,
             )
+            if browser_html and view not in {
+                'json',
+                'meta',
+                'history',
+                'diff',
+                'references',
+                'thread',
+            }:
+                markup, visitor_cookie = await post_views.prepare(request, value)
+                post_views.decorate(response, markup, visitor_cookie)
+                require(len(response.body) <= limits.max_response_bytes, 'response_too_large')
+            return response
         except Failure as exc:
             return json_response(
                 {'status': 'error', 'error': exc.as_dict()}, error_status(exc.code)
@@ -4029,6 +4043,7 @@ def create_app(service):
     app = Starlette(
         routes=[
             WebSocketRoute('/_flight', flight_hub.websocket),
+            Route(VIEW_ENDPOINT, post_views.event, methods=['GET', 'HEAD', 'POST']),
             Route(
                 '/{path:path}',
                 dispatch,
