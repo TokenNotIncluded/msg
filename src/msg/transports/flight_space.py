@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import secrets
 import time
 from collections import deque
@@ -18,7 +19,7 @@ from urllib.parse import urlsplit
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import canonical, loads, wire
+from msg.core.codec import loads, wire
 from msg.core.errors import Failure, require
 from msg.core.models import ExecutionContext, Principal
 from msg.core.planet_layout import planet_layout
@@ -338,7 +339,15 @@ class FlightHub:
         peer.tokens -= 1
 
     async def _send(self, websocket, value):
-        payload = canonical(value)
+        # Flight packets are unsigned, already projected JSON primitives. The
+        # general codec's recursive dataclass/Mapping conversion otherwise
+        # repeats for every peer and can monopolize the shared event loop.
+        try:
+            payload = json.dumps(
+                value, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False
+            ).encode('utf-8')
+        except (UnicodeError, ValueError, TypeError, RecursionError) as exc:
+            raise Failure('invalid_json_value') from exc
         require(len(payload) <= MAX_SNAPSHOT_BYTES, 'response_too_large')
         await asyncio.wait_for(websocket.send_text(payload.decode()), SEND_TIMEOUT)
 
