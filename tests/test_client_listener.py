@@ -65,6 +65,91 @@ async def test_exact_limit_retains_remainder_and_resume(tmp_path):
     assert [json.loads(line)['id'] for line in output.getvalue().splitlines()] == [1, 2, 3]
 
 
+async def test_once_page_budget_stops_empty_backlog_and_resumes_without_loss(tmp_path, capsys):
+    checkpoint = tmp_path / 'cursor.json'
+    output = io.StringIO()
+    calls = []
+
+    async def fetch(cursor, tail=False):
+        calls.append(cursor)
+        number = int(cursor or '0') + 1
+        return page([{'id': number}] if number >= 3 else [], str(number), number < 4)
+
+    assert (
+        await listen(
+            fetch, context=CONTEXT, cursor_file=checkpoint, once=True, max_pages=2, output=output
+        )
+        == 0
+    )
+    saved = json.loads(checkpoint.read_text())
+    assert saved['cursor'] == '2' and saved['has_more'] and saved['pending'] == []
+    assert output.getvalue() == ''
+    assert 'more pages remain' in capsys.readouterr().err
+    assert (
+        await listen(
+            fetch, context=CONTEXT, cursor_file=checkpoint, once=True, max_pages=2, output=output
+        )
+        == 2
+    )
+    assert calls == [None, '1', '2', '3']
+    assert [json.loads(line)['id'] for line in output.getvalue().splitlines()] == [3, 4]
+    assert not json.loads(checkpoint.read_text())['has_more']
+    assert capsys.readouterr().err == ''
+
+
+async def test_page_budget_preserves_pending_remainder_at_event_limit(tmp_path):
+    checkpoint = tmp_path / 'cursor.json'
+    output = io.StringIO()
+    calls = []
+
+    async def fetch(cursor, tail=False):
+        calls.append(cursor)
+        return page([{'id': 1}, {'id': 2}], '2')
+
+    assert (
+        await listen(
+            fetch,
+            context=CONTEXT,
+            cursor_file=checkpoint,
+            once=True,
+            max_events=1,
+            max_pages=1,
+            output=output,
+        )
+        == 1
+    )
+
+    async def resumed(cursor, tail=False):
+        assert cursor == '2'
+        return page(cursor='3')
+
+    assert (
+        await listen(
+            resumed, context=CONTEXT, cursor_file=checkpoint, once=True, max_pages=1, output=output
+        )
+        == 1
+    )
+    assert calls == [None]
+    assert [json.loads(line)['id'] for line in output.getvalue().splitlines()] == [1, 2]
+
+
+@pytest.mark.parametrize('limit', [0, -1, True, '2'])
+async def test_invalid_page_budget_rejected_before_fetch(limit):
+    async def fetch(cursor, tail=False):
+        raise AssertionError('Invalid budgets must fail before reading')
+
+    with pytest.raises(Failure, match='invalid_listener_page_limit'):
+        await listen(fetch, context=CONTEXT, once=True, max_pages=limit)
+
+
+async def test_page_budget_requires_once():
+    async def fetch(cursor, tail=False):
+        raise AssertionError('Daemon mode must reject this option')
+
+    with pytest.raises(Failure, match='listener_page_limit_requires_once'):
+        await listen(fetch, context=CONTEXT, max_pages=1)
+
+
 async def test_context_filter_and_symlink_rejected(tmp_path):
     checkpoint = tmp_path / 'cursor.json'
 

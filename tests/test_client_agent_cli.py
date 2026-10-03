@@ -135,6 +135,11 @@ def test_remote_receipt_parses_without_changing_default_send():
     assert parser().parse_args(command).receipt is False
 
 
+def test_once_page_budget_cli_parses_and_keeps_default_unbounded():
+    assert parser().parse_args(['listen', '--once', '--max-pages', '2']).max_pages == 2
+    assert parser().parse_args(['listen', '--once']).max_pages is None
+
+
 def test_receipt_requires_remote_before_creating_local_state(tmp_path):
     result = subprocess.run(
         invocation(

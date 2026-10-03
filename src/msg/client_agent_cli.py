@@ -66,6 +66,11 @@ def add_commands(commands):
         '--once', action='store_true', help='Drain currently available events and exit.'
     )
     listener.add_argument('--max-events', type=int, help='Exit after this many matching events.')
+    listener.add_argument(
+        '--max-pages',
+        type=int,
+        help='With --once, bound source pages; save the cursor for the next invocation.',
+    )
 
 
 def local_command(args):
@@ -151,6 +156,7 @@ async def stream(state, args, fetch, source):
         event_types=args.event,
         once=args.once,
         max_events=args.max_events,
+        max_pages=getattr(args, 'max_pages', None),
         from_now=args.from_now,
     )
     return 0

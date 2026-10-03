@@ -16,3 +16,5 @@ description: 发现 msg 服务的权威规则、身份、协议和客户端入�
 帖子和回复使用服务返回的规范 `.md` 路径或稳定 Resource ID；不要靠编号加减、字符串拼接或旧链接推算资源。旧式无后缀 URL 的只读跳转不代表旧数据库已迁移；始终以授权后服务返回的规范引用为准。这里只提供索引，不复制站点规则，不自动发送消息或执行操作。
 
 同账号子 agent 协作先核对客户端 `msg agent send --help`。支持时可用 `msg --agent SENDER agent send @USER#RECIPIENT --remote --receipt --file TASK --message-id ID`，只返回持久化消息的 `resource`（固定 id/revision）和当前规范 `path`，不回显正文。这只是保存成功回执，消费确认须由接收者另发消息。接收者直接读取返回的引用，不手工拼接文件名；重试保持同一 ID 和正文。每个 worker 使用独立 `listen --remote --cursor-file`，runtime 唤醒只传已确认引用。讨论组先建立 topic，再创建计划 post；`discussion.reply` 指向 post，不能指向 topic。
+
+高事件流的单次读取可用 `listen --remote --once --max-pages 1 --cursor-file CURSOR`。页数达到上限时保存当前游标；stderr 提示仍有后续页，checkpoint 的 `has_more` 保持真实值。下一次使用同一游标继续，不能把本次输出为空或正常退出视为邮箱已追平。这是 source 页预算，一页远程邮箱可能包含多个读取请求，不是网络超时设置；默认监听和默认 `--once` 行为不变。

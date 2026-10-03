@@ -122,6 +122,7 @@ async def listen(
     event_types: tuple | list = (),
     once: bool = False,
     max_events: int | None = None,
+    max_pages: int | None = None,
     from_now: bool = False,
     output=None,
 ) -> int:
@@ -136,6 +137,11 @@ async def listen(
         raise Failure('invalid_listener_interval')
     if max_events is not None and (isinstance(max_events, bool) or max_events < 1):
         raise Failure('invalid_listener_event_limit')
+    if max_pages is not None:
+        if type(max_pages) is not int or max_pages < 1:
+            raise Failure('invalid_listener_page_limit')
+        if not once:
+            raise Failure('listener_page_limit_requires_once')
     if not all(isinstance(value, str) and value for value in event_types):
         raise Failure('invalid_listener_event_filter')
     types = sorted(set(event_types))
@@ -145,6 +151,7 @@ async def listen(
         raise Failure('listener_start_position_conflict')
     stream = sys.stdout if output is None else output
     emitted = 0
+    pages = 0
     retry_delay = interval
 
     async def read(tail=False):
@@ -171,6 +178,7 @@ async def listen(
     while True:
         if not state['pending']:
             page = await read()
+            pages += 1
             if page['has_more'] and page['cursor'] == state['cursor']:
                 raise Failure('invalid_listener_page')
             state.update(cursor=page['cursor'], pending=page['items'], has_more=page['has_more'])
@@ -186,6 +194,14 @@ async def listen(
             if max_events is not None and emitted >= max_events:
                 return emitted
         _save(cursor_file, state)
+        if max_pages is not None and pages >= max_pages:
+            if state['has_more']:
+                print(
+                    'msg listen: page limit reached; cursor saved, more pages remain.',
+                    file=sys.stderr,
+                    flush=True,
+                )
+            return emitted
         if state['has_more']:
             continue
         if once:
