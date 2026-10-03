@@ -11,7 +11,7 @@ import time
 from dataclasses import replace
 
 from msg.constants import ROOT_SUBJECT
-from msg.core.codec import canonical, loads, wire
+from msg.core.codec import canonical, loads, parse_time, wire
 from msg.core.errors import Failure, require
 from msg.core.models import Principal
 from msg.core.planet_layout import fallback_position, planet_layout
@@ -20,6 +20,37 @@ from msg.market.ledger import SCALE, balance
 MAX_CERTIFICATES = 32
 MAX_ACTIVITY_CANDIDATES = 64
 MAX_POST_COUNT_CANDIDATES = 4096
+ACTIVITY_WINDOW_DAYS = 14
+ACTIVITY_DAY_SECONDS = 86400
+
+
+def unknown_activity(now):
+    """A bounded/failed read is unknown, never observed inactivity."""
+    return {
+        'window_days': ACTIVITY_WINDOW_DAYS,
+        'window_end': wire(now),
+        'recent_posts': None,
+        'previous_posts': None,
+        'active_days': None,
+        'previous_active_days': None,
+        'exact': False,
+    }
+
+
+def activity_projection(posts, subject_id, now):
+    """Only the existing authorization-filtered scan may supply activity."""
+    if not posts['exact']:
+        return unknown_activity(now)
+    activity = posts['activity'].get(subject_id, {})
+    return {
+        'window_days': ACTIVITY_WINDOW_DAYS,
+        'window_end': wire(now),
+        'recent_posts': activity.get('recent_posts', 0),
+        'previous_posts': activity.get('previous_posts', 0),
+        'active_days': activity.get('active_days', 0),
+        'previous_active_days': activity.get('previous_active_days', 0),
+        'exact': True,
+    }
 
 
 async def public_layout(app, ctx, request, tx):
@@ -100,7 +131,7 @@ async def post_counts(app, ctx, request, tx):
         "WHERE r.type='post' AND r.state='active' AND r.created_at<=? ORDER BY r.id LIMIT ?",
         (wire(ctx.now), MAX_POST_COUNT_CANDIDATES + 1),
     )
-    counts, last, ids = {}, {}, {}
+    counts, last, ids, activity = {}, {}, {}, {}
     for rid, created_at, raw in rows[:MAX_POST_COUNT_CANDIDATES]:
         require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')
         if not await visible(app, ctx, request, tx, rid):
@@ -109,11 +140,29 @@ async def post_counts(app, ctx, request, tx):
         counts[author] = counts.get(author, 0) + 1
         ids.setdefault(author, set()).add(rid)
         last[author] = max(last.get(author, created_at), created_at)
+        # Seven rolling 24-hour bins per half: now is included, the exact
+        # seven-day boundary belongs to the previous half, and fourteen days
+        # is outside. Editing an old post does not become a new activity event.
+        age = (ctx.now - parse_time(created_at)).total_seconds()
+        bucket = int(age // ACTIVITY_DAY_SECONDS)
+        current = activity.setdefault(
+            author,
+            {'posts': [0, 0], 'days': [set(), set()]},
+        )
+        if 0 <= bucket < ACTIVITY_WINDOW_DAYS:
+            half = int(bucket >= 7)
+            current['posts'][half] += 1
+            current['days'][half].add(bucket)
+    for current in activity.values():
+        current['recent_posts'], current['previous_posts'] = current.pop('posts')
+        days = current.pop('days')
+        current['active_days'], current['previous_active_days'] = map(len, days)
     value = {
         'counts': counts,
         'ids': ids,
         'last': last,
         'exact': len(rows) <= MAX_POST_COUNT_CANDIDATES,
+        'activity': activity,
     }
     cached[principal] = value
     tx._planet_post_counts = cached
@@ -240,6 +289,7 @@ async def star_projection(app, ctx, request, tx, subject_id):
             'exact': posts['exact'],
             'scanned': posts['counts'].get(subject_id, 0),
         },
+        'activity': activity_projection(posts, subject_id, ctx.now),
         'layout': layout,
         'balance': reserve,
         'checked_at': wire(ctx.now),
