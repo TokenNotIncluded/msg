@@ -666,7 +666,7 @@
         if (!gl.getProgramParameter(this.program, gl.LINK_STATUS))
           throw new Error("The graphics program could not start.");
         gl.useProgram(this.program);
-        this.buffer = gl.createBuffer();
+        this.drawBuffers = new Map();
         this.uniforms = {};
         for (const name of [
           "uTarget",
@@ -679,7 +679,7 @@
           "uPoints",
         ])
           this.uniforms[name] = gl.getUniformLocation(this.program, name);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this.buffer);
+        this.attributes = [];
         for (const [name, size, offset] of [
           ["aPosition", 3, 0],
           ["aColor", 4, 12],
@@ -687,7 +687,7 @@
         ]) {
           const loc = gl.getAttribLocation(this.program, name);
           gl.enableVertexAttribArray(loc);
-          gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 32, offset);
+          this.attributes.push({loc, size, offset});
         }
         gl.enable(gl.BLEND);
         gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
@@ -1264,19 +1264,31 @@
       // Leave the selected star above the mobile inspector, not underneath it.
       return !this.flight && this.width < 600 && this.focusId ? .5 : 0;
     }
-    project(p) {
-      const b = this.basis(),
-        r = p.map((n, i) => n - this.camera.target[i]),
-        dot = (v) => r.reduce((s, n, i) => s + n * v[i], 0),
-        depth = this.camera.distance - dot(b.eye);
+    project(p, basis = this.basis()) {
+      return this.projectVertex(p, 0, basis);
+    }
+    projectVertex(vertices, offset, b = this.basis()) {
+      const target = this.camera.target, x = vertices[offset] - target[0],
+        y = vertices[offset + 1] - target[1], z = vertices[offset + 2] - target[2];
+      const depth = this.camera.distance - (x * b.eye[0] + y * b.eye[1] + z * b.eye[2]);
       if (depth < 1) return null;
       const scale = (1.72 * this.height * 0.5) / depth;
       return {
-        x: this.width / 2 + dot(b.right) * scale,
-        y: this.height * (.5 - this.verticalShift() / 2) - dot(b.up) * scale,
+        x: this.width / 2 + (x * b.right[0] + y * b.right[1] + z * b.right[2]) * scale,
+        y: this.height * (.5 - this.verticalShift() / 2) - (x * b.up[0] + y * b.up[1] + z * b.up[2]) * scale,
         depth,
         scale,
       };
+    }
+    sphereVisible(position, radius, b = this.basis()) {
+      const c = this.camera, x = position[0] - c.target[0], y = position[1] - c.target[1], z = position[2] - c.target[2];
+      const depth = c.distance - (x * b.eye[0] + y * b.eye[1] + z * b.eye[2]);
+      if (depth + radius < 1) return false;
+      if (depth <= radius) return true;
+      const lens = this.height * .86, scale = lens / depth, margin = radius * lens / Math.max(1, depth - radius);
+      const sx = this.width / 2 + (x * b.right[0] + y * b.right[1] + z * b.right[2]) * scale;
+      const sy = this.height * (.5 - this.verticalShift() / 2) - (x * b.up[0] + y * b.up[1] + z * b.up[2]) * scale;
+      return sx + margin >= 0 && sx - margin <= this.width && sy + margin >= 0 && sy - margin <= this.height;
     }
     hit(x, y) {
       let best = null,
@@ -1514,28 +1526,45 @@
       );
       gl.uniform1f(u.uHeight, this.canvas.height);
       gl.uniform1f(u.uShift, this.verticalShift());
-      const draw = (vertices, mode, pointKind = 0) => {
-        if (!vertices.length) return;
-        gl.bufferData(
-          gl.ARRAY_BUFFER,
-          vertices instanceof Float32Array ? vertices : new Float32Array(vertices),
-          gl.DYNAMIC_DRAW,
-        );
-        gl.uniform1f(u.uPoints, pointKind || (mode === gl.POINTS ? 1 : 0));
-        gl.drawArrays(mode, 0, vertices.length / 8);
-      };
-      draw(this.clouds, gl.POINTS, 3);
-      draw(this.renderDust ?? this.dust, gl.POINTS, 2);
+      this.drawVertices('clouds', this.clouds, gl.POINTS, 3, true);
+      this.drawVertices('dust', this.renderDust ?? this.dust, gl.POINTS, 2, true);
       const geometry = this.geometry();
       gl.enable(gl.DEPTH_TEST);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-      draw(geometry.solids, gl.TRIANGLES);
+      this.drawVertices('solids', geometry.solids, gl.TRIANGLES);
       gl.disable(gl.DEPTH_TEST);
       gl.blendFunc(gl.SRC_ALPHA, gl.ONE);
-      draw(geometry.triangles, gl.TRIANGLES);
-      draw(geometry.lines, gl.LINES);
-      draw(geometry.points, gl.POINTS);
+      this.drawVertices('triangles', geometry.triangles, gl.TRIANGLES);
+      this.drawVertices('lines', geometry.lines, gl.LINES);
+      this.drawVertices('points', geometry.points, gl.POINTS);
       this.finish();
+    }
+    drawVertices(key, vertices, mode, pointKind = 0, immutable = false) {
+      if (!vertices.length) return;
+      const gl = this.gl;
+      this.drawBuffers ??= new Map();
+      let slot = this.drawBuffers.get(key);
+      if (!slot) { slot = {buffer:gl.createBuffer(), capacity:0, source:null, data:null}; this.drawBuffers.set(key, slot); }
+      gl.bindBuffer(gl.ARRAY_BUFFER, slot.buffer);
+      for (const {loc, size, offset} of this.attributes)
+        gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 32, offset);
+      if (immutable) {
+        // Collectible bitmap updates replace the typed array. Until then this
+        // exact frozen field is already resident on the GPU, even while flying.
+        if (slot.source !== vertices) {
+          gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW); slot.source = vertices;
+        }
+      } else {
+        if (vertices.length > slot.capacity) {
+          slot.capacity = Math.max(256, 2 ** Math.ceil(Math.log2(vertices.length)));
+          slot.data = new Float32Array(slot.capacity);
+          gl.bufferData(gl.ARRAY_BUFFER, slot.data.byteLength, gl.DYNAMIC_DRAW);
+        }
+        slot.data.set(vertices);
+        gl.bufferSubData(gl.ARRAY_BUFFER, 0, slot.data.subarray(0, vertices.length));
+      }
+      gl.uniform1f(this.uniforms.uPoints, pointKind || (mode === gl.POINTS ? 1 : 0));
+      gl.drawArrays(mode, 0, vertices.length / 8);
     }
     finish() {
       this.updateLabels();
@@ -1608,12 +1637,21 @@
         let traits = this.visualTraits.get(node);
         if (!traits) {
           const rng = M.random('shape:' + node.id);
-          traits = { phase: rng() * M.TAU, speed: .025 + rng() * .085, tilt: .8 + rng() * .6, mesh: planetMesh(node.id) };
+          traits = { phase: rng() * M.TAU, speed: .025 + rng() * .085, tilt: .8 + rng() * .6 };
           this.visualTraits.set(node, traits);
         }
         const pulse = 1 + (this.paused ? 0 : Math.sin(this.clock * (1 + traits.speed * 8) + traits.phase) * style.pulse);
         points.push(...vertex(p, col, light * pulse * (isStar ? .38 : 1), style.root ? 25 : isStar ? 5.5 : 2.2));
-        const projected = this.project(p);
+        const projected = this.project(p, b);
+        let extent = isStar ? style.radius * 4 : 2;
+        for (const descriptor of [node.post_ring, node.orbit]) {
+          const center = descriptor?.center;
+          const radius = Math.max(descriptor?.radius || 0, ...(descriptor?.ring_radii || [0]));
+          if (center?.length === 3) extent = Math.max(extent, Math.hypot(center[0] - p[0], center[1] - p[1], center[2] - p[2]) + radius);
+        }
+        // Pinned selection/root nodes remain in the readable view. Their
+        // offscreen decoration need not consume a detail slot or CPU geometry.
+        if (!this.sphereVisible(p, extent, b)) continue;
         if (!selected && !hovered && !style.root && (!projected || projected.scale * style.radius < 3 || detailed >= (globalThis.MSGUniversePlanets ? this.software || this.width < 700 ? 12 : 24 : this.software ? 24 : 64))) continue;
         detailed++;
         if (isStar) {
@@ -1634,11 +1672,13 @@
           const cameraPosition = this.camera.target.map((v, i) => v + b.eye[i] * this.camera.distance);
           const towardEye = unit(cameraPosition.map((v, i) => v - p[i]));
           const sun = style.root ? towardEye : unit(p.map(v => -v));
-          if (globalThis.MSGUniversePlanets?.appendSurface) globalThis.MSGUniversePlanets.appendSurface(solids, {
+          if (globalThis.MSGUniversePlanets?.appendSurface) {
+            if (this.sphereVisible(p, style.radius * 1.008, b)) globalThis.MSGUniversePlanets.appendSurface(solids, {
             node, style, clock:this.clock, towardEye, sun, pixelRadius:(projected?.scale ?? 0) * style.radius,
             software:this.software, mobile:this.width < 700, wake:() => this.wake(),
-          });
-          else for (const face of traits.mesh) {
+            });
+          }
+          else for (const face of (traits.mesh ??= planetMesh(node.id))) {
             const local = face.map(rotate), normal = unit(local[0].map((v, i) => v + local[1][i] + local[2][i]));
             if (dot(normal, towardEye) < -.12) continue;
             const diffuse = Math.max(0, dot(normal, sun));
@@ -1782,11 +1822,11 @@
       return result;
     }
     renderSoftware() {
-      const ctx = this.context, dpr = this.canvas.width / Math.max(this.width, 1);
+      const ctx = this.context, dpr = this.canvas.width / Math.max(this.width, 1), basis = this.basis();
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, this.width, this.height);
       for (let i = 0; i < this.clouds.length; i += this.width < 600 ? 16 : 8) {
-        const p = this.project(this.clouds.slice(i, i + 3));
+        const p = this.projectVertex(this.clouds, i, basis);
         if (!p) continue;
         const radius = clamp(p.scale * this.clouds[i + 7], 2, 140);
         if (p.x + radius < 0 || p.x - radius > this.width || p.y + radius < 0 || p.y - radius > this.height) continue;
@@ -1798,28 +1838,24 @@
       }
       const dust = this.renderDust ?? this.dust;
       for (let i = 0; i < dust.length; i += 8) {
-        const p = this.project(dust.subarray(i, i + 3));
+        const p = this.projectVertex(dust, i, basis);
         if (!p || p.x < 0 || p.x > this.width || p.y < 0 || p.y > this.height) continue;
         ctx.fillStyle = `rgba(220,220,220,${dust[i + 6] * .65})`;
         const size = clamp(p.scale * dust[i + 7], .5, 3);
         ctx.fillRect(p.x, p.y, size, size);
       }
       const geometry = this.geometry();
-      const color = (array, offset) => `rgba(${array.slice(offset + 3, offset + 6).map(v => Math.round(v * 255)).join(',')},${clamp(array[offset + 6], 0, 1)})`;
+      const color = (array, offset) => `rgba(${Math.round(array[offset + 3] * 255)},${Math.round(array[offset + 4] * 255)},${Math.round(array[offset + 5] * 255)},${clamp(array[offset + 6], 0, 1)})`;
       for (const [type, width] of [['solids', 24], ['triangles', 24], ['lines', 16]]) {
-        let array = geometry[type];
-        if (type === 'solids') {
-          const faces = [];
-          for (let i = 0; i < array.length; i += 24) {
-            const depth = [0, 8, 16].map(j => this.project(array.slice(i + j, i + j + 3))?.depth ?? -1);
-            if (depth.every(d => d > 0)) faces.push({ vertices: array.slice(i, i + 24), depth: depth.reduce((a, b) => a + b, 0) });
-          }
-          array = faces.sort((a, b) => b.depth - a.depth).flatMap(face => face.vertices);
-        }
+        const array = geometry[type], faces = [];
         for (let i = 0; i < array.length; i += width) {
           const vertices = [];
-          for (let j = 0; j < width; j += 8) vertices.push(this.project(array.slice(i + j, i + j + 3)));
+          for (let j = 0; j < width; j += 8) vertices.push(this.projectVertex(array, i + j, basis));
           if (vertices.some(p => !p)) continue;
+          faces.push({offset:i, vertices, depth:vertices.reduce((sum, p) => sum + p.depth, 0)});
+        }
+        if (type === 'solids') faces.sort((a, b) => b.depth - a.depth);
+        for (const {offset:i, vertices} of faces) {
           ctx.beginPath(); ctx.moveTo(vertices[0].x, vertices[0].y);
           for (const p of vertices.slice(1)) ctx.lineTo(p.x, p.y);
           if (type !== 'lines') {
@@ -1835,9 +1871,9 @@
       }
       const array = geometry.points;
       for (let i = 0; i < array.length; i += 8) {
-        const p = this.project(array.slice(i, i + 3));
+        const p = this.projectVertex(array, i, basis);
         if (!p) continue;
-        const r = clamp(p.scale * array[i + 7], 2, 50), rgb = array.slice(i + 3, i + 6).map(v => Math.round(v * 255)).join(',');
+        const r = clamp(p.scale * array[i + 7], 2, 50), rgb = `${Math.round(array[i + 3] * 255)},${Math.round(array[i + 4] * 255)},${Math.round(array[i + 5] * 255)}`;
         const gradient = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r);
         gradient.addColorStop(0, `rgba(${rgb},${array[i + 6]})`);
         gradient.addColorStop(.3, `rgba(${rgb},${array[i + 6] * .16})`);
@@ -1919,11 +1955,12 @@
           this.labelNodes.set(n.id, el);
         }
         const look = M.appearance(n, this.callbacks.now?.() ?? Date.now());
-        el.textContent =
+        const labelText =
           (n.kind === 'cluster' ? '⋯ ' : look.root ? '✦ ' : look.certified ? '◇ ' : '') +
           (n.kind === 'user'
             ? M.handle(n.name || n.title || 'Signal')
             : n.name || n.title || 'Signal');
+        if (el.textContent !== labelText) el.textContent = labelText;
         el.classList.toggle('root-label', look.root);
         el.classList.toggle('certified-label', look.certified);
         el.style.setProperty('--star-color', `rgb(${look.color.map(v => Math.round(v * 255)).join(',')})`);
