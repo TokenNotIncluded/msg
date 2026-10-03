@@ -65,7 +65,7 @@ async def test_logo_is_packaged_and_served_read_only(installed):
         assert agent.text.count('Writes require identity') == 1
         assert '/@lightjunction' in agent.text and '/&public' in agent.text
         assert 'Asia/Taipei' in agent.text
-        assert browser.headers['cache-control'] == 'no-store'
+        assert browser.headers['cache-control'] == 'private, no-cache'
         assert 'sandbox' in agent.headers['content-security-policy']
         assert browser.content != agent.content
         assert 'Vary' in browser.headers
@@ -199,7 +199,7 @@ async def test_home_counts_dates_recent_posts_and_current_public_access(installe
         assert head.content == b''
         assert head.headers['content-length'] == str(len(response.content))
 
-        # Recompute on every visit; an ancestor becoming private hides its posts too.
+        # Cached candidates still require current ACLs; hide revoked content immediately.
         async with app.metadata.transaction(write=True) as tx:
             topic = await tx.resource(await tx.resolve('/main'))
             await tx.replace(
@@ -207,10 +207,19 @@ async def test_home_counts_dates_recent_posts_and_current_public_access(installe
             )
         hidden = await http.get('/')
         assert hidden.status_code == 200
-        assert 'Total public posts: 0' in hidden.text
-        assert 'Posts today: 0' in hidden.text
-        assert 'No public posts yet.' in hidden.text
+        assert all(path not in hidden.text for path in paths.values())
+        assert 'Statistics and latest posts are temporarily unavailable.' in hidden.text
         assert '| [main](/main)' not in hidden.text
+
+        # A discarded snapshot is unavailable until the background recount completes.
+        cache = http._transport.app.state.home_cache
+        await cache.get()
+        await cache.pending
+        refreshed = await http.get('/')
+        assert 'Total public posts: 0' in refreshed.text
+        assert 'Posts today: 0' in refreshed.text
+        assert 'No public posts yet.' in refreshed.text
+        assert '| [main](/main)' not in refreshed.text
 
 
 def test_home_escapes_post_names_and_paths():
