@@ -170,6 +170,10 @@ async def visible(app, ctx, request, tx, rid):
 
 async def metadata(tx, r):
     data = wire(r)
+    if r.type == 'post':
+        from msg.storage.post_view_migration import view_count
+
+        data['view_count'] = view_count(tx, r.id)
     data['path'] = short_subject_path(await tx.path(r.id))
     data['stable_path'] = resource_path(ResourceRef(id=r.id))
     if r.revision:
@@ -502,6 +506,9 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
             else:
                 for item in values:
                     if item['type'] == 'post':
+                        from msg.storage.post_view_migration import view_count
+
+                        item['view_count'] = view_count(tx, item['id'])
                         preview = await message_preview(app, ctx, request, tx, item['id'])
                         if preview is not None:
                             item['preview'] = {
@@ -572,6 +579,7 @@ async def read_projection(app, ctx, request, tx, rid, *, revision=None, fields=(
         'revision',
         'created_at',
         'modified_at',
+        'view_count',
         'revision_created_at',
         'generation',
         'path',
@@ -770,6 +778,7 @@ def install(app):
                     latest.append({
                         'name': resource.name,
                         **post_preview(resource.name, body),
+                        'view_count': (await metadata(tx, resource))['view_count'],
                         'path': '/*' + hex_id(rid),
                         'created_at': resource.created_at.astimezone(timezone).isoformat(),
                     })
