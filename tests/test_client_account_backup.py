@@ -524,7 +524,11 @@ def test_age_timeout_kills_plugin_child_holding_pipes(tmp_path, monkeypatch):
     child_pid = int(pidfile.read_text())
     status = Path(f'/proc/{child_pid}/status')
     for _ in range(50):
-        if not status.exists() or '\nState:\tZ' in status.read_text():
+        try:
+            state = status.read_text()
+        except FileNotFoundError, ProcessLookupError:
+            break
+        if '\nState:\tZ' in state:
             break
         time.sleep(0.01)
     else:
