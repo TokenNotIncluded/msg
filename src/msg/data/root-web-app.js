@@ -1125,21 +1125,24 @@
     flightClient = new globalThis.MSGFlightClient.Client({
       onStatus(connection, message) {
         const connected = !!flightClient?.connected;
+        const local = !connected && !!flightClient?.localSession;
         const lostWhilePaused = connection === 'suspended' && !connected;
-        const mapMessage = lostWhilePaused ? '飞行连接已断开，返回飞行重新连接后再选择区域。' :
+        const mapMessage = local ? '本地驾驶中；恢复连接后平滑回到服务器位置。本地开火和燃料不会写回。区域切换需连接。' : lostWhilePaused ? '飞行连接已断开，返回飞行重新连接后再选择区域。' :
           connection === 'suspended' ? '已暂停控制，仍可选择区域。' :
-          connection === 'failed' ? '飞行连接失败，请退出飞行后重新进入。' :
+          connection === 'failed' ? '服务器拒绝了连接，请检查当前登录。' :
           connection === 'connected' ? '' : connection === 'connecting' || connection === 'reconnecting' ? '正在连接飞行世界…' : '飞行未连接，返回飞行重新连接后再选择区域。';
         const el = $('game-connection');
         if (el) {
-          const labels = {connecting:'连接中', connected:'已连接', stale:'连接过期', disconnected:'已断开', error:'连接失败', failed:'连接失败，请退出后重试', suspended:'已暂停', reconnecting:'已断开，重新连接中'};
-          el.dataset.state = lostWhilePaused ? 'disconnected' : connection;
-          el.textContent = lostWhilePaused ? '已断开，点击画面重连' : labels[connection] || message || '未连接';
-          el.title = lostWhilePaused ? mapMessage : connection === 'suspended' ? '点击飞行画面继续控制。' : message || '';
+          const labels = {connecting:'连接中', connected:'已连接', stale:'连接过期', disconnected:'已断开', error:'连接失败', failed:'连接被拒绝', suspended:'已暂停', reconnecting:'恢复连接中'};
+          el.dataset.state = local ? 'local' : lostWhilePaused ? 'disconnected' : connection;
+          el.textContent = local ? '本地驾驶 · 恢复连接中' : lostWhilePaused ? '已断开，点击画面重连' : labels[connection] || message || '未连接';
+          el.title = local || lostWhilePaused ? mapMessage : connection === 'suspended' ? '点击飞行画面继续控制。' : message || '';
         }
         if (!connected) renderer?.clearRemoteShips();
         flatMap?.update({connected, connectionMessage:mapMessage});
-        if (connection !== 'connected') renderer?.stopFlightInput(false);
+        if (!connected && (renderer?.wasConnected || !local)) renderer?.stopFlightInput(false);
+        if (renderer) renderer.wasConnected = connected;
+        if (local && renderer?.wantFlight && !renderer.flight) renderer.setPilot(true);
         renderer?.updateGameHud();
       },
       onHello(hello) {

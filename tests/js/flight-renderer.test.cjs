@@ -320,3 +320,42 @@ test('complete highway descriptors rebuild only on geometry or availability chan
   r.syncCollectibles({...field,seed:'1'.repeat(32)}); assert.notEqual(r.dust,first); assert.equal(r.renderDust.length,2300*8);
   assert.equal(r.collectEvents.size,0); assert.equal(r.collectSince,1000);
 });
+
+
+test('local session continues detached prediction without uploading local pose, fuel or attacks', () => {
+  const r = renderer(Object.freeze(self())); r.network.connected=false; r.network.localSession=true;
+  r.updateFlight(.04); // Transition clears held controls once.
+  r.keys.add('w'); r.keys.add(' ');
+  const before=[...r.flight.position], original=r.network.self;
+  for(let i=0;i<120;i++){r.network.serverNow+=40; r.updateFlight(.04);}
+  assert.notDeepEqual(r.flight.position,before); assert.ok(r.flight.speed>0);
+  assert.equal(r.network.input,undefined); assert.equal(r.gameActions.size,0);
+  assert.equal(r.network.self,original); assert.equal(original.fuel,80); assert.equal(original.hp,100);
+  assert.ok(r.localShot?.intent); assert.ok(r.geometry().solids.length>0);
+});
+test('online extrapolation is capped, while local mode may continue after a real disconnect', () => {
+  const r=renderer(); r.authorityAt=1000; r.keys.add('w'); r.updateFlight(.04);
+  r.network.serverNow=1400; const before=[...r.flight.position]; r.updateFlight(.04);
+  assert.deepEqual(r.flight.position,before);
+  r.network.connected=false; r.network.localSession=true; r.updateFlight(.04); r.keys.add('w');
+  r.updateFlight(.04); assert.notDeepEqual(r.flight.position,before);
+});
+test('reconnection smooths a large same-region local offset and discards local rewards', () => {
+  const r=renderer(); r.network.connected=false; r.network.localSession=true;
+  r.updateFlight(.04); r.flight.position=[90,0,16]; r.prediction.position=[90,0,16];
+  r.offlineTaken=new Set([2,4]); const ship={...self(),position:[0,0,16],collected:3};
+  r.network.connected=true; r.network.self=ship;
+  r.receiveFlightHello({self:ship,server_time_ms:1000});
+  assert.equal(r.offlineMode,false); assert.equal(r.offlineTaken.size,0);
+  assert.deepEqual(r.flight.position,[90,0,16]); assert.deepEqual(r.prediction.state.position,ship.position);
+  r.updateFlight(.04); assert.ok(r.flight.position[0]>0 && r.flight.position[0]<90);
+  assert.equal(ship.collected,3); assert.equal(ship.fuel,80);
+});
+test('offline token absorption affects only detached fuel and local bitmap', () => {
+  const r=renderer(); r.network.connected=false; r.network.localSession=true; r.updateFlight(.04);
+  r.dust=new Float32Array([0,0,16,1,1,1,.5,1]); r.collectibles={revision:2,radius:8,fuel:4,mask:[0]};
+  r.prediction.state.fuel=30; r.offlineCollect(.1);
+  assert.equal(r.offlineTaken.size,1); assert.equal(r.prediction.state.fuel,34);
+  assert.equal(r.collectibles.mask[0],0); assert.equal(r.network.self.fuel,80);
+  assert.equal(r.renderDust.length,0); assert.equal(r.network.input,undefined);
+});
