@@ -11,7 +11,7 @@
 <body>
 <a href="#catalog" class="skip">Skip to accessible star catalog</a>
 <main id="universe" aria-label="Interactive post universe">
-<canvas id="space" lang="zh-CN" tabindex="0" aria-label="三维星图。拖拽旋转、滚轮缩放。F 驾驶飞船；W S 推进，A D 平移，Q E 升降，箭头转向，空格攻击，B 刹车，J 护盾，K 冲刺，Enter 查看附近星球，H 返回总览，Escape 退出。星球目录支持键盘浏览。"></canvas>
+<canvas id="space" lang="zh-CN" tabindex="0" aria-label="三维星图。拖拽旋转、滚轮缩放。F 驾驶飞船；鼠标左拖控制方向，触屏双杆转向，油门松手保持；W S 临时推进，A D 平移，Q E 升降，箭头转向，空格攻击，B 刹车，J 护盾，K 冲刺，Enter 查看附近星球，H 返回总览，Escape 退出。星球目录支持键盘浏览。"></canvas>
 <div id="token-field" aria-hidden="true"></div><div id="ship-labels" aria-hidden="true"></div><div id="labels" aria-hidden="true"></div><div class="vignette" aria-hidden="true"></div>
 <header class="topbar">
 <a class="brand" href="/" aria-label="msg home"><span class="brand-icon">__LOGO__</span><b>msg</b><span class="brand-divider">/</span><span>token field</span></a>
@@ -39,8 +39,9 @@
       <span class="pilot-axis-direction">拉 · 抬头</span>
     </div>
     <div class="pilot-throttle" role="group" aria-label="飞船推进">
-      <span class="pilot-axis-label">推力</span>
-      <button data-flight-key="w" aria-label="推进 [W]">推进</button>
+      <span class="pilot-axis-label">油门 <output data-throttle-value>0%</output></span>
+      <button class="pilot-stick pilot-throttle-stick" data-flight-throttle role="slider" aria-label="油门操作杆：向上增推力，松手保持；上下键微调，Home归零，End全推力" aria-orientation="vertical" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-valuetext="0% 推力设定，松手保持"><span class="pilot-stick-rail" aria-hidden="true"></span><span class="pilot-stick-thumb" data-throttle-thumb aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5h8M6 11h12M8 17h8"/></svg></span></button>
+      <button data-throttle-zero aria-label="油门归零">归零</button>
       <button data-flight-key="b" aria-label="刹车 [B]">刹车</button>
       <button data-flight-key="s" aria-label="反推 [S]">反推</button>
     </div>
@@ -50,8 +51,8 @@
       <span class="pilot-axis-direction pilot-yaw-directions"><span>左转</span><span>右转</span></span>
     </div>
   </div>
-  <p class="pilot-steering-note">松杆回中 · 姿态辅助稳住转动 · 推力沿船头，松推力仍会漂移</p>
-  <p class="game-key-legend">W S 推进 · A D 平移 · Q E 升降 · 箭头转向 · 空格攻击 · B 刹车 · J 护盾 · K 冲刺 · Enter 查看</p>
+  <p class="pilot-steering-note"><span class="pilot-mouse-note">拖动画面转向 · 松手保持朝向 · </span><span class="pilot-touch-note">拉杆抬头 · 松方向杆回中 · </span>油门松手保持，归零后滑行 · 刹车同时归零</p>
+  <p class="game-key-legend">W S 临时覆盖油门 · A D 平移 · Q E 升降 · 箭头转向 · 空格攻击 · B 刹车 · J 护盾 · K 冲刺 · Enter 查看</p>
 </section>
 <section id="game-hud" lang="zh-CN" class="game-hud" hidden aria-label="飞船实时状态">
   <div class="game-session"><span id="game-connection" data-state="disconnected" role="status">未连接</span><button id="game-region" type="button" aria-controls="region-map">区域地图</button><span id="game-player">—</span><span>击破 <output id="game-score">—</output></span><span>吸收 <output id="game-collected">—</output></span></div>
@@ -75,7 +76,7 @@
   <div class="panel-top"><span class="eyebrow" lang="zh-CN">操作说明</span><button id="help-close" aria-label="Close field guide">×</button></div>
   <h2 id="help-title" lang="zh-CN">星图与飞行。</h2>
   <p lang="zh-CN">拖拽旋转星图，滚轮或双指缩放。WASD 平移，Q / E 调整距离，H 返回总览。不驾驶也能搜索和浏览星球目录。</p>
-  <p lang="zh-CN"><b>驾驶飞船：</b>点「驾驶」或在画面按 F。W / S 推进，A / D 平移，Q / E 升降；左杆控制俯仰（向下拉抬头，向上推低头），右杆控制左右转向，也可用方向键。松杆后姿态辅助逐渐稳住转动。空格发射激光，B 刹车，J 护盾，K 冲刺。Enter 查看附近可见星球，H 返回总览，F 或 Escape 退出。手机可以双手同时拖动两根操作杆，推力按钮独立，点激光、护盾、冲刺使用武器与技能。速度以场景单位计。</p>
+  <p lang="zh-CN"><b>驾驶飞船：</b>点「驾驶」或在画面按 F。鼠标按住画面拖动，向上拖抬头、向右拖右转，松手保持朝向；有鼠标的设备隐藏方向触控杆。手机左杆控制俯仰（向下拉抬头，向上推低头），右杆控制左右转向，可双手同时操作，也能拖动画面转向。油门杆向上加推力，松手保留设定；「归零」后滑行，B 或「刹车」同时归零并刹车。油门可用上下键按 1% 微调，Home 归零、End 全推力。W / S 按住临时覆盖油门，松开恢复设定；A / D 平移，Q / E 升降，方向键也可转向。空格发射激光，J 护盾，K 冲刺；手机点激光、护盾、冲刺。Enter 查看附近可见星球，H 返回总览，F 或 Escape 退出。切走窗口、取消触控、断线或退出会清空油门。速度以场景单位计。</p>
   <p lang="zh-CN">驾驶会连接实时飞行世界。登录玩家使用已有浏览器身份，从自己的星球附近出生；游客以临时游戏身份加入。松开推进后继续滑行并补充燃料，按 B 刹车可悬停；停稳两秒后逐渐恢复血量。靠近星球会受引力牵引，灰白字符在公共星球之间形成补给路线，靠近约 8 场景单位会自动吸收，补充燃料并增加本局收集数。所有玩家共享这片字符场，已吸收的字符 45 秒后再出现。开火闪光表示发射请求，命中和击毁需等待服务器确认。位置、命中、吸收、血量、燃料、冷却与重生由服务器判定。游戏状态不改变 MSG 余额或自动发送帖子、消息、ACK。切换窗口会停止控制，断线期间无法攻击或吸收。</p>
   <dl class="field-legend">
     <dt>✦ Root</dt><dd>The white core is the real root identity: a trust anchor, not an online indicator.</dd>

@@ -969,8 +969,8 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 .pilot-reticle::after { width: 1px; height: 12px; left: 8px; top: 2px; }
 #pilot-reticle { display: none; }
 .piloting #pilot-reticle { display: block; }
-.pilot-touch-controls { display: grid; grid-template-columns: 112px 52px 176px; justify-content: center; align-items: end; gap: 28px; padding: 12px 16px 0; }
-[data-flight-key] { min-width: 44px; min-height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; pointer-events: auto; border: 1px solid var(--hud-line); border-radius: 2px; color: var(--hud-text); background: var(--hud-surface); font: 11px var(--mono); padding: 8px; }
+.pilot-touch-controls { display: grid; grid-template-columns: 112px 93px 176px; justify-content: center; align-items: end; gap: 28px; padding: 12px 16px 0; }
+[data-flight-key], [data-throttle-zero] { min-width: 44px; min-height: 44px; touch-action: none; user-select: none; -webkit-user-select: none; pointer-events: auto; border: 1px solid var(--hud-line); border-radius: 2px; color: var(--hud-text); background: var(--hud-surface); font: 11px var(--mono); padding: 8px; }
 [data-flight-key].held { color: #111; background: var(--hud-text); }
 .pilot-axis { display: flex; flex-direction: column; align-items: center; gap: 5px; min-width: 0; }
 .pilot-axis-label { display: flex; flex-direction: column; align-items: center; gap: 2px; color: var(--hud-text); font: 11px/1.4 var(--mono); white-space: nowrap; }
@@ -992,10 +992,15 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
 .pilot-stick-thumb svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
 .pilot-yaw-directions { display: flex; justify-content: space-between; width: 100%; padding-inline: 8px; }
 .pilot-yaw { padding-bottom: 15px; }
-.pilot-throttle { display: flex; flex-direction: column; gap: 5px; align-items: stretch; padding-bottom: 18px; }
+.pilot-throttle { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; align-items: stretch; padding-bottom: 18px; }
+.pilot-throttle > .pilot-axis-label, .pilot-throttle > [data-flight-throttle], .pilot-throttle > [data-throttle-zero] { grid-column: 1 / -1; }
 .pilot-throttle > .pilot-axis-label { margin-bottom: 5px; }
-.pilot-throttle [data-flight-key="w"] { background: var(--hud-text); color: #111; }
-.pilot-throttle [data-flight-key="w"].held { background: #fff; }
+.pilot-throttle-stick { --throttle-position: 0; width: 58px; height: 132px; justify-self: center; }
+.pilot-throttle-stick .pilot-stick-rail { width: 1px; height: calc(100% - 24px); top: 12px; left: 50%; }
+.pilot-throttle-stick .pilot-stick-thumb { top: auto; bottom: 1px; transform: translateY(calc(var(--throttle-position) * -88px)); }
+.pilot-throttle-stick.powered { border-color: var(--hud-text); }
+[data-throttle-zero] { color: #111; background: var(--hud-text); }
+.pilot-mouse-note { display: none; }
 .pilot-steering-note { margin: 10px 12px 0; text-align: center; color: var(--hud-muted); font: 10px/1.5 var(--mono); }
 
 #game-hud { position: absolute; z-index: 4; top: 100px; left: var(--hud-edge); width: min(410px, calc(100% - 48px)); color: var(--hud-text); font: 12px/1.7 var(--mono); pointer-events: none; }
@@ -1069,7 +1074,7 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
   .pilot-readout { justify-content: flex-start; padding-inline: 16px; gap: 12px; }
   .pilot-readout strong { font-size: 16px; }
   #pilot-inspect { max-width: calc(100% - 110px); background: transparent; padding-inline: 0; }
-  .pilot-touch-controls { grid-template-columns: minmax(64px, 1fr) 44px minmax(122px, 1fr); gap: 12px; justify-content: stretch; padding: 10px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
+  .pilot-touch-controls { grid-template-columns: minmax(64px, 1fr) 93px minmax(122px, 1fr); gap: 12px; justify-content: stretch; padding: 10px max(16px, env(safe-area-inset-right)) 0 max(16px, env(safe-area-inset-left)); }
   .pilot-yaw .pilot-stick { width: 122px; }
   .pilot-yaw .pilot-stick-thumb { transform: translateX(calc(var(--stick-position) * 38px)); }
   .game-key-legend { display: none; }
@@ -1086,6 +1091,9 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
   .game-action { min-width: 58px; }
   .pilot-throttle { gap: 4px; }
   .pilot-touch-controls { gap: 8px; }
+  .pilot-touch-controls { grid-template-columns: minmax(64px, 1fr) 93px minmax(100px, 1fr); }
+  .pilot-yaw .pilot-stick { width: 100px; }
+  .pilot-yaw .pilot-stick-thumb { transform: translateX(calc(var(--stick-position) * 27px)); }
 }
 @media (max-height: 560px) and (orientation: landscape) {
   .piloting .topbar { height: 56px; }
@@ -1101,13 +1109,25 @@ body.exploring [data-intro] { opacity: 0; transform: translateY(-6px); pointer-e
   .pilot-pitch .pilot-stick-thumb { transform: translateY(calc(var(--stick-position) * 25px)); }
   .pilot-yaw .pilot-stick { width: 176px; }
   .pilot-yaw .pilot-stick-thumb { transform: translateX(calc(var(--stick-position) * 65px)); }
-  .pilot-throttle { display: grid; grid-template-columns: repeat(3, 44px); gap: 5px; padding-bottom: 32px; }
+  .pilot-throttle { grid-template-columns: 58px 44px; gap: 5px; padding-bottom: 0; }
   .pilot-throttle > .pilot-axis-label { grid-column: 1 / -1; }
+  .pilot-throttle > [data-flight-throttle] { grid-column: 1; grid-row: 2 / 5; height: 96px; }
+  .pilot-throttle > [data-throttle-zero], .pilot-throttle > [data-flight-key] { grid-column: 2; min-height: 44px; }
+  .pilot-throttle-stick .pilot-stick-thumb { transform: translateY(calc(var(--throttle-position) * -52px)); }
   .pilot-steering-note { display: none; }
   #game-actions { bottom: auto; top: 72px; right: 16px; }
   .piloting .flightbar { bottom: max(8px, env(safe-area-inset-bottom)); }
   #region-map { top: 16px; bottom: 16px; max-width: 720px; }
   #region-map-canvas { max-height: 44dvh; aspect-ratio: 2 / 1; }
+}
+@media (hover: hover) and (pointer: fine) {
+  .pilot-pitch, .pilot-yaw, .pilot-touch-note { display: none; }
+  .pilot-mouse-note { display: inline; }
+  .pilot-touch-controls { grid-template-columns: 176px; }
+  .pilot-throttle { grid-template-columns: 58px 64px; justify-content: center; padding-bottom: 0; }
+  .pilot-throttle > .pilot-axis-label { grid-column: 1 / -1; }
+  .pilot-throttle > [data-flight-throttle] { grid-column: 1; grid-row: 2 / 5; }
+  .pilot-throttle > [data-throttle-zero], .pilot-throttle > [data-flight-key] { grid-column: 2; }
 }
 
 /* Labels refer only to participants in the actual game snapshot. The renderer
