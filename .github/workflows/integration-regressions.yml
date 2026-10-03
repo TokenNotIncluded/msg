@@ -137,6 +137,7 @@ jobs:
         uses: actions/upload-artifact@v7.0.1
         with:
           name: integration-regression-source-${{ matrix.locale }}
+          include-hidden-files: true
           path: |
             artifacts/source.json
             src/

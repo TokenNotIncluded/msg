@@ -26,6 +26,10 @@ METADATA = 'Metadata-Version: 2.4\nName: msgctl\nVersion: 0.1.0a1\nRequires-Pyth
 ENTRY_POINTS = '[console_scripts]\nmsg = msg.cli:main\nmsgd = msg.daemon:main\n'
 REQUIRED = (
     'docs/DEPLOYMENT.md',
+    'docs/README.md',
+    'docs/ai-game.md',
+    'docs/archive/fixture.md',
+    'examples/game_bot.py',
     'deploy/msgd.service',
     'tests/test_system_rules.py',
     'conformance/test_transports.py',
