@@ -99,6 +99,21 @@ def _save(path: Path | None, state: dict) -> None:
         durable_write(path, json.dumps(state, ensure_ascii=False).encode())
 
 
+def _binding(context: dict, event_types) -> dict:
+    return {'source': context, 'event_types': sorted(set(event_types))}
+
+
+def seed_checkpoint(path: Path, context: dict, cursor: str, event_types=()) -> bool:
+    """Start a new listener at a known position; an existing checkpoint always wins."""
+    binding = _binding(context, event_types)
+    with _checkpoint_lock(path):
+        if path.exists():
+            _load(path, binding, None)
+            return False
+        _save(path, _load(None, binding, cursor))
+        return True
+
+
 def _page(value: dict) -> dict:
     if (
         not isinstance(value, dict)
@@ -144,8 +159,8 @@ async def listen(
             raise Failure('listener_page_limit_requires_once')
     if not all(isinstance(value, str) and value for value in event_types):
         raise Failure('invalid_listener_event_filter')
-    types = sorted(set(event_types))
-    binding = {'source': context, 'event_types': types}
+    binding = _binding(context, event_types)
+    types = binding['event_types']
     state = _load(cursor_file, binding, cursor)
     if from_now and (cursor is not None or (cursor_file is not None and cursor_file.exists())):
         raise Failure('listener_start_position_conflict')

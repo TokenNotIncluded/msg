@@ -1,4 +1,52 @@
-# Open issue resolution ledger · 2026-10-02
+# Issue resolution ledger
+
+## Current triage · 2026-10-03
+
+The 21 open issues were reviewed against main
+`105c2cf716c1179d49bc79224f10f44a3b031163`, its
+[completed CI](https://github.com/TokenNotIncluded/msg/actions/runs/37121402550),
+the original issue bodies and comments, and a fresh read-only deployment
+inventory. The installed native package is `msgd 0.2.14-20261003.46` with that
+source revision; the web and worker services are running. This triage did not
+perform production migration, deletion, recovery promotion, key retirement,
+CA changes or money operations.
+
+Eleven issues are closed. Nine supported implementations are complete; two
+obsolete umbrella requirements are retired as **not planned**. The remaining
+ten issues have focused titles and completion criteria. Their original bodies
+are retained in collapsed historical sections on GitHub. Retiring an old
+whole-design matrix does not assert exhaustive coverage or erase a concrete
+unresolved defect.
+
+| Issue | Current disposition |
+| --- | --- |
+| [#210](https://github.com/TokenNotIncluded/msg/issues/210) | Completed: explicit SSH opt-in for the specified protected administration operations; actual operator records remain in #70/#84. |
+| [#213](https://github.com/TokenNotIncluded/msg/issues/213) | Completed: graceful shutdown and sandbox cancellation fixes; actual production in-flight drain remains in #84. |
+| [#219](https://github.com/TokenNotIncluded/msg/issues/219) | Completed: explicit identity selection and recovered-account safeguards; old service-account retirement and full upgrade/restore interaction remain in #70/#84. |
+| [#68](https://github.com/TokenNotIncluded/msg/issues/68) | Completed: historical ciphertext recovery and retirement functionality; actual retained-ciphertext decryption and named backup-set retirement records remain in #84. |
+| [#69](https://github.com/TokenNotIncluded/msg/issues/69) | Completed: current-authority reconciliation and controlled restore promotion functionality; actual protected snapshots and independently current external pins remain in #84. |
+| [#76](https://github.com/TokenNotIncluded/msg/issues/76) | Completed: supported authorization sources, revocation and read/cache isolation contracts. |
+| [#77](https://github.com/TokenNotIncluded/msg/issues/77) | Completed: signed personal content, Legacy and honor protocols. |
+| [#78](https://github.com/TokenNotIncluded/msg/issues/78) | Completed: supported versioned read/search/Sync and path/query-reference contracts. |
+| [#79](https://github.com/TokenNotIncluded/msg/issues/79) | Completed: current content editing and immutable Revision contracts. |
+| [#83](https://github.com/TokenNotIncluded/msg/issues/83) | Not planned: retire the historical whole-design manual acceptance umbrella; concrete defects retain their own tracking. |
+| [#85](https://github.com/TokenNotIncluded/msg/issues/85) | Not planned: retire the unbounded whole-repository debt umbrella; future work needs a specific source path, behavior and bounded acceptance. |
+| [#64](https://github.com/TokenNotIncluded/msg/issues/64) | Open: actual ingress/default-listener/log-collector topology and effective secret-redaction policy evidence. |
+| [#65](https://github.com/TokenNotIncluded/msg/issues/65) | Open: establish whether any applicable old ledger/escrow data remains; rehearse a protected real snapshot in isolation only if applicable. Close as not planned if no applicable data remains. |
+| [#70](https://github.com/TokenNotIncluded/msg/issues/70) | Open: actual finite CA policy differences, old service-account disposition and applicable protected operator-path evidence. |
+| [#80](https://github.com/TokenNotIncluded/msg/issues/80) | Open: mixed-content volume capacity contract and crash/recovery evidence for the actual storage topology. |
+| [#81](https://github.com/TokenNotIncluded/msg/issues/81) | Open: controlled real HTTPS Webhook delivery, definite failure, lost ACK, retry and recovery; channel enablement is tracked in #84. |
+| [#82](https://github.com/TokenNotIncluded/msg/issues/82) | Open: actual tool resource exhaustion/termination evidence or a narrower supported-limit contract; address-space limits do not imply an RSS/process-count hard limit. |
+| [#84](https://github.com/TokenNotIncluded/msg/issues/84) | Open: bounded target capacity, applicable protected snapshots/external pins, isolated recovery and concrete operator records transferred from completed implementation issues. |
+| [#215](https://github.com/TokenNotIncluded/msg/issues/215) | Open: migrate the existing production installation into a stable named instance while preserving identity, trust, data and rollback. |
+| [#217](https://github.com/TokenNotIncluded/msg/issues/217) | Open: inspect and clean obsolete duplicate release artifacts while retaining current, verified rollback and required recovery material. |
+| [#220](https://github.com/TokenNotIncluded/msg/issues/220) | Open: confirm exact exclusive/shared objects and retention before retiring lmm-api/cortexfs; both packages and services still exist. |
+
+## Historical snapshot · 2026-10-02
+
+The sections below preserve the October 2 evidence and requirements as history.
+Their then-open status and blanket matrix gates are superseded by the current
+triage above; the current GitHub issue scope governs remaining work.
 
 Verified production baseline before this iteration (2026-10-02): native server
 `msgd 0.2.14-20261002.33`, source `8e859f9750c901ba4f5b3f2ec4f1294d93280205`;
