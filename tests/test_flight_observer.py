@@ -1,5 +1,6 @@
 """Observers use real TCP/OAuth, never a hidden guest player or test principal."""
 
+import asyncio
 import json
 import subprocess
 from pathlib import Path
@@ -111,10 +112,23 @@ async def test_observer_private_pilot_has_only_existing_public_game_projection(
     signed, secret = await flight_server.join(cookie=cookie)
     observer, hello = await observe(flight_server)
     public = await observed(observer, lambda body: body['total_players'] == 1)
+    # Both sockets stream a moving world. Compare the same authoritative tick,
+    # rather than the observer's later position with the driver's join position.
+    async with asyncio.timeout(4):
+        private_state = await snapshot(signed)
+        while private_state['tick'] != public['tick']:
+            if private_state['tick'] < public['tick']:
+                private_state = await snapshot(
+                    signed, lambda body, tick=public['tick']: body['tick'] >= tick
+                )
+            else:
+                public = await observed(
+                    observer, lambda body, tick=private_state['tick']: body['tick'] >= tick
+                )
     pilot = public['players'][0]
     assert pilot['id'] == secret['self']['id']
     assert pilot['subject_id'] is None and pilot['handle'].startswith('pilot-')
-    assert pilot['position'] == secret['self']['position']
+    assert pilot == player(private_state, secret['self']['id'])
     encoded = json.dumps([hello, public])
     assert subject not in encoded and 'oauth-owner' not in encoded
     assert 'home_position' not in encoded and 'home_body' not in encoded

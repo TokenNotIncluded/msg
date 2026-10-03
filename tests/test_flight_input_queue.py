@@ -1,6 +1,8 @@
 """Movement coalescing preserves bounded combat intents before a fenced pump."""
 
+import asyncio
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -125,9 +127,12 @@ def test_region_after_movement_does_not_restore_older_thrust():
 async def test_a_fenced_tick_uses_waiting_input_before_advancing_physics():
     hub, peer, ship = playground()
     hub.peers = {peer.id: peer}
+    hub.addresses = {peer.address: 1}
+    hub.service = SimpleNamespace()
     hub.closed = False
     hub.next_auth_check = 0.0
-    peer.writer = True
+    hub.next_geometry_check = 0.0
+    hub.runner = None
     clock = [100.0]
     hub.world.clock = lambda: clock[0]
     initial = list(ship.position)
@@ -148,7 +153,13 @@ async def test_a_fenced_tick_uses_waiting_input_before_advancing_physics():
     hub._refresh_geometry = geometry
     hub._enqueue = deliver
     hub._queue_controls(peer, packet(0, throttle=1))
-    await hub._run()
+    writer = asyncio.create_task(asyncio.Event().wait())
+    peer.writer = writer
+    try:
+        await hub._run()
+    finally:
+        writer.cancel()
+        await asyncio.gather(writer, return_exceptions=True)
 
     assert len(snapshots) == 1
     own = snapshots[0]['players'][0]
