@@ -21,6 +21,7 @@ EVENT_SECONDS = 8.0
 INPUT_SECONDS = 0.5
 CRUISE_SPEED = 20.0
 MAX_SPEED = 60.0
+LASER_RANGE = 180.0
 THRUST_ACCELERATION = 24.0
 DASH_ACCELERATION = 96.0
 COAST_DRAG = 0.32
@@ -780,7 +781,7 @@ class FlightWorld:
 
     def _laser(self, ship, now):
         forward = self._forward(ship)
-        nearest, distance = None, 60.0
+        nearest, distance = None, LASER_RANGE
         for ship_id in self.active:
             target = self.ships[ship_id]
             if ship_id == ship.id or target.hp <= 0:
