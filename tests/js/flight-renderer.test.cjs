@@ -359,3 +359,49 @@ test('offline token absorption affects only detached fuel and local bitmap', () 
   assert.equal(r.collectibles.mask[0],0); assert.equal(r.network.self.fuel,80);
   assert.equal(r.renderDust.length,0); assert.equal(r.network.input,undefined);
 });
+
+
+test('read-only observer renders only real current-region peers without a self ship or control input', () => {
+  const r=renderer(); r.flight=null; r.wantFlight=false; r.observing=true; r.observeRegion=0;
+  r.observerClient={connected:true,serverNow:1000};
+  const one={...self(),id:'real-a'}, two={...self(),id:'real-b',region:1};
+  r.receiveObserverSnapshot({players:[one,two],state_time_ms:1000});
+  assert.equal(r.remoteShips.size,1); assert.ok(r.remoteShips.has('real-a'));
+  assert.ok(r.geometry().solids.length>0); assert.equal(r.network.input,undefined);
+  r.observeRegion=1; r.receiveObserverSnapshot({players:[one,two],state_time_ms:1067});
+  assert.equal(r.remoteShips.size,1); assert.ok(r.remoteShips.has('real-b'));
+  r.observing=false; assert.equal(r.geometry().solids.length,0);
+});
+test('assembled weapon module gives immediate local geometry and only server events confirm a hit', () => {
+  require('../../src/msg/data/root-web-flight-effects.js');
+  const r=renderer(); r.effects=new MSGFlightEffects(); r.network.connected=false; r.network.localSession=true;
+  const before=r.geometry().lines.length; r.queueGameAction('laser');
+  assert.ok(r.geometry().lines.length>before); assert.equal(r.effects.sample(1000).feedback.kind,'intent');
+  assert.equal(r.network.self.hp,100); assert.equal(r.network.input,undefined);
+  r.network.connected=true;
+  r.receiveCombatEvents([{id:'hit-proof',type:'hit',player_id:'peer',target_id:'ship-own',at_ms:1000,position:[0,0,-10]},
+    {id:'laser-proof',type:'laser',player_id:'ship-own',at_ms:1000,position:[0,0,16],end:[0,0,-44]}],1000);
+  assert.equal(r.combatStatus.kind,'hit'); assert.equal(r.effects.sample(1000).feedback.kind,'hit');
+  assert.ok(r.effects.impacts.length>0);
+});
+
+
+test('initial local entry is guarded against synchronous status callbacks and exit cannot reopen a rejected transport', () => {
+  const r=renderer(); r.flight=null; r.wantFlight=false; r.available=true; r.canvas={dataset:{},focus(){}};
+  r.network.connected=false; r.network.localSession=false; r.network.self=null;
+  let connects=0;
+  r.network.connect=()=>{connects++;r.network.localSession=true;r.setPilot(true);};
+  r.network.suspend=()=>r.setPilot(true); r.network.resume=()=>{}; r.network.disconnect=()=>{r.network.localSession=false;};
+  r.setPilot(true); assert.equal(connects,1); assert.ok(r.flight); assert.equal(r.settingPilot,false);
+  r.network.connected=false; r.network.localSession=true; r.setPilot(true); assert.equal(connects,1);
+  r.setPilot(false); assert.equal(r.flight,null); assert.equal(r.wantFlight,false); assert.equal(r.network.localSession,false);
+});
+test('stellar tint and brightness share a bounded per-second cache and preserve the white root', () => {
+  const r=renderer(); const now=Date.parse('2026-10-03T10:00:00Z');
+  const node={id:'star-warm',kind:'user',star:{checked_at:new Date(now).toISOString(),post_count:{public:50,exact:true},
+    last_public_post_at:new Date(now).toISOString(),activity:{window_days:14,window_end:new Date(now).toISOString(),
+    recent_posts:20,previous_posts:20,active_days:6,previous_active_days:6,exact:true}}};
+  const first=r.style(node,now); assert.equal(first.stellar.stage,'star'); assert.ok(first.color[0]>first.color[2]);
+  assert.equal(r.style(node,now+400),first); assert.notEqual(r.style(node,now+1100),first);
+  const root=r.style({...node,id:'u_root'},now); assert.deepEqual(root.color,[1,.98,.94]);
+});

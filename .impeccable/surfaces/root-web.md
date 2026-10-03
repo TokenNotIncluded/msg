@@ -93,3 +93,8 @@ input override. These are local fixture observations, not production acceptance
 or a physical-phone result. This iteration is pending the native45 release;
 only the custom Lightjunction avatar is confirmed online. Deployment evidence is
 a separate coordinator handoff.
+
+
+Flight uses a distinct read-only observer connection outside piloting. It renders real players in the chosen region and uses the same public star positions. Observer region selection costs no fuel or player slot. Unexpected transport loss keeps a detached local flight and visual fire/pickups; local fuel, score and absorption never enter outgoing inputs. Short live extrapolation is capped at 250 ms. On recovery the authoritative state replaces local physics, with a visual position correction when the region and life state still match. Explicit exit and input cancellation still clear thrust.
+
+A shot immediately draws a local muzzle and moving warm beam. Only server hit/death events produce hit confirmation. Pools and event IDs are bounded; reduced motion retains explicit feedback with no recoil. Public activity windows cover recent and previous seven days from the same bounded ACL scan. Sustained stars require 14 posts and four distinct active days in each window. Unknown remains unknown. Visual temperature is a presentation scale. Cold satellites keep authoritative positions and require an existing explicit follow to a warm star or Root. Gold outbound and blue inbound arrowheads distinguish follows; loaded public replies thicken a bounded set of decorative streams without changing the 2,300 collectible token positions.

@@ -189,8 +189,9 @@
       const facing=nx*towardEye[0]+ny*towardEye[1]+nz*towardEye[2];
       if (facing<-.08) continue;
       const diffuse=Math.max(0,nx*sun[0]+ny*sun[1]+nz*sun[2]),rim=(1-Math.max(0,facing))**3;
-      const shade=style.root ? .52+.45*diffuse : .34+.60*diffuse+.06*rim;
-      const red=clamp(face.color[0]*shade,0,1),green=clamp(face.color[1]*shade,0,1),blue=clamp(face.color[2]*shade,0,1),alpha=face.alpha??1;
+      const stellar=!style.root && style.stellar, heat=stellar?.known?stellar.heat:0;
+      const shade=(style.root ? .52+.45*diffuse : .34+.60*diffuse+.06*rim)*(stellar ? .18+.82*stellar.brightness : 1);
+      const red=clamp(face.color[0]*shade*(1+heat*.6),0,1),green=clamp(face.color[1]*shade*(1+heat*.12),0,1),blue=clamp(face.color[2]*shade*(1-heat*.25),0,1),alpha=face.alpha??1;
       for(const v of face.vertices)solids.push(px+(v[0]*c-v[2]*s)*radius,py+v[1]*radius,pz+(v[0]*s+v[2]*c)*radius,
         red,green,blue,alpha,1);
       count++;
