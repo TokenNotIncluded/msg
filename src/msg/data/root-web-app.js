@@ -19,6 +19,8 @@
     activeConversation: null,
     mode: "public",
     account: null,
+    identity: null,
+    identityEpoch: 0,
     conversations: [],
     epoch: 0,
     selection: 0,
@@ -451,6 +453,7 @@
   }
   function discardPrivate() {
     state.epoch++;
+    state.identityEpoch++;
     state.loading = false;
     state.selection++;
     clearInterval(privacyTimer);
@@ -499,7 +502,26 @@
     state.mode = "public";
     modeUI();
     renderer.home();
-    if (refresh) loadPublic(true);
+    if (refresh) { loadPublic(true); refreshIdentity(); }
+  }
+  function accountIdentity(account) {
+    state.identityEpoch++;
+    state.identity = account ? { id: account.id, name: account.name } : null;
+    const link = $("account-link");
+    link.textContent = account ? M.handle(account.name) : "登录 ↗";
+    link.href = account ? safePath("/" + M.handle(account.name)) : "/login";
+  }
+  async function refreshIdentity() {
+    if (document.hidden || state.mode !== "public") return;
+    const epoch = ++state.identityEpoch;
+    try {
+      const page = await json("/_universe/account", { private: true });
+      if (epoch === state.identityEpoch && !document.hidden && state.mode === "public")
+        accountIdentity(page.account);
+    } catch {
+      if (epoch === state.identityEpoch && !document.hidden && state.mode === "public")
+        accountIdentity(null);
+    }
   }
   async function privateMode() {
     discardPrivate();
@@ -509,6 +531,7 @@
       const page = await json("/_universe/me", { private: true });
       if (epoch !== state.epoch || document.hidden) return;
       if (!page.account) {
+        accountIdentity(null);
         notice(
           "Sign in to view your own conversations. Public exploration needs no account.",
           true,
@@ -521,8 +544,7 @@
       state.mode = "private";
       modeUI();
       renderer.travel([0, 0, 0], 225);
-      $("account-link").textContent = M.handle(page.account.name);
-      $("account-link").href = safePath("/" + M.handle(page.account.name));
+      accountIdentity(page.account);
       notice("Private view. Only your conversations are loaded.");
       privacyTimer = setInterval(async () => {
         const expected = state.account?.id;
@@ -530,12 +552,14 @@
           const check = await json("/_universe/me", { private: true });
           if (epoch !== state.epoch) return;
           if (!check.account || check.account.id !== expected) {
+            accountIdentity(null);
             publicMode(false);
             notice(
               "Your private session ended. Its contents have been cleared.",
               true,
             );
           } else {
+            accountIdentity(check.account);
             state.account = check.account;
             state.conversations = check.conversations;
             refreshFacts();
@@ -544,6 +568,7 @@
           }
         } catch {
           if (epoch === state.epoch) {
+            accountIdentity(null);
             publicMode(false);
             notice(
               "Private access could not be verified. Its contents have been cleared.",
@@ -553,7 +578,10 @@
         }
       }, 30000);
     } catch (e) {
-      if (epoch === state.epoch) notice(errorMessage(e), true);
+      if (epoch === state.epoch) {
+        accountIdentity(null);
+        notice(errorMessage(e), true);
+      }
     }
   }
   function closeDetail() {
@@ -1296,7 +1324,7 @@
     if (document.hidden || e.type === "pagehide") {
       const wasPrivate = state.mode === "private";
       publicMode(false);
-      $("account-link").textContent = "登录 ↗";
+      accountIdentity(null);
       if (renderer.software)
         renderer.context.clearRect(
           0,
@@ -1311,14 +1339,16 @@
           "Private view cleared. Open My orbit again to verify your session.",
           true,
         );
-    }
+    } else refreshIdentity();
   };
   document.addEventListener("visibilitychange", hide);
   window.addEventListener("pagehide", hide);
   setInterval(signerLabel, 15000);
   setInterval(refreshStars, 30000);
+  setInterval(refreshIdentity, 30000);
   setInterval(() => {
     if (!document.hidden) { renderer.wake(); refreshFacts(); }
   }, 1000);
   loadPublic(true);
+  refreshIdentity();
 })();
