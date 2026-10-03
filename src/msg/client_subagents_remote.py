@@ -470,6 +470,18 @@ class RemoteAgents:
             'created_at': meta['created_at'],
         }
 
+    async def read(self, agent, message_id):
+        """Read one known message directly instead of scanning the change stream."""
+        root = await self._identity()
+        agent = self._label(agent)
+        require(
+            isinstance(message_id, str) and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,64}', message_id)),
+            'invalid_subagent_message_id',
+        )
+        await self._receive_preflight(root, agent)
+        meta, value = await self._json(root + '/' + agent + '/msg-' + message_id + '.json')
+        return self._event(meta, value, agent)
+
     def _legacy_scope_matches(self, saved, scope, agent):
         return (
             isinstance(saved, dict)

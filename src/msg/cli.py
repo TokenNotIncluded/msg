@@ -544,6 +544,9 @@ def parser():
     from msg.client_agent_cli import add_commands as add_agent_commands
 
     add_agent_commands(commands)
+    from msg.client_link import add_commands as add_link_commands
+
+    add_link_commands(commands)
     from msg.client_market import add_commands
 
     add_commands(commands)
@@ -553,6 +556,9 @@ def parser():
     from msg.client_mount import add_commands as add_mount_commands
 
     add_mount_commands(commands)
+    from msg.client_agent_link import add_commands as add_agent_link_commands
+
+    add_agent_link_commands(commands)
     return cli
 
 
@@ -651,6 +657,14 @@ async def run(args):
             result = await run_command(client, args)
             if args.user and command == 'login':
                 await client.require_username(args.user)
+        elif command == 'link':
+            from msg.client_link import run_command
+
+            result = await run_command(client, args)
+        elif command == 'agent-link':
+            from msg.client_agent_link import run_command
+
+            result = await run_command(client, args)
         elif command == 'internet':
             from msg.client_internet import run_command
 
@@ -1320,6 +1334,8 @@ async def run(args):
                 args,
                 context='auth_approval'
                 if command == 'auth' and args.action in {'approve', 'deny'}
+                else 'link'
+                if command == 'link'
                 else None,
                 identity={
                     'account': state.account,

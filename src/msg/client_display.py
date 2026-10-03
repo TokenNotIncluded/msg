@@ -75,6 +75,9 @@ def render_text(value, *, context=None, identity=None):
         if data.get('scopes'):
             lines.append(f'Access: {safe_text(" ".join(data["scopes"]))}')
         return '\n'.join(lines)
+    if context == 'link' and isinstance(value.get('prompt'), str):
+        # Onboarding prompts are meant to be copied verbatim to another agent.
+        return safe_text(value['prompt'])
     if context == 'server':
         lines = [f'Default server: {safe_text(value["default_server"] or "(not set)")}']
         if value['source'] != 'saved':
