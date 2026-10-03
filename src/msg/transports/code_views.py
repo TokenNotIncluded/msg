@@ -13,7 +13,7 @@ from pygments.util import ClassNotFound
 CODE_CSS = r"""
 .code-block,.diff-view{max-width:100%;min-width:0;margin:24px 0;border:1px solid var(--line);border-radius:2px;background:var(--bg)}
 .code-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:8px 12px;border-bottom:1px solid var(--line);font:12px var(--mono);color:var(--muted)}
-.code-toolbar button{margin-left:auto;min-height:36px;padding:4px 10px;border:1px solid var(--line);border-radius:2px;background:var(--bg);color:var(--fg);font:inherit;cursor:pointer}.code-toolbar button:hover{border-color:var(--fg)}
+.code-toolbar button{margin-left:auto;min-height:44px;padding:4px 14px;border:1px solid var(--line);border-radius:2px;background:var(--bg);color:var(--fg);font:inherit;cursor:pointer}.code-toolbar button:hover{border-color:var(--fg)}
 .code-copy-status:empty{display:none}.code-copy-status{font-size:11px}
 .code-scroll,.diff-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;outline-offset:3px}
 .prose .code-lines,.prose .diff-lines{margin:0;padding:12px 0;border-radius:0;background:var(--bg);color:var(--fg);font:13px/1.65 var(--mono);direction:ltr;unicode-bidi:isolate;overflow:visible;min-width:max-content}

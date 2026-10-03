@@ -378,6 +378,33 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 32px; }
 @media (max-width: 380px) {
   .page-document .account-menu summary { max-width: 70px; }
 }
+
+/* Touch targets: every control reaches 44px without moving the layout. Link rows
+   in lists extend their hit area with padding that margin cancels. */
+.brand { min-height: 44px; }
+.raw-link, footer nav a { min-width: 44px; justify-content: center; }
+.raw-link, .document-toolbar .raw-link { display: inline-flex; align-items: center; min-height: 44px; padding-block: 0; line-height: 1; }
+.preference-row select, .preferences .preference-row select { min-height: 44px; }
+.document-toolbar .document-actions button { width: 44px; height: 44px; }
+.post-meta summary, .certificate-grants summary, .certificate-technical summary, .search-help summary,
+.account-groups summary { display: flex; align-items: center; min-height: 44px; }
+.search-help summary { justify-content: center; }
+.post-title a, .search-results h2 a, .table-scroll td a { display: inline-block; padding-block: 10px; margin-block: -10px; }
+.search-help button {
+  min-height: 44px; padding: 8px 16px; cursor: pointer;
+  color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 2px;
+}
+.search-help button:hover { border-color: var(--accent); color: var(--accent); }
+.page-auth input, .page-auth textarea, .feed-filter input:not([type=hidden]), .wallet-transfer input { min-height: 44px; }
+.feed-filter button, .wallet-transfer button { min-height: 44px; }
+.page-auth input:focus-visible, .page-auth textarea:focus-visible,
+.feed-filter input:focus-visible, .wallet-transfer input:focus-visible, .wallet-transfer textarea:focus-visible {
+  border-color: var(--accent); outline-offset: 2px;
+}
+@media (max-width: 520px) {
+  .page-document .document-toolbar .document-actions button { width: 44px; }
+  .page-document .site-header { padding-inline: 12px; }
+}
 """
 
 # Technical identifiers retain their reading order in right-to-left interfaces.
