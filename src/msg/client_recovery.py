@@ -16,6 +16,7 @@ from msg.client_secrets import write_private
 from msg.core.codec import canonical, digest, loads, wire
 from msg.core.errors import Failure, require
 from msg.security.age_keys import encryption_key_id, public_from_recipient, recipient_from_identity
+from msg.security.age_recipients import recovery_recipient_fingerprint
 
 
 def _protected_file(path):
@@ -54,8 +55,7 @@ def create_recovery_envelope(state, recipients):
         1 <= len(recipients) <= 8 and len(set(recipients)) == len(recipients),
         'invalid_recovery_recipients',
     )
-    for recipient in recipients:
-        public_from_recipient(recipient)
+    fingerprints = tuple(recovery_recipient_fingerprint(recipient) for recipient in recipients)
     require(
         any(recipient != state.encryption_recipient for recipient in recipients),
         'independent_recovery_recipient_required',
@@ -82,9 +82,7 @@ def create_recovery_envelope(state, recipients):
     return ciphertext, {
         'subject_id': state.subject,
         'encryption_key_id': key_id,
-        'recipient_fingerprints': tuple(
-            encryption_key_id(public_from_recipient(r)) for r in recipients
-        ),
+        'recipient_fingerprints': fingerprints,
         'purpose': 'encryption-subkey-recovery',
     }
 

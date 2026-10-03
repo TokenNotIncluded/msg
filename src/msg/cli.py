@@ -1193,6 +1193,9 @@ async def run(args):
                         if args.clear
                         else [{'recipient': value} for value in args.recipient],
                     },
+                    contract_version=2
+                    if any(value.rpartition('1')[0].startswith('age1') for value in args.recipient)
+                    else 1,
                 )
             elif args.action == 'backup':
                 stored, envelope, metadata = await save_recovery_envelope(

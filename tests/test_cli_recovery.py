@@ -9,7 +9,7 @@ from test_service import NOW
 from msg import cli
 from msg.client import ClientState, MsgClient
 from msg.core.codec import loads
-from msg.security.age_keys import generate_age_key, recipient_from_identity
+from msg.security.age_keys import _encode, generate_age_key, recipient_from_identity
 from msg.transports.client import HTTPTransport
 from msg.transports.http import create_app
 
@@ -34,11 +34,21 @@ async def test_cli_policy_backup_and_offline_restore(installed, tmp_path, monkey
         custodian.write_text(custodian_private + '\n')
         custodian.chmod(0o600)
         monkeypatch.setitem(cli.TRANSPORTS, 'http', lambda server: HTTPTransport(server, http=http))
-        monkeypatch.setattr(
-            cli,
-            'MsgClient',
-            lambda state, transport: MsgClient(state, transport, clock=lambda: NOW),
-        )
+        selected_versions = []
+
+        def cli_client(state, transport):
+            result = MsgClient(state, transport, clock=lambda: NOW)
+            original_call = result.call
+
+            async def observed_call(operation, *args, **kwargs):
+                if operation == 'identity.recovery_policy_set':
+                    selected_versions.append(kwargs.get('contract_version', 1))
+                return await original_call(operation, *args, **kwargs)
+
+            result.call = observed_call
+            return result
+
+        monkeypatch.setattr(cli, 'MsgClient', cli_client)
 
         async def invoke(*command):
             parsed = cli.parser().parse_args([
@@ -82,3 +92,12 @@ async def test_cli_policy_backup_and_offline_restore(installed, tmp_path, monkey
         assert status == 0 and restored['account_authority'] == 'none'
         assert recipient_from_identity(output.read_text().strip()) == old_recipient
         assert output.stat().st_mode & 0o077 == 0
+        assert selected_versions == [1]
+        status, _ = await invoke('policy-set', '--recipient', _encode('age1yubikey', b'public'))
+        assert status == 0 and selected_versions[-1] == 2
+        status, _ = await invoke('policy-set', '--recipient', _encode('age1tag', b'public'))
+        assert status == 0 and selected_versions[-1] == 2
+        status, _ = await invoke('policy-set', '--clear')
+        assert status == 0 and selected_versions[-1] == 1
+        status, _ = await invoke('policy-set', '--recipient', custodian_recipient)
+        assert status == 0 and selected_versions[-1] == 1

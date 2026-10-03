@@ -15,6 +15,7 @@ from msg.plugins.common import (
 )
 from msg.plugins.schemas import IDENTIFIER, REF, STRING, obj
 from msg.security.age_keys import encryption_key_id, public_from_recipient
+from msg.security.age_recipients import recovery_recipient_fingerprint
 from msg.security.crypto import verify
 from msg.security.custodial_migration import (
     ack_statement,
@@ -459,6 +460,9 @@ def install(app):
         signature=True,
     )
     async def policy_set(ctx, request, tx):
+        return await apply_policy(ctx, request, tx, plugin_recipients=False)
+
+    async def apply_policy(ctx, request, tx, *, plugin_recipients):
         subject = await _owner(app, ctx, request, tx)
         current = _current_policy(tx, subject.resource_id)
         version = current['version'] if current else 0
@@ -476,7 +480,11 @@ def install(app):
         recipients = []
         for entry in args['recipients']:
             recipient = entry['recipient']
-            fingerprint = encryption_key_id(public_from_recipient(recipient))
+            fingerprint = (
+                recovery_recipient_fingerprint(recipient)
+                if plugin_recipients
+                else encryption_key_id(public_from_recipient(recipient))
+            )
             custodian_ref = entry.get('custodian_ref')
             if custodian_ref is not None:
                 if custodian_ref in known:
@@ -519,6 +527,22 @@ def install(app):
             write=True,
         )
         return HandlerOutput(data=policy)
+
+    @op(
+        'identity.recovery_policy_set',
+        obj(
+            {
+                'expected_version': {'type': 'integer', 'minimum': 0},
+                'encryption_key_id': IDENTIFIER,
+                'recipients': {'type': 'array', 'items': recipient_schema, 'maxItems': 8},
+            },
+            ('expected_version', 'encryption_key_id', 'recipients'),
+        ),
+        signature=True,
+        version=2,
+    )
+    async def policy_set_v2(ctx, request, tx):
+        return await apply_policy(ctx, request, tx, plugin_recipients=True)
 
     envelope_schema = obj(
         {
