@@ -255,7 +255,11 @@ def parser():
     )
     rootkey = sub.add_parser('root')
     rs = rootkey.add_subparsers(dest='root_command', required=True)
-    rs.add_parser('change-pin')
+    pin_change = rs.add_parser('change-pin')
+    pin_change.add_argument('--allow-ssh', action='store_true')
+    pin_change.add_argument(
+        '--allow-short-pin', action='store_true', help='Explicitly allow a six-digit Root PIN'
+    )
     rotate = rs.add_parser('rotate')
     rotate.add_argument('--lost-key', action='store_true')
     rotate.add_argument('--resume', action='store_true')
@@ -451,7 +455,7 @@ def main(argv=None):
                     else admin.revoke(args.certificate_id, args.reason)
                 )
             elif args.root_command == 'change-pin':
-                admin.change_pin()
+                admin.change_pin(allow_short_pin=args.allow_short_pin)
                 result = {'status': 'pin_changed'}
             elif args.root_command == 'rotate':
                 result = admin.rotate(lost_key=args.lost_key, resume=args.resume)

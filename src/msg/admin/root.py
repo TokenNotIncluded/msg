@@ -421,9 +421,8 @@ class RootAdmin:
             _approve_csr(app, csr_id, signer, expected_digest=csr.request_digest, operator=operator)
         )
 
-    def change_pin(self):
-        require_local_console(self.config_dir)
-        require(input('Type CHANGE PIN to continue: ') == 'CHANGE PIN', 'approval_cancelled')
+    def change_pin(self, *, allow_short_pin=False):
+        self._provisioning_operator()
         path = root_envelope(self.config_dir)
         private = open_private_key(
             loads(path.read_bytes()), getpass.getpass('Current root PIN/passphrase: ')
@@ -433,7 +432,11 @@ class RootAdmin:
             first == getpass.getpass('Confirm new root PIN/passphrase: '),
             'pin_confirmation_mismatch',
         )
-        durable_write(path, canonical(seal_private_key(private, first)), mode=0o600)
+        durable_write(
+            path,
+            canonical(seal_private_key(private, first, allow_short_pin=allow_short_pin)),
+            mode=0o600,
+        )
 
     def rotate(self, *, lost_key=False, resume=False):
         operator = require_local_console(self.config_dir)
