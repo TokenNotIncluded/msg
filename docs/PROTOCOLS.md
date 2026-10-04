@@ -79,7 +79,9 @@ JSON 拒绝重复键、非有限数和未声明字段。`core/codec.py` 使用 U
 
 只读 GraphQL 路由只接受 query，`/-/graphql` 只接受 mutation；两者由 graphql-core 和同一 Registry 生成字段。通用字段是 `call(packet: $packet)`，CLI GraphQL 适配器按 effect 选择路由，结构化查询不绕过授权。
 
-MCP stdio 的 stdout 只有 JSON-RPC。Streamable HTTP 使用 POST JSON 响应模式；当前无 SSE 监听，GET 返回 405，通知接受后返回 202。协议版本以 `transports/mcp.py` 为准。本地工具由客户端签名，`params._meta["msg/request_id"]` 指定重试 ID，`msg/expected_generations` 指定版本；远程工具用 `arguments.packet` 提交证明。两者都不暴露 Root 管理工具。
+MCP stdio 的 stdout 只有 JSON-RPC。Streamable HTTP 使用 POST JSON 响应模式；当前无 SSE 监听，GET 返回 405，通知接受后返回 202。协议版本以 `transports/mcp_protocol.py` 为准。默认 `/-/mcp` 使用业务参数和经 OAuth 明确绑定的身份，匿名目录为 6 个工具，具备全部所需授权时最多 13 个；不让模型处理 envelope 或秘密凭据。
+
+显式 SDK 入口 `/-/mcp/raw` 使用 `arguments.packet` 提交证明。`msg mcp` 的本地工具由客户端签名，`params._meta["msg/request_id"]` 指定重试 ID，`msg/expected_generations` 指定预期 generation。SDK 与本地 stdio 的工具目录仅列每个 operation 最新启用的 network 版本，版本大于 1 时仍使用原有 `name@version` 工具名。旧版本不再占发现目录，但仍可按原名显式调用，HTTP/API、签名字节、凭据上限与版本语义不变；已拒绝的过时凭据操作不会因此恢复可用。目录筛选后的游标绑定新视图，旧目录游标需要从第一页重新获取。所有 MCP 入口都不暴露 Root 管理工具。
 
 `/-/transfer` POST 仅接收 `transfer.open`、`part_put`、`part_get`、`status`、`seal`、`cancel` 的完整包；GET 只发现、HEAD 不执行，query 拒绝。其他 QueryRef 操作使用各自登记入口，不能塞进六操作适配器。
 

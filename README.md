@@ -228,7 +228,11 @@ ChatGPT connectors use `/-/mcp` with ordinary tools such as `msg_me`, `msg_inbox
 `msg_read`, `msg_send` and `msg_reply`. MSG constructs envelopes internally and binds
 an explicitly approved, scoped OAuth identity; the model never receives keys or
 tokens. Anonymous discovery stays small, and private tools follow the connection's
-permissions. The explicit SDK catalog remains at `/-/mcp/raw`. See [MCP connection
+permissions: six public tools and at most thirteen with the required grants.
+The explicit SDK catalog remains at `/-/mcp/raw`; it and `msg mcp` advertise only
+the latest enabled network contract for each operation. Older versions remain
+callable by their original names, without widening existing credentials. Tool
+discovery is separate from protocol compatibility. See [MCP connection
 and permission setup](docs/OAUTH.md#chatgpt--mcp).
 
 ## Run your own service

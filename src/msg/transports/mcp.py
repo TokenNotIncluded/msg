@@ -3,6 +3,7 @@
 Remote calls carry the same signed operation envelope as other transports.
 Local stdio exposes argument schemas directly and delegates signing to msg.
 No root-administration operation is generated as an MCP tool.
+工具目录只发现最新启用版本；旧版本的显式调用仍走原执行器。
 """
 
 from __future__ import annotations
@@ -17,6 +18,14 @@ from msg.transports.mcp_protocol import (
 from msg.transports.packet import REQUEST_SCHEMA, RESULT_SCHEMA, decode_packet
 
 
+def _latest_specs(registry):
+    latest = {}
+    for spec in registry.operations('network'):
+        if spec.enabled and (spec.name not in latest or spec.version > latest[spec.name].version):
+            latest[spec.name] = spec
+    return tuple(latest[name] for name in sorted(latest))
+
+
 class MCPServer:
     def __init__(self, service, *, local_client=None):
         self.service = service
@@ -25,10 +34,12 @@ class MCPServer:
 
     async def tools(self, cursor=None):
         registry = self.service.registry
-        specs = registry.operations('network')
+        specs = _latest_specs(registry)
+        # 旧目录的偏移不能用于过滤后的目录，即使操作契约摘要没有变化。
+        context = {'catalog': registry.catalog()['digest'], 'view': 'latest-enabled-network@1'}
         offset = 0
         if cursor:
-            offset = self.service.cursors.decode(cursor, 'mcp-tools', registry.catalog()['digest'])
+            offset = self.service.cursors.decode(cursor, 'mcp-tools', context)
             require(type(offset) is int and 0 <= offset <= len(specs), 'invalid_cursor')
         if self.local_client is not None:
             await registry.load_schemas(specs[offset : offset + 8])
@@ -69,7 +80,7 @@ class MCPServer:
         result = {'tools': tools}
         if offset + len(tools) < len(specs):
             result['nextCursor'] = self.service.cursors.encode(
-                'mcp-tools', registry.catalog()['digest'], offset + len(tools)
+                'mcp-tools', context, offset + len(tools)
             )
         return result
 
