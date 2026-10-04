@@ -23,6 +23,20 @@ def _vectors():
 
     recipient = recipient_from_public(bytes.fromhex('09' + '00' * 31))
     custodian = {'id': 'test-custodian', 'name': 'Isolated custodian', 'recipient': recipient}
+    # 独立固定默认客户端的验收值，避免与加载器一起漂移。
+    builtin_chatgpt = {
+        'client_id': 'msg-chatgpt',
+        'name': 'MSG for ChatGPT',
+        'redirect_uris': ['https://chatgpt.com/connector_platform_oauth_redirect'],
+        'scopes': [
+            'msg.mcp.message',
+            'msg.mcp.post',
+            'msg.mcp.read',
+            'offline_access',
+            'openid',
+            'profile',
+        ],
+    }
     # These are independent acceptance expectations, not configuration defaults
     # used by the server. Each case asserts the loader's effective Settings value.
     rows = {
@@ -30,14 +44,14 @@ def _vectors():
         'oauth.access_ttl': (900, 3600, 3601, 'invalid_oauth_config'),
         'oauth.session_ttl': (2592000, 7776000, 7776001, 'invalid_oauth_config'),
         'oauth.clients': (
-            [],
+            [builtin_chatgpt],
             [
                 {
                     'client_id': 'selftest',
                     'name': 'Config test',
                     'redirect_uris': ['https://example.invalid/callback'],
                     'scopes': ['msg.read', 'openid'],
-                }
+                },
             ],
             [
                 {
@@ -322,6 +336,8 @@ def configuration_selftest():
                             if field == 'identity.credential_delivery_recovery_window'
                             else None
                             if field == 'mail.enabled'
+                            else default + good
+                            if field == 'oauth.clients'
                             else good
                         )
                         require(

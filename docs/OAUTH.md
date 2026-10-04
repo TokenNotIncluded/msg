@@ -19,7 +19,7 @@ redirect_uris = ["https://app.example.com/auth/msg/callback"]
 scopes = ["openid", "profile", "offline_access", "msg.read"]
 ```
 
-`msg-cli` 是内置设备码客户端，不接受浏览器回调。其他客户端需要明确登记；没有动态注册、通配回调、密码授权或 implicit grant。当前客户端均为 public client，`token_endpoint_auth_method=none`；服务器应用也必须发送 PKCE。
+`msg-cli` 是内置设备码客户端，不接受浏览器回调；`msg-chatgpt` 是内置 MCP 客户端，回调见下文。其他客户端需要明确登记；没有动态注册、通配回调、密码授权或 implicit grant。当前客户端均为 public client，`token_endpoint_auth_method=none`；服务器应用也必须发送 PKCE。
 
 生产地址必须使用 HTTPS。回调地址精确匹配登记值，不允许 query、fragment、用户名或密码；本机开发仅允许明确登记的 `http://127.0.0.1` / `http://[::1]` 地址。
 

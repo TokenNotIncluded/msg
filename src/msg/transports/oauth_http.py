@@ -183,6 +183,11 @@ class OAuthBoundary:
         mcp_path = path in MCP_PATHS
         if mcp_path:
             scope.setdefault('state', {})['msg_mcp_identity'] = None
+            if bearer is None:
+                # Keep signed/anonymous MCP on the shared HTTP ingress policy,
+                # including its explicit aliases and denial status. No cookie fallback.
+                await self.app(scope, receive, send)
+                return
         if not oauth_path and not mcp_path and not (bearer and path.startswith('/-/p/')):
             cookie = request.cookies.get(self.session_cookie, '')
             browser_read = (
@@ -260,10 +265,6 @@ class OAuthBoundary:
                 origin is None or origin == self.service.settings.service_url, 'forbidden_origin'
             )
             if mcp_path:
-                # No cookie fallback: the host must explicitly send an OAuth bearer.
-                if bearer is None:
-                    await self.app(scope, receive, send)
-                    return
                 require(request.method == 'POST', 'method_not_allowed')
                 require(
                     len(request.headers.getlist('authorization')) == 1
