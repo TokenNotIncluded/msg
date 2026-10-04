@@ -3472,8 +3472,10 @@ def install(app):
         )
 
     from msg.plugins.delegated_identity import install as install_delegated_identity
+    from msg.plugins.link_rendezvous import install as install_link_rendezvous
 
     install_delegated_identity(app, op)
+    install_link_rendezvous(app, op)
 
     all_types = (
         'topic',

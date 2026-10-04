@@ -339,6 +339,11 @@ CREATE TABLE IF NOT EXISTS agent_drops (
  claimed_at TEXT, cancelled_at TEXT, nonce TEXT NOT NULL, ciphertext TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS agent_drops_inbox ON agent_drops(recipient,created_at,id);
 CREATE INDEX IF NOT EXISTS agent_drops_sender ON agent_drops(sender);
+CREATE TABLE IF NOT EXISTS link_invitations (
+ invite_id TEXT PRIMARY KEY, owner TEXT NOT NULL, name TEXT NOT NULL, minutes INTEGER NOT NULL,
+ created_at TEXT NOT NULL, expires_at TEXT NOT NULL, claim TEXT, claimed_at TEXT,
+ grant_box TEXT, released_at TEXT, revoked_at TEXT, UNIQUE(owner, name));
+CREATE INDEX IF NOT EXISTS link_invitations_owner ON link_invitations(owner, name);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS projections (resource_id TEXT PRIMARY KEY, text TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS email_challenges (subject TEXT PRIMARY KEY, digest TEXT NOT NULL, expires TEXT NOT NULL);

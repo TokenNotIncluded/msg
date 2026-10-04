@@ -176,7 +176,11 @@ class Registry:
                         and (
                             spec.effect == 'read'
                             or (
-                                spec.name == 'communication.internet_receive'
+                                spec.name
+                                in {
+                                    'communication.internet_receive',
+                                    'identity.link_claim',
+                                }
                                 and spec.version == 1
                                 and spec.effect == 'transaction'
                             )

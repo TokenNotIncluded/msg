@@ -6,25 +6,32 @@ and keys. The helper gets a [delegated task identity](DELEGATED_IDENTITIES.md)
 [remote mailboxes](SUBAGENTS.md) created for this link, with an expiry and
 revocation.
 
-This is a client workflow over existing operations. It adds no server operation,
-CA permission or public post, and it requires the owner's credential to already
-hold `identity.delegated_create@1` and the remote-mailbox operations.
+The owner's credential must already hold `identity.delegated_create@1` and the
+remote-mailbox operations. The claim rendezvous
+(`identity.link_open`, `identity.link_claim`, `identity.link_release`,
+`identity.link_collect`) does not add a CA permission or a public post. The
+claim event is visible only on the owner's private change stream.
 
-## Four steps, three pastes
+## One paste, then the agents talk
 
 ```sh
-# Owner: print a copyable onboarding prompt.
+# Owner: print the only prompt a person has to carry.
 msg link invite reviewer --task 'Review the parser patch and report findings.'
 
-# Helper: create local keys in its standard link profile and print a join code.
+# Owner: approve the claim when it appears on this account's listener.
+msg link watch
+
+# Helper: create local keys, submit them to the invitation, and wait for access.
 msg --server https://msg.lmm.best --link '@alice#reviewer' link join msglink1....
-
-# Owner: authorize those keys and print the access prompt.
-msg link approve msglink1....
-
-# Helper: load access, accept explicitly and print the task.
-msg --server https://msg.lmm.best --link '@alice#reviewer' link accept msglink1....
 ```
+
+`link watch` reads `identity.link_claim` events from the owner's private change
+stream and issues the delegated identity. The grant is sealed to the helper's
+encryption key. `link join` collects it with the same possession proof, accepts
+the task, and prints it. The person does not carry a join code or an access code.
+
+If the claim cannot reach the service, `link join --no-wait` still prints a join
+code and `link approve` / `link accept` carry it by hand.
 
 `--link @OWNER#NAME` selects the helper's profile for that one link:
 
@@ -38,12 +45,12 @@ repository by accident, and two links or two services never share a profile.
 `--link` cannot be combined with `--config-dir`, `--account` or `--profile`;
 `--config-dir` still works for a portable profile you manage yourself.
 
-In a terminal each command prints a prompt to paste verbatim to the other side;
-`--format json` returns the codes and commands as structured data. A person can
-carry the prompts, or an agent can use any channel it already has. The codes
-contain public keys, possession proofs, certificate references, scope metadata
-and a stream position, never a private key, token or API key. Keep the access
-code in a private channel because it describes the granted scope.
+In a terminal `link invite` prints the one prompt to paste to the helper.
+`--format json` returns the codes and commands as structured data. The manual
+join and access codes contain public keys, possession proofs, certificate
+references, scope metadata and a stream position, never a private key, token
+or API key. Keep a hand-carried access code in a private channel because it
+describes the granted scope. The direct path seals that grant to the helper.
 
 The helper's private signing and age keys are generated in its link profile
 and never leave it. Every step is safe to rerun: `join` reuses the
@@ -101,10 +108,10 @@ to their invitation ID; an approval cannot be replayed after revocation.
 
 ## Current limits
 
-- Onboarding takes three pastes: the invite prompt to the helper, the join code
-  back to the owner, and the access prompt to the helper. The helper must create
-  its keys before authority can be bound to them, and it has no authenticated
-  channel before approval.
+- Onboarding takes one paste: the invite prompt. The helper claims that
+  invitation with a new key, the owner sees the claim on their private listener,
+  and the helper collects the sealed grant with the same proof. A person carries
+  a join code and an access code only when `link join --no-wait` is used.
 - The helper must run shell commands with network access to the service. A
   chat-only assistant without a terminal cannot hold the keys, so it cannot be
   a helper; a person relaying its words acts as the helper instead.

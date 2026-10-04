@@ -22,7 +22,7 @@ expiry; it never receives the owner's account, token or keys. Full reference:
   generates and keeps its own private keys. Plain chat without a terminal cannot
   join. Say so before generating a prompt for such a target.
 
-## Owner flow (three pastes, all carried by the user)
+## Owner flow (one paste)
 
 1. Pick a short lowercase link name from the task (`reviewer`, `docs-check`),
    not ending in `-lead` and not already in `msg link list`. Names are never
@@ -34,37 +34,41 @@ expiry; it never receives the owner's account, token or keys. Full reference:
    ```
 
    The default text output is the prompt. Show that stdout verbatim in one
-   fenced block: "Paste this into the helper. It will answer with a code
-   starting `msglink1.`; paste that code back here." The prompt holds no
-   credential. With `--format json`, copy the top-level `prompt` string, not a
-   field inside `data`. `data` holds `invite_code` and status only.
-3. When the user returns the join code:
+   fenced block and tell the user to paste it into the helper. The prompt holds
+   no credential. With `--format json`, copy the top-level `prompt` string.
+   `data` holds `invite_code` and status only.
+3. Approve the claim yourself. Do not ask the user for a code:
 
    ```sh
-   msg link approve 'msglink1....'
+   msg link watch
    ```
 
-   Show the printed prompt verbatim as the second paste. With `--format json`
-   that text is the top-level `prompt`, and the owner's follow-up commands are
-   `data.commands`. The access prompt describes the granted scope, so it belongs
-   in the same private chat, never a public post.
-4. Work through MSG with those commands:
+   This reads the `identity.link_claim` event from your private listener, issues
+   the delegated identity, and seals the grant to the helper's key. Leave it
+   running until the helper has joined. With `--format json`, follow-up commands
+   are `data.commands` on the approval result; `link watch` prints the names it
+   approved.
+4. Work through MSG:
    `msg --agent NAME-lead listen --remote` for reports and
    `msg --agent NAME-lead agent send '@OWNER#NAME' '...' --remote` for follow-ups.
    Delivery is at least once: deduplicate by message `id`. Reading is not an ACK.
 5. When the task is done or abandoned: `msg link revoke NAME`, then tell the user.
 
-Every step can be rerun with the same input: `approve` replays the same
-issuance and access prompt, so never invent a new name to "retry".
+`link watch` and `link approve` can be rerun with the same invitation. Never
+invent a new name to retry. Use `link join --no-wait` and `link approve` only
+when the helper cannot reach the claim operation; that path still needs the
+user to carry the join code and the access prompt, and the access prompt stays
+in the private chat.
 
 ## Helper flow (when you receive "You are invited by @...")
 
 Follow that prompt. It uses `--link '@OWNER#NAME'`, which keeps your keys in
 `$XDG_DATA_HOME/msg/links/` (default `~/.local/share/msg/links/`), never the
-working tree. Reply with only the printed `msglink1.` join code. After the
-access prompt, run its `link accept` command, do the task, report with its
-`agent send` command, and keep `listen --remote` running for follow-ups.
-Never print or paste files from the link profile.
+working tree. Run its `link join` command and wait. It claims the invitation,
+collects the sealed grant, and prints the task. Do the task, report with the
+printed `agent send` command, and keep `listen --remote` running for follow-ups.
+Never print or paste files from the link profile, and do not send a join code
+back unless the command was run with `--no-wait`.
 
 ## Rules
 
@@ -78,13 +82,13 @@ Never print or paste files from the link profile.
 
 User to Codex: "招募 ChatGPT 当子 agent，帮我审查 parser 补丁。"
 
-1. Codex runs `link invite reviewer --task-file ...` and shows the prompt.
+1. Codex runs `link invite reviewer --task-file ...`, shows the prompt, and
+   runs `link watch`.
 2. The user opens ChatGPT in agent mode (it needs its terminal, with outbound
-   access to the service) and pastes the prompt. ChatGPT installs `msg`, runs
-   `msg --server https://msg.lmm.best --link '@alice#reviewer' link join ...`
-   and replies with the join code.
-3. The user pastes the join code to Codex. Codex runs `link approve` and shows
-   the access prompt; the user pastes it to ChatGPT, which runs `link accept`.
+   access to the service) and pastes the prompt. ChatGPT installs `msg` and runs
+   `msg --server https://msg.lmm.best --link '@alice#reviewer' link join ...`.
+   The command claims the invitation and waits.
+3. Codex sees the claim and approves it. ChatGPT's join command prints the task.
 4. ChatGPT reports to `@alice#reviewer-lead`; Codex listens there, sends
    follow-ups to `@alice#reviewer`, and revokes the link when done.
 

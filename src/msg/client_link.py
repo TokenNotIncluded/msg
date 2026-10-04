@@ -1,15 +1,17 @@
 """Agent Link: invite a helper agent into one task without sharing the account.
 
-This composes existing mechanisms; it adds no server authority. The owner
-creates two private remote mailbox labels for the link and issues a delegated
-task identity whose grants cover only those two mailboxes. The helper's keys
-are generated on the helper and never leave it. Every code exchanged here holds
-public keys, proofs and references only, never a private key or bearer token.
+The owner prints one prompt. The helper claims that invitation with a new key;
+the claim shows up on the owner's private listener. The owner approves from
+that claim and seals the grant to the helper's encryption key. The helper
+collects it with the same possession proof. No join code or access code has to
+be carried back by a person.
 
-    owner   msg link invite NAME --task ...           -> onboarding prompt
-    helper  msg --link @OWNER#NAME link join CODE     -> join code (public keys)
-    owner   msg link approve JOIN_CODE                -> access prompt
-    helper  msg --link @OWNER#NAME link accept CODE   -> explicit acceptance + task
+The manual `approve`/`accept` codes still work when a claim cannot be delivered.
+They hold public keys, proofs and references only, never a private key or token.
+
+    owner   msg link invite NAME --task ...           -> one onboarding prompt
+    owner   msg link watch                            -> approve claims from the listener
+    helper  msg --link @OWNER#NAME link join CODE     -> claim, wait, accept the task
 
 `--link` selects the helper's standard profile, a private directory per
 service, owner and link name under $XDG_DATA_HOME/msg/links, never the
@@ -21,11 +23,13 @@ already committed writes remain.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import os
 import secrets
 import shlex
 from copy import copy
+from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -68,10 +72,22 @@ def add_commands(commands):
         default=DEFAULT_MINUTES,
         help=f'Access lifetime after approval, 1-1440 (default {DEFAULT_MINUTES}).',
     )
-    join = actions.add_parser('join', help='Helper: create local keys and print a join code.')
+    join = actions.add_parser('join', help='Helper: claim the invitation and wait for access.')
     join.add_argument('code', help='Invitation code from the onboarding prompt.')
-    approve = actions.add_parser('approve', help='Owner: authorize a joined helper.')
-    approve.add_argument('code', help='Join code returned by the helper.')
+    join.add_argument(
+        '--no-wait',
+        action='store_false',
+        dest='wait',
+        help='Submit the public key and print a join code instead of waiting.',
+    )
+    join.set_defaults(wait=True)
+    watch = actions.add_parser('watch', help='Owner: approve claims from the private listener.')
+    watch.add_argument(
+        '--once', action='store_true', help='Approve the claims already waiting, then return.'
+    )
+    watch.add_argument('--interval', type=float, default=2, help='Seconds between checks.')
+    approve = actions.add_parser('approve', help='Owner: authorize a join code carried by hand.')
+    approve.add_argument('code', help='Join code from link join --no-wait.')
     approve.add_argument('--minutes', type=int, help='Override the invitation lifetime.')
     accept = actions.add_parser('accept', help='Helper: load access and accept the task.')
     accept.add_argument('code', help='Access code from the approval prompt.')
@@ -280,11 +296,11 @@ def invitation_prompt(server, owner, name, task, minutes, code):
         '',
         '1. Install the MSG client if `msg` is missing:',
         f'   curl -fsSL {server}/install | bash',
-        '2. Create local keys for this task and print a join code:',
+        '2. Claim this invitation. The command waits, then prints the task:',
         f'   {join}',
-        f'3. Send the printed join code back to @{owner} through the same channel as this prompt.',
+        'Do not send a code back. The owner sees the claim on their own listener and approves it.',
         '',
-        f'After approval you will receive an access code. Access lasts {minutes} minutes and',
+        f'Access lasts {minutes} minutes after approval and',
         f'covers only the private mailboxes @{owner}#{name} and @{owner}#{lead_label(name)}.',
         'Your private keys stay in your private link profile under $XDG_DATA_HOME/msg/links',
         '(default ~/.local/share/msg/links). Never paste them anywhere.',
@@ -350,6 +366,12 @@ async def invite(client, args):
         'minutes': args.minutes,
         'state': 'invited',
     }
+    client.checked(
+        await client.call(
+            'identity.link_open',
+            {'invite_id': record['invite_id'], 'name': name, 'minutes': args.minutes},
+        )
+    )
     save_record(state, record)
     code = encode_code(
         'invite',
@@ -382,7 +404,25 @@ async def join(client, args):
     if saved is None:
         state.data['agent_link'] = link
         state._save()
+    claim_arguments = {
+        'invite_id': invite_id,
+        'grantor': request['grantor'],
+        'public_key': request['public_key'],
+        'encryption_recipient': request['encryption_recipient'],
+        'possession_proof': request['possession_proof'],
+    }
+    try:
+        client.checked(await client.call('identity.link_claim', claim_arguments, anonymous=True))
+    except Failure as exc:
+        if getattr(args, 'wait', False) or exc.code not in {
+            'transport_error',
+            'transport_uncertain',
+        }:
+            raise
     join_code = encode_code('join', {'name': name, 'invite': invite_id, 'request': request})
+    if getattr(args, 'wait', False):
+        minutes = code.get('minutes') if isinstance(code.get('minutes'), int) else 120
+        return await wait_for_access(client, claim_arguments, minutes)
     return {
         'status': 'ok',
         'data': {
@@ -392,11 +432,92 @@ async def join(client, args):
             'profile': str(state.paths.data),
         },
         'prompt': '\n'.join([
-            f'Send this join code to {grantor}. It contains only public keys and a signed proof:',
+            f'Claimed the invitation from {grantor}. The owner approves it from their listener.',
+            'Run the same join command without --no-wait to collect the task.',
             '',
             join_code,
         ]),
     }
+
+
+async def publish_grant(client, record, grant):
+    from msg.security.age_keys import public_from_recipient
+    from msg.security.sealed_box import encrypt
+
+    request = record['approval']['request']
+    bundle = {
+        'name': record['name'],
+        'invite': record['invite_id'],
+        'grant': grant,
+        'cursor': record['tails'][record['name']],
+    }
+    box = encrypt(
+        canonical(bundle), public_from_recipient(request['encryption_recipient'])
+    ).decode()
+    client.checked(
+        await client.call(
+            'identity.link_release', {'invite_id': record['invite_id'], 'grant_box': box}
+        )
+    )
+
+
+async def wait_for_access(client, claim, minutes):
+    from msg.security.age_keys import private_from_identity
+    from msg.security.sealed_box import decrypt
+
+    deadline = client.clock() + timedelta(minutes=minutes)
+    private = private_from_identity(
+        client.state.age_key_path.read_text().strip()
+    ).private_bytes_raw()
+    while True:
+        result = client.checked(await client.call('identity.link_collect', claim, anonymous=True))
+        box = result.data.get('grant_box')
+        if box:
+            bundle = loads(decrypt(box.encode(), private))
+            return await accept(client, SimpleNamespace(code=encode_code('access', bundle)))
+        require(result.data.get('state') != 'expired', 'link_invite_expired')
+        require(client.clock() < deadline, 'link_invite_expired')
+        await asyncio.sleep(1)
+
+
+async def watch(client, args):
+    interval = getattr(args, 'interval', 2)
+    require(
+        type(interval) is not bool and isinstance(interval, (int, float)) and interval > 0,
+        'invalid_listener_interval',
+    )
+    approved = []
+    while True:
+        pending = client.checked(await client.call('identity.link_pending'))
+        for item in pending.data['items']:
+            try:
+                record = load_record(client.state, item['name'])
+            except Failure:
+                continue
+            if record.get('invite_id') != item['invite_id'] or record.get('state') == 'revoked':
+                continue
+            code = encode_code(
+                'join',
+                {'name': item['name'], 'invite': item['invite_id'], 'request': item['request']},
+            )
+            await approve(client, SimpleNamespace(code=code, minutes=None))
+            if item['name'] not in approved:
+                approved.append(item['name'])
+        if getattr(args, 'once', False) or not _pending_local(client):
+            return {'status': 'ok', 'data': {'approved': approved}}
+        await asyncio.sleep(interval)
+
+
+def _pending_local(client):
+    directory = records_directory(client.state)
+    if not directory.exists():
+        return False
+    for path in directory.glob('*.json'):
+        if path.name.endswith('.grant.json'):
+            continue
+        if read_json(path).get('state') in {'invited', 'issued'}:
+            return True
+    return False
 
 
 async def approve(client, args):
@@ -423,6 +544,21 @@ async def approve(client, args):
     if approval is not None:
         require(approval['request'] == request, 'link_already_approved')
         require(approval['minutes'] == minutes, 'link_approval_pending')
+    # Bind even a hand-carried request before issuing authority. This also
+    # completes a claim that the helper could not deliver over its connection.
+    client.checked(
+        await client.call(
+            'identity.link_claim',
+            {
+                'invite_id': record['invite_id'],
+                'grantor': request['grantor'],
+                'public_key': request['public_key'],
+                'encryption_recipient': request['encryption_recipient'],
+                'possession_proof': request['possession_proof'],
+            },
+            anonymous=True,
+        )
+    )
     grant_file = grant_path(state, record)
     if record['state'] == 'invited':
         mailboxes = RemoteAgents(client)
@@ -468,6 +604,7 @@ async def approve(client, args):
         save_record(state, record)
     # Existing checkpoints win; this also resumes an interrupted initial seeding.
     seed_listener(client, lead_label(name), record['tails'][lead_label(name)])
+    await publish_grant(client, record, grant)
     access = encode_code(
         'access',
         {
@@ -588,6 +725,8 @@ async def revoke(client, args):
         mailboxes = RemoteAgents(client)
         for label in (name, lead_label(name)):
             await mailboxes.archive(label)
+    if record.get('invite_id'):
+        client.checked(await client.call('identity.link_close', {'invite_id': record['invite_id']}))
     record['state'] = 'revoked'
     save_record(state, record)
     return {'status': 'ok', 'data': {'name': name, 'state': 'revoked'}}
@@ -598,6 +737,8 @@ async def run_command(client, args):
         return await invite(client, args)
     if args.action == 'join':
         return await join(client, args)
+    if args.action == 'watch':
+        return await watch(client, args)
     if args.action == 'approve':
         return await approve(client, args)
     if args.action == 'accept':
