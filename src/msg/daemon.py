@@ -233,6 +233,15 @@ def parser():
         action='store_true',
         help='Allow an OS root SSH terminal for this repair only; Root PIN required',
     )
+
+    link_repair = account_sub.add_parser(
+        'repair-link', help='Preview or Root-approve Agent Link owner operations on one primary key'
+    )
+    link_repair.add_argument('subject_id')
+    link_repair.add_argument('--key-id')
+    link_repair.add_argument('--apply', action='store_true')
+    link_repair.add_argument('--expected-digest')
+    link_repair.add_argument('--allow-ssh', action='store_true')
     board = sub.add_parser('board', help='Local Root channel administration')
     board_sub = board.add_subparsers(dest='board_command', required=True)
     appoint = board_sub.add_parser('appoint', help='Appoint or replace channel administrators')
@@ -424,7 +433,11 @@ def main(argv=None):
                 result = (
                     admin.archive_account(args.subject_id)
                     if args.account_command == 'archive'
-                    else admin.repair_follows(
+                    else (
+                        admin.repair_link_authority
+                        if args.account_command == 'repair-link'
+                        else admin.repair_follows
+                    )(
                         args.subject_id,
                         key_id=args.key_id,
                         apply=args.apply,
