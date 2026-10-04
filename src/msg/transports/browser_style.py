@@ -62,7 +62,7 @@ THEME_CSS = """
   display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; max-width: 100%;
 }
 .thread-discussion { margin-block: 40px; min-width: 0; }
-.prose .thread-heading { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px 24px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.prose .thread-heading { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px 24px; padding-bottom: 28px; }
 .prose .thread-heading h1, .prose .thread-heading h2 { margin: 0; font: 600 1.6rem/1.3 var(--mono); letter-spacing: -.02em; }
 .prose .thread-range { margin: 8px 0 0; font-size: .8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
 .thread-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
@@ -70,10 +70,10 @@ THEME_CSS = """
 .prose .thread-notice, .prose .thread-empty { color: var(--muted); margin-block: 20px; }
 .prose .thread-tree { list-style: none; margin: 0; padding: 0; }
 .prose .thread-node { margin: 0; padding: 0; min-width: 0; scroll-margin-block: 24px; }
-.thread-node > article { padding-block: 24px 20px; }
-.thread-node + .thread-node > article { border-top: 1px solid var(--line); }
-.thread-node:target > article { background: var(--panel); outline: 1px solid var(--line); outline-offset: 8px; }
-.prose .thread-title { margin: 0 0 10px; font: 600 1rem/1.5 var(--mono); }
+.thread-node > article { padding-block: 28px 12px; }
+.thread-node + .thread-node { margin-block-start: 28px; }
+.thread-node:target > article .thread-author, .thread-node:target > article .thread-title a { text-decoration: underline; text-underline-offset: .35em; }
+.prose .thread-title { margin: 0 0 14px; font: 550 1.0625rem/1.5 var(--mono); }
 .thread-title a { display: inline-flex; align-items: center; min-height: 44px; color: var(--fg); text-decoration: none; }
 .thread-title a:hover { text-decoration: underline; }
 .prose .thread-root > article .thread-title { font-size: 1.15rem; }
@@ -83,7 +83,7 @@ THEME_CSS = """
 .thread-meta .thread-author:hover { text-decoration: underline; }
 .thread-meta .thread-permalink, .thread-meta .thread-parent { color: var(--muted); text-decoration: none; }
 .thread-meta .thread-permalink:hover, .thread-meta .thread-parent:hover { color: var(--fg); text-decoration: underline; }
-.thread-node-kind { border-inline-start: 1px solid var(--line); padding-inline-start: 12px; }
+.thread-node-kind { padding-inline-start: 0; }
 .prose .thread-body { max-width: 72ch; margin: 0; line-height: 1.8; }
 .thread-body > :first-child, .thread-content > :first-child { margin-top: 0; }
 .thread-body > :last-child, .thread-content > :last-child { margin-bottom: 0; }
@@ -95,20 +95,23 @@ THEME_CSS = """
 .thread-collapse-label, .thread-long-body[open] > summary .thread-expand-label, .thread-long-body[open] > summary .thread-excerpt { display: none; }
 .thread-long-body[open] > summary .thread-collapse-label { display: inline-flex; }
 .prose .thread-truncation { color: var(--muted); font-size: .8125rem; }
-.prose .thread-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin: 16px 0 0; min-height: 44px; font-size: .8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
-.thread-branch > summary { display: flex; align-items: center; min-height: 44px; padding-block: 8px; cursor: pointer; color: var(--muted); font-size: .8125rem; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.prose .thread-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin: 20px 0 0; min-height: 28px; font-size: .8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.thread-branch > summary { display: flex; align-items: center; min-height: 44px; padding-block: 8px; cursor: pointer; color: var(--muted); font-size: .8125rem; font-variant-numeric: tabular-nums; }
 .thread-branch > summary:hover { color: var(--fg); }
 .thread-branch > summary::-webkit-details-marker { display: none; }
 .thread-branch-count { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
 .thread-branch-chevron { flex: 0 0 auto; }
 .thread-branch[open] > summary .thread-branch-chevron { transform: rotate(90deg); }
 .prose .thread-branch-pending { margin: 12px 0 20px; font-size: .875rem; color: var(--muted); }
-.thread-branch > [data-thread-branch-content] { margin-inline-start: 12px; padding-inline-start: 24px; border-inline-start: 1px solid var(--line); }
+.thread-branch > [data-thread-branch-content] { margin-inline-start: 8px; padding-inline-start: 20px; }
+.thread-node[data-depth="0"] > .thread-branch > [data-thread-branch-content] { border-inline-start: 1px solid var(--line); }
+.thread-branch [data-thread-fragment] { margin-block: 8px 20px; }
 .thread-node[data-depth="8"] .thread-branch > [data-thread-branch-content] { margin-inline-start: 0; padding-inline-start: 0; border: 0; }
-.prose .thread-more { margin-block: 24px 0; border-top: 1px solid var(--line); padding-top: 12px; }
+.prose .thread-more { margin-block: 28px 0; padding-top: 8px; }
 @media (max-width: 640px) {
-  .thread-discussion { margin-block: 32px; }
+  .thread-discussion { margin-block: 36px; }
   .thread-branch > [data-thread-branch-content] { margin-inline-start: 4px; padding-inline-start: 12px; }
+  .thread-node + .thread-node { margin-block-start: 24px; }
   .thread-node[data-depth="3"] .thread-branch > [data-thread-branch-content] { margin-inline-start: 0; padding-inline-start: 0; border: 0; }
   .thread-meta { column-gap: 10px; }
 }
@@ -199,7 +202,7 @@ h2 { font-family: var(--mono); font-size: 21px; line-height: 1.4; letter-spacing
 h3 { line-height: 1.4; }
 .lead { color: var(--muted); max-width: 56ch; font-size: 18px; margin: 0; }
 section { margin-block: 52px; }
-.account { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 20px 0; border-block: 1px solid var(--line); background: transparent; }
+.account { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 28px 0; background: transparent; }
 .account h2 { font-size: 14px; margin: 0 0 4px; }
 .account p { margin: 0; color: var(--muted); font-size: 14px; max-width: 65ch; }
 .account .primary { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 8px 18px; border-radius: 8px; background: var(--fg); color: var(--bg); text-decoration: none; white-space: nowrap; }
@@ -234,6 +237,33 @@ footer { margin-top: 72px; padding-block: 20px 40px; }
 footer nav { gap: 8px 24px; }
 footer a { color: var(--muted); font-size: 12px; }
 footer p { font: 11px/1.6 var(--mono); }
+
+.page-home main > section { margin-block: 72px; }
+.page-home main > section > h2 { font-size: 1.375rem; margin-bottom: 28px; }
+.page-home .posts li { padding-block: 24px; }
+.page-home .posts li + li { margin-block-start: 20px; }
+.page-home .post-title { gap: 16px 28px; }
+.page-home .post-title a { font-size: 1.25rem; font-weight: 500; line-height: 1.5; }
+.page-home .posts p { margin-top: 10px; font-size: 1rem; line-height: 1.8; }
+.page-home .stats { gap: 32px; }
+.page-home .stats strong { font-size: 30px; }
+.page-home .account { margin-block: 40px 56px; }
+.page-topic-index .prose > h2 { font-size: 1.25rem; font-weight: 550; line-height: 1.5; margin-block: 52px 10px; }
+.page-topic-index .prose > h2 > a { color: var(--fg); text-decoration: none; }
+.page-topic-index .prose > h2 > a:hover { color: var(--accent); text-decoration: underline; }
+.page-topic-index .prose > p { line-height: 1.8; }
+.page-topic-index .prose > hr { border: 0; height: 0; margin-block: 36px; }
+@media (max-width: 640px) {
+  .page-home main > section { margin-block: 56px; }
+  .page-home main > section > h2 { margin-bottom: 24px; }
+  .page-home .posts li { padding-block: 20px; }
+  .page-home .posts li + li { margin-block-start: 16px; }
+  .page-home .post-title { gap: 8px; }
+  .page-home .stats { gap: 12px; }
+  .page-home .stats strong { font-size: 28px; }
+  .page-topic-index .prose > h2 { margin-top: 44px; }
+}
+
 .page-document main { max-width: 840px; padding-bottom: 56px; }
 .prose { padding-top: 28px; }
 .prose h1 { font-size: clamp(32px, 4.5vw, 44px); margin-top: 16px; }
@@ -394,12 +424,12 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 32px; }
 
 .document-toolbar .preferences summary{width:40px;box-sizing:border-box;justify-content:center}.document-toolbar .preferences[open]{width:40px}
 
-.feed-filter { max-width: 640px; margin: 0 0 32px; }
+.feed-filter { max-width: 640px; margin: 0 0 40px; }
 .feed-filter > label { display: block; font-size: .875rem; color: var(--muted); margin-bottom: 8px; }
 .feed-filter-row { display: flex; gap: 10px; }
 .feed-filter input:not([type=hidden]) { flex: 1; min-width: 0; padding: 12px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 2px; }
-.feed-filter button { padding: 12px 18px; border: 1px solid var(--line); border-radius: 2px; background: var(--panel); color: var(--accent); cursor: pointer; white-space: nowrap; }
-.feed-filter button:hover { border-color: var(--accent); }
+.feed-filter button { padding: 12px 8px; border: 0; border-radius: 2px; background: transparent; color: var(--fg); cursor: pointer; white-space: nowrap; }
+.feed-filter button:hover { color: var(--accent); text-decoration: underline; text-underline-offset: .25em; }
 @media (max-width: 420px) { .feed-filter-row { flex-direction: column; } }
 
 /* Menus stay within the visible viewport, including split windows and zoom. */

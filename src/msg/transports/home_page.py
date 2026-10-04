@@ -208,7 +208,7 @@ def home_html(
             ])
             parts.append(
                 '<div class="post-engagement">'
-                f'<span class="muted" title="Approximate views / 近似浏览量">{int(item.get("view_count", 0))} 浏览</span>'
+                f'<span class="muted" title="Approximate views / 近似浏览量">{int(item.get("view_count", 0))} 浏览 · views</span>'
                 + reply_link((reply_status or {}).get(item['path']), item['path'])
                 + '</div>'
             )
