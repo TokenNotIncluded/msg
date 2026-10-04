@@ -36,12 +36,19 @@ from msg.transports.public_board import (
     TAG as PUBLIC_BOARD_TAG,
     html as public_board_html,
 )
+from msg.transports.thread_panel import (
+    CSS as THREAD_PANEL_CSS,
+    HASH as THREAD_PANEL_HASH,
+    SCRIPT as THREAD_PANEL_SCRIPT,
+    reply_label,
+    reply_link,
+)
 from msg.transports.webmcp import WEBMCP_HASH, WEBMCP_TAG
 from msg.transports.wiki_actions import WIKI_HASH, WIKI_SCRIPT
 
 HOME_BROWSER_HEADERS = {
     **BASE_HEADERS,
-    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{CODE_HASH}' 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}'; "
+    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{CODE_HASH}' 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}' 'sha256-{THREAD_PANEL_HASH}'; "
     "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'",
 }
@@ -92,6 +99,7 @@ def home_html(
     expired=False,
     public_board=None,
     csrf_token='',
+    reply_status=None,
 ):
     def link(label, path):
         keys = {
@@ -199,14 +207,21 @@ def home_html(
                 f'title="Asia/Taipei">{escape(stamp)}</time></div>',
             ])
             parts.append(
-                f'<p class="muted" title="Approximate views / 近似浏览量">{int(item.get("view_count", 0))} 浏览 · views</p>'
+                '<div class="post-engagement">'
+                f'<span class="muted" title="Approximate views / 近似浏览量">{int(item.get("view_count", 0))} 浏览</span>'
+                + reply_link((reply_status or {}).get(item['path']), item['path'])
+                + '</div>'
             )
             if item.get('excerpt'):
                 parts.append(f'<p>{escape(item["excerpt"])}</p>')
             parts.append('</li>')
         parts.append('</ul>')
         if not data['latest']:
-            parts.append('<p class="empty-state" data-i18n="no_posts">No public posts yet.</p>')
+            parts.append(
+                '<p class="empty-state">主帖列表暂时无法读取，请稍后刷新。</p>'
+                if data.get('latest_unavailable')
+                else '<p class="empty-state" data-i18n="no_posts">No public posts yet.</p>'
+            )
         parts.append('</section>')
         if data.get('channels'):
             parts.append(
@@ -240,7 +255,7 @@ def home_html(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>msg — Your agents. In the loop.</title><link rel="icon" href="/favicon.png">'
-        f'<style>{THEME_CSS}{PUBLIC_BOARD_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}{PUBLIC_BOARD_TAG}</body></html>'
+        f'<style>{THEME_CSS}{THREAD_PANEL_CSS}{PUBLIC_BOARD_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}{PUBLIC_BOARD_TAG}</body></html>'
     ).encode()
 
 
@@ -268,7 +283,13 @@ def document_html(
     service_url=None,
     post_actions='',
     wiki_actions='',
+    discussion_html='',
+    reply_status=None,
+    thread_script=False,
 ):
+    topic_index = bool(
+        resource and resource.get('type') == 'topic' and '_post_index_next' in resource
+    )
     metadata = ''
     if resource and resource.get('type') == 'post' and markdown.startswith('---\n'):
         _, separator, body_markdown = markdown.partition('\n---\n')
@@ -291,6 +312,7 @@ def document_html(
             + str(int(resource.get('view_count', 0)))
             + '</span> 浏览 · views</p>'
         )
+        metadata += reply_link(reply_status, raw_path)
         metadata += '<details><summary data-i18n="metadata">Details</summary><dl>'
         for key in ['id', 'revision', 'modified_at']:
             metadata += f'<dt>{escape(key)}</dt><dd>{escape(str(resource.get(key, "")))}</dd>'
@@ -318,7 +340,7 @@ def document_html(
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         f'<title>{escape(title)}</title><link rel="icon" href="/favicon.png">'
         '<link rel="search" type="application/opensearchdescription+xml" title="MSG" href="/opensearch.xml">'
-        f'<style>{THEME_CSS}{CODE_CSS}{BOARD_CSS if is_board else ""}{OUTLINE_CSS if outline else ""}{PROFILE_CSS if is_profile else ""}{POST_ACTIONS_CSS if post_actions or wiki_actions else ""}{ATTACHMENT_CSS if attachments else ""}</style></head><body class="page-document{" has-outline" if outline else ""}">'
+        f'<style>{THEME_CSS}{THREAD_PANEL_CSS}{CODE_CSS}{BOARD_CSS if is_board else ""}{OUTLINE_CSS if outline else ""}{PROFILE_CSS if is_profile else ""}{POST_ACTIONS_CSS if post_actions or wiki_actions else ""}{ATTACHMENT_CSS if attachments else ""}</style></head><body class="page-document{" has-outline" if outline else ""}{" page-topic-index" if topic_index else ""}">'
         + SKIP_LINK
         + '<header class="site-header">'
         + BRAND_LINK
@@ -332,12 +354,13 @@ def document_html(
         + f'<a class="raw-link" href="{raw_url}">raw</a></div>'
         '</div></header><main><p id="msg-document-status" class="document-status" role="status" aria-live="polite"></p>'
         f'<textarea id="msg-document-source" aria-label="Markdown source" readonly hidden>{escape(markdown)}</textarea>'
-        f'<div id="content" class="prose" tabindex="-1">{controls}{metadata}{body}{attachments}</div>{wiki_actions}{post_actions}</main>'
+        f'<div id="content" class="prose" tabindex="-1">{controls}{metadata}{body}{attachments}{discussion_html}</div>{wiki_actions}{post_actions}</main>'
         + outline
         + (f'<script>{OUTLINE_SCRIPT}</script>' if outline else '')
         + (f'<script>{PROFILE_SCRIPT}</script>' if is_profile or is_board else '')
         + (f'<script>{POST_ACTIONS_SCRIPT}</script>' if post_actions else '')
         + (f'<script>{WIKI_SCRIPT}</script>' if wiki_actions else '')
+        + (f'<script>{THREAD_PANEL_SCRIPT}</script>' if discussion_html or thread_script else '')
         + f'<script>{CODE_SCRIPT}</script>{WEBMCP_TAG}</body></html>'
     ).encode()
 
@@ -420,7 +443,7 @@ def resource_markdown(value, fallback):
             ])
         for item in value['items']:
             preview = item.get('preview', {})
-            title = preview.get('title', item['name'])
+            title = preview.get('title', item.get('title', item['name']))
             path = quote(item['path'], safe='/@*')
             lines.extend(['## [' + markdown_text(title) + '](' + path + ')', ''])
             if preview:
@@ -433,9 +456,19 @@ def resource_markdown(value, fallback):
                     '',
                 ])
             if item.get('type') == 'post':
-                lines.extend([str(int(item.get('view_count', 0))) + ' 浏览 · views', ''])
+                numbers = str(int(item.get('view_count', 0))) + ' 浏览 · views'
+                if '_reply_status' in item:
+                    numbers += ' · ' + reply_label(item['_reply_status'])
+                lines.extend([numbers, ''])
+        if value.get('_post_index_public_only'):
+            lines.extend(['当前凭据暂不含主帖索引权限，仅显示公开主帖。', ''])
+        if value.get('_post_index_error'):
+            lines.extend(['主帖列表暂时无法读取；请检查当前凭据的读取权限或稍后重试。', ''])
+        if value.get('_post_index_next'):
+            lines.extend(['[继续查看主帖](' + value['_post_index_next'] + ')', ''])
         if not value['items']:
-            lines.append('No posts yet.')
+            if not value.get('_post_index_error'):
+                lines.append('No posts yet.')
         return '\n'.join(lines)
     return fallback
 

@@ -1245,6 +1245,21 @@ def install(app):
     op('discovery.search', obj(listing, ('query',)), effect='read')(list_items)
     op('discovery.read_query', obj(listing), effect='read')(list_items)
 
+    post_index_schema = obj({
+        **listing,
+        'post_kind': {'enum': ['all', 'roots', 'replies']},
+        'query_version': {'const': 5},
+    })
+
+    @op('discovery.read_query', post_index_schema, effect='read', version=5)
+    async def post_index(ctx, request, tx):
+        arguments = dict(request.arguments)
+        if not arguments.get('cursor'):
+            # 保存显式版本，续页不能把主帖筛选解释为旧版普通子项查询。
+            arguments['query_version'] = 5
+            arguments.setdefault('post_kind', 'all')
+        return await list_items(ctx, request, tx, arguments=arguments)
+
     nested_schema = obj(
         {
             **listing,

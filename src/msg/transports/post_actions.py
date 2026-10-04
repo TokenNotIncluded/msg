@@ -169,6 +169,7 @@ POST_ACTIONS_SCRIPT = r"""(() => {
       field.value='';pending=null;status.textContent=kind==='fork'?text('Branch created. ','分支已创建。'):text('Comment posted. ','评论已发表。');
       const link=document.createElement('a');link.href='/_id/'+encodeURIComponent(result.resources[0].id);
       link.textContent=kind==='fork'?text('View branch','查看分支'):text('View comment','查看评论');status.append(link);
+      if(kind==='comment') window.dispatchEvent(new CustomEvent('msg:reply-posted',{detail:{parent:panel.dataset.id}}));
     } catch(error) {recover(error);} finally {writing=false;availability();}
   });
   fetch('/_post/state?id='+encodeURIComponent(panel.dataset.id)+'&revision='+encodeURIComponent(panel.dataset.revision),{credentials:'same-origin',headers:{Accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(15000)})

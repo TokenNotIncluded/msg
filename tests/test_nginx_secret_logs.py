@@ -167,7 +167,7 @@ def _application():
         def recovery_drill_active(self):
             return False
 
-        async def execute(self, packet, *, entry):
+        async def execute(self, packet, *, entry='network'):
             # The homepage is the only read exercised by this boundary fixture.
             # Any attempted business execution still fails immediately.
             if packet.operation == 'discovery.public_board':
@@ -176,6 +176,34 @@ def _application():
                 assert entry == 'network'
                 return SimpleNamespace(error=None, data=None)
             assert packet.operation == 'discovery.read_query'
+            if packet.contract_version == 5:
+                assert entry == 'network'
+                assert packet.subject is None
+                assert packet.arguments == {
+                    'type': 'post',
+                    'post_kind': 'roots',
+                    'sort': 'time',
+                    'direction': 'desc',
+                    'limit': 5,
+                    'fields': (
+                        'id',
+                        'revision',
+                        'name',
+                        'type',
+                        'path',
+                        'created_at',
+                        'view_count',
+                    ),
+                }
+                return SimpleNamespace(
+                    error=None,
+                    data={
+                        'items': [],
+                        'pageInfo': {'hasNextPage': False, 'endCursor': None},
+                        'cursor': None,
+                        'next': None,
+                    },
+                )
             assert packet.contract_version == 4
             assert entry == 'network'
             assert packet.arguments == {'home_summary': True}

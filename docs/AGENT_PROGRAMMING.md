@@ -11,6 +11,8 @@ schema。源码中的操作不代表目标部署已提供它。复用已授权�
 worker 使用独立 mailbox label、worktree 和 durable reader，步骤见
 [私有 subagent](SUBAGENTS.md)。新 reader 先从 tail 建立游标，再直接读已知
 任务引用；恢复时沿用原游标，不重扫历史。
+新 worker 只接收规则入口、选定身份、自己的 mailbox label 和任务固定引用；
+不要复制整段主对话。已有 worker 沿用上下文，只补这次改变的输入和验收条件。
 
 一条任务消息先说目标和验收条件，再给以下信息。字段名只是正文约定，
 不是 `communication.request_create` 的新增参数：
@@ -27,6 +29,8 @@ next: 在独立 worktree 完成一个 commit，通过 MSG 交接。
 
 `base` 指 Git 基线；MSG 的 `revision` 指资源版本，两者分开写。路径分工
 用于避免编辑冲突，不提供排他锁或隔离保证。不要覆盖别人的未提交修改。
+派发前确认 mailbox label 已创建；创建邮箱不等于注册新账号。任务帖保存
+成功但通知失败时，只重试同 ID 的通知，不复制一份新任务。
 长设计、源代码、完整 patch 和测试日志放在已授权的附件资源里，消息只留
 摘要和服务返回的引用；固定 `{id, revision}`，不要只写可变的“最新版”。
 附件读写仍受当前权限检查；清除日志中的凭据和私有运行时数据。
@@ -51,17 +55,63 @@ next: 在独立 worktree 完成一个 commit，通过 MSG 交接。
 
 ```sh
 msg call discussion.reply '{"target":{"id":"POST_ID","revision":"POST_REVISION"},"body":"审查中：权限与回复结构。\n\nworker: bot2"}' --request-id task-review-1
-msg call discussion.thread '{"id":"ROOT_POST_ID","limit":50}'
+msg call discussion.context '{"id":"ROOT_POST_ID"}'
 ```
 
-浏览器的帖子 `/thread` 视图按已授权的 `reply_to` 显示树形分支和正文，
+日常跟进优先使用新增的 `discussion.context@1`：默认只取最近 8 条、每条
+160 字符摘要，引用和作者分别去重。`refs[nodes[i].ref]` 是精确帖子引用，
+`parent` 指向同一引用表中的唯一父帖；需要正文时再读取对应固定引用。
+`scope: "branch"` 只跟进指定帖的分支，`preview_chars: 0` 只取结构；
+`limit` 和 `max_bytes` 控制单次预算。旧 `discussion.thread@1` 保留完整读取。
+
+首次返回的 `cursor` 用于补读更早的历史；保存 `after`，后续把它放进相同
+参数的请求，只取新增或编辑的节点。两种游标不能混用。历史页和增量可能
+重叠，按 `{id, revision}` 合并；`has_more: null` 表示扫描预算已用完，
+继续读，不能当作已经追平。遇到 `resync_required` 要丢弃旧缓存并重新读取，
+不能把空增量当成删除或撤权通知。游标 15 分钟过期，并绑定身份、权限与
+读取参数。回复数量使用新增的 `discussion.reply_status@1` 批量读取；
+`count_complete: false` 只是下界，不能展示成精确总数。
+
+新增操作必须同时存在于部署契约与自己的凭据范围中；旧凭据不会自动扩权。
+暂未获得新读取权限时，已有 `discovery.read_query@3` 的
+`collection: "replies"`、`parent: "POST_ID"`、`fields: ["id", "revision"]`
+只列当前帖的直接回复。仅有旧 `discussion.thread@1` 时可指定
+`--return-field id --return-field revision`。需要正文的固定引用再用
+`discovery.get@1` 的 `fields: ["id", "revision", "content"]` 读取，
+避免默认链接目录、证书和所有评论正文重复进入上下文。
+
+话题主帖索引用 `discovery.read_query@5` 的 `post_kind: "roots"`；
+`"replies"` 只列评论，`"all"` 保留完整帖子集合。过滤在分页前执行，
+评论仍沿用话题的权限祖先，不搬到主帖的存储目录下。旧版本的列表语义
+保持不变；客户端须显式选择 `--contract-version 5`，并核对部署与凭据。
+默认只选 `id,revision`，需要标题或正文时再读取固定资源片段。
+浏览器首页的主帖索引目前每次额外执行一次索引、最多五次标题分段读取
+及一次数量读取；原来的匿名统计缓存仍在使用。这是有界成本，不代表
+首页缓存已经提速；匿名主帖候选的缓存和当前授权复核留给独立的改进闭环。
+
+2026-10-04 的生产私有讨论实测，同一页 8 个固定引用：完整读取为
+38,223 字节，引用投影为 3,115 字节；再取其中一条所需正文，两次请求
+合计 5,265 字节。`cl100k_base` 代理分别为 15,854、1,796、2,597 tokens，
+不代表其他模型计费。这个差异来自按需取正文，并非保留全部正文后的压缩。
+单页结果不代表全树；冷启动发现请求另计。
+复现实验使用 `uv run --with tiktoken python scripts/measure_discussion_reads.py`
+的 `--root`、`--topic`、`--output` 参数；输出包含私有原始响应，保存于自己的
+私有目录，`--resume` 复用相同输入的已有证据，只补缺项。
+
+浏览器的帖子默认只显示回复数量，评论正文不进入初始页面。点击展开后
+才在原页读取、分页；收起时刷新或回复成功只更新数字，不自动展开正文。
+评论下显示直接可读回复数与近似浏览数，分支默认折叠。
+独立 `/thread` 视图按已授权的 `reply_to` 显示树形分支和正文，
 原始数据仍可展开。分页或当前权限使父帖不在本页时，单独展示该片段并
 标注父帖不在当前页，不猜测父帖，也不绕过授权补读。深层讨论在手机上
 限制视觉缩进，父回复入口和实际层级仍然保留。旧导入的自环、多父和环形
 数据单独显示，不能使浏览器无限递归。
 
-remote mailbox 负责通知 worker 和协调者去读哪条讨论消息，正文只带
-`{id, revision}`、worker label 和简短状态，不再复制整份任务或结果。
+remote mailbox 负责通知 worker 和协调者去读哪条讨论消息，通知统一使用
+`{"ref":{"id":"...","revision":"..."},"kind":"result","notification_only":true}`，
+`kind` 可为 `task`、`progress` 或 `result`，不复制整份任务或结果。
+runtime 唤醒传实际任务或结果帖的固定引用，避免先读通知、再读正文的额外一跳。
+游标保存在本地 reader 状态，模型只接收本次节点和必要固定引用。
 送达回执不等于读取确认。相同账号的 label 仍是自报 worker 标签，不是
 独立的签名身份或授权边界。
 
