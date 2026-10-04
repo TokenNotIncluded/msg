@@ -36,7 +36,8 @@ async def prepared_link(app, tmp_path, http, task='Review the parser patch and r
     )
     prompt = invited['prompt']
     assert task in prompt and invited['data']['invite_code'] in prompt
-    assert 'link join' in prompt and '--config-dir ./msg-link-reviewer' in prompt
+    assert 'prompt' not in invited['data']
+    assert "--link '@alice#reviewer' link join" in prompt and '--config-dir' not in prompt
     joined = await run_command(helper, args('join', code=invited['data']['invite_code']))
     # Re-running join reuses the same local keys and prints the same public request.
     again = await run_command(helper, args('join', code=invited['data']['invite_code']))
@@ -50,6 +51,9 @@ async def linked(app, tmp_path, http, task='Review the parser patch and report.'
         owner, args('approve', code=joined['data']['join_code'], minutes=None)
     )
     assert approved['data']['address'].startswith('@alice~')
+    assert 'prompt' not in approved['data']
+    assert approved['prompt'].startswith('@alice approved your Agent Link access')
+    assert approved['data']['commands']['listen'] == 'msg --agent reviewer-lead listen --remote'
     replay = await run_command(
         owner, args('approve', code=joined['data']['join_code'], minutes=None)
     )
@@ -549,6 +553,37 @@ def test_cli_link_commands_are_reachable():
     ])
     assert parsed.command == 'link' and parsed.minutes == 45 and parsed.task == 'Check it'
     assert parser.parse_args(['link', 'accept', 'msglink1.x']).code == 'msglink1.x'
+
+
+def test_link_profile_is_standard_private_and_isolated(tmp_path, monkeypatch):
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path / 'data'))
+    server = 'https://msg.lmm.best'
+    profile = client_link.link_directory(server, '@alice#reviewer')
+    assert profile == tmp_path / 'data/msg/links/msg.lmm.best/alice/reviewer'
+    assert client_link.link_directory(server, 'alice#reviewer') == profile
+    assert client_link.link_directory('https://other.example', '@alice#reviewer') != profile
+    assert client_link.link_directory(server, '@alice#tester') != profile
+    for parent in (profile.parent, profile.parent.parent, profile.parent.parent.parent):
+        assert parent.stat().st_mode & 0o077 == 0
+    for bad in ('alice', '@alice#reviewer-lead', '@Alice#reviewer', '@alice#../x', '@alice#'):
+        with pytest.raises(Failure):
+            client_link.link_directory(server, bad)
+
+
+def test_cli_link_option_selects_only_the_link_profile(tmp_path, monkeypatch):
+    monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path))
+    monkeypatch.delenv('MSG_SERVER', raising=False)
+    parser = cli.parser()
+    base = ['--link', '@alice#reviewer', 'link', 'join', 'msglink1.x']
+    parsed = parser.parse_args(['--server', 'https://msg.lmm.best', *base])
+    expected = tmp_path / 'msg/links/msg.lmm.best/alice/reviewer'
+    assert client_link.select_link_profile(parsed) == expected == parsed.config_dir
+    for extra in (['--account', 'me'], ['--config-dir', 'x'], ['--profile', 'p']):
+        conflict = parser.parse_args(['--server', 'https://msg.lmm.best', *extra, *base])
+        with pytest.raises(Failure, match='link_profile_conflict'):
+            client_link.select_link_profile(conflict)
+    with pytest.raises(Failure, match='server_required'):
+        client_link.select_link_profile(parser.parse_args(base))
 
 
 def test_terminal_output_is_the_copyable_prompt():

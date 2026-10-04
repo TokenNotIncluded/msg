@@ -6,10 +6,14 @@ task identity whose grants cover only those two mailboxes. The helper's keys
 are generated on the helper and never leave it. Every code exchanged here holds
 public keys, proofs and references only, never a private key or bearer token.
 
-    owner   msg link invite NAME --task ...    -> onboarding prompt
-    helper  msg --config-dir DIR link join CODE  -> join code (public keys)
-    owner   msg link approve JOIN_CODE         -> access prompt
-    helper  msg --config-dir DIR link accept CODE -> explicit acceptance + task
+    owner   msg link invite NAME --task ...           -> onboarding prompt
+    helper  msg --link @OWNER#NAME link join CODE     -> join code (public keys)
+    owner   msg link approve JOIN_CODE                -> access prompt
+    helper  msg --link @OWNER#NAME link accept CODE   -> explicit acceptance + task
+
+`--link` selects the helper's standard profile, a private directory per
+service, owner and link name under $XDG_DATA_HOME/msg/links, never the
+working tree where keys could be committed by accident.
 
 Revocation ends the delegated identity and archives both labels; history and
 already committed writes remain.
@@ -18,6 +22,7 @@ already committed writes remain.
 from __future__ import annotations
 
 import base64
+import os
 import secrets
 import shlex
 from copy import copy
@@ -33,12 +38,13 @@ from msg.client_delegated import (
     prepare as prepare_delegation,
     read_json,
 )
-from msg.client_subagents import normalize_agent
+from msg.client_subagents import normalize_agent, validate_username
 from msg.client_subagents_remote import RemoteAgents
 from msg.core.codec import canonical, loads, unb64
 from msg.core.errors import Failure, require
-from msg.paths import private_directory
+from msg.paths import private_directory, xdg_directory
 from msg.security.crypto import key_id
+from msg.service_origin import service_namespace, service_origin
 
 CODE_PREFIX = 'msglink1.'
 LEAD_SUFFIX = '-lead'
@@ -215,9 +221,41 @@ def task_text(args):
     return text
 
 
-def helper_command(server, name, *words):
-    directory = './msg-link-' + name
-    parts = ['msg', '--server', server, '--config-dir', directory, *words]
+def link_address(owner, name):
+    return f'@{owner}#{name}'
+
+
+def link_directory(server, address):
+    """The standard helper profile for one link on one service."""
+    require(isinstance(address, str), 'invalid_link_profile')
+    owner, separator, name = address.removeprefix('@').partition('#')
+    require(bool(separator), 'invalid_link_profile')
+    owner = validate_username(owner)
+    name = check_name(name, owner)
+    directory = xdg_directory('XDG_DATA_HOME', '.local/share') / 'msg'
+    for part in ('links', service_namespace(server), owner, name):
+        private_directory(directory)
+        directory = directory / part
+    return directory
+
+
+def select_link_profile(args):
+    require(
+        args.config_dir is None
+        and args.account is None
+        and args.profile is None
+        and args.migrate_from is None,
+        'link_profile_conflict',
+        details={'options': ['--link', '--config-dir', '--account', '--profile']},
+    )
+    server = args.server or os.environ.get('MSG_SERVER')
+    require(server is not None, 'server_required', details={'options': ['--server', 'MSG_SERVER']})
+    args.config_dir = link_directory(service_origin(server), args.link)
+    return args.config_dir
+
+
+def helper_command(server, owner, name, *words):
+    parts = ['msg', '--server', server, '--link', link_address(owner, name), *words]
     return ' '.join(shlex.quote(part) for part in parts)
 
 
@@ -231,7 +269,7 @@ async def owner_handle(client):
 
 
 def invitation_prompt(server, owner, name, task, minutes, code):
-    join = helper_command(server, name, 'link', 'join', code)
+    join = helper_command(server, owner, name, 'link', 'join', code)
     return '\n'.join([
         f'You are invited by @{owner} on {server} to help with one task through MSG Agent Link.',
         '',
@@ -248,19 +286,20 @@ def invitation_prompt(server, owner, name, task, minutes, code):
         '',
         f'After approval you will receive an access code. Access lasts {minutes} minutes and',
         f'covers only the private mailboxes @{owner}#{name} and @{owner}#{lead_label(name)}.',
-        'Your private keys stay in that config directory. Never paste them anywhere.',
+        'Your private keys stay in your private link profile under $XDG_DATA_HOME/msg/links',
+        '(default ~/.local/share/msg/links). Never paste them anywhere.',
         'This prompt contains no credentials; reading it grants nothing.',
     ])
 
 
 def access_prompt(server, owner, name, expires_at, code):
-    helper = helper_command(server, name) + ' --agent ' + name
+    helper = helper_command(server, owner, name) + ' --agent ' + name
     lead = shlex.quote(f'@{owner}#{lead_label(name)}')
     return '\n'.join([
         f'@{owner} approved your Agent Link access on {server} until {expires_at}.',
         '',
         'Accept the task explicitly; this prints the task from your private inbox:',
-        f'   {helper_command(server, name, "link", "accept", code)}',
+        f'   {helper_command(server, owner, name, "link", "accept", code)}',
         '',
         'Then report progress and results, and wait for follow-up messages:',
         f'   {helper} agent send {lead} "progress or result" --remote',
@@ -346,7 +385,12 @@ async def join(client, args):
     join_code = encode_code('join', {'name': name, 'invite': invite_id, 'request': request})
     return {
         'status': 'ok',
-        'data': {'name': name, 'grantor': grantor, 'join_code': join_code},
+        'data': {
+            'name': name,
+            'grantor': grantor,
+            'join_code': join_code,
+            'profile': str(state.paths.data),
+        },
         'prompt': '\n'.join([
             f'Send this join code to {grantor}. It contains only public keys and a signed proof:',
             '',

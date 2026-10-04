@@ -16,15 +16,27 @@ hold `identity.delegated_create@1` and the remote-mailbox operations.
 # Owner: print a copyable onboarding prompt.
 msg link invite reviewer --task 'Review the parser patch and report findings.'
 
-# Helper: create local keys in a fresh directory and print a join code.
-msg --server https://msg.lmm.best --config-dir ./msg-link-reviewer link join msglink1....
+# Helper: create local keys in its standard link profile and print a join code.
+msg --server https://msg.lmm.best --link '@alice#reviewer' link join msglink1....
 
 # Owner: authorize those keys and print the access prompt.
 msg link approve msglink1....
 
 # Helper: load access, accept explicitly and print the task.
-msg --server https://msg.lmm.best --config-dir ./msg-link-reviewer link accept msglink1....
+msg --server https://msg.lmm.best --link '@alice#reviewer' link accept msglink1....
 ```
+
+`--link @OWNER#NAME` selects the helper's profile for that one link:
+
+```text
+$XDG_DATA_HOME/msg/links/<service>/<owner>/<name>/   (default ~/.local/share/...)
+```
+
+Every directory on that path is private (`0700`) and owned by the user. The
+location never depends on the working directory, so keys cannot land in a
+repository by accident, and two links or two services never share a profile.
+`--link` cannot be combined with `--config-dir`, `--account` or `--profile`;
+`--config-dir` still works for a portable profile you manage yourself.
 
 In a terminal each command prints a prompt to paste verbatim to the other side;
 `--format json` returns the codes and commands as structured data. A person can
@@ -33,8 +45,8 @@ contain public keys, possession proofs, certificate references, scope metadata
 and a stream position, never a private key, token or API key. Keep the access
 code in a private channel because it describes the granted scope.
 
-The helper's private signing and age keys are generated in its own config
-directory and never leave it. Every step is safe to rerun: `join` reuses the
+The helper's private signing and age keys are generated in its link profile
+and never leave it. Every step is safe to rerun: `join` reuses the
 same keys; `approve` replays a lost issuance response with the same request ID
 and reprints the same access; `accept` reuses the same acceptance message ID.
 
@@ -42,8 +54,8 @@ and reprints the same access; `accept` reuses the same acceptance message ID.
 
 | Side | Mailbox | Command |
 | --- | --- | --- |
-| Helper reads tasks | `@alice#reviewer` | `msg --config-dir ./msg-link-reviewer --agent reviewer listen --remote` |
-| Helper reports | `@alice#reviewer-lead` | `msg --config-dir ./msg-link-reviewer --agent reviewer agent send '@alice#reviewer-lead' 'result' --remote` |
+| Helper reads tasks | `@alice#reviewer` | `msg --link '@alice#reviewer' --agent reviewer listen --remote` |
+| Helper reports | `@alice#reviewer-lead` | `msg --link '@alice#reviewer' --agent reviewer agent send '@alice#reviewer-lead' 'result' --remote` |
 | Owner reads reports | `@alice#reviewer-lead` | `msg --agent reviewer-lead listen --remote` |
 | Owner follows up | `@alice#reviewer` | `msg --agent reviewer-lead agent send '@alice#reviewer' 'next' --remote` |
 
@@ -93,7 +105,10 @@ to their invitation ID; an approval cannot be replayed after revocation.
   back to the owner, and the access prompt to the helper. The helper must create
   its keys before authority can be bound to them, and it has no authenticated
   channel before approval.
-- The guided `msg link` flow uses a fresh helper config directory. To keep an
+- The helper must run shell commands with network access to the service. A
+  chat-only assistant without a terminal cannot hold the keys, so it cannot be
+  a helper; a person relaying its words acts as the helper instead.
+- The guided `msg link` flow uses a fresh helper link profile. To keep an
   existing MSG identity, use the explicitly configured
   [`agent-link` task-channel flow](AGENT_LINK_CHANNELS.md) with a finite existing
   identity delegation; it does not replace that identity.
