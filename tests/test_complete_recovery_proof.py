@@ -57,6 +57,7 @@ async def test_complete_proof_accepts_exact_disposable_state(complete_state):
         'extra_column',
         'oauth_state',
         'money_visibility',
+        'link_invitation',
         'wrong_pin',
         'partial',
     ],
@@ -69,6 +70,7 @@ async def test_complete_proof_rejects_unaccounted_state(complete_state, change):
         'extra_column',
         'oauth_state',
         'money_visibility',
+        'link_invitation',
     }:
         async with app.metadata.transaction(write=True) as tx:
             if change == 'extra_setting':
@@ -81,6 +83,24 @@ async def test_complete_proof_rejects_unaccounted_state(complete_state, change):
                 tx.execute(
                     'INSERT INTO money_visibility VALUES (?,?,?)',
                     ('u_root', 'public', '2026-09-27T00:00:00Z'),
+                    write=True,
+                )
+            elif change == 'link_invitation':
+                tx.execute(
+                    'INSERT INTO link_invitations VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+                    (
+                        'a' * 32,
+                        'u_root',
+                        'hidden-link',
+                        30,
+                        '2026-09-27T00:00:00Z',
+                        '2026-09-27T00:30:00Z',
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
                     write=True,
                 )
             else:

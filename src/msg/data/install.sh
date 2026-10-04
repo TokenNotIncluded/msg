@@ -29,7 +29,7 @@ main() {
         sha256() { shasum -a 256 "$1" | awk '{print $1}'; }
     else fail 'SHA-256 verification is required.'; fi
     revision=1fa962b27038d7b7510a0b967faf49490c756adb
-    source_hash=8303d27034754ebbd7c89ff8776ffaa0b52fcc0181e1d8a4bd132d3355a9ea32
+    source_hash=879d633548061c4784a83af264a4eb14753f0b75b613a5b8bec675bc22dc8404
     data_home=${XDG_DATA_HOME:-"$HOME/.local/share"}
     case "$data_home" in /*) ;; *) fail 'XDG_DATA_HOME must be absolute.' ;; esac
     bin_dir="$HOME/.local/bin"

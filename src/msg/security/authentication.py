@@ -186,8 +186,7 @@ class AuthenticationService:
             # and a link claim checks the invitation plus the new key's possession
             # proof. Neither path receives a credential ceiling.
             anonymous_write = (
-                request.operation
-                in {'communication.internet_receive', 'identity.link_claim'}
+                request.operation in {'communication.internet_receive', 'identity.link_claim'}
                 and spec.version == 1
                 and spec.anonymous_only
                 and spec.effect == 'transaction'
