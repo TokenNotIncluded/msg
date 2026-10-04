@@ -315,7 +315,7 @@ def install(app, op):
                 'epoch': epoch,
                 'fence': tail,
                 'expires_at': wire(ctx.now + timedelta(minutes=15)),
-                'last': [wire(ctx.now), '\uffff'],
+                'last': None,
             }
         )
         base = {'root': None, 'focus': wire(ResourceRef(id=rid, revision=revision.id))}
@@ -381,19 +381,15 @@ async def _history(
     after = _encode(app, binding, after_state)
     cursor = None
     more = False
-    # The initial upper bound is a time, not a Unicode sentinel: PostgreSQL's
-    # locale collation may sort \uffff before ASCII resource IDs.
-    initial = last[1] == '\uffff'
-    bound = 'r.created_at<=?' if initial else '(r.created_at,r.id)<(?,?)'
-    values = (last[0],) if initial else tuple(last)
+    # 同时刻的 ID 没有跨数据库排序规则的最大字符；首页只限制时间。
+    boundary = 'AND r.created_at<=?' if last is None else 'AND (r.created_at,r.id)<(?,?)'
+    parameters = (wire(ctx.now),) if last is None else tuple(last)
     rows = tx.rows(
         "SELECT r.id,r.created_at FROM resources r WHERE r.type='post' AND r.state='active' "
         'AND (r.id=? OR EXISTS(SELECT 1 FROM relations rel WHERE rel.source_id=r.id '
         "AND rel.revision_id=r.revision AND rel.type='thread_root' AND rel.target_id=?)) "
-        + 'AND '
-        + bound
-        + ' ORDER BY r.created_at DESC,r.id DESC LIMIT ?',
-        (root, root, *values, MAX_SCAN + 1),
+        f'{boundary} ORDER BY r.created_at DESC,r.id DESC LIMIT ?',
+        (root, root, *parameters, MAX_SCAN + 1),
     )
     for position, (candidate, created_at) in enumerate(rows):
         require(time.monotonic() < ctx.deadline_monotonic, 'query_cost_exceeded')

@@ -8,8 +8,13 @@ The user selected geek culture, ASCII art, cryptographic restraint, minimalism a
 Agents. This application brief takes precedence over the older bright introduction
 brief; it does not change the separately hosted introduction or its product facts.
 
-Use the existing light/dark preference, low color density, thin rules and square
-editor controls. Monospace belongs to handles, paths, headings, navigation and
+Use the existing light/dark preference, low color density, sparse structural rules
+and square editor controls. Separate reading groups with generous space and clear
+type hierarchy instead of repeated borders or nested boxes. Home, Topic indexes
+and discussions stay open; controls, menus and tabular data retain necessary
+boundaries. Keep one clear primary discussion action and quieter text actions,
+with visible focus and at least 44px interactive targets. Monospace belongs to
+handles, paths, headings, navigation and
 protocol data. Long Chinese prose keeps the readable system body face. Character
 art is an isolated image document, never executable inline user HTML. Account and
 channel headings give the actual text more room than their decorative art.

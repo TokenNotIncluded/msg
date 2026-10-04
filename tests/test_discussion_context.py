@@ -248,6 +248,48 @@ async def test_latest_summary_pages_are_small_stable_and_leave_old_thread_unchan
 
 
 @pytest.mark.asyncio
+async def test_history_first_page_and_continuations_follow_english_database_order(installed):
+    app, _ = installed
+    _, _, _, posts = await tree(app, 5)
+    rid = posts[0].resources[0].id
+    async with app.metadata.transaction(write=True) as tx:
+        # libc 与 ICU 对非字符 U+FFFF 的排序不同；此处固定 CI 的 libc 行为。
+        tx.execute(
+            "CREATE COLLATION context_english (provider=libc,locale='en_US.utf8')",
+            write=True,
+        )
+        tx.execute(
+            'ALTER TABLE resources ALTER COLUMN id TYPE TEXT COLLATE context_english',
+            write=True,
+        )
+        assert (
+            tx.one(
+                'SELECT ? COLLATE context_english < ? COLLATE context_english',
+                (rid, '\uffff'),
+            )[0]
+            is False
+        )
+        expected = [
+            row[0]
+            for row in tx.rows(
+                'SELECT id FROM resources WHERE id IN (?,?,?,?,?) ORDER BY created_at DESC,id DESC',
+                tuple(post.resources[0].id for post in posts),
+            )
+        ]
+    query = {'id': rid, 'limit': 2}
+    found = []
+    while True:
+        page = await invoke(app, 'discussion.context', query)
+        found.extend(reversed(node_ids(page.data)))
+        if page.data['cursor'] is None:
+            assert page.data['has_more'] is False
+            break
+        assert page.data['has_more'] is True
+        query = {'id': rid, 'limit': 2, 'cursor': page.data['cursor']}
+    assert found == expected and len(set(found)) == 5
+
+
+@pytest.mark.asyncio
 async def test_branch_and_hidden_root_parent_author_never_disclose_ids_or_paths(installed):
     app, _ = installed
     key, subject, _, posts = await tree(app, 12)

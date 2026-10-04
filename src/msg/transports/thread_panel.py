@@ -12,25 +12,40 @@ CSS = """
   color: var(--fg); text-decoration: none; font-variant-numeric: tabular-nums; }
 .reply-link:hover { text-decoration: underline; }
 .post-engagement { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 20px; }
-.discussion-panel { margin-block: 40px 24px; padding-block: 24px; border-top: 1px solid var(--line); }
+.discussion-panel { margin-block: 64px 32px; padding-block: 0 24px; }
 .discussion-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
-.prose .discussion-heading h2 { margin: 0; font-size: 1.25rem; }
+.prose .discussion-heading h2 { margin: 0; font-size: 1.375rem; font-weight: 550; }
 .discussion-count, .discussion-note { color: var(--muted); font-size: .875rem; }
-.discussion-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-block: 16px; }
+.discussion-controls { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-block: 24px 28px; }
 .discussion-controls button, .discussion-controls a { min-height: 44px; display: inline-flex;
-  align-items: center; justify-content: center; padding: 8px 14px; border: 1px solid var(--line);
-  background: var(--bg); color: var(--fg); font: inherit; cursor: pointer; text-decoration: none; }
-.discussion-controls button:hover, .discussion-controls a:hover { background: var(--panel); }
+  align-items: center; justify-content: center; padding: 8px 4px; border: 0;
+  background: transparent; color: var(--muted); font: inherit; font-size: .875rem;
+  cursor: pointer; text-decoration: none; border-radius: 2px; }
+.discussion-controls button:hover, .discussion-controls a:hover { color: var(--fg);
+  text-decoration: underline; text-underline-offset: .25em; }
+.discussion-controls button[data-thread-expand] { padding-inline: 16px;
+  background: var(--fg); color: var(--bg); }
+.discussion-controls button[data-thread-expand]:hover { background: var(--muted);
+  color: var(--bg); text-decoration: none; }
 .discussion-controls button:disabled { color: var(--muted); cursor: wait; }
+.discussion-controls button[data-thread-expand]:disabled { background: var(--panel);
+  color: var(--muted); }
 .discussion-controls :focus-visible, .reply-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.discussion-preview { list-style: none; padding: 0; margin: 16px 0; }
-.discussion-preview li { padding-block: 12px; border-bottom: 1px solid var(--line); }
-.discussion-preview p { margin: 4px 0; }
+.discussion-preview { list-style: none; padding: 0; margin: 24px 0; }
+.discussion-preview li { padding-block: 18px; }
+.discussion-preview li + li { margin-block-start: 12px; }
+.discussion-preview p { margin: 8px 0; }
 .discussion-preview a { display: inline-flex; align-items: center; min-height: 44px; }
 .discussion-status { color: var(--muted); min-height: 1.5em; font-size: .875rem; }
-.discussion-panel .thread-discussion { margin-block: 16px; }
+.discussion-panel .thread-discussion { margin-block: 24px; }
 .discussion-panel [aria-busy="true"] { opacity: .75; }
-button.thread-control { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); cursor: pointer; }
+button.thread-control { padding-inline: 4px; font: inherit; font-size: .875rem;
+  color: var(--fg); background: transparent; border: 0; cursor: pointer;
+  text-decoration: underline; text-underline-offset: .25em; }
+@media (max-width: 640px) {
+  .discussion-panel { margin-top: 48px; }
+  .discussion-controls { column-gap: 16px; }
+}
 @media (prefers-reduced-motion: no-preference) {
   .discussion-controls button { transition: background-color 120ms ease-out; }
 }
