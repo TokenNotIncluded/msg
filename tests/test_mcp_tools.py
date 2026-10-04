@@ -1,7 +1,6 @@
 """Pure adapter tests; real authorization/transactions remain executor tests."""
 
 import json
-from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -33,27 +32,18 @@ def registry(tmp_path_factory):
     return Application(settings).registry
 
 
-class CatalogRegistry:
-    def __init__(self, registry):
-        self.registry = registry
+class FilteredRegistry:
+    """Remove exact installed contracts while preserving real older versions."""
+
+    def __init__(self, registry, omitted):
+        self.registry, self.omitted = registry, frozenset(omitted)
 
     def operations(self, entry):
-        specs = list(self.registry.operations(entry))
-        # The new versions are implemented/tested separately by the DM worker;
-        # their business input schema retains these registered parameters.
-        specs.append(replace(self.registry.operation('communication.dm_send'), version=2))
-        specs.append(
-            replace(self.registry.operation('discovery.get'), name='communication.conversation_get')
+        return tuple(
+            spec
+            for spec in self.registry.operations(entry)
+            if f'{spec.name}@{spec.version}' not in self.omitted
         )
-        specs.extend(
-            replace(self.registry.operation(op, old), version=new)
-            for op, old, new in (
-                ('communication.dm_request', 2, 3),
-                ('communication.dm_accept', 1, 2),
-                ('communication.dm_reject', 1, 2),
-            )
-        )
-        return specs
 
 
 def identity(operations=ALL, **kwargs):
@@ -86,25 +76,8 @@ class Call:
 
     async def __call__(self, operation, arguments, *, contract_version=1):
         self.calls.append((operation, arguments, contract_version))
-        if operation == 'communication.conversation_get':
-            assert set(arguments) == {'id'}
-        else:
-            version = contract_version
-            if (
-                operation
-                in {'communication.dm_send', 'communication.dm_accept', 'communication.dm_reject'}
-                and version == 2
-            ):
-                version = 1
-            if operation == 'communication.dm_request' and version == 3:
-                version = 2
-            spec = self.registry.operation(operation, version)
-            if operation == 'communication.dm_request' and contract_version == 3:
-                schema = self.registry.schema(spec.input_schema)
-                schema['properties']['introduction']['maxLength'] = 32768
-                Draft202012Validator(schema).validate(arguments)
-            else:
-                self.registry.validate(spec.input_schema, arguments)
+        spec = self.registry.operation(operation, contract_version)
+        self.registry.validate(spec.input_schema, arguments)
         return self.handler(operation, arguments, contract_version)
 
 
@@ -136,8 +109,8 @@ def test_default_schemas_hide_envelopes_and_credentials(registry):
         'contract_version',
         'expected_generations',
     }
-    anonymous = tool_catalog(CatalogRegistry(registry))
-    full = tool_catalog(CatalogRegistry(registry), identity())
+    anonymous = tool_catalog(registry)
+    full = tool_catalog(registry, identity())
     assert {tool['name'] for tool in anonymous} == PUBLIC
     assert len(full) == 13
     for tool in full:
@@ -154,11 +127,16 @@ def test_default_schemas_hide_envelopes_and_credentials(registry):
             for scope in scheme.get('scopes', ())
         )
     anonymous[0]['inputSchema']['properties']['token'] = {}
-    assert 'token' not in tool_catalog(CatalogRegistry(registry))[0]['inputSchema']['properties']
+    assert 'token' not in tool_catalog(registry)[0]['inputSchema']['properties']
 
 
 def test_catalog_uses_exact_installed_versions_and_ceilings(registry):
-    assert 'msg_send' not in {item['name'] for item in tool_catalog(registry, identity())}
+    assert 'msg_send' in {item['name'] for item in tool_catalog(registry, identity())}
+    missing = FilteredRegistry(registry, {'communication.dm_send@2'})
+    installed = {f'{spec.name}@{spec.version}' for spec in missing.operations('network')}
+    assert 'communication.dm_send@1' in installed
+    assert 'communication.dm_send@2' not in installed
+    assert 'msg_send' not in {item['name'] for item in tool_catalog(missing, identity())}
     read_identity = identity(
         frozenset().union(
             *(DEPENDENCIES[name] for name in PUBLIC),
@@ -166,11 +144,9 @@ def test_catalog_uses_exact_installed_versions_and_ceilings(registry):
             DEPENDENCIES['msg_notifications'],
         )
     )
-    read = {item['name'] for item in tool_catalog(CatalogRegistry(registry), read_identity)}
+    read = {item['name'] for item in tool_catalog(registry, read_identity)}
     assert read == PUBLIC | {'msg_inbox', 'msg_notifications'}
-    message = tool_catalog(
-        CatalogRegistry(registry), identity(DEPENDENCIES['msg_send'] | REPLY_ALTERNATIVES[0])
-    )
+    message = tool_catalog(registry, identity(DEPENDENCIES['msg_send'] | REPLY_ALTERNATIVES[0]))
     reply = next(tool for tool in message if tool['name'] == 'msg_reply')
     assert reply['securitySchemes'] == [
         {'type': 'oauth2', 'scopes': ['msg.mcp.read', 'msg.mcp.message']}
@@ -656,7 +632,7 @@ async def test_errors_never_echo_exception_or_private_details(registry, failure)
 
 
 async def test_connect_requests_all_limited_scopes_and_returns_host_challenge(registry):
-    catalog = tool_catalog(CatalogRegistry(registry))
+    catalog = tool_catalog(registry)
     connect = next(tool for tool in catalog if tool['name'] == 'msg_connect')
     assert connect['securitySchemes'][1]['scopes'] == [
         'msg.mcp.read',
