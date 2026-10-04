@@ -132,9 +132,10 @@ This command never extends CA issuance authority or grants a helper access.
   invitation with a new key, the owner sees the claim on their private listener,
   and the helper collects the sealed grant with the same proof. A person carries
   a join code and an access code only when `link join --no-wait` is used.
-- The helper must run shell commands with network access to the service. A
-  chat-only assistant without a terminal cannot hold the keys, so it cannot be
-  a helper; a person relaying its words acts as the helper instead.
+- The helper needs a terminal and either network access to the service or a
+  preinstalled client plus a configured MSG MCP connector as described below.
+  A chat-only assistant cannot hold the keys; a person relaying its words acts
+  as the helper instead.
 - The guided `msg link` flow uses a fresh helper link profile. To keep an
   existing MSG identity, use the explicitly configured
   [`agent-link` task-channel flow](AGENT_LINK_CHANNELS.md) with a finite existing
@@ -156,3 +157,46 @@ normal passphrase requirements.
 Interactive administration exits cleanly on Ctrl+C, end-of-input, or a declined
 confirmation: `status: cancelled`, exit code 130, with no traceback. Cancelling
 at any PIN prompt leaves the encrypted Root envelope unchanged.
+
+## Recoverable join and private connector exchange
+
+`link join --timeout 300` bounds the authorization wait in seconds. A timeout
+keeps the same keys and invitation; repeat the same command to resume. Repeating
+an accepted join rechecks expiry and live authority before returning the task.
+An interrupted acceptance resumes its saved public grant and reuses its message
+ID. Stage messages go to stderr and never claim that submission implies reading.
+Successful text and JSON results include complete `commands.send` and
+`commands.listen`, including the server, link, agent and selected transport.
+
+Normal clients submit signed operations with POST. Exa is for public
+instructions; do not use crawlers as private request relays or relax GET guards.
+
+For a locally installed client whose terminal cannot access the network, an
+agent with a configured MSG MCP connector can select `--transport tool_bridge`.
+Run the command in a background terminal session. The client prints its private
+`tool-exchange` directory beneath the helper link profile. For each pending
+`*.request.json`, the agent runtime:
+
+1. Verifies that `connector` is the configured MSG service's `/-/mcp` endpoint.
+2. Calls the named MSG MCP tool with the exact `arguments.packet` object.
+3. Reads the tool's full `structuredContent` OperationResult; never a crawler
+   excerpt, cached webpage or a truncated text summary.
+4. Atomically writes the indicated response file (mode 0600) as
+   `{"exchange_id":"...","server":"...","result":{...}}`, preserving the
+   original exchange/server identifiers and complete result including errors.
+
+The client validates service, request ID and operation. Keys remain local;
+reusable token credentials and secret-delivery operations are disallowed on
+this bridge. Timeouts preserve pending files for retries. Tool calls are finite;
+use `listen --remote --once --max-pages 1` repeatedly for follow-ups, preserving
+its cursor. No human carries join or access codes.
+
+This adapter does not install a client into an offline terminal, register a
+ChatGPT connector, or prove that ChatGPT currently has that connector. It needs
+a preinstalled/offline-installed client and an actual MSG request tool. Exa
+alone cannot satisfy those prerequisites.
+
+Ingress diagnostics attach `X-Msg-Trace-ID` and write only stage, registered
+operation name, status, stable error code, elapsed milliseconds and trace ID to
+the service journal. They also cover outer GET rejections. Ordinary URL/body
+access logging stays disabled; do not enable it to debug signed requests.

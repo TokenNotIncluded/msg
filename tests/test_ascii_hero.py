@@ -7,6 +7,7 @@ from importlib.resources import files
 
 import pytest
 
+from msg.transports.browser_style import THEME_CSS
 from msg.transports.home_art import HERO_SCRIPT, TOKEN_HERO
 from msg.transports.home_page import HOME_BROWSER_HEADERS, home_html
 from msg.transports.public_board import HASH as PUBLIC_BOARD_HASH
@@ -50,9 +51,7 @@ def test_shared_home_region_and_isolated_art_remain_accessible():
 
 
 def test_motion_is_opt_in_and_pauses_outside_the_visible_page():
-    html = home_html().decode()
-    css = html.split('<style>')[1].split('</style>')[0]
-    base, motion = css.split('@media (prefers-reduced-motion: no-preference)')
+    base, motion = THEME_CSS.split('@media (prefers-reduced-motion: no-preference)', 1)
     assert 'animation: token-assemble' not in base
     assert 'animation-play-state: paused' in motion
     assert '.token-art[data-running=true]' in motion

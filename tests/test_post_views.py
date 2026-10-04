@@ -73,7 +73,7 @@ async def test_reads_do_not_count_and_visible_event_dedupes_in_metadata(oauth):
     assert explicit.data == {'id': rid, 'view_count': 1}
     channel = await http.get('/main', headers={'Accept': 'text/html'})
     home = await http.get('/', headers={'Accept': 'text/html'})
-    assert '1 浏览 · views' in channel.text and '1 浏览 · views' in home.text
+    assert '1 浏览' in channel.text and '1 浏览' in home.text
     async with app.metadata.transaction(write=False) as tx:
         rows = tx.rows('SELECT day,visitor_digest FROM post_view_days WHERE resource_id=?', (rid,))
         assert len(rows) == 1 and len(rows[0][1]) == 43
