@@ -301,6 +301,17 @@ def _signed_subject(ctx):
     return subject
 
 
+def _dm_subject(ctx):
+    """New DM contracts accept the authenticated subject's bounded token or signature."""
+    subject = ctx.principal.subject
+    require(
+        subject is not None and ctx.principal.method in {'signature', 'token'},
+        'authentication_required',
+    )
+    require(ctx.principal.actor == subject, 'dm_subject_required')
+    return subject
+
+
 def _dm_pair(a, b):
     require(a != b, 'dm_self_request')
     participants = tuple(sorted((a, b)))
@@ -697,10 +708,9 @@ def install(app):
                 })
         return HandlerOutput(data={'items': items})
 
-    async def dm_request(ctx, request, tx):
+    async def dm_request_body(ctx, request, tx, sender):
         from msg.plugins.common import create_resource
 
-        sender = _signed_subject(ctx)
         await app.authorizer.require_base(ctx.principal, operation_id(request), sender, tx)
         recipient = await resolve(tx, request.arguments['recipient'])
         target = await tx.resource(recipient)
@@ -747,6 +757,8 @@ def install(app):
         introduction = request.arguments.get('introduction')
         intro_ref = None
         if introduction is not None:
+            if request.contract_version == 3:
+                require(len(introduction) <= 500, 'introduction_too_large')
             require(len(introduction.encode('utf-8')) <= 1024, 'introduction_too_large')
             intro = await create_resource(
                 app,
@@ -770,6 +782,9 @@ def install(app):
             data['introduction_ref'] = wire(intro_ref)
         return HandlerOutput(resources=(ResourceRef(id=topic.id),), data=data)
 
+    async def dm_request(ctx, request, tx):
+        return await dm_request_body(ctx, request, tx, _signed_subject(ctx))
+
     op('communication.dm_request', obj({'recipient': IDENTIFIER}, ('recipient',)), signature=True)(
         dm_request
     )
@@ -786,8 +801,27 @@ def install(app):
         version=2,
     )(dm_request)
 
-    async def dm_decision(ctx, request, tx):
-        subject = _signed_subject(ctx)
+    @op(
+        'communication.dm_request',
+        obj(
+            {
+                'recipient': IDENTIFIER,
+                'introduction': {'type': 'string', 'minLength': 1, 'maxLength': 32768},
+            },
+            ('recipient',),
+        ),
+        version=3,
+    )
+    async def dm_request_token(ctx, request, tx):
+        subject = _dm_subject(ctx)
+        introduction = request.arguments.get('introduction')
+        if introduction is not None:
+            require(len(introduction.encode('utf-8')) <= 32768, 'introduction_too_large')
+        output = await dm_request_body(ctx, request, tx, subject)
+        await check_access(app, ctx, request, tx, output.data['conversation_id'], 'read')
+        return output
+
+    async def dm_decision_body(ctx, request, tx, subject):
         await app.authorizer.require_base(ctx.principal, operation_id(request), subject, tx)
         rid = await resolve(tx, request.arguments['conversation_id'])
         pair, first, second, initiator, state = _dm_record(tx, rid, subject)
@@ -813,20 +847,28 @@ def install(app):
             resources=(ResourceRef(id=rid),), data={'conversation_id': rid, 'state': desired}
         )
 
+    async def dm_decision(ctx, request, tx):
+        return await dm_decision_body(ctx, request, tx, _signed_subject(ctx))
+
     for name in ('communication.dm_accept', 'communication.dm_reject'):
         op(name, obj({'conversation_id': IDENTIFIER}, ('conversation_id',)), signature=True)(
             dm_decision
         )
 
-    @op(
-        'communication.dm_send',
-        obj({'conversation_id': IDENTIFIER, 'body': STRING}, ('conversation_id', 'body')),
-        signature=True,
-    )
-    async def dm_send(ctx, request, tx):
+    async def dm_decision_token(ctx, request, tx):
+        subject = _dm_subject(ctx)
+        rid = await resolve(tx, request.arguments['conversation_id'])
+        await check_access(app, ctx, request, tx, rid, 'read')
+        return await dm_decision_body(ctx, request, tx, subject)
+
+    for name in ('communication.dm_accept', 'communication.dm_reject'):
+        op(name, obj({'conversation_id': IDENTIFIER}, ('conversation_id',)), version=2)(
+            dm_decision_token
+        )
+
+    async def dm_send_body(ctx, request, tx, subject):
         from msg.plugins.content import create_post
 
-        subject = _signed_subject(ctx)
         rid = await resolve(tx, request.arguments['conversation_id'])
         pair, first, second, initiator, state = _dm_record(tx, rid, subject)
         await check_access(app, ctx, request, tx, rid, 'create')
@@ -835,6 +877,51 @@ def install(app):
         recipient = second if subject == first else first
         _dm_notice(tx, ctx, request, recipient, post.id)
         return output_for(post, conversation_id=rid)
+
+    @op(
+        'communication.dm_send',
+        obj({'conversation_id': IDENTIFIER, 'body': STRING}, ('conversation_id', 'body')),
+        signature=True,
+    )
+    async def dm_send(ctx, request, tx):
+        return await dm_send_body(ctx, request, tx, _signed_subject(ctx))
+
+    @op(
+        'communication.dm_send',
+        obj({'conversation_id': IDENTIFIER, 'body': STRING}, ('conversation_id', 'body')),
+        version=2,
+    )
+    async def dm_send_token(ctx, request, tx):
+        return await dm_send_body(ctx, request, tx, _dm_subject(ctx))
+
+    @op('communication.conversation_get', obj({'id': IDENTIFIER}, ('id',)), effect='read')
+    async def conversation_get(ctx, request, tx):
+        rid = await resolve_read(tx, request.arguments['id'])
+        await check_access(app, ctx, request, tx, rid, 'read')
+        topic = await tx.resource(rid)
+        if topic.type == 'post':
+            topic = await tx.resource(topic.parent)
+            await check_access(app, ctx, request, tx, topic.id, 'read')
+        require(topic.type == 'topic', 'not_a_conversation')
+        data = {
+            'topic': wire(ResourceRef(id=topic.id, revision=topic.revision)),
+            'kind': 'discussion',
+        }
+        row = tx.one(
+            'SELECT participant_a,participant_b,initiator,state FROM dm_conversations WHERE resource_id=?',
+            (topic.id,),
+        )
+        if row is not None:
+            subject = ctx.principal.subject
+            require(subject in row[:2], 'permission_denied')
+            first, second, initiator, state = row
+            data.update(
+                kind='direct',
+                state=state,
+                other_subject=second if subject == first else first,
+                initiator=initiator,
+            )
+        return HandlerOutput(data=data)
 
     @op('communication.dm_list', obj(), effect='read')
     async def dm_list(ctx, request, tx):

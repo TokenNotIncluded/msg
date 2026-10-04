@@ -16,10 +16,28 @@ from msg.core.codec import b64, canonical, loads, wire
 from msg.core.errors import Failure, require
 from msg.core.models import TokenProof
 from msg.core.requests import request_for
-from msg.security.oauth import DEVICE_GRANT, OAuthService, get, save, secret, state_id
+from msg.oauth_config import SCOPES
+from msg.security.oauth import (
+    DEVICE_GRANT,
+    OAuthService,
+    get,
+    resource_execution,
+    save,
+    secret,
+    state_id,
+)
 from msg.transports.browser_login import LOGIN_POLL_SCRIPT
 from msg.transports.browser_style import BRAND_LINK, PREFERENCES, SKIP_LINK, THEME_CSS
 from msg.transports.http_common import body_bytes
+from msg.transports.mcp_auth import (
+    MCP_PATHS,
+    PROTECTED_RESOURCE_PATHS,
+    authenticate_mcp,
+    challenge,
+    protected_resource_metadata,
+    require_unmixed_mcp,
+    resource_uri,
+)
 from msg.transports.packet import decode_packet
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
 from msg.transports.webmcp import WEBMCP_HASH, WEBMCP_TAG
@@ -159,9 +177,13 @@ class OAuthBoundary:
                 '/.well-known/oauth-authorization-server',
                 '/.well-known/openid-configuration',
             }
+            or path in PROTECTED_RESOURCE_PATHS
         )
         bearer = request.headers.get('authorization')
-        if not oauth_path and not (bearer and path.startswith('/-/p/')):
+        mcp_path = path in MCP_PATHS
+        if mcp_path:
+            scope.setdefault('state', {})['msg_mcp_identity'] = None
+        if not oauth_path and not mcp_path and not (bearer and path.startswith('/-/p/')):
             cookie = request.cookies.get(self.session_cookie, '')
             browser_read = (
                 cookie
@@ -237,6 +259,45 @@ class OAuthBoundary:
             require(
                 origin is None or origin == self.service.settings.service_url, 'forbidden_origin'
             )
+            if mcp_path:
+                # No cookie fallback: the host must explicitly send an OAuth bearer.
+                if bearer is None:
+                    await self.app(scope, receive, send)
+                    return
+                require(request.method == 'POST', 'method_not_allowed')
+                require(
+                    len(request.headers.getlist('authorization')) == 1
+                    and not request.headers.get('x-msg-request'),
+                    'ambiguous_credentials',
+                )
+                identity = await authenticate_mcp(self.service, bearer)
+                raw_body = await body_bytes(
+                    request, self.service.settings.server.limits.max_request_bytes
+                )
+                require_unmixed_mcp(loads(raw_body))
+                scope['state']['msg_mcp_identity'] = identity
+                sent = False
+
+                async def mcp_receive():
+                    nonlocal sent
+                    if sent:
+                        return await receive()
+                    sent = True
+                    return {'type': 'http.request', 'body': raw_body, 'more_body': False}
+
+                rebound_scope = dict(
+                    scope,
+                    headers=[
+                        (k, v)
+                        for k, v in scope['headers']
+                        if k.lower()
+                        not in {b'content-length', b'content-encoding', b'transfer-encoding'}
+                    ]
+                    + [(b'content-length', str(len(raw_body)).encode())],
+                )
+                with resource_execution(resource_uri(self.service)):
+                    await self.app(rebound_scope, mcp_receive, send)
+                return
             if not oauth_path:
                 require(request.method == 'POST', 'method_not_allowed')
                 packet = decode_packet(
@@ -310,7 +371,11 @@ class OAuthBoundary:
             response = json({'error': exc.code}, status)
             if exc.code == 'invalid_token':
                 response.status_code = 401
-                response.headers['WWW-Authenticate'] = 'Bearer error="invalid_token"'
+                response.headers['WWW-Authenticate'] = (
+                    challenge(self.service, 'invalid_token', ('msg.mcp.read',))
+                    if mcp_path
+                    else 'Bearer error="invalid_token"'
+                )
         except Exception:
             response = json({'error': 'server_error'}, 500)
         await response(scope, receive, send)
@@ -430,10 +495,13 @@ class OAuthBoundary:
         if path.startswith('/.well-known/') or path == '/oauth/jwks':
             require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
             base = self.service.settings.service_url
+            if path in PROTECTED_RESOURCE_PATHS:
+                return json(protected_resource_metadata(self.service))
             if path == '/oauth/jwks':
                 return json({'keys': [self.oauth.jwk()]})
             return json({
                 'issuer': base,
+                'authorization_response_iss_parameter_supported': True,
                 'authorization_endpoint': base + '/oauth/authorize',
                 'token_endpoint': base + '/oauth/token',
                 'userinfo_endpoint': base + '/oauth/userinfo',
@@ -446,13 +514,7 @@ class OAuthBoundary:
                 'grant_types_supported': ['authorization_code', 'refresh_token', DEVICE_GRANT],
                 'token_endpoint_auth_methods_supported': ['none'],
                 'code_challenge_methods_supported': ['S256'],
-                'scopes_supported': [
-                    'openid',
-                    'profile',
-                    'offline_access',
-                    'msg.read',
-                    'msg.write',
-                ],
+                'scopes_supported': sorted(SCOPES),
             })
         # Rate limits commit independently, including rejected code guesses.
         # Userinfo is a read: do not mutate retained OAuth state during GET or
@@ -611,13 +673,17 @@ class OAuthBoundary:
                         'code_verifier',
                         'device_code',
                         'refresh_token',
+                        'resource',
+                        'scope',
                     },
                     'invalid_request',
                 )
                 result, error = await self.oauth.exchange(tx, args)
                 return json({'error': error}, 400) if error else json(result)
             if path == '/oauth/userinfo':
-                credential = await self.oauth.bearer(tx, self.bearer_value(request))
+                credential = await self.oauth.bearer(
+                    tx, self.bearer_value(request), check_resource=False
+                )
                 _, binding = get(tx, 'access:' + credential.id, now)
                 _, family = get(tx, binding['family'], now)
                 require('openid' in family['scopes'], 'invalid_scope')
@@ -638,7 +704,7 @@ class OAuthBoundary:
                 require(set(args) <= {'client_id', 'token', 'token_type_hint'}, 'invalid_request')
                 id = state_id('refresh', args.get('token', ''))
                 if args.get('token', '').startswith('t_oauth_'):
-                    credential = await self.oauth.bearer(tx, args['token'])
+                    credential = await self.oauth.bearer(tx, args['token'], check_resource=False)
                     id = 'access:' + credential.id
                 row = tx.one('SELECT body FROM oauth_states WHERE id=?', (id,))
                 if row:
@@ -727,7 +793,7 @@ class OAuthBoundary:
                 pending['status'] = 'approved' if args['decision'] == 'approve' else 'denied'
                 save(tx, id, pending)
                 return page('Confirmed', '<p>You can return to the CLI to continue.</p>')
-            redirect = {'state': auth_args['state']}
+            redirect = {'state': auth_args['state'], 'iss': self.service.settings.service_url}
             if args['decision'] == 'approve':
                 auth_args.setdefault('scope', 'openid profile')
                 redirect['code'] = await self.oauth.authorize(tx, cookie, auth_args)

@@ -122,7 +122,7 @@ async def test_mcp_streamable_http_lists_transfers_and_calls_same_executor(insta
         },
     ) as http:
         init = await http.post(
-            '/-/mcp',
+            '/-/mcp/raw',
             json={
                 'jsonrpc': '2.0',
                 'id': 1,
@@ -140,7 +140,7 @@ async def test_mcp_streamable_http_lists_transfers_and_calls_same_executor(insta
         cursor = None
         while True:
             response = await http.post(
-                '/-/mcp',
+                '/-/mcp/raw',
                 json={
                     'jsonrpc': '2.0',
                     'id': 2,
@@ -173,11 +173,11 @@ async def test_mcp_streamable_http_lists_transfers_and_calls_same_executor(insta
         )
         params = {'name': 'content.post_create', 'arguments': {'packet': wire(packet)}}
         notification = await http.post(
-            '/-/mcp', json={'jsonrpc': '2.0', 'method': 'tools/call', 'params': params}
+            '/-/mcp/raw', json={'jsonrpc': '2.0', 'method': 'tools/call', 'params': params}
         )
         assert notification.status_code == 202
         response = await http.post(
-            '/-/mcp', json={'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': params}
+            '/-/mcp/raw', json={'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': params}
         )
         assert response.json()['result']['structuredContent']['status'] == 'ok', response.text
         async with app.metadata.transaction(write=False) as tx:
