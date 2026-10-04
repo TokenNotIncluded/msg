@@ -37,3 +37,40 @@ def test_wrong_current_pin_leaves_envelope_unchanged(tmp_path, monkeypatch):
     with pytest.raises(Failure, match='invalid_pin'):
         RootAdmin(tmp_path).change_pin(allow_short_pin=True)
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize('stop_at', [0, 1, 2])
+@pytest.mark.parametrize('exception', [KeyboardInterrupt, EOFError])
+def test_cancel_at_any_pin_prompt_exits_cleanly_without_changing_envelope(
+    tmp_path, monkeypatch, capsys, stop_at, exception
+):
+    from msg import daemon
+
+    root = Ed25519Signer.generate()
+    old = 'isolated-old-root-passphrase'
+    path = tmp_path / 'root.json'
+    before = canonical(seal_private_key(root.private_bytes(), old))
+    path.write_bytes(before)
+    monkeypatch.setattr(RootAdmin, '_provisioning_operator', lambda self: 'private-terminal')
+    monkeypatch.setattr('msg.admin.root.root_envelope', lambda config: path)
+    prompts = []
+
+    def answer(prompt):
+        index = len(prompts)
+        prompts.append(prompt)
+        if index == stop_at:
+            raise exception()
+        return old if index == 0 else '123456'
+
+    monkeypatch.setattr('getpass.getpass', answer)
+    assert (
+        daemon.main(['--config-dir', str(tmp_path), 'root', 'change-pin', '--allow-short-pin'])
+        == 130
+    )
+    output = capsys.readouterr()
+    assert not output.out
+    assert loads(output.err) == {
+        'status': 'cancelled',
+        'reason': 'interrupted' if exception is KeyboardInterrupt else 'input_closed',
+    }
+    assert path.read_bytes() == before

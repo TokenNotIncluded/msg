@@ -625,7 +625,16 @@ def main(argv=None):
             timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
         )
         return 0
+    except (KeyboardInterrupt, EOFError) as exc:
+        reason = 'interrupted' if isinstance(exc, KeyboardInterrupt) else 'input_closed'
+        print(canonical({'status': 'cancelled', 'reason': reason}).decode(), file=sys.stderr)
+        return 130
     except (Failure, OSError, ValueError) as exc:
+        if isinstance(exc, Failure) and exc.code == 'approval_cancelled':
+            print(
+                canonical({'status': 'cancelled', 'reason': 'declined'}).decode(), file=sys.stderr
+            )
+            return 130
         code = exc.code if isinstance(exc, Failure) else 'local_operation_failed'
         print(canonical({'status': 'error', 'error': {'code': code}}).decode(), file=sys.stderr)
         return 1

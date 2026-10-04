@@ -279,3 +279,12 @@ def test_apply_uses_short_confirmation_and_captures_its_own_preview(
             RootAdmin(tmp_path).repair_link_authority('@old', apply=True)
         assert not applied and not pin_prompts
     assert prompts == ['Apply this repair? [y/N]: ']
+
+
+def test_declining_repair_exits_as_cancelled(monkeypatch, capsys):
+    def decline(self, *args, **kwargs):
+        raise Failure('approval_cancelled')
+
+    monkeypatch.setattr(RootAdmin, 'repair_link_authority', decline)
+    assert daemon.main(['account', 'repair-link', '@old', '--apply']) == 130
+    assert loads(capsys.readouterr().err) == {'status': 'cancelled', 'reason': 'declined'}
