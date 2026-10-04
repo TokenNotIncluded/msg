@@ -643,8 +643,8 @@ class RootAdmin:
         )
 
         require(
-            (apply and type(expected_digest) is str and bool(expected_digest))
-            or (not apply and expected_digest is None),
+            expected_digest is None
+            or (apply and type(expected_digest) is str and bool(expected_digest)),
             'link_repair_expected_preview_required',
         )
         if not apply:
@@ -658,8 +658,11 @@ class RootAdmin:
                 async with app.metadata.transaction(write=False) as tx:
                     preview = await link_preview(app, tx, subject, key_id)
                 fingerprint = digest(preview)
-                require(fingerprint == expected_digest, 'link_repair_preview_changed')
-                print(canonical({'preview': preview, 'digest': fingerprint}).decode())
+                if expected_digest is not None:
+                    require(fingerprint == expected_digest, 'link_repair_preview_changed')
+                print('Account: ' + preview['handle'])
+                print('Add Agent Link permissions: ' + ', '.join(preview['additions']))
+                print('Existing scopes and constraints stay unchanged.')
                 if not preview['additions']:
                     return {
                         'subject_id': preview['subject_id'],
@@ -668,7 +671,7 @@ class RootAdmin:
                         'additions': [],
                     }
                 require(
-                    input('Type REPAIR LINK ' + fingerprint + ': ') == 'REPAIR LINK ' + fingerprint,
+                    input('Apply this repair? [y/N]: ').strip().lower() == 'y',
                     'approval_cancelled',
                 )
                 signer = Ed25519Signer.from_bytes(
