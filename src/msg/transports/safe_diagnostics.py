@@ -31,10 +31,11 @@ class SafeDiagnostics:
         trace, started = uuid4().hex, time.monotonic()
         operation, code, status, body = None, None, 500, bytearray()
         parts = scope.get('path', '').split('/')
-        if len(parts) >= 4 and parts[1:3] in (['-', 'p'], ['-', 'g']):
+        registry = getattr(self.service, 'registry', None)
+        if registry is not None and len(parts) >= 4 and parts[1:3] in (['-', 'p'], ['-', 'g']):
             # Only registry names are retained; never retain arbitrary path segments.
             try:
-                spec = self.service.registry.operation(parts[3])
+                spec = registry.operation(parts[3])
                 operation = spec.name
             except Failure, KeyError, ValueError:
                 pass

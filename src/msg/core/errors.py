@@ -8,6 +8,7 @@ _PUBLIC_MESSAGES = {
     'delegated_grantor_mismatch': 'This task-key request belongs to a different grantor.',
     'delegated_subject_required': 'A task identity must act for its grantor.',
     'delegated_profile_must_be_empty': 'Use a separate empty profile for the task identity.',
+    'link_approval_in_progress': 'Another watcher is approving a link in this owner profile. Wait and retry the same invitation.',
     'link_claim_taken': 'This invitation was already claimed by another key.',
     'tool_exchange_timeout': 'The MSG connector did not return a result in time. Resume with the same link profile and exchange files.',
     'tool_bridge_link_required': 'The connector bridge requires --link and connects only to its pinned service.',

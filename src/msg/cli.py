@@ -13,7 +13,10 @@ from msg.core.codec import loads, result_wire as result_wire, unb64, wire
 from msg.core.errors import Failure, require
 from msg.core.models import OperationResult, ResourceRef
 from msg.core.search_query import search_query_version
-from msg.transports.client import TRANSPORTS
+from msg.transports.client import TRANSPORTS as HTTP_TRANSPORTS
+from msg.transports.tool_bridge import ToolBridgeTransport
+
+TRANSPORTS = {**HTTP_TRANSPORTS, 'tool_bridge': ToolBridgeTransport}
 
 
 def json_input(value):
@@ -574,6 +577,8 @@ async def run(args):
         from msg.client_link import select_link_profile
 
         select_link_profile(args)
+    if getattr(args, 'transport', 'http') == 'tool_bridge':
+        require(args.link is not None and args.endpoint is None, 'tool_bridge_link_required')
     if args.command == 'server':
         from msg.client_servers import run_command
 
@@ -635,7 +640,6 @@ async def run(args):
     )
     transport_options = {'endpoint': args.endpoint} if args.endpoint is not None else {}
     if args.transport == 'tool_bridge':
-        require(args.link is not None and args.endpoint is None, 'tool_bridge_link_required')
         transport_options['exchange_dir'] = state.paths.data / 'tool-exchange'
         print('MSG connector exchange: ' + str(transport_options['exchange_dir']), file=sys.stderr)
     transport = TRANSPORTS[args.transport](state.server, **transport_options)

@@ -164,7 +164,8 @@ at any PIN prompt leaves the encrypted Root envelope unchanged.
 keeps the same keys and invitation; repeat the same command to resume. Repeating
 an accepted join rechecks expiry and live authority before returning the task.
 An interrupted acceptance resumes its saved public grant and reuses its message
-ID. Stage messages go to stderr and never claim that submission implies reading.
+ID. Watchers sharing an owner profile serialize approval so mailbox setup and
+issuance cannot race. Stage messages go to stderr and never claim that submission implies reading.
 Successful text and JSON results include complete `commands.send` and
 `commands.listen`, including the server, link, agent and selected transport.
 

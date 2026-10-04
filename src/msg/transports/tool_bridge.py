@@ -30,6 +30,7 @@ class ToolBridgeTransport:
         require(packet.target_service == self.server, 'service_mismatch')
         # This helper-only bridge never exports reusable credential secrets.
         require_url_safe_packet(packet)
+        require(len(canonical(packet)) <= 1048576, 'request_too_large')
         identifier = digest(packet).removeprefix('sha256:')
         request = self.directory / (identifier + '.request.json')
         response = self.directory / (identifier + '.response.json')

@@ -25,11 +25,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import fcntl
 import os
 import secrets
 import shlex
+import stat
 import sys
 import time
+from contextlib import contextmanager
 from copy import copy
 from pathlib import Path
 from types import SimpleNamespace
@@ -572,7 +575,12 @@ async def watch(client, args):
                 'join',
                 {'name': item['name'], 'invite': item['invite_id'], 'request': item['request']},
             )
-            await approve(client, SimpleNamespace(code=code, minutes=None))
+            try:
+                await approve(client, SimpleNamespace(code=code, minutes=None))
+            except Failure as exc:
+                if exc.code != 'link_approval_in_progress':
+                    raise
+                continue
             if item['name'] not in approved:
                 approved.append(item['name'])
         if getattr(args, 'once', False) or not _pending_local(client):
@@ -592,7 +600,35 @@ def _pending_local(client):
     return False
 
 
+@contextmanager
+def approval_lock(state):
+    # Serialize initialization and issuance across watchers of this owner profile.
+    path = records_directory(state) / 'approval.lock'
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as exc:
+        raise Failure('unsafe_link_approval_lock') from exc
+    try:
+        info = os.fstat(fd)
+        require(
+            stat.S_ISREG(info.st_mode) and info.st_uid == os.getuid() and not info.st_mode & 0o077,
+            'unsafe_link_approval_lock',
+        )
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise Failure('link_approval_in_progress', retryable=True) from exc
+        yield
+    finally:
+        os.close(fd)
+
+
 async def approve(client, args):
+    with approval_lock(client.state):
+        return await _approve(client, args)
+
+
+async def _approve(client, args):
     state = client.state
     code = decode_code(args.code, 'join')
     owner = await owner_handle(client)
@@ -800,6 +836,11 @@ def list_links(client):
 
 
 async def revoke(client, args):
+    with approval_lock(client.state):
+        return await _revoke(client, args)
+
+
+async def _revoke(client, args):
     state = client.state
     owner = await owner_handle(client)
     name = check_name(args.name, owner)
