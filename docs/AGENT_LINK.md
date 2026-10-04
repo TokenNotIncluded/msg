@@ -152,3 +152,7 @@ run `msgd root change-pin --allow-ssh --allow-short-pin`. Enter the current PIN,
 then the new PIN twice. No typed confirmation or PIN in command arguments is
 needed. The Root key stays the same; other key-wrapping flows retain their
 normal passphrase requirements.
+
+Interactive administration exits cleanly on Ctrl+C, end-of-input, or a declined
+confirmation: `status: cancelled`, exit code 130, with no traceback. Cancelling
+at any PIN prompt leaves the encrypted Root envelope unchanged.
