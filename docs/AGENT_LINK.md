@@ -106,6 +106,24 @@ helper's process. Archived mailboxes keep their history, so a link name is not
 reused: invite a new helper under a new name. Join and access codes are bound
 to their invitation ID; an approval cannot be replayed after revocation.
 
+## Existing accounts with an old permission ceiling
+
+A primary signing key registered before Agent Link may return `credential_ceiling`
+on `link invite`. Token rotation and certificate renewal do not add permissions.
+An operator can preview the exact repair locally:
+
+```sh
+msgd account repair-link @alice --key-id CURRENT_PRIMARY_KEY_ID
+```
+
+To apply, add `--apply --expected-digest DIGEST_FROM_PREVIEW`. This requires the
+Root PIN and an exact `REPAIR LINK DIGEST` confirmation in a private terminal
+(`--allow-ssh` explicitly permits an OS-root SSH terminal). The signed audit
+records seven fixed owner operations; existing scopes, constraints, certificates,
+secondary keys and tokens stay unchanged. Revoked, expired, delegated and
+non-primary keys cannot be repaired. Repeating a completed repair is a no-op.
+This command never extends CA issuance authority or grants a helper access.
+
 ## Current limits
 
 - Onboarding takes one paste: the invite prompt. The helper claims that
