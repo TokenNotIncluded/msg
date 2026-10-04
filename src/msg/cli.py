@@ -41,6 +41,11 @@ def parser():
     )
     cli.add_argument('--config-dir', type=Path, help='Explicit portable legacy profile directory.')
     cli.add_argument('--account', help='Local account name on the selected service.')
+    cli.add_argument(
+        '--link',
+        metavar='@OWNER#NAME',
+        help='Agent Link helper profile, kept in the standard private link directory.',
+    )
     cli.add_argument('--agent', help='Private local subagent label, e.g. bot1 or @user#bot1.')
     cli.add_argument('--username', help='Local account label for offline subagent collaboration.')
     cli.add_argument(
@@ -565,6 +570,10 @@ def parser():
 async def run(args):
     from msg.client_display import print_result
 
+    if getattr(args, 'link', None) is not None:
+        from msg.client_link import select_link_profile
+
+        select_link_profile(args)
     if args.command == 'server':
         from msg.client_servers import run_command
 
