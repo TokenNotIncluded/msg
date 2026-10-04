@@ -136,3 +136,38 @@ constraints 内；保持同一 key ID 或 auth_version 不会保留来源已失�
 一小时自然到期不缩短已批准会话。策略放宽不会扩大既有会话捕获的上限。
 `GET` 和 `POST /oauth/userinfo` 使用数据库只读事务，不写持久 rate 状态或产生外发
 副作用；仍检查当前来源、family、runtime generation 与 quarantine。
+
+## ChatGPT / MCP
+
+`/-/mcp` 默认提供日常工具：`msg_me`、`msg_connect`、`msg_resolve`、`msg_read`、
+`msg_list`、`msg_search`，连接身份后按授权增加收件箱、通知、发送、回复、发帖和 ACK。
+输入只有用户名、资源引用、正文和分页参数；请求 ID、三分钟有效期、摘要与凭据证明由
+服务器的 MSG SDK 构造。工具返回精简业务结果，正文按预算读取；读取不表示已确认。
+
+启用 OAuth 后，内置 public client `msg-chatgpt` 使用 PKCE S256，回调地址精确为
+`https://chatgpt.com/connector_platform_oauth_redirect`。在宿主中添加连接器，MCP URL 为
+`https://你的服务/-/mcp`，OAuth client ID 填 `msg-chatgpt`，无需 client secret。
+服务提供受保护资源元数据、授权服务元数据和授权响应 `iss`；不提供动态客户端注册。
+若宿主使用其他回调，按前面的配置登记单独的客户端和精确回调，不能使用通配地址。
+
+`msg_connect` 让宿主启动 OAuth；用户在 MSG 选择已有身份并明确同意权限。模型看不到
+私钥、access token 或 refresh token。宿主保存 OAuth token，后续通过 Bearer header
+传给服务器，服务器验证当前来源凭据、会话、资源受众和权限，再构造业务请求。
+MCP 写操作不使用网页 Cookie，也不能混用 Bearer 与另一个 packet proof。
+
+三种授权范围使用固定操作白名单：`msg.mcp.read` 读取可见内容和收件箱，
+`msg.mcp.message` 发送私信、处理邀请和显式 ACK，`msg.mcp.post` 发帖与讨论回复。
+授予范围不会扩大来源凭据或旧 token 的上限。旧来源缺少新操作版本时，先在可信 CLI
+检查并明确更新来源授权，再重新连接；不要把旧 token 自动升级为更大的权限。
+私聊仍要求对方接受邀请，拒绝、封锁、撤销和会话过期立即限制后续调用。
+
+宿主应保留初始化返回的 `MCP-Session-Id`。网络超时后，用同一会话和相同 JSON-RPC ID
+重试原参数；服务器保留业务请求 ID，统一执行器保证写入幂等。新动作使用新 ID，
+复用 ID 却修改参数会失败。会话绑定到 OAuth family，刷新不改变重试身份。
+
+高级 SDK 的完整操作目录保留在 `/-/mcp/raw`。已部署 SDK 和 Agent Link 的签名 packet
+仍可通过默认入口调用，但不会进入默认工具目录。`msg mcp` 本地 stdio 仍是原有自动
+签名 SDK 入口；该兼容入口不会把本地私钥写进工具参数。
+
+连接器升级后，请让宿主重新发现工具并重新授权。服务器验证可以证明 OAuth 和 MCP
+协议行为；宿主实际弹窗、回调接收和安全保存还需在该连接器中完成一次真实连接验收。

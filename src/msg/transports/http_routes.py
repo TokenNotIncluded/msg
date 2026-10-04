@@ -49,6 +49,7 @@ from msg.transports.http_common import (
     json_response as json_response,
 )
 from msg.transports.mcp import PROTOCOL_VERSION, SUPPORTED_VERSIONS, MCPServer
+from msg.transports.mcp_agent import AgentMCPServer
 from msg.transports.packet import decode_packet, path_packet, require_url_safe_packet
 from msg.transports.permissions_page import PERMISSIONS_MARKDOWN
 from msg.transports.read_tree_path import decode_read_tree_path
@@ -309,7 +310,7 @@ def classify_route(path, method, registry):
 
         code = path.split('/', 4)[3]
         return operation_route(build_dictionary(registry).resolve_operation(code))
-    if path in {'/-/graphql', '/-/mcp'}:
+    if path in {'/-/graphql', '/-/mcp', '/-/mcp/raw'}:
         return RouteSpec('dynamic_execution', RouteEffect.EXTERNAL_EFFECT)
     if path == '/-/transfer' and method == 'POST':
         return RouteSpec('transfer_execution', RouteEffect.BUSINESS_WRITE)
@@ -959,7 +960,8 @@ def create_app(service):
 
     flight_hub = FlightHub(service)
     post_views = PostViews(service)
-    mcp = MCPServer(service)
+    mcp = AgentMCPServer(service)
+    raw_mcp = MCPServer(service)
     graphql_adapter = None
     short_codes = None
 
@@ -2516,6 +2518,7 @@ def create_app(service):
                         'path_get': '/-/g/operation/j/packet',
                         'graphql': '/-/graphql',
                         'mcp_http': '/-/mcp',
+                        'mcp_advanced': '/-/mcp/raw',
                         'transfer': '/-/transfer',
                         'mcp_stdio': 'msg mcp',
                     },
@@ -2525,7 +2528,7 @@ def create_app(service):
                     'contract_digest': service.registry.catalog()['digest'],
                 }
                 return json_response(data)
-            if path == '/-/mcp':
+            if path in {'/-/mcp', '/-/mcp/raw'}:
                 require(request.method == 'POST', 'method_not_allowed')
                 protocol = request.headers.get('mcp-protocol-version')
                 require(
@@ -2533,11 +2536,19 @@ def create_app(service):
                 )
                 raw = await body_bytes(request, limits.max_request_bytes)
                 message = loads(raw)
-                output = await mcp.handle(message)
+                if path == '/-/mcp/raw':
+                    output = await raw_mcp.handle(message)
+                    mcp_headers = {'MCP-Protocol-Version': PROTOCOL_VERSION}
+                else:
+                    output, mcp_headers = await mcp.handle(
+                        message,
+                        identity=getattr(request.state, 'msg_mcp_identity', None),
+                        session_id=request.headers.get('mcp-session-id'),
+                    )
                 if output is None:
                     return Response(status_code=202, headers=BASE_HEADERS)
                 require(len(canonical(output)) <= limits.max_response_bytes, 'response_too_large')
-                return json_response(output, headers={'MCP-Protocol-Version': PROTOCOL_VERSION})
+                return json_response(output, headers=mcp_headers)
             if path in {'/-/graphql', '/_read/graphql', '/_r/graphql'}:
                 require(request.method == 'POST', 'method_not_allowed')
                 if graphql_adapter is None:

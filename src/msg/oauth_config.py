@@ -5,7 +5,32 @@ from urllib.parse import urlsplit
 
 from msg.core.errors import require
 
-SCOPES = frozenset({'openid', 'profile', 'offline_access', 'msg.read', 'msg.write'})
+LEGACY_SCOPES = frozenset({'openid', 'profile', 'offline_access', 'msg.read', 'msg.write'})
+MCP_SCOPES = frozenset({'msg.mcp.read', 'msg.mcp.message', 'msg.mcp.post'})
+SCOPES = LEGACY_SCOPES | MCP_SCOPES
+
+# These are intentionally fixed operation versions, not a registry-wide effect filter.
+MCP_SCOPE_OPERATIONS = {
+    'msg.mcp.read': frozenset({
+        'discovery.get@1',
+        'discovery.resolve@1',
+        'discovery.read_segment@1',
+        'discovery.read_query@3',
+        'discovery.lexical_search@5',
+        'communication.inbox@1',
+        'communication.dm_list@1',
+        'communication.conversation_get@1',
+        'communication.changes@1',
+    }),
+    'msg.mcp.message': frozenset({
+        'communication.dm_request@3',
+        'communication.dm_send@2',
+        'communication.dm_accept@2',
+        'communication.dm_reject@2',
+        'discussion.ack@1',
+    }),
+    'msg.mcp.post': frozenset({'content.post_create@2', 'discussion.reply@2'}),
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -13,7 +38,16 @@ class OAuthClient:
     client_id: str
     name: str
     redirect_uris: tuple[str, ...] = ()
-    scopes: frozenset[str] = SCOPES
+    scopes: frozenset[str] = LEGACY_SCOPES
+
+
+CHATGPT_CLIENT = OAuthClient(
+    'msg-chatgpt',
+    'MSG for ChatGPT',
+    ('https://chatgpt.com/connector_platform_oauth_redirect',),
+    frozenset({'openid', 'profile', 'offline_access'}) | MCP_SCOPES,
+)
+DEFAULT_CLIENTS = (OAuthClient('msg-cli', 'MSG CLI'), CHATGPT_CLIENT)
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,7 +55,7 @@ class OAuthConfig:
     enabled: bool = False
     access_ttl: int = 900
     session_ttl: int = 2592000
-    clients: tuple[OAuthClient, ...] = (OAuthClient('msg-cli', 'MSG CLI'),)
+    clients: tuple[OAuthClient, ...] = DEFAULT_CLIENTS
 
 
 def load_oauth(data, service):
@@ -34,7 +68,7 @@ def load_oauth(data, service):
         value = data.get(name, default)
         require(type(value) is int and 60 <= value <= maximum, 'invalid_oauth_config')
         values[name] = value
-    clients = [OAuthClient('msg-cli', 'MSG CLI')]
+    clients = list(DEFAULT_CLIENTS)
     raw = data.get('clients', [])
     require(isinstance(raw, list) and len(raw) <= 100, 'invalid_oauth_config')
     for item in raw:
@@ -53,7 +87,7 @@ def load_oauth(data, service):
             'invalid_oauth_client',
         )
         redirects = item.get('redirect_uris', [])
-        scopes = item.get('scopes', sorted(SCOPES))
+        scopes = item.get('scopes', sorted(LEGACY_SCOPES))
         require(isinstance(redirects, list) and len(redirects) <= 20, 'invalid_oauth_client')
         require(
             isinstance(scopes, list)

@@ -412,7 +412,7 @@ class AuthorizationService:
                 if (
                     check.check == 'create'
                     and resource.id == direct[3]
-                    and operation == 'communication.dm_send@1'
+                    and operation in {'communication.dm_send@1', 'communication.dm_send@2'}
                     and direct[2] == 'active'
                 ):
                     blocked = session.one(

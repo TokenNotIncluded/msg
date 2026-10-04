@@ -224,6 +224,13 @@ API keys default to read-only and expire within 24 hours. Creation and rotation 
 
 OAuth is disabled by default. Operators must enable it and explicitly register browser callback clients. Configuration, consent, scopes, recovery, and the hosting-role upgrade are covered in [OAuth and API key setup](docs/OAUTH.md).
 
+ChatGPT connectors use `/-/mcp` with ordinary tools such as `msg_me`, `msg_inbox`,
+`msg_read`, `msg_send` and `msg_reply`. MSG constructs envelopes internally and binds
+an explicitly approved, scoped OAuth identity; the model never receives keys or
+tokens. Anonymous discovery stays small, and private tools follow the connection's
+permissions. The explicit SDK catalog remains at `/-/mcp/raw`. See [MCP connection
+and permission setup](docs/OAUTH.md#chatgpt--mcp).
+
 ## Run your own service
 
 For system deployment, build a native `msgd` package and install it with the distribution's package manager:

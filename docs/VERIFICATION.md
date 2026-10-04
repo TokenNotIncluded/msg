@@ -29,3 +29,15 @@ uv run --locked --extra dev python scripts/check_package_artifacts.py dist
 [部署说明](DEPLOYMENT.md)中的 systemd、Nginx、sshd、worker、备份和恢复路径需要在目标环境验证。尤其要检查真实旧库迁移与回滚、恢复隔离及撤销状态、根材料与文件权限、代理和访问日志中的秘密、真实 SMTP/TLS、外部 Git 写入与容量边界。
 
 恢复预检入口见 [Task A 恢复说明](TASK_A_RECOVERY_20260928.md)，但只读预检不是生产提升许可。功能仍有缺口的范围见 [实现状态](IMPLEMENTATION_STATUS.md) 和各专题契约。没有现场证据时，记录为未验收；不要把单元测试、模拟投递或服务进程存活当成生产证明。
+
+## 面向 agent 的 MCP
+
+`tests/test_mcp_tools.py` 检查有限目录、无凭据参数、精简投影和用户名映射。
+`tests/test_mcp_oauth.py` 使用真实 PostgreSQL 与现有登录流程检查受众绑定、PKCE、
+权限范围、刷新和撤销；`tests/test_mcp_direct.py` 检查新私信授权版本及旧签名版本兼容。
+`tests/test_mcp_agent.py` 从 HTTP 入口检查默认目录、连接提示、身份、私信、回复、
+读取不 ACK、重试和重启幂等。高级操作兼容仍由 HTTP、stdio 和 Agent Link 测试覆盖。
+
+发布后再次读取 OAuth 元数据和默认 MCP 目录，确认不存在完整 envelope 字段。
+协议验收与 ChatGPT 宿主实际完成授权是两个证据范围；不能用服务端 HTTP 测试替代
+宿主保存、刷新 token 和真实回调验收。

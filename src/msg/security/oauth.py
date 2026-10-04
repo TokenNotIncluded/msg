@@ -8,6 +8,8 @@ The relational writer fence serializes grant consumption and refresh rotation.
 import hashlib
 import hmac
 import secrets
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
@@ -18,12 +20,24 @@ from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 from msg.core.codec import b64, canonical, decode, loads, parse_time, wire
 from msg.core.errors import Failure, require
 from msg.core.models import CapabilityGrant, Credential, Scope
+from msg.oauth_config import MCP_SCOPE_OPERATIONS, MCP_SCOPES
 from msg.security.browser_actions import BROWSER_POST_WRITES
 from msg.security.policy import constraints_subset, scope_subset
 from msg.security.quarantine import require_live_authority
 
 DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code'
 CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+_RESOURCE_EXECUTION = ContextVar('msg_oauth_resource_execution', default=None)
+
+
+@contextmanager
+def resource_execution(resource):
+    """Trusted adapter context, never derived from an operation packet field."""
+    token = _RESOURCE_EXECUTION.set(resource)
+    try:
+        yield
+    finally:
+        _RESOURCE_EXECUTION.reset(token)
 
 
 def secret():
@@ -120,7 +134,7 @@ async def require_source(tx, body, now, *, custodial_ceiling):
     return subject
 
 
-async def require_binding(tx, credential, now, config, *, custodial_ceiling):
+async def require_binding(tx, credential, now, config, *, custodial_ceiling, resource=None):
     browser = tx.one('SELECT body FROM oauth_states WHERE id=?', ('browser:' + credential.id,))
     if browser is not None:
         require(config is not None and config.enabled, 'oauth_disabled')
@@ -159,6 +173,20 @@ async def require_binding(tx, credential, now, config, *, custodial_ceiling):
     require(credential.source_credential_id == family['parent'], 'invalid_grant')
     client = client_for(config, family['client_id'])
     require(set(family['scopes']) <= client.scopes and not family.get('revoked'), 'invalid_grant')
+    if family.get('resource') is not None:
+        require(credential.subject_id == family['subject'], 'invalid_grant')
+        require(family['resource'] == (resource or _RESOURCE_EXECUTION.get()), 'invalid_grant')
+        require(
+            bool(set(family['scopes']) & MCP_SCOPES)
+            and not set(family['scopes']) & {'msg.read', 'msg.write'},
+            'invalid_grant',
+        )
+        operations = frozenset().union(
+            *(MCP_SCOPE_OPERATIONS.get(scope, frozenset()) for scope in family['scopes'])
+        )
+        require(all(g.operations <= operations for g in credential.ceiling), 'invalid_grant')
+    else:
+        require(not set(family['scopes']) & MCP_SCOPES, 'invalid_grant')
     await require_source(tx, family, now, custodial_ceiling=custodial_ceiling)
     await require_ceiling(
         tx, credential.ceiling, tuple(decode(CapabilityGrant, raw) for raw in family['ceiling'])
@@ -207,6 +235,7 @@ class OAuthService:
         now = self.app.clock()
         client = client_for(self.config, client_id)
         scopes = scopes_for(client, scope)
+        self.resource_for(scopes, None)
         code = ''.join(secrets.choice(CODE_ALPHABET) for _ in range(8))
         value = secret()
         id = state_id('user', code)
@@ -396,6 +425,22 @@ class OAuthService:
         )
         return source['subject'], credential.id, self.browser_secret(cookie)
 
+    def resource_for(self, scopes, resource):
+        if resource is None:
+            require(not scopes & MCP_SCOPES, 'invalid_target')
+            return None
+        require(resource == self.app.settings.service_url + '/-/mcp', 'invalid_target')
+        require(
+            bool(scopes & MCP_SCOPES) and not scopes & {'msg.read', 'msg.write'},
+            'invalid_scope',
+        )
+        return resource
+
+    def require_resource(self, source, args):
+        resource = self.resource_for(frozenset(source['scopes']), source.get('resource'))
+        require(args.get('resource') == resource, 'invalid_target')
+        return resource
+
     def authorization(self, args):
         require(
             set(args)
@@ -408,6 +453,7 @@ class OAuthService:
                 'code_challenge',
                 'code_challenge_method',
                 'nonce',
+                'resource',
             },
             'invalid_request',
         )
@@ -425,7 +471,8 @@ class OAuthService:
             'invalid_request',
         )
         require('nonce' not in args or 16 <= len(args['nonce']) <= 512, 'invalid_request')
-        scopes_for(client, args.get('scope', 'openid profile'))
+        scopes = scopes_for(client, args.get('scope', 'openid profile'))
+        self.resource_for(scopes, args.get('resource'))
         return client
 
     async def authorize(self, tx, cookie, args):
@@ -439,6 +486,7 @@ class OAuthService:
             redirect_uri=args['redirect_uri'],
             challenge=args['code_challenge'],
             nonce=args.get('nonce'),
+            resource=args.get('resource'),
         )
         put(
             tx,
@@ -454,12 +502,15 @@ class OAuthService:
         now = self.app.clock()
         grant = args.get('grant_type')
         if grant == DEVICE_GRANT:
+            require('resource' not in args and 'scope' not in args, 'invalid_request')
             return await self.pending_result(
                 tx, args.get('device_code', ''), args['client_id'], 'device'
             )
         if grant == 'authorization_code':
             id = state_id('code', args.get('code', ''))
             _, body = get(tx, id, now)
+            self.require_resource(body, args)
+            require('scope' not in args, 'invalid_request')
             if body.get('consumed') and body['client_id'] == args['client_id']:
                 _, family = get(tx, body['family'], now)
                 family['revoked'] = True
@@ -496,6 +547,7 @@ class OAuthService:
             _, old = get(tx, id, now)
             expiry, family = get(tx, old['family'], now)
             require(family['client_id'] == args['client_id'], 'invalid_grant')
+            self.require_resource(family, args)
             if old.get('used'):
                 family['revoked'] = True
                 save(tx, old['family'], family)
@@ -504,6 +556,12 @@ class OAuthService:
             client = client_for(self.config, family['client_id'])
             require(set(family['scopes']) <= client.scopes, 'invalid_scope')
             await require_source(tx, family, now, custodial_ceiling=self.app.temporary_ceiling())
+            if 'scope' in args:
+                scopes = scopes_for(client, args['scope'])
+                require(scopes <= set(family['scopes']), 'invalid_scope')
+                self.resource_for(scopes, family.get('resource'))
+                family['scopes'] = sorted(scopes)
+                save(tx, old['family'], family)
             old['used'] = True
             save(tx, id, old)
             # A refresh does not extend the family's absolute lifetime.
@@ -535,6 +593,15 @@ class OAuthService:
                 or ('msg.write' in source['scopes'] and op.effect != 'read')
             )
         }
+        for scope in source['scopes']:
+            operations.update(MCP_SCOPE_OPERATIONS.get(scope, ()))
+        if source.get('resource') is not None:
+            self.resource_for(frozenset(source['scopes']), source['resource'])
+            operations &= {
+                f'{op.name}@{op.version}'
+                for op in self.app.registry.operations()
+                if not op.require_signature and not op.anonymous_only
+            }
         ceiling = tuple(
             replace(g, operations=g.operations & operations)
             for raw in source['ceiling']
@@ -561,6 +628,8 @@ class OAuthService:
             'subject_id': subject.resource_id,
             'scope': ' '.join(source['scopes']),
         }
+        if source.get('resource') is not None:
+            result['resource'] = source['resource']
         if 'offline_access' in source['scopes']:
             refresh = secret()
             put(
@@ -607,27 +676,44 @@ class OAuthService:
         value = (head + '.' + body).encode()
         return value.decode() + '.' + b64(self.signing_key().sign(value))
 
-    async def bearer(self, tx, value):
+    async def bearer(self, tx, value, *, resource=None, check_resource=True):
         from msg.core.codec import unb64
 
         id, sep, token = value.partition('.')
         require(sep and len(value) <= 256, 'invalid_token')
-        credential = await tx.credential(id)
+        try:
+            credential = await tx.credential(id)
+        except Failure:
+            raise Failure('invalid_token') from None
         now = self.app.clock()
+        try:
+            decoded = unb64(token, limit=32)
+        except Failure:
+            raise Failure('invalid_token') from None
         require(
-            credential.kind == 'token'
+            len(decoded) == 32
+            and credential.kind == 'token'
             and credential.revoked_at is None
             and credential.not_before <= now
-            and credential.expires_at > now
-            and hmac.compare_digest(
-                credential.verifier, hashlib.sha256(unb64(token, limit=32)).digest()
-            ),
+            and (credential.expires_at is None or credential.expires_at > now)
+            and hmac.compare_digest(credential.verifier, hashlib.sha256(decoded).digest()),
             'invalid_token',
         )
         try:
+            row = tx.one('SELECT body FROM oauth_states WHERE id=?', ('access:' + id,))
+            family = get(tx, loads(row[0])['family'], now)[1] if row else {}
             await require_binding(
-                tx, credential, now, self.config, custodial_ceiling=self.app.temporary_ceiling()
+                tx,
+                credential,
+                now,
+                self.config,
+                custodial_ceiling=self.app.temporary_ceiling(),
+                resource=resource if check_resource else family.get('resource'),
             )
+            if check_resource:
+                require(family.get('resource') == resource, 'invalid_token')
+                if resource is not None:
+                    self.resource_for(frozenset(family['scopes']), resource)
         except Failure as exc:
             if exc.code in {'recovery_runtime_stale', 'recovery_quarantined'}:
                 raise
