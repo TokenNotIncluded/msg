@@ -66,7 +66,8 @@ def test_thread_html_escapes_rows_keeps_data_collapsed_and_uses_readable_post_li
     ).decode()
     article = page.split('<article>', 1)[1].split('</article>', 1)[0]
     assert 'href="/*' + 'a' * 32 + '"' in article and '/json' not in article
-    assert '<img ' not in article and 'javascript:' not in article
+    assert '<img ' not in article and 'href="javascript:' not in article
+    assert '[Text](javascript:alert(1))' in article
     assert 'Safe  title' in article or 'Safe title' in article
     assert 'Text' in article and '&amp;' in article
     raw = page.split('<pre id="thread-raw-data"><code>', 1)[1].split('</code>', 1)[0]

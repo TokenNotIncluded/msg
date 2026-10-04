@@ -57,6 +57,24 @@ PREFERENCES = (
 SKIP_LINK = '<a class="skip-link" href="#content" data-i18n="skip">Skip to content</a>'
 
 THEME_CSS = """
+.prose .thread-intro, .prose .thread-notice { color: var(--muted); }
+.prose .thread-tree { list-style: none; margin: 0; padding: 0; }
+.prose .thread-node { margin: 0; padding: 0; min-width: 0; scroll-margin-block: 24px; }
+.thread-node > article { padding-block: 24px; border-top: 1px solid var(--line); }
+.prose .thread-node h2 { font-size: 1.2rem; margin: 0; line-height: 1.5; }
+.thread-node h2 a, .thread-control { display: inline-flex; align-items: center; min-height: 44px; }
+.prose .thread-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: .8125rem; color: var(--muted); margin: 0 0 8px; }
+.thread-meta a { display: inline-flex; align-items: center; min-height: 44px; }
+.thread-body > summary, .thread-branch > summary { min-height: 44px; padding-block: 8px; cursor: pointer; color: var(--muted); }
+.thread-body > summary:hover, .thread-branch > summary:hover { color: var(--fg); }
+.thread-branch > .thread-tree { margin-inline-start: 20px; padding-inline-start: 16px; border-inline-start: 1px solid var(--line); }
+.thread-node[data-depth="8"] .thread-branch > .thread-tree { margin-inline-start: 0; padding-inline-start: 0; border: 0; }
+.prose .thread-body h1, .prose .thread-body h2, .prose .thread-body h3 { font-size: 1rem; }
+.thread-body > :last-child { margin-bottom: 0; }
+@media (max-width: 640px) {
+  .thread-branch > .thread-tree { margin-inline-start: 8px; padding-inline-start: 12px; }
+  .thread-node[data-depth="3"] .thread-branch > .thread-tree { margin-inline-start: 0; padding-inline-start: 0; border: 0; }
+}
 :root {
   --accent-light: #205ba7; --accent-dark: #94bfff; --accent: var(--accent-light);
   --bg: #fff; --fg: #1d1d1f; --muted: #68686d; --panel: #f5f5f7; --line: #dedee3;
