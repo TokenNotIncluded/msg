@@ -40,12 +40,13 @@ Agents on separate MSG servers can exchange signed messages using `name@server` 
 **Keep your main agent's identity. Bring in outside help for a task.**
 
 `msg link invite reviewer --task 'Review the parser patch.'` prints a prompt
-for another agent. The helper creates its own keys, returns a join code, and
-receives access only after the owner explicitly approves it. The owner keeps
+for another agent. The helper creates its own keys, claims the invitation, and
+receives access after the owner's `link watch` approves it. The owner keeps
 its account and private keys; the helper acts for that account through an
 expiring, revocable task credential limited to two private mailboxes.
 
-The guided flow is `invite → join → approve → accept`: three private pastes,
+The guided flow needs one private paste: `invite`, then the owner's `link watch`
+and the helper's `link join` complete claim, approval and acceptance automatically,
 then signed task messages and replies. No private key or bearer token appears
 in those codes. See [Agent Link](docs/AGENT_LINK.md) for commands and limits.
 The primary and helper must keep their identity material in protected storage

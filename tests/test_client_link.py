@@ -331,9 +331,8 @@ async def test_approval_binds_helper_and_ignores_old_label_grant(installed, tmp_
             HTTPTransport(app.settings.service_url, http=http),
             clock=lambda: NOW,
         )
-        other = await run_command(stranger, args('join', code=invited['data']['invite_code']))
-        with pytest.raises(Failure, match='link_already_approved'):
-            await run_command(owner, args('approve', code=other['data']['join_code'], minutes=None))
+        with pytest.raises(Failure, match='link_claim_taken'):
+            await run_command(stranger, args('join', code=invited['data']['invite_code']))
         with pytest.raises(Failure, match='link_approval_pending'):
             await run_command(owner, args('approve', code=joined['data']['join_code'], minutes=60))
         record = load_record(owner.state, 'reviewer')
@@ -469,6 +468,77 @@ async def test_invite_join_approve_accept_exchange_and_revoke(installed, tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_manual_join_recovers_when_helper_claim_is_unreachable(
+    installed, tmp_path, monkeypatch
+):
+    app, _ = installed
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        owner, helper, invited, _ = await prepared_link(app, tmp_path, http)
+        invited = await run_command(
+            owner, args('invite', name='offline-review', task='Review.', task_file=None, minutes=30)
+        )
+        helper = MsgClient(
+            ClientState(tmp_path / 'offline-helper', server=app.settings.service_url),
+            HTTPTransport(app.settings.service_url, http=http),
+            clock=lambda: NOW,
+        )
+        original = helper.call
+
+        async def disconnected(operation, arguments=None, **kwargs):
+            if operation == 'identity.link_claim':
+                raise Failure('transport_uncertain', retryable=True)
+            return await original(operation, arguments, **kwargs)
+
+        monkeypatch.setattr(helper, 'call', disconnected)
+        joined = await run_command(
+            helper, args('join', code=invited['data']['invite_code'], wait=False)
+        )
+        approved = await run_command(
+            owner, args('approve', code=joined['data']['join_code'], minutes=None)
+        )
+        accepted = await run_command(helper, args('accept', code=approved['data']['access_code']))
+        assert accepted['data']['task']['message'] == 'Review.'
+
+
+@pytest.mark.asyncio
+async def test_claim_is_approved_from_the_owner_listener(installed, tmp_path, capsys):
+    app, _ = installed
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        owner, helper, invited, joined = await prepared_link(app, tmp_path, http)
+        page = owner.checked(await owner.call('communication.changes', {'limit': 200}))
+        assert any(
+            item.get('type') == 'identity.link_claim'
+            and item.get('data', {}).get('name') == 'reviewer'
+            for item in page.data['items']
+        )
+        intruder = MsgClient(
+            ClientState(tmp_path / 'intruder', server=app.settings.service_url),
+            HTTPTransport(app.settings.service_url, http=http),
+            clock=lambda: NOW,
+        )
+        with pytest.raises(Failure, match='link_claim_taken'):
+            await run_command(intruder, args('join', code=invited['data']['invite_code']))
+        watched = await run_command(owner, args('watch', once=True, interval=0.1))
+        assert watched['data']['approved'] == ['reviewer']
+        accepted = await run_command(
+            helper, args('join', code=invited['data']['invite_code'], wait=True)
+        )
+        assert accepted['data']['task']['message'] == 'Review the parser patch and report.'
+        await RemoteAgents(helper).send(
+            'reviewer', 'reviewer-lead', 'Done via the claim.', message_id='claim-r1'
+        )
+        assert await drain(owner, 'reviewer-lead', capsys) == [
+            'Accepted the task as ' + accepted['data']['address'] + '.',
+            'Done via the claim.',
+        ]
+        assert joined['data']['join_code'].startswith('msglink1.')
+
+
+@pytest.mark.asyncio
 async def test_helper_ceiling_is_limited_to_the_link_mailboxes(installed, tmp_path):
     app, _ = installed
     async with httpx.AsyncClient(
@@ -527,11 +597,20 @@ async def test_codes_are_bound_to_kind_and_invitation(installed, tmp_path):
             transport,
             clock=lambda: NOW,
         )
-        joined = await run_command(helper, args('join', code=encode_code('invite', forged)))
+        with pytest.raises(Failure, match='not_found'):
+            await run_command(helper, args('join', code=encode_code('invite', forged)))
+        from msg.client_delegated import prepare as prepare_delegation
+
+        mismatched = encode_code(
+            'join',
+            {
+                'name': 'reviewer',
+                'invite': '0' * 32,
+                'request': prepare_delegation(helper, '@alice'),
+            },
+        )
         with pytest.raises(Failure, match='link_invite_mismatch'):
-            await run_command(
-                owner, args('approve', code=joined['data']['join_code'], minutes=None)
-            )
+            await run_command(owner, args('approve', code=mismatched, minutes=None))
         with pytest.raises(Failure, match='invalid_link_code'):
             decode_code('msglink1.%%%', 'invite')
         with pytest.raises(Failure, match='link_exists'):

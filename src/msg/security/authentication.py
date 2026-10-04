@@ -181,17 +181,19 @@ class AuthenticationService:
                 ceiling=ceiling,
             )
         if proof is None:
-            # Cross-service delivery has its own recipient-pinned inner signature.
-            # Only this operation may enter a write transaction without a local proof;
-            # its handler verifies the grant, target binding, signature and replay fence.
-            internet_delivery = (
-                request.operation == 'communication.internet_receive'
+            # Two writes may enter without an account signature. Each handler
+            # verifies its own proof: internet delivery checks the pinned grant,
+            # and a link claim checks the invitation plus the new key's possession
+            # proof. Neither path receives a credential ceiling.
+            anonymous_write = (
+                request.operation
+                in {'communication.internet_receive', 'identity.link_claim'}
                 and spec.version == 1
                 and spec.anonymous_only
                 and spec.effect == 'transaction'
             )
             require(
-                request.subject is None and (spec.effect == 'read' or internet_delivery),
+                request.subject is None and (spec.effect == 'read' or anonymous_write),
                 'authentication_required',
             )
             return Principal(
