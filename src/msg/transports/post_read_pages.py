@@ -50,129 +50,301 @@ def thread_preview(item):
     return {'title': title, 'excerpt': excerpt}
 
 
-def thread_read_html(items, data, *, path, raw_query='', account=None, service_url=None):
+def _thread_content(item):
+    content = item.get('content', '')
+    if isinstance(content, dict) and 'template_id' in content and 'values' in content:
+        from msg.core.template_dsl import render_values
+
+        content = render_values(content['values'])
+    return content if isinstance(content, str) else ''
+
+
+def _thread_body(content):
+    renderer = markdown_renderer()
+    lines = content[:8192].splitlines()
+    if lines and lines[0] == '---':
+        for index, line in enumerate(lines[1:], 1):
+            if line in {'---', '...'}:
+                lines = lines[index + 1 :]
+                break
+        else:
+            lines = []
+    tokens = renderer.parse('\n'.join(lines))
+    # 标题已经显示在帖头；只移除同一个正文 H1，代码块和后续章节保留。
+    for index, token in enumerate(tokens[:-2]):
+        if token.type == 'heading_open' and token.tag == 'h1':
+            del tokens[index : index + 3]
+            break
+    return renderer.renderer.render(tokens, renderer.options, {})
+
+
+def _thread_href(item):
+    target = item.get('path', '')
+    if not isinstance(target, str) or not target.startswith('/') or target.startswith('//'):
+        target = '/*' + hex_id(item['id'])
+    return escape(quote(target, safe='/@*'), quote=True)
+
+
+def _thread_numbers(item, status):
+    count = status.get('reply_count') if isinstance(status, dict) else None
+    complete = status.get('count_complete') is True if isinstance(status, dict) else False
+    valid_count = isinstance(count, int) and not isinstance(count, bool) and count >= 0
+    if valid_count and complete:
+        replies = str(count) + ' 条回复'
+    elif valid_count and count:
+        replies = '至少 ' + str(count) + ' 条回复'
+    else:
+        replies = '回复数未知'
+    if isinstance(status, dict) and status.get('public_only'):
+        replies = '公开 ' + replies
+    views = item.get('view_count')
+    if views is None and isinstance(status, dict):
+        views = status.get('view_count')
+    valid_views = isinstance(views, int) and not isinstance(views, bool) and views >= 0
+    label = str(views) + ' 浏览' if valid_views else '浏览量未知'
+    return (
+        '<span class="thread-reply-count">'
+        + escape(replies)
+        + '</span>'
+        + '<span class="thread-view-count">'
+        + escape(label)
+        + '</span>',
+        not valid_count or not complete or count > 0,
+    )
+
+
+def thread_fragment_html(items, data, *, focus_id=None, embedded=False, reply_statuses=None):
+    """读取已授权片段，不补读父帖，也不把当前页数量当成全串数量。"""
+    nodes, roots = thread_tree(items, data['root'])
+    statuses = {hex_id(rid): value for rid, value in (reply_statuses or {}).items()}
+    root_id = hex_id(data['root'])
+    focus_id = hex_id(focus_id) if focus_id else root_id
+    omitted = {focus_id} if embedded else set()
+    shown = {rid: node for rid, node in nodes.items() if rid not in omitted}
+    displayed_roots = tuple(
+        rid for rid, node in shown.items() if node.parent is None or node.parent in omitted
+    )
+    if not embedded:
+        displayed_roots = roots
+    replies = sum(rid != root_id for rid in shown)
+    branches = sum(rid != root_id and node.parent == root_id for rid, node in shown.items())
+    item_order = {rid: index for index, rid in enumerate(shown)}
+    latest = max(
+        (rid for rid in shown if rid != root_id),
+        key=lambda rid: (str(shown[rid].item.get('created_at', '')), item_order[rid]),
+        default=None,
+    )
+    heading = 'h2' if embedded else 'h1'
+    section_id = 'thread-discussion' if embedded else 'discussion'
+    heading_id = section_id + '-heading'
+    parts = [
+        '<section class="thread-discussion" data-thread-fragment id="'
+        + section_id
+        + '" aria-labelledby="'
+        + heading_id
+        + '">',
+        '<header class="thread-heading"><div><'
+        + heading
+        + (' class="sr-only"' if embedded else '')
+        + ' id="'
+        + heading_id
+        + '">讨论</'
+        + heading
+        + '><p class="thread-range">本页 '
+        + str(replies)
+        + ' 条回复'
+        + (' · ' + str(branches) + ' 个分支' if branches else '')
+        + (' · 后面还有回复' if data.get('next') else '')
+        + '</p></div><nav class="thread-actions" aria-label="讨论导航">',
+    ]
+    if latest is not None:
+        parts.append(
+            '<a class="thread-control" href="#reply-'
+            + escape(latest, quote=True)
+            + '">最新回复</a>'
+        )
+    if not embedded:
+        parts.append(
+            '<a class="thread-control" href="/*' + escape(root_id, quote=True) + '">返回主帖</a>'
+        )
+    parts.append('</nav></header>')
+    if any(node.incomplete for node in nodes.values()):
+        parts.append('<p class="thread-notice">本页为部分讨论；有些父帖不在当前页。</p>')
+    if any(node.invalid for node in nodes.values()):
+        parts.append('<p class="thread-notice">部分回复关系异常，已单独列出。</p>')
+    if not shown:
+        parts.append('<p class="thread-empty">还没有可读的回复。讨论会在这里接着展开。</p>')
+    else:
+        parts.append('<ol class="thread-tree">')
+        stack = [(rid, 0, False) for rid in reversed(displayed_roots)]
+        while stack:
+            rid, depth, closing = stack.pop()
+            node = shown[rid]
+            children = tuple(child for child in node.children if child in shown)
+            if closing:
+                if children:
+                    parts.append('</ol></details>')
+                parts.append('</li>')
+                continue
+            item = node.item
+            preview = thread_preview(item)
+            href = _thread_href(item)
+            title = preview['title']
+            is_root = rid == root_id
+            parts.append(
+                '<li class="thread-node'
+                + (' thread-root' if is_root else '')
+                + (' thread-focus' if rid == focus_id else '')
+                + '" id="reply-'
+                + escape(rid, quote=True)
+                + '" data-depth="'
+                + str(depth)
+                + '"><article>'
+            )
+            metadata = []
+            author = item.get('links', {}).get('a', {}).get('path', '')
+            if isinstance(author, str) and author.startswith('/@'):
+                metadata.append(
+                    '<a class="thread-author" href="'
+                    + escape(quote(author, safe='/@'), quote=True)
+                    + '">'
+                    + escape(author.removeprefix('/'))
+                    + '</a>'
+                )
+            else:
+                metadata.append('<span class="thread-author">帖子</span>')
+            if item.get('created_at'):
+                metadata.append(
+                    '<a class="thread-permalink" href="'
+                    + href
+                    + '"><time datetime="'
+                    + escape(item['created_at'], quote=True)
+                    + '">'
+                    + escape(display_time(item['created_at']))
+                    + '</time></a>'
+                )
+            if is_root:
+                metadata.append('<span class="thread-node-kind">主帖</span>')
+            elif node.parent in shown:
+                metadata.append(
+                    '<a class="thread-parent" href="#reply-'
+                    + escape(node.parent, quote=True)
+                    + '">回复上帖</a>'
+                )
+            elif node.parent in omitted:
+                metadata.append(
+                    '<span class="thread-node-kind">'
+                    + ('回复主帖' if node.parent == root_id else '回复当前帖')
+                    + '</span>'
+                )
+            elif node.incomplete:
+                metadata.append('<span>父帖不在当前页</span>')
+            parts.append(
+                '<header class="thread-node-heading"><p class="thread-meta">'
+                + ''.join(metadata)
+                + '</p>'
+            )
+            if title != 'Untitled post':
+                parts.append(
+                    '<p class="thread-title" role="heading" aria-level="3"><a href="'
+                    + href
+                    + '">'
+                    + escape(title)
+                    + '</a></p>'
+                )
+            parts.append('</header>')
+            content = _thread_content(item)
+            if not content and preview['excerpt']:
+                parts.append('<p class="thread-body">' + escape(preview['excerpt']) + '</p>')
+            elif content:
+                body = _thread_body(content)
+                if len(content) > 1600:
+                    parts.append(
+                        '<details class="thread-body thread-long-body"><summary>'
+                        + '<span class="thread-excerpt">'
+                        + escape(preview['excerpt'] or '长正文')
+                        + '</span><span class="thread-expand-label">展开正文</span>'
+                        + '<span class="thread-collapse-label">收起正文</span></summary>'
+                        + '<div class="thread-content">'
+                        + body
+                        + '</div></details>'
+                    )
+                else:
+                    parts.append('<div class="thread-body">' + body + '</div>')
+                if len(content) > 8192 or item.get('_body_more'):
+                    parts.append(
+                        (
+                            '<p class="thread-truncation">正文节选（前 8192 字符） · '
+                            if len(content) > 8192
+                            else '<p class="thread-truncation">正文节选 · '
+                        )
+                        + '<a class="thread-control" href="'
+                        + href
+                        + '">阅读完整帖子</a></p>'
+                    )
+            numbers, expandable = _thread_numbers(item, statuses.get(rid))
+            if not children and not expandable:
+                parts.append('<p class="thread-stats">' + numbers + '</p>')
+            parts.append('</article>')
+            stack.append((rid, depth, True))
+            if children or expandable:
+                parts.append(
+                    '<details class="thread-branch" data-thread-branch data-post-id="'
+                    + escape(item['id'], quote=True)
+                    + '"><summary>'
+                    + '<span class="thread-branch-count"><svg class="thread-branch-chevron" '
+                    + 'width="12" height="12" viewBox="0 0 12 12" fill="none" '
+                    + 'stroke="currentColor" stroke-width="1.5" aria-hidden="true">'
+                    + '<path d="m4 2 4 4-4 4"/></svg>'
+                    + numbers
+                    + '</span></summary>'
+                )
+                if children:
+                    parts.append('<ol class="thread-tree" data-thread-branch-content>')
+                    stack.extend((child, depth + 1, False) for child in reversed(children))
+                else:
+                    parts.append(
+                        '<div data-thread-branch-content><p class="thread-branch-pending">'
+                        + '子回复尚未读取。</p></div></details>'
+                    )
+        parts.append('</ol>')
+    if data.get('next'):
+        next_path = data['next']
+        if (
+            isinstance(next_path, str)
+            and next_path.startswith('/')
+            and not next_path.startswith('//')
+        ):
+            href = escape(quote(next_path, safe='/@*?=&%+'), quote=True)
+            parts.append(
+                '<p class="thread-more"><a class="thread-control" href="'
+                + href
+                + '">继续阅读回复</a></p>'
+            )
+    parts.append('</section>')
+    return ''.join(parts)
+
+
+def thread_read_html(
+    items, data, *, path, raw_query='', account=None, service_url=None, reply_statuses=None
+):
     """Render only items the thread operation has already authorized."""
     from msg.transports.home_page import document_html
 
-    root = '/*' + quote(hex_id(data['root']), safe='')
-    nodes, roots = thread_tree(items, data['root'])
-    parts = [
-        '<h1>Thread / 讨论串</h1>',
-        '<p class="thread-intro">沿着分支阅读和回复。每条回复只有一个父帖。'
-        ' / Follow each branch; every reply has one parent.</p>',
-        f'<p><a class="thread-control" href="{root}">返回根帖 / Back to root</a></p>',
-    ]
-    if any(node.incomplete for node in nodes.values()):
-        parts.append(
-            '<p class="thread-notice">本页为部分讨论，部分父帖不在当前页。'
-            ' / This page contains part of the discussion; some parents are outside this page.</p>'
-        )
-    if any(node.invalid for node in nodes.values()):
-        parts.append(
-            '<p class="thread-notice">部分回复关系异常，已单独列出。'
-            ' / Some reply relationships are invalid and are shown separately.</p>'
-        )
-    parts.append('<ol class="thread-tree">')
-    stack = [(rid, 0, False) for rid in reversed(roots)]
-    while stack:
-        rid, depth, closing = stack.pop()
-        node = nodes[rid]
-        if closing:
-            if node.children:
-                parts.append('</ol></details>')
-            parts.append('</li>')
-            continue
-        item = node.item
-        preview = thread_preview(item)
-        target = item.get('path', '')
-        if not isinstance(target, str) or not target.startswith('/') or target.startswith('//'):
-            target = '/*' + hex_id(item['id'])
-        href = escape(quote(target, safe='/@*'), quote=True)
-        parts.append(
-            '<li class="thread-node" id="reply-'
-            + escape(rid, quote=True)
-            + '" data-depth="'
-            + str(depth)
-            + '"><article><h2><a href="'
-            + href
-            + '">'
-            + escape(preview['title'])
-            + '</a></h2>'
-        )
-        metadata = []
-        author = item.get('links', {}).get('a', {}).get('path', '')
-        if isinstance(author, str) and author.startswith('/@'):
-            metadata.append(
-                '<a href="'
-                + escape(quote(author, safe='/@'), quote=True)
-                + '">'
-                + escape(author.removeprefix('/'))
-                + '</a>'
-            )
-        if item.get('created_at'):
-            metadata.append(
-                '<time datetime="'
-                + escape(item['created_at'], quote=True)
-                + '">'
-                + escape(display_time(item['created_at']))
-                + '</time>'
-            )
-        if node.parent is not None:
-            metadata.append(
-                '<a href="#reply-'
-                + escape(node.parent, quote=True)
-                + '">回复父帖 / In reply to parent</a>'
-            )
-        elif node.incomplete:
-            metadata.append('父帖不在当前页 / Parent outside this page')
-        if metadata:
-            parts.append('<p class="thread-meta">' + ' · '.join(metadata) + '</p>')
-        content = item.get('content', '')
-        if isinstance(content, dict) and 'template_id' in content and 'values' in content:
-            from msg.core.template_dsl import render_values
-
-            content = render_values(content['values'])
-        if preview['excerpt'] and not content:
-            parts.append('<p>' + escape(preview['excerpt']) + '</p>')
-        if isinstance(content, str) and content:
-            parts.append(
-                '<details class="thread-body" open><summary>正文 / Message</summary>'
-                + markdown_renderer().render(content[:8192])
-                + '</details>'
-            )
-            if len(content) > 8192:
-                parts.append(
-                    '<p>正文节选 / Excerpt · <a class="thread-control" href="'
-                    + href
-                    + '">查看完整帖子 / Read complete post</a></p>'
-                )
-        parts.append('</article>')
-        stack.append((rid, depth, True))
-        if node.children:
-            parts.append(
-                '<details class="thread-branch" open><summary>'
-                + str(len(node.children))
-                + ' 条直接回复 / direct replies</summary><ol class="thread-tree">'
-            )
-            stack.extend((child, depth + 1, False) for child in reversed(node.children))
-    parts.append('</ol>')
-    if not items:
-        parts.append('<p>暂无可读帖子。 / No readable posts.</p>')
-    if data.get('next'):
-        href = escape(quote(data['next'], safe='/@*?=&'), quote=True)
-        parts.append(f'<p><a class="thread-control" href="{href}">更多 / More</a></p>')
-    parts.append(
+    body = thread_fragment_html(items, data, reply_statuses=reply_statuses)
+    body += (
         '<details><summary>原始数据 / Raw data</summary><pre id="thread-raw-data"><code>'
         + escape(json.dumps(data, ensure_ascii=False, indent=2))
         + '</code></pre></details>'
     )
     return document_html(
         '',
-        title='Thread / 讨论串',
+        title='讨论 · msg',
         account=account,
         raw_path=path,
         raw_query=raw_query,
-        body_html=''.join(parts),
+        body_html=body,
+        thread_script=True,
         service_url=service_url,
     )
 

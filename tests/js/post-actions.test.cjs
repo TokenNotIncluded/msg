@@ -26,9 +26,11 @@ function page(options={}) {
   const panel = element(); panel.dataset = {signedIn:'true',id:'post',author:'author',revision:'displayed-revision',csrf:'csrf'};
   panel.querySelectorAll = () => buttons;
   panel.querySelector = selector => ({form,textarea:field,'[role=status]':status,label,'[type=submit]':submit,'[data-copy=collection]':collection,'[data-copy=proofs]':element(),'[data-copy=forks]':element(),'[data-copy=claims]':element(),'[data-copy=claim-note]':element(),'[data-compose-close]':close})[selector];
-  const calls = [];
+  const calls = [], notifications = [];
   vm.runInNewContext(script, {
     document:{documentElement:{lang:'en'},getElementById:()=>panel,createElement:element},
+    window:{dispatchEvent:event=>notifications.push(event)},
+    CustomEvent:class {constructor(type,options){this.type=type;this.detail=options.detail;}},
     MutationObserver:class {observe() {}},
     crypto:{randomUUID:()=>String(calls.length)}, AbortSignal:{timeout:()=>null},
     location:{assign() {throw Error('Unexpected login');}},
@@ -43,7 +45,7 @@ function page(options={}) {
       return {ok:true,json:async()=>({status:'ok',data:{proofs:{USED:1},my_proofs:['USED']},resources:[{id:'branch'}]})};
     }
   });
-  return {buttons,form,field,status,calls,submit,close};
+  return {buttons,form,field,status,calls,submit,close,notifications};
 }
 
 test('reading never writes; a claim needs explicit submit and pins displayed revision', async () => {
@@ -138,6 +140,9 @@ test('pending write locks composer switching and preserves the submitted operati
   assert.equal(JSON.parse(ui.calls[1].args.body).operation,'discussion.reply');
   assert.match(ui.status.textContent,/Comment posted/);
   assert.equal(ui.status.children[0].textContent,'View comment');
+  assert.equal(ui.notifications.length,1);
+  assert.equal(ui.notifications[0].type,'msg:reply-posted');
+  assert.equal(ui.notifications[0].detail.parent,'post');
   assert.equal(ui.field.disabled,false); assert.equal(ui.close.disabled,false);
 });
 

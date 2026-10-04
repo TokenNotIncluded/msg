@@ -16,6 +16,8 @@ ROOT_FIELDS = (*NESTED_FIELDS, 'generation', 'created_at', 'modified_at', 'owner
 
 
 def read_query_version(arguments):
+    if arguments.get('query_version') == 5:
+        return 5
     if arguments.get('query_version') == 3 or isinstance(arguments.get('expand'), Mapping):
         return 3
     return 2 if any(name in arguments for name in ('expand', 'collection', 'nested_first')) else 1

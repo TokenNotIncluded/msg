@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -1268,6 +1269,161 @@ def create_app(service):
                     if raw_document
                     else 'text/markdown',
                     headers=headers,
+                )
+            if path == '/_post/reply-status':
+                require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+                require(
+                    'authorization' not in request.headers
+                    and 'x-msg-request' not in request.headers,
+                    'invalid_request',
+                )
+                pairs = request.query_params.multi_items()
+                query = dict(pairs)
+                require(len(pairs) == len(query), 'duplicate_query_parameter')
+                require(set(query) == {'id'}, 'unknown_query_parameter')
+                focus = await execute_packet(
+                    request_for(
+                        'discovery.get',
+                        {'id': query['id'], 'fields': ['id']},
+                        service.settings.service_url,
+                        source='manual',
+                    )
+                )
+                if focus.error:
+                    return json_response(result_wire(focus), error_status(focus.error.code))
+                from msg.transports.thread_browser import reply_statuses
+                from msg.transports.thread_panel import reply_label
+
+                rid = focus.data['id']
+                statuses = await reply_statuses(
+                    execute_packet,
+                    [rid],
+                    service.settings.service_url,
+                    public_execute=service.executor.execute,
+                )
+                status = statuses.get(rid)
+                body = canonical({
+                    'data': {'id': rid, 'status': status, 'reply_label': reply_label(status)}
+                })
+                require(len(body) <= limits.max_response_bytes, 'response_too_large')
+                return Response(
+                    b'' if request.method == 'HEAD' else body,
+                    status_code=200 if status is not None else 503,
+                    media_type='application/json',
+                    headers={
+                        **BASE_HEADERS,
+                        'Cache-Control': 'private, no-store',
+                        'Vary': 'Accept, Cookie',
+                        'Content-Length': str(len(body)),
+                    },
+                )
+            if path == '/_post/thread-fragment':
+                require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
+                require(
+                    'authorization' not in request.headers
+                    and 'x-msg-request' not in request.headers,
+                    'invalid_request',
+                )
+                pairs = request.query_params.multi_items()
+                query = dict(pairs)
+                require(len(pairs) == len(query), 'duplicate_query_parameter')
+                require(
+                    'id' in query and set(query) <= {'id', 'limit', 'cursor'},
+                    'unknown_query_parameter',
+                )
+                if 'limit' in query:
+                    require(
+                        query['limit'].isascii()
+                        and query['limit'].isdecimal()
+                        and len(query['limit']) <= 3,
+                        'invalid_limit',
+                    )
+                    query['limit'] = int(query['limit'])
+                    require(1 <= query['limit'] <= 10, 'invalid_limit')
+                else:
+                    query['limit'] = 8
+                from msg.transports.thread_browser import (
+                    branch_items,
+                    fragment_html,
+                    reply_statuses,
+                )
+
+                focus = await execute_packet(
+                    request_for(
+                        'discovery.get',
+                        {'id': query['id'], 'fields': ['id', 'type', 'state']},
+                        service.settings.service_url,
+                        source='manual',
+                    )
+                )
+                if focus.error:
+                    return json_response(result_wire(focus), error_status(focus.error.code))
+                focus_id = focus.data['id']
+                require(focus.data['type'] == 'post', 'not_a_post')
+                require(focus.data['state'] == 'active', 'ancestor_inactive')
+                if query.get('cursor'):
+                    saved, _ = service.cursors.inspect_page(query['cursor'], service.clock())
+                    bound = saved.get('arguments', {})
+                    require(
+                        saved.get('operation') == 'discovery.read_query'
+                        and bound
+                        == {
+                            'parent': focus_id,
+                            'collection': 'replies',
+                            'fields': ['id', 'revision'],
+                            'limit': query['limit'],
+                            'query_version': 3,
+                        },
+                        'cursor_query_mismatch',
+                    )
+                    arguments = {'cursor': query['cursor']}
+                else:
+                    arguments = {
+                        'parent': focus_id,
+                        'collection': 'replies',
+                        'fields': ['id', 'revision'],
+                        'limit': query['limit'],
+                    }
+                result = await execute_packet(
+                    request_for(
+                        'discovery.read_query',
+                        arguments,
+                        service.settings.service_url,
+                        source='manual',
+                        contract_version=3,
+                    )
+                )
+                if result.error:
+                    return json_response(result_wire(result), error_status(result.error.code))
+                page = wire(result.data)
+                items = await branch_items(execute_packet, page, service.settings.service_url)
+                # 焦点已获当前授权，只作为这一层的结构节点，不重复读取正文或祖先。
+                data = {'root': focus_id, 'items': [{'id': focus_id}, *items]}
+                if page.get('pageInfo', {}).get('hasNextPage'):
+                    data['cursor'] = page['pageInfo']['endCursor']
+                statuses = await reply_statuses(
+                    execute_packet,
+                    list(dict.fromkeys([focus_id, *(item['id'] for item in data['items'])]))[:20],
+                    service.settings.service_url,
+                    public_execute=service.executor.execute,
+                )
+                body = fragment_html(
+                    data,
+                    focus_id=focus_id,
+                    query=query,
+                    status=statuses.get(focus_id),
+                    statuses=statuses,
+                ).encode()
+                require(len(body) <= limits.max_response_bytes, 'response_too_large')
+                return Response(
+                    b'' if request.method == 'HEAD' else body,
+                    media_type='text/html',
+                    headers={
+                        **HOME_BROWSER_HEADERS,
+                        'Cache-Control': 'private, no-store',
+                        'Vary': 'Accept, Cookie',
+                        'Content-Length': str(len(body)),
+                    },
                 )
             if path in {'/_post/state', '/_post/proofs', '/_post/forks', '/bookmarks'}:
                 require(request.method in {'GET', 'HEAD'}, 'method_not_allowed')
@@ -2791,6 +2947,29 @@ def create_app(service):
                 cookie = request.cookies.get(session_cookie, '')
                 browser_html = 'text/html' in request.headers.get('accept', '').casefold()
                 renderer = home_html if browser_html else home_markdown
+                reply_status = {}
+                if browser_html and home_data:
+                    from msg.transports.thread_browser import reply_statuses, root_post_index
+
+                    index = await root_post_index(
+                        service.executor.execute, service.settings.service_url, limit=5
+                    )
+                    home_data = {
+                        **home_data,
+                        'latest': index['items'],
+                        'latest_unavailable': bool(index.get('error')),
+                    }
+                    latest = home_data.get('latest', [])[:5]
+                    statuses = await reply_statuses(
+                        execute_packet,
+                        [item['path'] for item in latest],
+                        service.settings.service_url,
+                        public_execute=service.executor.execute,
+                    )
+                    reply_status = {
+                        item['path']: statuses.get('r_' + item['path'].removeprefix('/*'))
+                        for item in latest
+                    }
                 payload = renderer(
                     home_data,
                     public_board=board_value,
@@ -2801,12 +2980,14 @@ def create_app(service):
                         getattr(service.settings, 'oauth', None), 'enabled', False
                     ),
                     expired=request.scope.get('state', {}).get('msg_browser_expired', False),
+                    **({'reply_status': reply_status} if browser_html else {}),
                 )
                 headers = {
                     **(HOME_BROWSER_HEADERS if browser_html else BASE_HEADERS),
                     'Content-Length': str(len(payload)),
                     'Cache-Control': 'private, no-store'
                     if request.headers.get('cookie')
+                    or (browser_html and (home_data or {}).get('latest_unavailable'))
                     else 'private, no-cache',
                     'Vary': 'Accept, Cookie',
                     'X-Msg-Home-Snapshot': 'unavailable'
@@ -2822,7 +3003,10 @@ def create_app(service):
                         else {}
                     ),
                 }
-                if not request.headers.get('cookie'):
+                if (
+                    not request.headers.get('cookie')
+                    and headers['Cache-Control'] != 'private, no-store'
+                ):
                     headers['ETag'] = '"' + sha256(payload).hexdigest() + '"'
                     if not_modified(request, headers['ETag']):
                         headers.pop('Content-Length', None)
@@ -3704,7 +3888,15 @@ def create_app(service):
                     require(0 <= preview <= 1000, 'invalid_preview')
                     args.update(query)
                 else:
-                    require(not request.query_params, 'unknown_query_parameter')
+                    require(
+                        not request.query_params
+                        or (
+                            view == 'markdown'
+                            and set(request.query_params) == {'post_cursor'}
+                            and 'text/html' in request.headers.get('accept', '').casefold()
+                        ),
+                        'unknown_query_parameter',
+                    )
                 if view == 'diff':
                     if post_view['new']:
                         args.update(old_revision=post_view['old'], new_revision=post_view['new'])
@@ -3850,6 +4042,15 @@ def create_app(service):
                         raise
                     browser_thread = False
             browser_html = browser_html or browser_thread
+            if 'post_cursor' in request.query_params:
+                require(
+                    browser_html
+                    and view == 'markdown'
+                    and value.get('type') == 'topic'
+                    and not value.get('conversation')
+                    and set(request.query_params) == {'post_cursor'},
+                    'unknown_query_parameter',
+                )
             thread_markup = None
             certificate_markup = None
             if browser_html and ('certificate' in value or 'certificates' in value):
@@ -3878,11 +4079,110 @@ def create_app(service):
                 headers.update(HOME_BROWSER_HEADERS)
             post_actions = ''
             wiki_actions = ''
+            discussion_html = ''
+            reply_status = None
             account = None
             if browser_html:
                 account = await browser_account()
+                if (
+                    value.get('type') == 'topic'
+                    and not value.get('conversation')
+                    and (
+                        any(item.get('type') == 'post' for item in value.get('items', ()))
+                        or request.query_params.get('post_cursor')
+                    )
+                ):
+                    from msg.transports.thread_browser import (
+                        reply_statuses,
+                        root_index_arguments,
+                        root_post_index,
+                    )
+
+                    cursor = request.query_params.get('post_cursor')
+                    if cursor:
+                        require(
+                            len(request.query_params.getlist('post_cursor')) == 1,
+                            'duplicate_query_parameter',
+                        )
+                        require(len(cursor) <= 8192, 'invalid_cursor')
+                        saved, _ = service.cursors.inspect_page(cursor, service.clock())
+                        bound = saved.get('arguments', {})
+                        require(
+                            saved.get('operation') == 'discovery.read_query'
+                            and bound
+                            == {
+                                **root_index_arguments(parent=value['id']),
+                                'query_version': 5,
+                            },
+                            'cursor_query_mismatch',
+                        )
+                    index = await root_post_index(
+                        execute_packet,
+                        service.settings.service_url,
+                        parent=value['id'],
+                        cursor=cursor,
+                        public_execute=service.executor.execute,
+                    )
+                    statuses = await reply_statuses(
+                        execute_packet,
+                        [item['id'] for item in index['items']],
+                        service.settings.service_url,
+                        public_execute=service.executor.execute,
+                    )
+                    next_page = (
+                        '/*'
+                        + hex_id(value['id'])
+                        + '?'
+                        + urlencode({'post_cursor': index['cursor']})
+                        if index.get('next')
+                        else None
+                    )
+                    value = {
+                        **value,
+                        'items': [
+                            {**item, '_reply_status': statuses.get(item['id'])}
+                            for item in index['items']
+                        ]
+                        + (
+                            []
+                            if cursor
+                            else [
+                                item
+                                for item in value.get('items', ())
+                                if item.get('type') != 'post'
+                            ]
+                        ),
+                        '_post_index_error': index.get('error'),
+                        '_post_index_public_only': index.get('public_only', False),
+                        '_post_index_next': next_page,
+                    }
+                    headers.update({
+                        'ETag': '"' + digest([value, account])[7:] + '"',
+                        'Cache-Control': 'private, no-store',
+                        'Vary': 'Accept, Cookie',
+                    })
                 if browser_thread:
                     from msg.transports.post_read_pages import thread_read_html
+                    from msg.transports.thread_browser import reply_statuses
+
+                    groups = [
+                        thread_items[offset : offset + 20]
+                        for offset in range(0, len(thread_items), 20)
+                    ]
+                    status_pages = await asyncio.gather(
+                        *(
+                            reply_statuses(
+                                execute_packet,
+                                [item['id'] for item in group],
+                                service.settings.service_url,
+                                public_execute=service.executor.execute,
+                            )
+                            for group in groups
+                        )
+                    )
+                    statuses = {
+                        rid: status for page in status_pages for rid, status in page.items()
+                    }
 
                     thread_markup = thread_read_html(
                         thread_items,
@@ -3891,6 +4191,7 @@ def create_app(service):
                         raw_query=request.url.query,
                         account=account,
                         service_url=service.settings.service_url,
+                        reply_statuses=statuses,
                     )
                     etag = '"' + digest([value, thread_markup.decode(), account])[7:] + '"'
                     headers.update({
@@ -3909,7 +4210,17 @@ def create_app(service):
                     post_actions = post_actions_html(
                         value, account, csrf(cookie) if cookie and account else ''
                     )
-                    etag = '"' + digest([value, browser_html, post_actions])[7:] + '"'
+                    from msg.transports.thread_browser import post_discussion
+
+                    discussion_html, reply_status = await post_discussion(
+                        execute_packet,
+                        value,
+                        service.settings.service_url,
+                        public_execute=service.executor.execute,
+                    )
+                    etag = (
+                        '"' + digest([value, browser_html, post_actions, discussion_html])[7:] + '"'
+                    )
                     headers['ETag'] = etag
                     headers['Cache-Control'] = 'private, no-store'
                     headers['Vary'] = 'Accept, Cookie'
@@ -3929,7 +4240,17 @@ def create_app(service):
                     wiki_actions = wiki_actions_html(
                         value, account, csrf(cookie) if cookie and account else ''
                     )
-                    etag = '"' + digest([value, browser_html, post_actions, wiki_actions])[7:] + '"'
+                    etag = (
+                        '"'
+                        + digest([
+                            value,
+                            browser_html,
+                            post_actions,
+                            wiki_actions,
+                            discussion_html,
+                        ])[7:]
+                        + '"'
+                    )
                     headers.update({
                         'ETag': etag,
                         'Cache-Control': 'private, no-store',
@@ -3995,6 +4316,8 @@ def create_app(service):
                     service_url=service.settings.service_url,
                     post_actions=post_actions,
                     wiki_actions=wiki_actions,
+                    discussion_html=discussion_html,
+                    reply_status=reply_status,
                 )
                 if browser_html
                 else resource_markdown(value, describe_resource(value)).encode()

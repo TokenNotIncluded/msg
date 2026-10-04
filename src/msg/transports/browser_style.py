@@ -57,23 +57,60 @@ PREFERENCES = (
 SKIP_LINK = '<a class="skip-link" href="#content" data-i18n="skip">Skip to content</a>'
 
 THEME_CSS = """
-.prose .thread-intro, .prose .thread-notice { color: var(--muted); }
+.page-topic-index .prose > h2 > a,
+.page-topic-index .prose > p > a[href*="post_cursor="] {
+  display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; max-width: 100%;
+}
+.thread-discussion { margin-block: 40px; min-width: 0; }
+.prose .thread-heading { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 8px 24px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.prose .thread-heading h1, .prose .thread-heading h2 { margin: 0; font: 600 1.6rem/1.3 var(--mono); letter-spacing: -.02em; }
+.prose .thread-range { margin: 8px 0 0; font-size: .8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.thread-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; }
+.thread-control { display: inline-flex; align-items: center; min-height: 44px; padding-inline: 4px; font-size: .875rem; }
+.prose .thread-notice, .prose .thread-empty { color: var(--muted); margin-block: 20px; }
 .prose .thread-tree { list-style: none; margin: 0; padding: 0; }
 .prose .thread-node { margin: 0; padding: 0; min-width: 0; scroll-margin-block: 24px; }
-.thread-node > article { padding-block: 24px; border-top: 1px solid var(--line); }
-.prose .thread-node h2 { font-size: 1.2rem; margin: 0; line-height: 1.5; }
-.thread-node h2 a, .thread-control { display: inline-flex; align-items: center; min-height: 44px; }
-.prose .thread-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: .8125rem; color: var(--muted); margin: 0 0 8px; }
+.thread-node > article { padding-block: 24px 20px; }
+.thread-node + .thread-node > article { border-top: 1px solid var(--line); }
+.thread-node:target > article { background: var(--panel); outline: 1px solid var(--line); outline-offset: 8px; }
+.prose .thread-title { margin: 0 0 10px; font: 600 1rem/1.5 var(--mono); }
+.thread-title a { display: inline-flex; align-items: center; min-height: 44px; color: var(--fg); text-decoration: none; }
+.thread-title a:hover { text-decoration: underline; }
+.prose .thread-root > article .thread-title { font-size: 1.15rem; }
+.prose .thread-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 0 12px; margin: 0 0 4px; font-size: .8125rem; line-height: 1.5; color: var(--muted); }
 .thread-meta a { display: inline-flex; align-items: center; min-height: 44px; }
-.thread-body > summary, .thread-branch > summary { min-height: 44px; padding-block: 8px; cursor: pointer; color: var(--muted); }
-.thread-body > summary:hover, .thread-branch > summary:hover { color: var(--fg); }
-.thread-branch > .thread-tree { margin-inline-start: 20px; padding-inline-start: 16px; border-inline-start: 1px solid var(--line); }
-.thread-node[data-depth="8"] .thread-branch > .thread-tree { margin-inline-start: 0; padding-inline-start: 0; border: 0; }
+.thread-meta .thread-author { color: var(--fg); font: 500 .875rem/1.5 var(--mono); text-decoration: none; }
+.thread-meta .thread-author:hover { text-decoration: underline; }
+.thread-meta .thread-permalink, .thread-meta .thread-parent { color: var(--muted); text-decoration: none; }
+.thread-meta .thread-permalink:hover, .thread-meta .thread-parent:hover { color: var(--fg); text-decoration: underline; }
+.thread-node-kind { border-inline-start: 1px solid var(--line); padding-inline-start: 12px; }
+.prose .thread-body { max-width: 72ch; margin: 0; line-height: 1.8; }
+.thread-body > :first-child, .thread-content > :first-child { margin-top: 0; }
+.thread-body > :last-child, .thread-content > :last-child { margin-bottom: 0; }
 .prose .thread-body h1, .prose .thread-body h2, .prose .thread-body h3 { font-size: 1rem; }
-.thread-body > :last-child { margin-bottom: 0; }
+.thread-long-body > summary { min-height: 44px; cursor: pointer; list-style: none; }
+.thread-long-body > summary::-webkit-details-marker { display: none; }
+.thread-excerpt { display: block; color: var(--fg); margin-bottom: 8px; }
+.thread-expand-label, .thread-collapse-label { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent); font-size: .875rem; text-decoration: underline; text-underline-offset: .22em; }
+.thread-collapse-label, .thread-long-body[open] > summary .thread-expand-label, .thread-long-body[open] > summary .thread-excerpt { display: none; }
+.thread-long-body[open] > summary .thread-collapse-label { display: inline-flex; }
+.prose .thread-truncation { color: var(--muted); font-size: .8125rem; }
+.prose .thread-stats { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin: 16px 0 0; min-height: 44px; font-size: .8125rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.thread-branch > summary { display: flex; align-items: center; min-height: 44px; padding-block: 8px; cursor: pointer; color: var(--muted); font-size: .8125rem; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+.thread-branch > summary:hover { color: var(--fg); }
+.thread-branch > summary::-webkit-details-marker { display: none; }
+.thread-branch-count { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.thread-branch-chevron { flex: 0 0 auto; }
+.thread-branch[open] > summary .thread-branch-chevron { transform: rotate(90deg); }
+.prose .thread-branch-pending { margin: 12px 0 20px; font-size: .875rem; color: var(--muted); }
+.thread-branch > [data-thread-branch-content] { margin-inline-start: 12px; padding-inline-start: 24px; border-inline-start: 1px solid var(--line); }
+.thread-node[data-depth="8"] .thread-branch > [data-thread-branch-content] { margin-inline-start: 0; padding-inline-start: 0; border: 0; }
+.prose .thread-more { margin-block: 24px 0; border-top: 1px solid var(--line); padding-top: 12px; }
 @media (max-width: 640px) {
-  .thread-branch > .thread-tree { margin-inline-start: 8px; padding-inline-start: 12px; }
-  .thread-node[data-depth="3"] .thread-branch > .thread-tree { margin-inline-start: 0; padding-inline-start: 0; border: 0; }
+  .thread-discussion { margin-block: 32px; }
+  .thread-branch > [data-thread-branch-content] { margin-inline-start: 4px; padding-inline-start: 12px; }
+  .thread-node[data-depth="3"] .thread-branch > [data-thread-branch-content] { margin-inline-start: 0; padding-inline-start: 0; border: 0; }
+  .thread-meta { column-gap: 10px; }
 }
 :root {
   --accent-light: #205ba7; --accent-dark: #94bfff; --accent: var(--accent-light);

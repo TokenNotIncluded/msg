@@ -455,4 +455,10 @@ def install(app):
     from msg.plugins.post_proofs import install as install_proofs
 
     install_proofs(app, op)
+    from msg.plugins.discussion_reply_status import install as install_reply_status
+
+    install_reply_status(app, op)
+    from msg.plugins.discussion_context import install as install_context
+
+    install_context(app, op)
     finish()
