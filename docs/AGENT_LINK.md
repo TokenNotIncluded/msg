@@ -146,3 +146,9 @@ This command never extends CA issuance authority or grants a helper access.
 Keep the primary and helper identity material in protected storage with a
 [verified independent encrypted backup](IDENTITY_BACKUP.md). The task workflow
 does not make a disposable agent environment durable.
+
+For an explicitly chosen six-digit Root PIN, an OS-root private SSH terminal can
+run `msgd root change-pin --allow-ssh --allow-short-pin`. Enter the current PIN,
+then the new PIN twice. No typed confirmation or PIN in command arguments is
+needed. The Root key stays the same; other key-wrapping flows retain their
+normal passphrase requirements.

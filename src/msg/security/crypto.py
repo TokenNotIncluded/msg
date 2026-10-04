@@ -77,7 +77,9 @@ def verify(public: bytes, payload: bytes, signature: Signature, *, purpose: str)
         raise Failure('invalid_signature') from exc
 
 
-def _pin(pin):
+def _pin(pin, *, allow_short_pin=False):
+    if allow_short_pin and type(pin) is str and len(pin) == 6 and pin.isascii() and pin.isdecimal():
+        return pin.encode('utf-8')
     require(
         type(pin) is str
         and len(pin) >= 12
@@ -89,8 +91,8 @@ def _pin(pin):
     return pin.encode('utf-8')
 
 
-def seal_private_key(private: bytes, pin: str):
-    password = _pin(pin)
+def seal_private_key(private: bytes, pin: str, *, allow_short_pin=False):
+    password = _pin(pin, allow_short_pin=allow_short_pin)
     signer = Ed25519Signer.from_bytes(private)
     header = {
         'version': 1,
