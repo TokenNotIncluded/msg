@@ -128,4 +128,17 @@ async def test_bridge_rejects_other_service_and_reusable_secrets(tmp_path):
     )
     with pytest.raises(Failure, match='secure_channel_required'):
         await bridge.call(secret)
+    oversized = request_for('file.create', {'body': 'x' * 1048576}, 'https://msg.example')
+    with pytest.raises(Failure, match='request_too_large'):
+        await bridge.call(oversized)
     assert not list(bridge.directory.iterdir())
+
+
+@pytest.mark.asyncio
+async def test_bridge_cli_rejects_normal_account_before_opening_credentials():
+    from msg.cli import parser, run
+    from msg.core.errors import Failure
+
+    arguments = parser().parse_args(['--transport', 'tool_bridge', 'account', 'list'])
+    with pytest.raises(Failure, match='tool_bridge_link_required'):
+        await run(arguments)

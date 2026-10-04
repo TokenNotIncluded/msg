@@ -749,3 +749,38 @@ async def test_join_timeout_preserves_pending_profile(installed, tmp_path):
                 helper, args('join', code=invited['data']['invite_code'], wait=True, timeout=0)
             )
         assert helper.state.signer.key_id == key and helper.state.path.read_bytes() == before
+
+
+@pytest.mark.asyncio
+async def test_concurrent_owner_approval_cannot_race_mailbox_initialization(
+    installed, tmp_path, monkeypatch
+):
+    import asyncio
+
+    app, _ = installed
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        owner, _, _, joined = await prepared_link(app, tmp_path, http)
+        started, proceed = asyncio.Event(), asyncio.Event()
+        original = RemoteAgents.create
+
+        async def paused(self, name):
+            started.set()
+            await proceed.wait()
+            return await original(self, name)
+
+        monkeypatch.setattr(RemoteAgents, 'create', paused)
+        command = args('approve', code=joined['data']['join_code'], minutes=None)
+        first = asyncio.create_task(run_command(owner, command))
+        try:
+            await asyncio.wait_for(started.wait(), 10)
+            with pytest.raises(Failure, match='link_approval_in_progress'):
+                await run_command(owner, command)
+            proceed.set()
+            assert (await first)['status'] == 'ok'
+        finally:
+            proceed.set()
+            if not first.done():
+                first.cancel()
+            await asyncio.gather(first, return_exceptions=True)
