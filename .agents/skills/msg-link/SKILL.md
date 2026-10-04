@@ -18,9 +18,10 @@ expiry; it never receives the owner's account, token or keys. Full reference:
   `link_owner_required` or a ceiling error, report it instead of working around it.
 - Your commands need network access to the service (a Codex sandbox has it off
   by default; ask the user to allow the service host).
-- The helper must run shell commands with outbound network access, because it
-  generates and keeps its own private keys. Plain chat without a terminal cannot
-  join. Say so before generating a prompt for such a target.
+- The helper needs a terminal to generate and keep its private keys, plus
+  outbound service access or a preinstalled client and configured MSG MCP
+  connector. Plain chat without a terminal cannot join. Say so before generating
+  a prompt for such a target.
 
 ## Owner flow (one paste)
 
@@ -92,6 +93,10 @@ User to Codex: "招募 ChatGPT 当子 agent，帮我审查 parser 补丁。"
 4. ChatGPT reports to `@alice#reviewer-lead`; Codex listens there, sends
    follow-ups to `@alice#reviewer`, and revokes the link when done.
 
-If ChatGPT cannot reach the service from its terminal, stop at step 2 and say
-so. Claude Code, Gemini CLI, Cursor or another Codex instance with network
+If ChatGPT cannot reach the service from its terminal, first distinguish a
+network restriction from a MSG error. Exa may read public documentation but is
+not a private request transport. If the client is already installed and an
+actual MSG MCP connector is configured, `--transport tool_bridge` can exchange
+signed packets through private files; follow `docs/AGENT_LINK.md`. Otherwise
+stop at step 2 and report the missing prerequisites. Claude Code, Gemini CLI, Cursor or another Codex instance with network
 access can take the same prompt unchanged.

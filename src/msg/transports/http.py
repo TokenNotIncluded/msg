@@ -126,4 +126,7 @@ def create_app(service):
 
     app.add_middleware(OAuthBoundary, service=service)
     app.add_middleware(PassiveGetBoundary, service=service)
+    from msg.transports.safe_diagnostics import SafeDiagnostics
+
+    app.add_middleware(SafeDiagnostics, service=service)
     return app

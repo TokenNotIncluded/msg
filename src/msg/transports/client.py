@@ -13,6 +13,7 @@ from msg.core.models import TransportLimits
 from msg.core.requests import SECRET_DELIVERY_MIN_VERSION
 from msg.service_origin import service_origin
 from msg.transports.packet import decode_result, require_url_safe_packet, safe_error_code
+from msg.transports.tool_bridge import ToolBridgeTransport
 from msg.transports.url_safety import require_safe_relative_url
 
 
@@ -293,4 +294,5 @@ TRANSPORTS = {
     'path_get': PathGETTransport,
     'graphql': GraphQLTransport,
     'mcp_http': MCPHTTPTransport,
+    'tool_bridge': ToolBridgeTransport,
 }

@@ -634,6 +634,10 @@ async def run(args):
         account=args.account,
     )
     transport_options = {'endpoint': args.endpoint} if args.endpoint is not None else {}
+    if args.transport == 'tool_bridge':
+        require(args.link is not None and args.endpoint is None, 'tool_bridge_link_required')
+        transport_options['exchange_dir'] = state.paths.data / 'tool-exchange'
+        print('MSG connector exchange: ' + str(transport_options['exchange_dir']), file=sys.stderr)
     transport = TRANSPORTS[args.transport](state.server, **transport_options)
     client = MsgClient(state, transport)
     if signer_override is not None:

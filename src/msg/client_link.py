@@ -28,8 +28,9 @@ import base64
 import os
 import secrets
 import shlex
+import sys
+import time
 from copy import copy
-from datetime import timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -41,12 +42,14 @@ from msg.client_delegated import (
     create as create_delegation,
     prepare as prepare_delegation,
     read_json,
+    require_empty_profile,
 )
 from msg.client_subagents import normalize_agent, validate_username
 from msg.client_subagents_remote import RemoteAgents
-from msg.core.codec import canonical, loads, unb64
+from msg.core.codec import b64, canonical, loads, unb64
 from msg.core.errors import Failure, require
 from msg.paths import private_directory, xdg_directory
+from msg.plugins.delegated_identity import possession_body
 from msg.security.crypto import key_id
 from msg.service_origin import service_namespace, service_origin
 
@@ -79,6 +82,12 @@ def add_commands(commands):
         action='store_false',
         dest='wait',
         help='Submit the public key and print a join code instead of waiting.',
+    )
+    join.add_argument(
+        '--timeout',
+        type=float,
+        default=300,
+        help='Maximum seconds to wait; keeps keys and progress on timeout.',
     )
     join.set_defaults(wait=True)
     watch = actions.add_parser('watch', help='Owner: approve claims from the private listener.')
@@ -391,6 +400,9 @@ async def invite(client, args):
 
 async def join(client, args):
     state = client.state
+    if getattr(args, 'wait', False):
+        timeout = getattr(args, 'timeout', 300)
+        require(isinstance(timeout, (int, float)) and 0 <= timeout <= 86400, 'invalid_link_timeout')
     code = decode_code(args.code, 'invite')
     require(code.get('server') == state.server, 'wrong_service')
     grantor, name, invite_id = code.get('grantor'), code.get('name'), code.get('invite')
@@ -399,11 +411,45 @@ async def join(client, args):
     name = check_name(name, grantor[1:])
     saved = state.data.get('agent_link')
     link = {'grantor': grantor, 'name': name, 'invite': invite_id}
-    require(saved is None or saved == link, 'link_profile_in_use')
-    request = prepare_delegation(client, grantor)
+    require(
+        saved is None
+        or (isinstance(saved, dict) and all(saved.get(k) == v for k, v in link.items())),
+        'link_profile_in_use',
+    )
+    if saved is not None and saved.get('access_code'):
+        return await accept(client, SimpleNamespace(code=saved['access_code']))
+    if state.subject is not None:
+        require_empty_profile(client)
+        require(
+            state.token is None and not state.hardware_path.exists(),
+            'delegated_profile_must_be_empty',
+        )
+        grant = state.data.get('delegated_identity')
+        require(saved is not None and isinstance(grant, dict), 'delegated_profile_must_be_empty')
+        acceptance_binding(client, grant)
+        require(grant.get('grantor_address') == grantor, 'delegated_grantor_mismatch')
+        public, recipient = b64(state.signer.public_key), state.encryption_recipient
+        request = {
+            'target_service': state.server,
+            'grantor': grantor,
+            'public_key': public,
+            'encryption_recipient': recipient,
+            'possession_proof': state.signer.sign(
+                possession_body(state.server, public, recipient, grantor),
+                purpose='delegated-identity-v1',
+            ),
+        }
+        from msg.core.codec import wire
+
+        request['possession_proof'] = wire(request['possession_proof'])
+    else:
+        request = prepare_delegation(client, grantor)
     if saved is None:
         state.data['agent_link'] = link
         state._save()
+    if getattr(args, 'wait', False):
+        link_progress('Local keys saved.')
+    submitted = True
     claim_arguments = {
         'invite_id': invite_id,
         'grantor': request['grantor'],
@@ -414,6 +460,7 @@ async def join(client, args):
     try:
         client.checked(await client.call('identity.link_claim', claim_arguments, anonymous=True))
     except Failure as exc:
+        submitted = False
         if getattr(args, 'wait', False) or exc.code not in {
             'transport_error',
             'transport_uncertain',
@@ -422,7 +469,10 @@ async def join(client, args):
     join_code = encode_code('join', {'name': name, 'invite': invite_id, 'request': request})
     if getattr(args, 'wait', False):
         minutes = code.get('minutes') if isinstance(code.get('minutes'), int) else 120
-        return await wait_for_access(client, claim_arguments, minutes)
+        link_progress('Claim submitted. Waiting for owner approval.')
+        return await wait_for_access(
+            client, claim_arguments, minutes, timeout=getattr(args, 'timeout', 300)
+        )
     return {
         'status': 'ok',
         'data': {
@@ -432,7 +482,9 @@ async def join(client, args):
             'profile': str(state.paths.data),
         },
         'prompt': '\n'.join([
-            f'Claimed the invitation from {grantor}. The owner approves it from their listener.',
+            f'Claimed the invitation from {grantor}. The owner approves it from their listener.'
+            if submitted
+            else 'The claim could not be submitted. Use the manual approve / accept fallback.',
             'Run the same join command without --no-wait to collect the task.',
             '',
             join_code,
@@ -461,23 +513,43 @@ async def publish_grant(client, record, grant):
     )
 
 
-async def wait_for_access(client, claim, minutes):
+def link_progress(message):
+    print('MSG link: ' + message, file=sys.stderr, flush=True)
+
+
+async def wait_for_access(client, claim, minutes, *, timeout=300):
     from msg.security.age_keys import private_from_identity
     from msg.security.sealed_box import decrypt
 
-    deadline = client.clock() + timedelta(minutes=minutes)
+    require(isinstance(timeout, (int, float)) and 0 <= timeout <= 86400, 'invalid_link_timeout')
+    deadline = time.monotonic() + timeout
     private = private_from_identity(
         client.state.age_key_path.read_text().strip()
     ).private_bytes_raw()
     while True:
-        result = client.checked(await client.call('identity.link_collect', claim, anonymous=True))
+        try:
+            result = client.checked(
+                await asyncio.wait_for(
+                    client.call('identity.link_collect', claim, anonymous=True),
+                    timeout=max(0.01, deadline - time.monotonic()),
+                )
+            )
+        except TimeoutError as exc:
+            raise Failure('link_wait_timeout', retryable=True) from exc
+        except Failure as exc:
+            if exc.code not in {'transport_error', 'transport_uncertain'}:
+                raise
+            require(time.monotonic() < deadline, 'link_wait_timeout', retryable=True)
+            await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
+            continue
         box = result.data.get('grant_box')
         if box:
+            link_progress('Authorization received.')
             bundle = loads(decrypt(box.encode(), private))
             return await accept(client, SimpleNamespace(code=encode_code('access', bundle)))
         require(result.data.get('state') != 'expired', 'link_invite_expired')
-        require(client.clock() < deadline, 'link_invite_expired')
-        await asyncio.sleep(1)
+        require(time.monotonic() < deadline, 'link_wait_timeout', retryable=True)
+        await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
 
 
 async def watch(client, args):
@@ -667,6 +739,11 @@ async def accept(client, args):
         await candidate.call('communication.changes', {'cursor': cursor['sync_cursor'], 'limit': 1})
     )
     require(not page.data.get('resync_required'), 'resync_required')
+    # Persist the public grant/cursor before binding so interrupted acceptance resumes.
+    link['access_code'] = args.code
+    state.data['agent_link'] = link
+    state._save()
+    link_progress('Task read.')
     accepted = accept_delegation(client, grant)
     mailbox = RemoteAgents(client)
     await mailbox.send(
@@ -675,18 +752,35 @@ async def accept(client, args):
         f'Accepted the task as {accepted["address"]}.',
         message_id='accept-' + link['invite'],
     )
+    link_progress('Acceptance message submitted (not a read receipt).')
     seed_listener(client, name, code['cursor'])
     link['accepted'] = True
     state.data['agent_link'] = link
     state._save()
+    helper = helper_command(state.server, link['grantor'][1:], name)
+    if client.transport.name != 'http':
+        helper += ' --transport ' + client.transport.name
+    helper += ' --agent ' + shlex.quote(name)
+    commands = {
+        'send': helper
+        + ' agent send '
+        + shlex.quote(link['grantor'] + '#' + lead_label(name))
+        + ' "progress or result" --remote',
+        'listen': helper + ' listen --remote',
+    }
     return {
         'status': 'ok',
-        'data': {**accepted, 'name': name, 'task': task},
+        'data': {**accepted, 'name': name, 'task': task, 'commands': commands},
         'prompt': '\n'.join([
             f'Accepted as {accepted["address"]} until {accepted["expires_at"]}.',
             '',
             f'Task from {task["from"]}:',
             task['message'],
+            '',
+            'Report progress or results:',
+            commands['send'],
+            'Wait for follow-ups:',
+            commands['listen'],
         ]),
     }
 

@@ -671,3 +671,81 @@ def test_terminal_output_is_the_copyable_prompt():
     value = {'status': 'ok', 'data': {'invite_code': 'msglink1.x'}, 'prompt': 'Paste me\nverbatim'}
     assert render_text(value, context='link') == 'Paste me\nverbatim'
     assert decode_code(' msglink1.' + encode_code('join', {'a': 1})[9:] + '\n', 'join')['a'] == 1
+
+
+@pytest.mark.asyncio
+async def test_join_resumes_accepted_profile_and_checks_live_revocation(installed, tmp_path):
+    app, _ = installed
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        owner, helper, invited, joined = await prepared_link(app, tmp_path, http)
+        approved = await run_command(
+            owner, args('approve', code=joined['data']['join_code'], minutes=None)
+        )
+        accepted = await run_command(helper, args('accept', code=approved['data']['access_code']))
+        key, recipient = helper.state.signer.key_id, helper.state.encryption_recipient
+        repeated = await run_command(
+            helper, args('join', code=invited['data']['invite_code'], wait=True)
+        )
+        assert repeated['data']['task'] == accepted['data']['task']
+        assert helper.state.signer.key_id == key and helper.state.encryption_recipient == recipient
+        commands = repeated['data']['commands']
+        assert "--link '@alice#reviewer'" in commands['send']
+        assert '--server ' in commands['send'] and '--agent reviewer' in commands['listen']
+        # Profiles accepted by the old client have no saved access code.
+        helper.state.data['agent_link'].pop('access_code')
+        helper.state._save()
+        legacy = await run_command(
+            helper, args('join', code=invited['data']['invite_code'], wait=True)
+        )
+        assert legacy['data']['task'] == accepted['data']['task']
+        assert helper.state.signer.key_id == key
+        await run_command(owner, args('revoke', name='reviewer'))
+        with pytest.raises(Failure, match='authority_source_inactive'):
+            await run_command(helper, args('join', code=invited['data']['invite_code'], wait=True))
+
+
+@pytest.mark.asyncio
+async def test_join_resumes_interrupted_acceptance_without_new_keys(
+    installed, tmp_path, monkeypatch
+):
+    app, _ = installed
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        owner, helper, invited, joined = await prepared_link(app, tmp_path, http)
+        approved = await run_command(
+            owner, args('approve', code=joined['data']['join_code'], minutes=None)
+        )
+        key = helper.state.signer.key_id
+        original = RemoteAgents.send
+
+        async def interrupted(*args, **kwargs):
+            raise Failure('transport_uncertain', retryable=True)
+
+        monkeypatch.setattr(RemoteAgents, 'send', interrupted)
+        with pytest.raises(Failure, match='transport_uncertain'):
+            await run_command(helper, args('accept', code=approved['data']['access_code']))
+        assert helper.state.subject is not None
+        monkeypatch.setattr(RemoteAgents, 'send', original)
+        result = await run_command(
+            helper, args('join', code=invited['data']['invite_code'], wait=True)
+        )
+        assert result['data']['task']['message'] == 'Review the parser patch and report.'
+        assert helper.state.signer.key_id == key
+
+
+@pytest.mark.asyncio
+async def test_join_timeout_preserves_pending_profile(installed, tmp_path):
+    app, _ = installed
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app(app)), base_url=app.settings.service_url
+    ) as http:
+        _, helper, invited, _ = await prepared_link(app, tmp_path, http)
+        key, before = helper.state.signer.key_id, helper.state.path.read_bytes()
+        with pytest.raises(Failure, match='link_wait_timeout'):
+            await run_command(
+                helper, args('join', code=invited['data']['invite_code'], wait=True, timeout=0)
+            )
+        assert helper.state.signer.key_id == key and helper.state.path.read_bytes() == before
