@@ -148,7 +148,9 @@ def test_root_preview_never_checks_console_or_unlocks(tmp_path, monkeypatch):
     }
 
 
-@pytest.mark.parametrize('options', [{'apply': True}, {'expected_digest': 'unexpected'}])
+@pytest.mark.parametrize(
+    'options', [{'apply': True, 'expected_digest': ''}, {'expected_digest': 'unexpected'}]
+)
 def test_apply_requires_the_prior_preview_before_touching_authority(tmp_path, monkeypatch, options):
     monkeypatch.setattr(RootAdmin, '_provisioning_operator', forbidden)
     monkeypatch.setattr(RootAdmin, '_app', forbidden)
@@ -212,3 +214,68 @@ async def test_late_recovery_markers_block_apply_without_business_or_sequence_wr
             assert await snapshot() == before, mode
         finally:
             marker.unlink(missing_ok=True)
+
+
+@pytest.mark.parametrize('answer,accepted', [('y', True), (' Y ', True), ('n', False), ('', False)])
+def test_apply_uses_short_confirmation_and_captures_its_own_preview(
+    tmp_path, monkeypatch, answer, accepted
+):
+    from types import SimpleNamespace
+
+    from msg.security.crypto import Ed25519Signer
+
+    signer = Ed25519Signer.generate()
+    plan = {
+        'handle': '@old',
+        'subject_id': 'u_old',
+        'key_id': signer.key_id,
+        'additions': ['identity.link_open@1'],
+    }
+    prompts, pin_prompts, applied = [], [], []
+
+    @asynccontextmanager
+    async def transaction(*, write):
+        assert write is False
+        yield object()
+
+    async def close():
+        pass
+
+    app = SimpleNamespace(metadata=SimpleNamespace(transaction=transaction), close=close)
+
+    async def opened(config_dir):
+        return app
+
+    async def preview(app, tx, subject, key_id):
+        assert subject == '@old'
+        return plan
+
+    async def repair(app, subject, root, **options):
+        assert root.public_key == signer.public_key
+        assert options['expected_digest'] == digest(plan)
+        applied.append(options)
+        return {'changed': True}
+
+    def confirm(prompt):
+        prompts.append(prompt)
+        return answer
+
+    monkeypatch.setattr('msg.admin.link_authority.open_for_repair', opened)
+    monkeypatch.setattr('msg.admin.link_authority.link_preview', preview)
+    monkeypatch.setattr('msg.admin.link_authority.repair_link_authority', repair)
+    monkeypatch.setattr(RootAdmin, '_provisioning_operator', lambda self: 'test-operator')
+    monkeypatch.setattr('builtins.input', confirm)
+    monkeypatch.setattr('msg.admin.root.root_envelope', lambda config: tmp_path / 'envelope')
+    monkeypatch.setattr('msg.security.root_files.read_private', lambda path: b'{}')
+    monkeypatch.setattr(
+        'msg.admin.root.open_private_key', lambda envelope, pin: signer.private_bytes()
+    )
+    monkeypatch.setattr('getpass.getpass', lambda prompt: pin_prompts.append(prompt) or 'test-only')
+    if accepted:
+        assert RootAdmin(tmp_path).repair_link_authority('@old', apply=True) == {'changed': True}
+        assert len(applied) == len(pin_prompts) == 1
+    else:
+        with pytest.raises(Failure, match='approval_cancelled'):
+            RootAdmin(tmp_path).repair_link_authority('@old', apply=True)
+        assert not applied and not pin_prompts
+    assert prompts == ['Apply this repair? [y/N]: ']

@@ -116,9 +116,11 @@ An operator can preview the exact repair locally:
 msgd account repair-link @alice --key-id CURRENT_PRIMARY_KEY_ID
 ```
 
-To apply, add `--apply --expected-digest DIGEST_FROM_PREVIEW`. This requires the
-Root PIN and an exact `REPAIR LINK DIGEST` confirmation in a private terminal
-(`--allow-ssh` explicitly permits an OS-root SSH terminal). The signed audit
+To apply, run the same command with `--apply`. It shows the account and exact
+permission additions; enter `y`, then the Root PIN in a private terminal
+(`--allow-ssh` explicitly permits an OS-root SSH terminal). No digest needs to be
+retyped. `--expected-digest` remains optional for pinning a prior preview; the
+transaction always rejects changes since the displayed preview. The signed audit
 records seven fixed owner operations; existing scopes, constraints, certificates,
 secondary keys and tokens stay unchanged. Revoked, expired, delegated and
 non-primary keys cannot be repaired. Repeating a completed repair is a no-op.

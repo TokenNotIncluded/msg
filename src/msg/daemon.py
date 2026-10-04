@@ -240,7 +240,7 @@ def parser():
     link_repair.add_argument('subject_id')
     link_repair.add_argument('--key-id')
     link_repair.add_argument('--apply', action='store_true')
-    link_repair.add_argument('--expected-digest')
+    link_repair.add_argument('--expected-digest', help='Optional digest to pin a previous preview')
     link_repair.add_argument('--allow-ssh', action='store_true')
     board = sub.add_parser('board', help='Local Root channel administration')
     board_sub = board.add_subparsers(dest='board_command', required=True)
