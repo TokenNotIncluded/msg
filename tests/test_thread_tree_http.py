@@ -55,7 +55,12 @@ async def test_nested_branches_survive_pagination_and_hidden_parent_without_extr
         continuation = await http.get(first.json()['next'], headers={'Accept': 'text/html'})
         assert continuation.text.count('<article>') == 2
         assert '父帖不在当前页' in continuation.text
-        assert f'href="#reply-{hex_id(branch.id)}"' not in continuation.text
+        # Equal timestamps are ordered by resource ID, not creation order.
+        branch_present = f'id="reply-{hex_id(branch.id)}"' in continuation.text
+        child_present = f'id="reply-{hex_id(child.id)}"' in continuation.text
+        assert (f'href="#reply-{hex_id(branch.id)}"' in continuation.text) == (
+            branch_present and child_present
+        )
         assert (await http.get(path)).json() == full.json()
         async with app.metadata.transaction(write=True) as tx:
             parent = await tx.resource(branch.id)
