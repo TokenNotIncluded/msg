@@ -51,7 +51,7 @@ async def test_local_stdio_signs_tools_and_never_exposes_root(installed, tmp_pat
             cursor = page.get('nextCursor')
             if cursor is None:
                 break
-        assert 'identity.register' in listed and 'identity.register@2' in listed
+        assert 'identity.register' not in listed and 'identity.register@2' in listed
         assert len(listed) == len(set(listed))
         request = {
             'jsonrpc': '2.0',
