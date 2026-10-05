@@ -27,6 +27,7 @@ from msg.security.oauth import (
     state_id,
 )
 from msg.transports.browser_login import LOGIN_POLL_SCRIPT
+from msg.transports.browser_navigation import HASH as NAVIGATION_HASH, TAG as NAVIGATION_TAG
 from msg.transports.browser_style import BRAND_LINK, PREFERENCES, SKIP_LINK, THEME_CSS
 from msg.transports.http_common import body_bytes
 from msg.transports.mcp_auth import (
@@ -49,7 +50,7 @@ HEADERS = {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; "
-    f"script-src 'sha256-{WEBMCP_HASH}'; connect-src 'self'; img-src 'self'; form-action 'self'; "
+    f"script-src 'sha256-{WEBMCP_HASH}' 'sha256-{NAVIGATION_HASH}'; connect-src 'self'; img-src 'self'; form-action 'self'; "
     "frame-ancestors 'none'; base-uri 'none'",
 }
 
@@ -90,6 +91,7 @@ def page(title, body, *, script=None):
         + body
         + '</div></main>'
         + WEBMCP_TAG
+        + NAVIGATION_TAG
         + script_tag
         + '</body></html>',
         # Form POSTs need a non-opaque Origin for the same-origin CSRF fence.

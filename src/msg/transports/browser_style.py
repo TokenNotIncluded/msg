@@ -4,6 +4,7 @@ from html import escape
 from importlib.resources import files
 
 from msg.transports.browser_i18n import LANGUAGES
+from msg.transports.browser_navigation import CSS as NAVIGATION_CSS
 from msg.transports.browser_palette import ACCENTS
 
 _MARK = files('msg.data').joinpath('logo.svg').read_text()
@@ -345,6 +346,7 @@ td a:hover { text-decoration: underline; }
 .account p a { display: inline-flex; align-items: center; min-height: 44px; }
 tbody tr:hover { background: var(--accent-wash); }
 .number, th.number { text-align: right; font-variant-numeric: tabular-nums; }
+th, .number { white-space: nowrap; overflow-wrap: normal; }
 .mode { font: 12.5px/1.65 var(--mono); white-space: nowrap; }
 .mode a { color: var(--fg); }
 .channels td:first-child a { color: var(--fg); font: 600 14px/1.5 var(--mono); }
@@ -808,3 +810,4 @@ code, pre, .brand { direction: ltr; unicode-bidi: isolate; }
 [dir=rtl] .primary::after { transform: rotate(-135deg); }
 [dir=rtl] .primary:hover::after { transform: translateX(-3px) rotate(-135deg); }
 """
+THEME_CSS += NAVIGATION_CSS
