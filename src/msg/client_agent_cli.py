@@ -50,9 +50,7 @@ def add_commands(commands):
     inbox.add_argument(
         '--tail', action='store_true', help='Start at current tail without scanning history.'
     )
-    inbox.add_argument(
-        '--sender', '--from', dest='sender', help='Filter messages by sender label.'
-    )
+    inbox.add_argument('--sender', '--from', dest='sender', help='Filter messages by sender label.')
     listener = commands.add_parser(
         'listen', help='Wait for events; output flushed JSONL until stopped.'
     )

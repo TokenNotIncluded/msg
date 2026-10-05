@@ -359,6 +359,7 @@ class RemoteAgents:
             raise
         values = []
         semaphore = asyncio.Semaphore(10)
+        read_many = getattr(self.client.transport, 'call_reads', None)
 
         async def inspect_item(item):
             name = self._label(item['name'])
@@ -380,9 +381,59 @@ class RemoteAgents:
                     return None
                 raise
 
+        async def inspect_chunk(chunk):
+            names = [self._label(item['name']) for item in chunk]
+            calls = [
+                self.client.prepare(
+                    'file.read',
+                    {
+                        'id': root + '/' + name + '/agent.json',
+                        'fields': [*PRIVATE_FIELDS, 'content'],
+                    },
+                )
+                for name in names
+            ]
+            try:
+                async with semaphore:
+                    results = await read_many(calls)
+            except Exception:
+                results = None
+            if results is None:
+                fallback_results = await asyncio.gather(*(inspect_item(item) for item in chunk))
+                return [r for r in fallback_results if r is not None]
+
+            chunk_values = []
+            for name, result in zip(names, results, strict=True):
+                if result.status != 'ok':
+                    continue
+                try:
+                    meta, value = self._private_json(result.data)
+                    config = self._config(meta, value, name)
+                    chunk_values.append({
+                        'name': name,
+                        'identity': self._full(name),
+                        'archived': config['archived'],
+                        'active': not config['archived'],
+                    })
+                except Failure as exc:
+                    if exc.code in {
+                        'subagent_not_found',
+                        'subagent_private_namespace_conflict',
+                        'invalid_subagent_message',
+                    }:
+                        continue
+                    raise
+            return chunk_values
+
         async for page in self._children(root, 'topic'):
-            results = await asyncio.gather(*(inspect_item(item) for item in page))
-            values.extend(r for r in results if r is not None)
+            if read_many is not None:
+                chunks = [page[i : i + 8] for i in range(0, len(page), 8)]
+                chunk_results = await asyncio.gather(*(inspect_chunk(c) for c in chunks))
+                for cr in chunk_results:
+                    values.extend(cr)
+            else:
+                results = await asyncio.gather(*(inspect_item(item) for item in page))
+                values.extend(r for r in results if r is not None)
         return sorted(values, key=lambda item: item['name'])
 
     async def show(self, name):
@@ -602,7 +653,10 @@ class RemoteAgents:
                     if meta['parent'] != mailbox or meta['name'] == 'agent.json':
                         continue
                     value = self._event(meta, value, agent)
-                    if sender_label is not None and self._stored_label(value['from']) != sender_label:
+                    if (
+                        sender_label is not None
+                        and self._stored_label(value['from']) != sender_label
+                    ):
                         continue
                     if not tail:
                         items.append(value)
