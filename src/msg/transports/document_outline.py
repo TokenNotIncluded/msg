@@ -7,13 +7,13 @@ from html import escape, unescape
 
 CSS = """
 .document-outline { position: fixed; inset: 22vh 24px auto auto; z-index: 5;
-  width: 30px; height: 56vh; display: block; transition: width .32s ease;
+  width: 44px; height: 56vh; display: block; transition: width .32s ease;
   color: var(--muted); }
-.document-outline::before { content: ''; position: absolute; right: 13px;
+.document-outline::before { content: ''; position: absolute; right: 20px;
   top: 8px; bottom: 8px; width: 2px; background: var(--line); border-radius: 2px; }
 .outline-toggle { position: absolute; inset: 0; border: 0; padding: 0;
   background: transparent; cursor: pointer; width: 100%; }
-.outline-toggle:after { content: ''; position: absolute; right: 11px;
+.outline-toggle:after { content: ''; position: absolute; right: 18px;
   top: var(--progress, 0%); width: 6px; height: 28px; max-height: 10%;
   border-radius: 4px; background: var(--accent); transition: top .16s ease; }
 .outline-list { position: relative; margin: 0; padding: 28px 14px 28px 8px;
