@@ -1,0 +1,32 @@
+name: Rust source checkpoint
+on:
+  push:
+    branches: ['migration/rust-wire-phase1']
+    paths: ['.github/workflows/rust-source-checkpoint.yml']
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: bfe46024ab7d396f979688c57077d2c2dd3c0d7e
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Archive tracked public source only
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD^{tree})" = 56511c906e4efbc7097aa1262c944f3f6824471d
+          mkdir -p /tmp/msg-source
+          git rev-parse HEAD > /tmp/msg-source/source-commit.txt
+          git rev-parse HEAD^{tree} > /tmp/msg-source/source-tree.txt
+          git archive --format=tar.gz HEAD > /tmp/msg-source/source.tar.gz
+          (cd /tmp/msg-source && sha256sum source.tar.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msg-rust-merged-source
+          path: /tmp/msg-source/
+          retention-days: 2
+          if-no-files-found: error
