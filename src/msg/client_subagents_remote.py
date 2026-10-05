@@ -8,6 +8,7 @@ records bind to the immutable account ID, so changing a handle keeps mailboxes
 and history intact; qualified addresses always show the current handle.
 """
 
+import asyncio
 import re
 import uuid
 from collections.abc import Mapping
@@ -357,16 +358,43 @@ class RemoteAgents:
                 return []
             raise
         values = []
-        async for page in self._children(root, 'topic'):
-            for item in page:
-                name = self._label(item['name'])
-                _, config = await self._agent(root, name, active=False)
-                values.append({
+        semaphore = asyncio.Semaphore(10)
+
+        async def inspect_item(item):
+            name = self._label(item['name'])
+            try:
+                async with semaphore:
+                    _, config = await self._agent(root, name, active=False)
+                return {
                     'name': name,
                     'identity': self._full(name),
                     'archived': config['archived'],
-                })
+                    'active': not config['archived'],
+                }
+            except Failure as exc:
+                if exc.code in {
+                    'subagent_not_found',
+                    'subagent_private_namespace_conflict',
+                    'invalid_subagent_message',
+                }:
+                    return None
+                raise
+
+        async for page in self._children(root, 'topic'):
+            results = await asyncio.gather(*(inspect_item(item) for item in page))
+            values.extend(r for r in results if r is not None)
         return sorted(values, key=lambda item: item['name'])
+
+    async def show(self, name):
+        root = await self._root()
+        name = self._label(name)
+        _, config = await self._agent(root, name, active=False)
+        return {
+            'name': name,
+            'identity': self._full(name),
+            'archived': config['archived'],
+            'active': not config['archived'],
+        }
 
     async def archive(self, name):
         root = await self._root()
@@ -491,10 +519,12 @@ class RemoteAgents:
             and self._stored_label(saved['to']) == agent
         )
 
-    async def inbox(self, agent, cursor=None, limit=50, tail=False):
+    async def inbox(self, agent, cursor=None, limit=50, tail=False, sender=None):
         root = await self._identity()
         agent = self._label(agent)
+        sender_label = self._label(sender) if sender is not None else None
         require(type(limit) is int and 1 <= limit <= 200, 'invalid_subagent_limit')
+        require(type(tail) is bool and not (tail and cursor is not None), 'invalid_subagent_cursor')
         config_meta = await self._receive_preflight(root, agent)
         scope = {
             'server': self.client.state.server,
@@ -572,6 +602,8 @@ class RemoteAgents:
                     if meta['parent'] != mailbox or meta['name'] == 'agent.json':
                         continue
                     value = self._event(meta, value, agent)
+                    if sender_label is not None and self._stored_label(value['from']) != sender_label:
+                        continue
                     if not tail:
                         items.append(value)
                 if resumable and len(items) >= limit:

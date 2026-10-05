@@ -173,7 +173,7 @@ async def test_doctor_rejects_missing_market_schema_without_repairing_it(install
 
 
 @pytest.mark.asyncio
-async def test_market_selftest_features_require_the_actual_isolated_flow():
+async def test_market_selftest_features_require_the_actual_isolated_flow(postgres_required):
     result = await selftest()
     assert result['ok'] and result['cleaned_up'], result
     assert result['checks']['market_e2e'] is True

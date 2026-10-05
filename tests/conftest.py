@@ -15,6 +15,17 @@ from msg.config import load_settings, write_example
 NOW = datetime(2026, 9, 27, tzinfo=UTC)
 
 
+def pytest_collection_modifyitems(items):
+    for item in items:
+        if {'pg_cluster', 'postgres_required'}.intersection(item.fixturenames):
+            item.add_marker(pytest.mark.db)
+
+
+@pytest.fixture
+def postgres_required():
+    """声明测试内部自建的 PostgreSQL，不提前启动另一个闲置集群。"""
+
+
 def _create_database(cluster, name, *, template=None):
     with psycopg.connect(cluster.format(database='postgres'), autocommit=True) as connection:
         query = sql.SQL('CREATE DATABASE {}').format(sql.Identifier(name))

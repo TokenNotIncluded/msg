@@ -35,6 +35,8 @@ server = [
     "markdown-it-py>=4,<5",
     "pygments>=2.19,<3",
     "websockets>=15,<17",
+    "fido2>=2.2.1,<3",
+    "pyjwt[crypto]>=2.10,<3",
 ]
 dev = [
     "msgctl[server]",
@@ -64,6 +66,7 @@ source-include = [
 addopts = "-ra --strict-config --strict-markers"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = ["db: 需要真实 PostgreSQL，包含 fixture 依赖和测试内自建集群"]
 asyncio_mode = "auto"
 filterwarnings = ["error"]
 

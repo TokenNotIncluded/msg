@@ -1,0 +1,8 @@
+[
+  {
+    "page": "root",
+    "check": "console_error",
+    "message_pattern": "^WebSocket connection to 'ws://127\\.0\\.0\\.1:[0-9]+/_flight' failed: Error during WebSocket handshake: Unexpected response code: 200$",
+    "reason": "复用的 Root 内存 HTTP fixture 不提供飞行 WebSocket 服务。只豁免回环 /_flight 的这一条握手错误，其他脚本异常和网络错误继续失败。"
+  }
+]

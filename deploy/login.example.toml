@@ -1,0 +1,42 @@
+# Merge this section into the active instance's msgd.toml; it is not an
+# independently loaded login.toml. This example keeps every login method off.
+# Supply private credential files and exact provider callbacks before enabling.
+# See docs/ACCOUNT_LOGIN.md. Never put secrets in this file.
+[login]
+enabled = false
+registration = "provider_only"
+session_ttl = 900
+
+[login.providers.google]
+enabled = false
+client_id = "REPLACE_WITH_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
+credential_file = "/etc/msgd/google-login-client.secret"
+token_auth_method = "client_secret_post"
+
+[login.providers.github]
+enabled = false
+client_id = "REPLACE_WITH_GITHUB_CLIENT_ID"
+credential_file = "/etc/msgd/github-login-client.secret"
+token_auth_method = "client_secret_post"
+
+# Requires an OpenAI-approved website identity client for this application.
+# Do not reuse a Codex client. Public identity-only clients use none; if OpenAI
+# provisioned client_secret_basic, use that method and its private credential file.
+[login.providers.chatgpt]
+enabled = false
+client_id = "oaiapp_REPLACE_WITH_APPROVED_CLIENT_ID"
+token_auth_method = "none"
+# credential_file = "/etc/msgd/chatgpt-login-client.secret"
+
+[login.providers.email]
+enabled = false
+transport = "sequenzy"
+credential_file = "/etc/msgd/sequenzy-credentials.json"
+# Omit sender to use the verified workspace default. If set, verify this identity
+# in Sequenzy first; its API can ignore an unverified custom from address.
+# sender = "login@example.org"
+# For existing TLS SMTP instead: transport = "smtp"; configure mail.toml separately.
+
+[login.providers.passkey]
+enabled = false
+# origin and RP ID are derived from the configured service_url.

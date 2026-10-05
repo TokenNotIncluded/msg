@@ -125,6 +125,10 @@ def create_app(service):
     from msg.transports.oauth_http import OAuthBoundary
 
     app.add_middleware(OAuthBoundary, service=service)
+    if getattr(getattr(service.settings, 'login', None), 'enabled', False):
+        from msg.transports.account_login import AccountLoginBoundary
+
+        app.add_middleware(AccountLoginBoundary, service=service)
     app.add_middleware(PassiveGetBoundary, service=service)
     from msg.transports.safe_diagnostics import SafeDiagnostics
 

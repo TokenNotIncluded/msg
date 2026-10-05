@@ -113,6 +113,24 @@ async def require_source(tx, body, now, *, custodial_ceiling):
         and (parent.expires_at is None or parent.expires_at > now),
         'invalid_grant',
     )
+    if body.get('login_binding'):
+        binding = tx.one(
+            'SELECT subject,source_credential_id,auth_version,generation,revoked_at,ceiling '
+            'FROM login_bindings WHERE id=?',
+            (body['login_binding'],),
+        )
+        require(
+            binding is not None
+            and binding[:3] == (body['subject'], body['parent'], body['auth_version'])
+            and binding[3] == body.get('login_generation')
+            and binding[4] is None,
+            'invalid_grant',
+        )
+        await require_ceiling(
+            tx,
+            tuple(decode(CapabilityGrant, raw) for raw in body.get('ceiling', ())),
+            tuple(decode(CapabilityGrant, raw) for raw in loads(binding[5])),
+        )
     if body.get('custodial'):
         row = tx.one(
             'SELECT signing_key_id,status FROM custodial_vault WHERE subject=?',
@@ -293,6 +311,20 @@ class OAuthService:
         _, body = get(tx, id, self.app.clock())
         require(body['status'] == 'pending', 'invalid_grant')
         client_for(self.config, body['client_id'])
+        if body.get('login_intent'):
+            require(
+                principal.actor == principal.subject == body['expected_subject'],
+                'login_owner_required',
+            )
+        if body.get('login_intent') and decision == 'approve':
+            from msg.security.login import approve_login_intent
+
+            await approve_login_intent(self.app, tx, principal, body['login_intent'])
+        elif body.get('login_intent'):
+            _, intent = get(tx, body['login_intent'], self.app.clock())
+            require(intent['status'] == 'pending', 'invalid_grant')
+            intent['status'] = 'denied'
+            save(tx, body['login_intent'], intent)
         source = await self.source(tx, principal)
         body.update(source if decision == 'approve' else {})
         body['status'] = 'approved' if decision == 'approve' else 'denied'
@@ -325,68 +357,78 @@ class OAuthService:
         body['status'] = 'consumed'
         save(tx, locator['user'], body)
         if kind == 'login':
-            cookie = secret()
-            session_expiry = now + timedelta(seconds=self.config.session_ttl)
-            parent = await tx.credential(body['parent'])
-            if parent.expires_at is not None:
-                session_expiry = min(session_expiry, parent.expires_at)
-            session_id = state_id('session', cookie)
-            credential_id = 't_browser_' + uuid4().hex
-            operations = {
-                f'{op.name}@{op.version}'
-                for op in self.app.registry.operations()
-                if (
-                    op.effect == 'read'
-                    or (
-                        'msg.write' in body['scopes']
-                        and op.name in BROWSER_POST_WRITES
-                        and op.version == 1
-                    )
-                )
-                and not op.require_signature
-                and not op.anonymous_only
-                and not op.name.startswith(('identity.', 'root.', 'system.'))
-            }
-            wiki_writes = {'content.post_create@1', 'content.post_edit@1'}
-            wiki_scope = Scope(resource_id='t_wiki', descendants=True)
-            ceiling_items = []
-            for raw in body['ceiling']:
-                grant = decode(CapabilityGrant, raw)
-                general = grant.operations & (operations - wiki_writes)
-                if general:
-                    ceiling_items.append(replace(grant, operations=general))
-                shared = grant.operations & operations & wiki_writes
-                if shared:
-                    if await scope_subset(wiki_scope, grant.scope, tx):
-                        ceiling_items.append(replace(grant, operations=shared, scope=wiki_scope))
-                    elif await scope_subset(grant.scope, wiki_scope, tx):
-                        ceiling_items.append(replace(grant, operations=shared))
-            ceiling = tuple(ceiling_items)
-            await tx.save_credential(
-                Credential(
-                    id=credential_id,
-                    subject_id=body['subject'],
-                    kind='token',
-                    verifier=hashlib.sha256(self.browser_secret(cookie)).digest(),
-                    ceiling=ceiling,
-                    not_before=now,
-                    expires_at=session_expiry,
-                    revoked_at=None,
-                    source_credential_id=body['parent'],
-                ),
-                body['auth_version'],
-            )
-            body['browser_credential'] = credential_id
-            put(tx, session_id, 'session', session_expiry, body)
-            put(
-                tx,
-                'browser:' + credential_id,
-                'browser',
-                session_expiry,
-                dict(body, session=session_id),
-            )
-            return {'cookie': cookie, 'expires': session_expiry}, None
+            return await self.create_browser_session(tx, body), None
         return await self.tokens(tx, body), None
+
+    async def create_browser_session(self, tx, source, *, cookie=None, ttl=None):
+        self.fence(tx)
+        now = self.app.clock()
+        await require_source(tx, source, now, custodial_ceiling=self.app.temporary_ceiling())
+        require(ttl is None or type(ttl) is int and 60 <= ttl <= 3600, 'invalid_session_ttl')
+        body = dict(source)
+        cookie = cookie or secret()
+        session_expiry = now + timedelta(
+            seconds=self.config.session_ttl if ttl is None else min(ttl, self.config.session_ttl)
+        )
+        parent = await tx.credential(body['parent'])
+        if parent.expires_at is not None:
+            session_expiry = min(session_expiry, parent.expires_at)
+        session_id = state_id('session', cookie)
+        credential_id = 't_browser_' + uuid4().hex
+        operations = {
+            f'{op.name}@{op.version}'
+            for op in self.app.registry.operations()
+            if (
+                op.effect == 'read'
+                or (
+                    'msg.write' in body['scopes']
+                    and op.name in BROWSER_POST_WRITES
+                    and op.version == 1
+                )
+            )
+            and not op.require_signature
+            and not op.anonymous_only
+            and not op.name.startswith(('identity.', 'root.', 'system.'))
+        }
+        wiki_writes = {'content.post_create@1', 'content.post_edit@1'}
+        wiki_scope = Scope(resource_id='t_wiki', descendants=True)
+        ceiling_items = []
+        for raw in body['ceiling']:
+            grant = decode(CapabilityGrant, raw)
+            general = grant.operations & (operations - wiki_writes)
+            if general:
+                ceiling_items.append(replace(grant, operations=general))
+            shared = grant.operations & operations & wiki_writes
+            if shared:
+                if await scope_subset(wiki_scope, grant.scope, tx):
+                    ceiling_items.append(replace(grant, operations=shared, scope=wiki_scope))
+                elif await scope_subset(grant.scope, wiki_scope, tx):
+                    ceiling_items.append(replace(grant, operations=shared))
+        ceiling = tuple(ceiling_items)
+        await tx.save_credential(
+            Credential(
+                id=credential_id,
+                subject_id=body['subject'],
+                kind='token',
+                verifier=hashlib.sha256(self.browser_secret(cookie)).digest(),
+                ceiling=ceiling,
+                not_before=now,
+                expires_at=session_expiry,
+                revoked_at=None,
+                source_credential_id=body['parent'],
+            ),
+            body['auth_version'],
+        )
+        body['browser_credential'] = credential_id
+        put(tx, session_id, 'session', session_expiry, body)
+        put(
+            tx,
+            'browser:' + credential_id,
+            'browser',
+            session_expiry,
+            dict(body, session=session_id),
+        )
+        return {'cookie': cookie, 'expires': session_expiry}
 
     async def session(self, tx, cookie):
         self.fence(tx)

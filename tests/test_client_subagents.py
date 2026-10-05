@@ -229,3 +229,43 @@ def test_symlinked_directory_and_foreign_owner_are_rejected(tmp_path, monkeypatc
     monkeypatch.setattr(os, 'geteuid', lambda: agents.directory.stat().st_uid + 1)
     with pytest.raises(Failure, match='client_directory_not_owned'):
         LocalAgents(state)
+
+
+def test_local_agents_show_read_and_sender_filter(tmp_path):
+    state, agents = mailbox(tmp_path)
+    agents.create('bot1')
+    agents.create('bot2')
+    agents.create('bot3')
+
+    # show
+    info = agents.show('bot1')
+    assert info['label'] == 'bot1'
+    assert info['active'] is True
+
+    with pytest.raises(Failure, match='subagent_not_found'):
+        agents.show('ghost')
+
+    # send with custom message_id
+    msg_id = 'custom-test-id-123'
+    sent = agents.send('bot1', 'bot2', 'hello from bot1', message_id=msg_id)
+    assert sent['id'] == msg_id
+
+    agents.send('bot3', 'bot2', 'hello from bot3')
+
+    # read
+    read_item = agents.read('bot2', msg_id)
+    assert read_item['id'] == msg_id
+    assert read_item['message'] == 'hello from bot1'
+
+    with pytest.raises(Failure, match='not_found'):
+        agents.read('bot2', 'nonexistent-id')
+
+    # inbox with sender filter
+    bot1_inbox = agents.inbox('bot2', sender='bot1')
+    assert len(bot1_inbox['items']) == 1
+    assert bot1_inbox['items'][0]['id'] == msg_id
+
+    bot3_inbox = agents.inbox('bot2', sender='bot3')
+    assert len(bot3_inbox['items']) == 1
+    assert bot3_inbox['items'][0]['message'] == 'hello from bot3'
+

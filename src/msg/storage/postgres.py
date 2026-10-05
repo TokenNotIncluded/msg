@@ -590,6 +590,9 @@ class PostgresMetadataStore:
                 # Multiple daemon workers may initialize the same fresh database.
                 conn.execute('SELECT pg_advisory_xact_lock(725274758, 1886265951)')
                 conn.execute(_SCHEMA)
+                from msg.storage.login_schema import LOGIN_SCHEMA
+
+                conn.execute(LOGIN_SCHEMA)
                 from msg.storage.market_migration import migrate_market
 
                 migrate_market(conn)
