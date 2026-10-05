@@ -80,6 +80,7 @@ POST_ACTIONS_SCRIPT = r"""(() => {
   availability();
   let state = {bookmarked:false, following:false, proofs:{}, my_proofs:[]};
   let compose = 'comment';
+  let replyTo = null;
   const labels = {
     ACK: [['Read','我读过'],['Read','我读过']],
     USED: [['Used','我使用过'],['Used','我使用过']],
@@ -110,7 +111,8 @@ POST_ACTIONS_SCRIPT = r"""(() => {
     panel.querySelector('[data-copy=claim-note]').textContent = text('Personal claims about this revision, not platform endorsements.','对这个版本的个人声明，不代表平台背书。');
     closeCompose.textContent = text('Close','收起');
     panel.querySelector('textarea').maxLength = ['comment','fork'].includes(compose) ? 20000 : 4096;
-    panel.querySelector('label').textContent = compose === 'fork' ? text('New branch content','新分支内容') : labels[compose] && compose !== 'comment' ? text('Optional evidence / usage / result (this is your claim)','可选：使用过程、验证依据或结果（这是你的声明）') : text('Your comment','你的评论');
+    const replying = compose === 'comment' && replyTo && replyTo.id !== panel.dataset.id;
+    panel.querySelector('label').textContent = compose === 'fork' ? text('New branch content','新分支内容') : labels[compose] && compose !== 'comment' ? text('Optional evidence / usage / result (this is your claim)','可选：使用过程、验证依据或结果（这是你的声明）') : replying ? text('Reply to ','回复 ') + (replyTo.name || text('this comment','这条评论')) : text('Your comment','你的评论');
     panel.querySelector('[type=submit]').textContent = compose === 'fork' ? text('Create branch','创建分支') : compose !== 'comment' ? text('Record claim','提交证明声明') : text('Send comment','发表评论');
   };
   new MutationObserver(update).observe(document.documentElement,{attributes:true,attributeFilter:['lang']});
@@ -140,7 +142,7 @@ POST_ACTIONS_SCRIPT = r"""(() => {
     if(writing) return;
     if(!signedIn()) return;
     const kind=button.dataset.action;
-    if(['comment','fork','ACK','USED','VERIFIED','SOLVED','THANKS'].includes(kind)) { compose=kind;panel.querySelector('textarea').required=['comment','fork'].includes(kind);panel.querySelector('form').hidden=false;update();panel.querySelector('textarea').focus();return; }
+    if(['comment','fork','ACK','USED','VERIFIED','SOLVED','THANKS'].includes(kind)) { compose=kind;if(kind!=='comment')replyTo=null;panel.querySelector('textarea').required=['comment','fork'].includes(kind);panel.querySelector('form').hidden=false;update();panel.querySelector('textarea').focus();return; }
     if(!ready) return;
     const enabled=kind==='bookmark'?state.bookmarked:state.following;
     const operation=(kind==='follow'?'communication.':'discussion.')+(enabled?'un':'')+kind;
@@ -154,20 +156,34 @@ POST_ACTIONS_SCRIPT = r"""(() => {
     } catch(error) { recover(error); }
     finally { writing=false;availability(); }
   });
-  closeCompose.addEventListener('click', () => { if(!writing) panel.querySelector('form').hidden=true; });
+  closeCompose.addEventListener('click', () => { if(!writing) { replyTo=null;panel.querySelector('form').hidden=true;update(); } });
+  document.addEventListener('click', event => {
+    const trigger = event.target.closest('[data-reply-to]');
+    if(!trigger || writing) return;
+    if(!signedIn()) return;
+    replyTo = {id: trigger.dataset.replyTo, revision: trigger.dataset.replyRevision, name: trigger.dataset.replyName || ''};
+    if(!replyTo.revision) { replyTo=null; return; }
+    compose='comment';
+    panel.querySelector('textarea').required=true;
+    panel.querySelector('form').hidden=false;
+    update();
+    panel.querySelector('form').scrollIntoView({block:'center'});
+    field.focus();
+  });
   let pending;
   panel.querySelector('form').addEventListener('submit',async event => {
     event.preventDefault();if(writing || !signedIn()) return;
     const kind=compose, body=field.value.trim();if(!body && ['comment','fork'].includes(kind)) {field.focus();return;}
     writing=true;availability();
-    if(!pending || pending.body!==body || pending.kind!==kind) pending={body,kind,id:crypto.randomUUID()};
+    const targetId = replyTo && kind==='comment' ? replyTo.id : panel.dataset.id;
+    if(!pending || pending.body!==body || pending.kind!==kind || pending.target!==targetId) pending={body,kind,target:targetId,id:crypto.randomUUID()};
     status.textContent=text('Sending…','正在发送…');
     try {
       const isProof=!['comment','fork'].includes(kind);
       const operation=isProof?'discussion.prove':kind==='fork'?'discussion.fork':'discussion.reply';
-      const result=await send(operation,isProof?{kind,note:body,revision:panel.dataset.revision}:{body,revision:panel.dataset.revision},pending.id);
+      const result=await send(operation,isProof?{kind,note:body,revision:panel.dataset.revision}:{body,revision:(replyTo&&kind==='comment'?replyTo.revision:panel.dataset.revision),...(replyTo&&kind==='comment'?{id:replyTo.id}:{})},pending.id);
       if(isProof) { state={...state,...result.data};proofWritten=true;countsAvailable=proofsKnown=true;update();field.value='';pending=null;panel.querySelector('form').hidden=true;status.textContent=text('Claim recorded for this revision.','已记录对此版本的证明声明。');return; }
-      field.value='';pending=null;status.textContent=kind==='fork'?text('Branch created. ','分支已创建。'):text('Comment posted. ','评论已发表。');
+      field.value='';pending=null;replyTo=null;update();status.textContent=kind==='fork'?text('Branch created. ','分支已创建。'):text('Comment posted. ','评论已发表。');
       const link=document.createElement('a');link.href='/_id/'+encodeURIComponent(result.resources[0].id);
       link.textContent=kind==='fork'?text('View branch','查看分支'):text('View comment','查看评论');status.append(link);
       if(kind==='comment') window.dispatchEvent(new CustomEvent('msg:reply-posted',{detail:{parent:panel.dataset.id}}));
