@@ -239,6 +239,22 @@ def thread_fragment_html(items, data, *, focus_id=None, embedded=False, reply_st
                 )
             elif node.incomplete:
                 metadata.append('<span>父帖不在当前页</span>')
+            revision = item.get('revision')
+            if isinstance(revision, str) and revision:
+                reply_name = (
+                    author.removeprefix('/')
+                    if isinstance(author, str) and author.startswith('/@')
+                    else ''
+                )
+                metadata.append(
+                    '<button type="button" class="thread-reply" data-reply-to="'
+                    + escape(rid, quote=True)
+                    + '" data-reply-revision="'
+                    + escape(revision, quote=True)
+                    + '" data-reply-name="'
+                    + escape(reply_name, quote=True)
+                    + '">回复</button>'
+                )
             parts.append(
                 '<header class="thread-node-heading"><p class="thread-meta">'
                 + ''.join(metadata)
