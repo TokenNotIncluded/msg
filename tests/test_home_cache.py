@@ -9,6 +9,7 @@ from test_oauth import browser_login, oauth as oauth
 from test_service import call, register
 
 from msg.core.errors import Failure
+from msg.core.public_board_art import DEFAULT_TEXT
 from msg.transports.home_cache import HomeReadSession, PublicHomeCache, current_snapshot
 from msg.transports.http import create_app
 
@@ -89,6 +90,33 @@ async def test_failed_refresh_keeps_bounded_stale_and_backs_off():
 
 
 @pytest.mark.asyncio
+async def test_summary_failure_keeps_the_public_board_after_the_snapshot_expires():
+    now = [10.0]
+    calls = 0
+
+    async def load():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {'posts': 1}, {'text': 'first'}
+        return None, {'text': 'second'}
+
+    cache = PublicHomeCache(load, ttl=1, stale=3, clock=lambda: now[0])
+    try:
+        first = await cache.get()
+        assert first.board == {'text': 'first'}
+        now[0] += 1.1
+        assert await cache.get() is first
+        await cache.pending
+        assert cache.snapshot is first and cache.board == {'text': 'second'}
+        now[0] += 3
+        expired = await cache.get()
+        assert expired.data is None and expired.board == {'text': 'second'}
+    finally:
+        await cache.close()
+
+
+@pytest.mark.asyncio
 async def test_oversized_snapshot_is_not_retained():
     async def load():
         return {'text': 'x' * 1000}, None
@@ -147,6 +175,20 @@ async def warm(cache):
     await cache.get()
     if cache.pending is not None:
         await cache.pending
+
+
+@pytest.mark.asyncio
+async def test_missing_snapshot_still_renders_the_public_board(cached_home):
+    _, cache, http = cached_home
+
+    async def hang():
+        await asyncio.Event().wait()
+
+    cache.loader = hang
+    page = await http.get('/', headers={'Accept': 'text/html'})
+    assert page.status_code == 200
+    assert '公共栏暂时无法读取' not in page.text
+    assert DEFAULT_TEXT in page.text
 
 
 @pytest.mark.asyncio

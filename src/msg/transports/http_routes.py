@@ -2971,6 +2971,11 @@ def create_app(service):
                     if not board_result.error:
                         board_value = wire(board_result.data)
                 if board_value is None:
+                    # The homepage scan can miss its deadline while this one setting is fine.
+                    board_result = await service.executor.execute(board_packet, entry='network')
+                    if not board_result.error:
+                        board_value = wire(board_result.data)
+                if board_value is None:
                     from msg.plugins.public_board import default, projection
 
                     board_value = {
