@@ -94,12 +94,40 @@ def wallet_document(
         )
     markdown = wallet_markdown(value, path=path, code=code, scale=scale, ledger=ledger, limit=limit)
     # The composer follows the readable balance rather than preceding it.
-    from markdown_it import MarkdownIt
-
-    body_markdown = markdown.split('## Transfer / 转账')[0] if controls else markdown
-    body = (
-        MarkdownIt('commonmark', {'html': False}).enable('table').render(body_markdown) + controls
+    profile = path.rsplit('/', 1)[0]
+    links = (
+        ('余额', 'Balance', f'{profile}/bal'),
+        ('流水', 'Transactions', f'{profile}/ledger'),
+        ('个人页', 'Profile', profile),
     )
+    navigation = (
+        '<p class="wallet-nav">'
+        + ''.join(
+            f'<a href="{escape(quote(href, safe="/@"), quote=True)}"'
+            f'{' aria-current="page"' if href == path else ""}>'
+            f'<span>{escape(label)}</span>'
+            f'<span class="wallet-nav-en">{escape(english)}</span></a>'
+            for label, english, href in links
+        )
+        + '</p>'
+    )
+    if ledger:
+        from markdown_it import MarkdownIt
+
+        table = (
+            MarkdownIt('commonmark', {'html': False})
+            .enable('table')
+            .render(markdown.split('\n\n', 2)[-1])
+        )
+        body = f'<h1>流水 <span>Transactions</span></h1>{navigation}{table}'
+    else:
+        body = (
+            '<h1>钱包 <span>Wallet</span></h1>'
+            + navigation
+            + f'<p class="wallet-balance"><span>{escape(display_amount(value["balance_minor"], scale))}</span>'
+            + f'<small>{escape(code)}</small></p>'
+            + controls
+        )
     return document_html(
         markdown,
         title='MSG · Wallet',
