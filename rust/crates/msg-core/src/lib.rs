@@ -4,7 +4,7 @@ use std::fmt;
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::de::{self, MapAccess, Visitor};
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::value::RawValue;
 use sha2::{Digest, Sha256};
 
@@ -38,7 +38,30 @@ enum Value {
     Object(BTreeMap<String, Json>),
 }
 
+// Preserve canonical-v1 numbers when typed records contain arbitrary JSON.
+// Do not round through serde_json::Value's fixed-width number representation.
+impl Serialize for Json {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let text = self.canonical().map_err(serde::ser::Error::custom)?;
+        RawValue::from_string(text)
+            .map_err(serde::ser::Error::custom)?
+            .serialize(serializer)
+    }
+}
+impl<'de> Deserialize<'de> for Json {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        let raw = Box::<RawValue>::deserialize(deserializer)?;
+        Self::parse(raw.get()).map_err(serde::de::Error::custom)
+    }
+}
+
 impl Json {
+    pub fn as_bool(&self) -> Result<bool> {
+        match self.0 {
+            Value::Bool(v) => Ok(v),
+            _ => Err(Error("invalid_type")),
+        }
+    }
     pub fn parse(input: &str) -> Result<Self> {
         if input.len() > MAX_BYTES {
             return Err(Error("request_too_large"));

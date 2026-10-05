@@ -1,0 +1,20 @@
+[package]
+name = "msg-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+msg-core = { path = "../msg-core" }
+msg-identity = { path = "../msg-identity" }
+rusqlite.workspace = true
+
+[dev-dependencies]
+msg-protocol = { path = "../msg-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -162,6 +162,12 @@ impl Request {
         Ok(request)
     }
 
+    /// Immutable decoded fields, for trusted native server layers only.
+    /// No mutable accessor: validation cannot be invalidated after construction.
+    pub fn field(&self, name: &str) -> Result<&Json> {
+        self.fields.get(name).ok_or(Error("missing_field"))
+    }
+
     pub fn canonical(&self) -> Result<String> {
         Json::from_object(self.fields.clone()).canonical()
     }
