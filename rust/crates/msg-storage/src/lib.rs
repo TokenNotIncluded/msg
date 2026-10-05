@@ -1,7 +1,10 @@
-//! Native SQLite authority reads over existing Python-created databases.
+//! Native SQLite sessions over existing Python-created databases.
 //!
-//! No schema creation, migration, writer, public resource output or Python process.
-//! One borrowed, non-Send snapshot binds all reads to the same transaction.
+//! No schema creation/migration, network entry point or Python subprocess.
+//! Read snapshots and write sessions share the same transaction-bound authority reads.
+pub mod records;
+#[cfg(unix)]
+pub mod writer;
 use msg_core::{Error, Json, Result, MAX_BYTES};
 use msg_identity::{
     models::Timestamp,
@@ -9,13 +12,21 @@ use msg_identity::{
     store::{AuthorityStore, Record, RecoveryDelivery},
 };
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, Transaction};
-use std::{marker::PhantomData, path::Path, rc::Rc, time::Duration};
+use std::{cell::Cell, marker::PhantomData, path::Path, rc::Rc, time::Duration};
+#[cfg(unix)]
+pub use writer::{SqliteWriter, WriteFailure, WriteSession};
 
 pub struct SqliteAuthority {
     connection: Connection,
 }
-pub struct Snapshot<'a> {
+pub struct ReadOnly;
+pub type Snapshot<'a> = Session<'a, ReadOnly>;
+
+/// A borrowed database session. Its transaction is private and cannot escape.
+pub struct Session<'a, Access> {
     transaction: Transaction<'a>,
+    access: Access,
+    poison: Cell<Option<Error>>,
     // A database snapshot must stay with the task that owns it.
     _owner: PhantomData<Rc<()>>,
 }
@@ -23,6 +34,7 @@ fn database_error(error: rusqlite::Error) -> Error {
     match error.sqlite_error_code() {
         Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => Error("server_busy"),
         Some(ErrorCode::ReadOnly) => Error("read_only_transaction"),
+        Some(ErrorCode::ConstraintViolation) => Error("constraint_conflict"),
         _ => Error("storage_error"),
     }
 }
@@ -47,6 +59,8 @@ impl SqliteAuthority {
         let transaction = self.connection.transaction().map_err(database_error)?;
         let snapshot = Snapshot {
             transaction,
+            access: ReadOnly,
+            poison: Cell::new(None),
             _owner: PhantomData,
         };
         // The first read pins this snapshot before checking any authority.
@@ -54,8 +68,18 @@ impl SqliteAuthority {
         Ok(snapshot)
     }
 }
-impl Snapshot<'_> {
+impl<Access> Session<'_, Access> {
+    fn active(&self) -> Result<()> {
+        if let Some(error) = self.poison.get() {
+            return Err(error);
+        }
+        if self.transaction.is_autocommit() {
+            return Err(Error("transaction_aborted"));
+        }
+        Ok(())
+    }
     fn validate_schema(&self) -> Result<()> {
+        self.active()?;
         let expected = [
             ("schema_version", "version"), ("settings", "key,value"),
             ("identities", "id,kind,body"), ("credentials", "id,subject,body"),
@@ -97,6 +121,7 @@ impl Snapshot<'_> {
         Ok(())
     }
     fn json(&self, sql: &str, id: &str) -> Result<Option<Json>> {
+        self.active()?;
         let mut stmt = self
             .transaction
             .prepare_cached(sql)
@@ -114,7 +139,7 @@ impl Snapshot<'_> {
         .transpose()
     }
 }
-impl AuthorityStore for Snapshot<'_> {
+impl<Access> AuthorityStore for Session<'_, Access> {
     fn record(&self, kind: Record, id: &str) -> Result<Json> {
         // A bounded SQL substring avoids allocating a corrupt multi-GB body.
         let (table, condition, missing) = match kind {
@@ -133,6 +158,7 @@ impl AuthorityStore for Snapshot<'_> {
         )
     }
     fn has_setting(&self, key: &str) -> Result<bool> {
+        self.active()?;
         self.transaction
             .query_row(
                 "SELECT EXISTS(SELECT 1 FROM settings WHERE key=?1)",
@@ -142,6 +168,7 @@ impl AuthorityStore for Snapshot<'_> {
             .map_err(database_error)
     }
     fn certificate_revoked(&self, id: &str) -> Result<bool> {
+        self.active()?;
         let revoked: Option<i64> = self
             .transaction
             .query_row("SELECT revoked FROM certificates WHERE id=?1", [id], |r| {
@@ -157,6 +184,7 @@ impl AuthorityStore for Snapshot<'_> {
         id: &str,
         digest: &str,
     ) -> Result<Option<Json>> {
+        self.active()?;
         let row: Option<(String, String)> = self.transaction.query_row(
             "SELECT digest,CAST(substr(CAST(body AS BLOB),1,1048577) AS TEXT) FROM results WHERE subject=?1 AND request_id=?2",
             [subject.unwrap_or(""), id], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(database_error)?;
@@ -186,6 +214,7 @@ impl AuthorityStore for Snapshot<'_> {
         Ok(Some(result))
     }
     fn oauth_state(&self, id: &str) -> Result<Option<OAuthState>> {
+        self.active()?;
         let row: Option<(String, String)> = self.transaction.query_row(
             "SELECT expires,CAST(substr(CAST(body AS BLOB),1,1048577) AS TEXT) FROM oauth_states WHERE id=?1",
             [id], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(database_error)?;
@@ -201,6 +230,7 @@ impl AuthorityStore for Snapshot<'_> {
         .transpose()
     }
     fn custodial_binding(&self, subject: &str) -> Result<Option<(String, String)>> {
+        self.active()?;
         self.transaction
             .query_row(
                 "SELECT signing_key_id,status FROM custodial_vault WHERE subject=?1",
@@ -215,6 +245,7 @@ impl AuthorityStore for Snapshot<'_> {
         credential: &str,
         subject: &str,
     ) -> Result<Option<RecoveryDelivery>> {
+        self.active()?;
         let row: Option<(String, String, bool, String)> = self.transaction.query_row(
             "SELECT recovery_verifier,recovery_expires_at,consumed_at IS NOT NULL,request_id FROM token_deliveries WHERE credential_id=?1 AND subject=?2",
             [credential, subject], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))).optional().map_err(database_error)?;

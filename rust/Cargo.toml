@@ -18,6 +18,8 @@ serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.145", features = ["raw_value", "arbitrary_precision"] }
 sha2 = "=0.10.9"
 subtle = "=2.6.1"
+fs2 = "=0.4.3"
+libc = "=0.2.190"
 rusqlite = { version = "=0.32.1", features = ["bundled"] }
 
 [workspace.lints.rust]
