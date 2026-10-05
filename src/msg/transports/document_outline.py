@@ -42,8 +42,8 @@ CSS = """
 .outline-list a[aria-current=location] { font-weight: 600; }
 .prose :is(h1,h2,h3,h4,h5,h6)[id] { scroll-margin-top: 32px; }
 @media (min-width: 960px) {
-  .page-document.has-outline main { max-width: 1088px; padding-right: 310px; }
-  .document-outline { right: max(24px, calc((100vw - 1088px) / 2 + 28px)); }
+  .page-document.has-outline main { max-width: 1128px; padding-right: 310px; }
+  .document-outline { right: max(24px, calc((100vw - 1128px) / 2 + 28px)); }
 }
 @media (max-width: 959px) { .document-outline { display: none; } }
 @media (prefers-reduced-motion: reduce) {
