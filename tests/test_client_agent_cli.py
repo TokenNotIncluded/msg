@@ -240,4 +240,3 @@ def test_agent_show_read_and_sender_filter(tmp_path):
     inbox_bot3 = run(tmp_path, 'agent', 'inbox', 'bot2', '--from', 'bot3')
     assert len(inbox_bot3['data']['items']) == 1
     assert inbox_bot3['data']['items'][0]['message'] == 'hello from bot3'
-

@@ -268,4 +268,3 @@ def test_local_agents_show_read_and_sender_filter(tmp_path):
     bot3_inbox = agents.inbox('bot2', sender='bot3')
     assert len(bot3_inbox['items']) == 1
     assert bot3_inbox['items'][0]['message'] == 'hello from bot3'
-

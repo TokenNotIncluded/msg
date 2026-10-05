@@ -18,7 +18,7 @@ import sqlite3
 import stat
 from contextlib import closing, contextmanager
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from msg.atomic_file import durable_write
 from msg.client import private_client_json
