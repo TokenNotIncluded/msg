@@ -8,19 +8,35 @@ permissions:
 jobs:
   snapshot:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - name: Archive tracked source for the offline migration editor
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Prepare offline test environment (no credentials)
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p /tmp/msg-migration-source
           git rev-parse HEAD > /tmp/msg-migration-source/source-commit.txt
           git archive --format=tar.gz HEAD > /tmp/msg-migration-source/source.tar.gz
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+          mkdir -p /tmp/deps/src
+          printf '[package]\nname="offline-dependencies"\nversion="0.0.0"\nedition="2021"\n[dependencies]\nmsg-protocol={path="%s/rust/crates/msg-protocol"}\nrusqlite={version="=0.32.1",features=["bundled"]}\nsubtle="=2.6.1"\n' "$PWD" > /tmp/deps/Cargo.toml
+          echo 'fn main() {}' > /tmp/deps/src/main.rs
+          cargo +1.85.0 vendor --manifest-path /tmp/deps/Cargo.toml /tmp/vendor > /tmp/vendor-config.toml
+          tar -cJf /tmp/msg-migration-source/rust-toolchain.tar.xz -C "$HOME/.rustup/toolchains/1.85.0-x86_64-unknown-linux-gnu" .
+          tar -czf /tmp/msg-migration-source/vendor.tar.gz -C /tmp vendor vendor-config.toml
+          python -m pip install 'cryptography==46.0.3' 'jsonschema==4.25.1' 'ruff==0.16.9'
+          tar -cJf /tmp/msg-migration-source/python-toolchain.tar.xz -C "$(python -c 'import sys;print(sys.prefix)')" .
       - uses: actions/upload-artifact@v7
         with:
-          name: msg-migration-source-${{ github.sha }}
+          name: msg-migration-editor-${{ github.sha }}
           path: /tmp/msg-migration-source/
           retention-days: 1
           if-no-files-found: error
+          compression-level: 0
