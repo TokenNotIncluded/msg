@@ -1,0 +1,26 @@
+name: Rust migration source snapshot
+on:
+  push:
+    branches: ['migration/rust-*']
+    paths: ['.github/workflows/rust-migration-snapshot.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Archive tracked source for the offline migration editor
+        run: |
+          mkdir -p /tmp/msg-migration-source
+          git rev-parse HEAD > /tmp/msg-migration-source/source-commit.txt
+          git archive --format=tar.gz HEAD > /tmp/msg-migration-source/source.tar.gz
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msg-migration-source-${{ github.sha }}
+          path: /tmp/msg-migration-source/
+          retention-days: 1
+          if-no-files-found: error
