@@ -392,9 +392,11 @@ async def validate_ceiling(app, ctx, tx, grants):
 
 def install(app):
     op, finish = registration(app, 'identity')
+    from msg.plugins.login_identity import install as install_login
     from msg.plugins.oauth_identity import install as install_oauth
 
     install_oauth(app, op)
+    install_login(app, op)
 
     @op(
         'identity.rename',
@@ -447,6 +449,9 @@ def install(app):
         version=2,
     )
     async def custodial_create(ctx, request, tx):
+        from msg.login_config import registration_closed
+
+        require(not registration_closed(app.settings), 'provider_registration_required')
         token = app.issued_token(request, ctx.principal.subject)
         signer = Ed25519Signer.generate()
         age_identity, recipient = generate_age_key()
@@ -846,6 +851,9 @@ def install(app):
         version=2,
     )
     async def register(ctx, request, tx):
+        from msg.login_config import registration_closed
+
+        require(not registration_closed(app.settings), 'provider_registration_required')
         await app.online_issuer(tx)
         public = unb64(request.arguments['public_key'], limit=32)
         encryption_public = public_from_recipient(request.arguments['encryption_recipient'])
@@ -2015,6 +2023,9 @@ def install(app):
         version=3,
     )
     async def temporary(ctx, request, tx):
+        from msg.login_config import registration_closed
+
+        require(not registration_closed(app.settings), 'provider_registration_required')
         if request.contract_version < 3:
             raise Failure('temporary_dual_keys_required', details={'contract_version': 3})
         token = app.issued_token(request, ctx.principal.subject)

@@ -298,6 +298,19 @@ def operation_route(spec):
 
 def classify_route(path, method, registry):
     """Classify the matched HTTP boundary before interpreting a request body."""
+    if path.startswith('/-/login/'):
+        if (
+            path == '/-/login/start'
+            or path.startswith('/-/login/callback/')
+            or path.endswith('/options')
+        ):
+            return RouteSpec('login_transaction', RouteEffect.LOCAL_EPHEMERAL)
+        effect = (
+            RouteEffect.EXTERNAL_EFFECT
+            if path == '/-/login/email/start'
+            else RouteEffect.BUSINESS_WRITE
+        )
+        return RouteSpec('account_login', effect)
     if path in {'/-/d', '/-/schema'} or path.startswith('/-/d/'):
         return RouteSpec('contract', RouteEffect.PURE_READ)
     protocol = re.match(r'^/-/([pg])/([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)', path)
@@ -992,7 +1005,14 @@ def create_app(service):
                     source='manual',
                 )
             )
-            return identity.data if not identity.error else None
+            if identity.error:
+                return None
+            return dict(
+                identity.data,
+                login_methods_enabled=getattr(
+                    getattr(service.settings, 'login', None), 'enabled', False
+                ),
+            )
 
         async def execute_packet(packet, *, entry='network'):
             browser = request.scope.get('state', {}).get('msg_browser_credentials')
@@ -2923,7 +2943,12 @@ def create_app(service):
                         )
                     )
                     if not identity.error:
-                        account = identity.data
+                        account = dict(
+                            identity.data,
+                            login_methods_enabled=getattr(
+                                getattr(service.settings, 'login', None), 'enabled', False
+                            ),
+                        )
                         channels = await execute_packet(
                             request_for(
                                 'discovery.get',

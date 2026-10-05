@@ -4,7 +4,10 @@
 
 ## 本地与 CI
 
-项目要求 Python 3.15。`tests/` 使用 PostgreSQL；不设置 `MSG_TEST_POSTGRES_URL_TEMPLATE` 时，根目录 `conftest.py` 尝试启动临时 PostgreSQL。CI 在 `.github/workflows/ci.yml` 配置 PostgreSQL、Valkey、age、Nginx、OpenSSL 和 Git LFS，并使用八个测试分片。
+项目要求 Python 3.15。数据库测试不设置 `MSG_TEST_POSTGRES_URL_TEMPLATE` 时，根目录 `conftest.py` 或自检尝试启动临时 PostgreSQL；无需数据库的测试不会启动集群。CI 在 `.github/workflows/ci.yml` 配置 PostgreSQL、Valkey、age、Nginx、OpenSSL 和 Git LFS，并使用八个测试分片。
+
+`pytest -m "not db"` 运行无需真实 PostgreSQL 的测试；其中也包含真实文件与子进程的集成检查。
+`pytest -m db` 显式运行真实 PostgreSQL 测试；fixture 的传递依赖自动标记，动态后端在 fixture 参数声明，测试内自建集群使用 `postgres_required` 声明，不额外启动集群。
 
 ```bash
 uv sync --locked --extra dev --python 3.15
@@ -23,6 +26,33 @@ uv run --locked --extra dev python scripts/check_package_artifacts.py dist
 它从同一 uv.lock 导出哈希依赖锁，分别验收 client-only/server 安装和正式 selftest，
 并运行真实回环 daemon 与 OpenSSH/Git。逐 issue 的当前入口和现场材料见
 [发布验收与交接](RELEASE_ACCEPTANCE.md)，不能从隔离演练推导生产已切流。
+
+## UI 审计
+
+`scripts/check_ui_audit.py` 使用真实渲染函数和内存 HTTP fixture，不连接 PostgreSQL。
+共享首页、文档、搜索、登录、`/now` 与 `/terminal` 检查深浅配色，Root 按其设计仅检查深色；
+四个视口为 1280×800、768×1024、390×844、320×640，手机启用触摸，所有页面减少动态效果。
+依据 [DESIGN.md](../DESIGN.md) 与 [.impeccable/surfaces](../.impeccable/surfaces/)，
+可见文字至少 11px，交互命中区域至少 44×44px，正文对比度至少 4.5:1（大字 3:1），
+页面无横向溢出、未捕获脚本异常及未豁免的 `console.error`。只有正文中的行内链接免除命中区域检查。
+
+```bash
+mkdir -p ~/.cache/msg-test-tmp/ui-audit
+TMPDIR=~/.cache/msg-test-tmp/ui-audit uv run --extra server --with playwright python scripts/check_ui_audit.py --require-browser
+TMPDIR=~/.cache/msg-test-tmp/ui-audit uv run --extra server --with playwright python scripts/check_ui_audit.py --pages home now root --widths 1280 390 --verbose --shots ~/.cache/msg-ui/ui-audit/shots
+rm -rf ~/.cache/msg-test-tmp/ui-audit
+```
+
+`MSG_BROWSER_PATH` 或 `--browser` 选择浏览器，缺省 `/usr/bin/chromium`，启动参数包含 `--no-sandbox`。
+`--extra server` 提供真实渲染函数所需的 Starlette、Markdown 等依赖；默认客户端依赖不足以渲染这些页面。
+缺少浏览器或 Playwright 时打印 SKIP 并成功退出；`--require-browser` 将缺失视为失败。
+默认只保存结构化报告到 `~/.cache/msg-ui/ui-audit/report.json`，`--report` 可指定路径，截图须显式传 `--shots DIR`。
+`--verbose --limit N` 打印各类问题的前 N 条元素、文字和实测数值。
+
+豁免写入 `scripts/ui_audit_allow.json`：每条明确页面、检查类别、具体元素选择器
+（异常用固定前缀的 `message_pattern`）、原因，可再限定视口与主题。不得用白名单掩盖新发现的生产缺陷。
+Root 内存 fixture 没有飞行 WebSocket 服务，因此只豁免回环 `/_flight` 的特定握手错误；
+其余异常继续失败。审计是渲染回归检查，不证明生产部署、真实飞行服务或物理手机验收。
 
 ## 部署验收
 

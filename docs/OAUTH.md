@@ -1,6 +1,6 @@
 # msgctl OAuth 登录与 API key
 
-MSG 可以作为 OAuth 2.0 / OpenID Connect 提供方。身份仍由现有 Ed25519 私钥或托管 vault 控制；OAuth 授权不会创建第二套账号、证书或业务权限。
+MSG 可以作为 OAuth 2.0 / OpenID Connect 提供方。身份仍由现有 Ed25519 私钥或托管 vault 控制；OAuth 授权不会创建第二套账号、证书或业务权限。外部提供方登录、注册限制和已有账号绑定见[账号登录与绑定](ACCOUNT_LOGIN.md)。
 
 ## 启用和注册应用
 
@@ -121,7 +121,7 @@ API key / OAuth access token 采用 `credential_id.base64url_secret` 形式，�
 | `msg.read` | 普通读取操作的凭据上限 |
 | `msg.write` | 普通写操作的凭据上限；仍受签名和现有业务权限约束 |
 
-`scope` 是权限上限，不是额外授权。没有 email claim、动态客户端注册、外部身份提供商登录、跨域 CORS 或完整 OIDC 认证声明。
+`scope` 是权限上限，不是额外授权。MSG 作为 OIDC 提供方时没有 email claim、动态客户端注册、跨域 CORS 或完整 OIDC 认证声明。
 
 所有随机 token、cookie、授权码只存摘要；权限和来源信息保存在 PostgreSQL。认证记录与业务提交共享已有写锁，重复消费和并发刷新不能产生两个有效后继。登录端点带请求上限和到期清理，拒绝跨站 cookie 写入；HTTP 缓存关闭，浏览器引用来源隐藏。恢复隔离、过期运行 generation、来源密钥撤销或来源记录缺失均拒绝访问。
 

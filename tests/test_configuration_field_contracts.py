@@ -144,7 +144,7 @@ def test_configuration_selftest_opens_no_network_or_secret_file(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_official_selftest_runs_configuration_field_vectors():
+async def test_official_selftest_runs_configuration_field_vectors(postgres_required):
     from msg.admin.diagnostics import selftest
     from msg.config_contracts import CONFIGURATION_FIELDS
 
