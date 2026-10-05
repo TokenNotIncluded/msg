@@ -1,0 +1,68 @@
+name: Rust wire compatibility
+on:
+  pull_request:
+    paths:
+      - 'rust/**'
+      - 'src/msg/core/**'
+      - 'src/msg/security/crypto.py'
+      - '.github/workflows/rust-wire.yml'
+  push:
+    branches: [main, 'migration/rust-*']
+    paths:
+      - 'rust/**'
+      - 'src/msg/core/**'
+      - 'src/msg/security/crypto.py'
+      - '.github/workflows/rust-wire.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rust-wire-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: false
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install Rust toolchain and Python reference dependencies
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+          python -m pip install cryptography==46.0.3 jsonschema==4.25.1
+      - name: Check formatting and retain a repair patch
+        working-directory: rust
+        run: |
+          mkdir -p artifacts
+          cargo +1.85.0 fmt --all
+          git diff -- . > artifacts/rustfmt.patch
+          test ! -s artifacts/rustfmt.patch
+      - name: Native tests
+        if: ${{ !cancelled() }}
+        working-directory: rust
+        run: cargo +1.85.0 test --workspace --all-targets
+      - name: Clippy
+        if: ${{ !cancelled() }}
+        working-directory: rust
+        run: cargo +1.85.0 clippy --workspace --all-targets -- -D warnings
+      - name: Python and Rust differential checks
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: src
+        run: |
+          cargo +1.85.0 build --manifest-path rust/Cargo.toml --example wire_check
+          python rust/tests/test_python_parity.py --binary rust/target/debug/examples/wire_check --report rust/artifacts/parity.json
+      - name: Preserve evidence and resolved dependency lock
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-wire-${{ github.sha }}
+          path: |
+            rust/artifacts/
+            rust/Cargo.lock
+          if-no-files-found: warn

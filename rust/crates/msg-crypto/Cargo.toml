@@ -1,0 +1,16 @@
+[package]
+name = "msg-crypto"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ed25519-dalek.workspace = true
+serde.workspace = true
+sha2.workspace = true
+msg-core = { path = "../msg-core" }
+
+[lints]
+workspace = true
