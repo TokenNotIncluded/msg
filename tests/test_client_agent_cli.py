@@ -176,3 +176,20 @@ def test_agent_context_rejects_public_post_and_offline_account_feed(tmp_path, co
     )
     assert result.returncode == 1
     assert json.loads(result.stderr)['status'] == 'error'
+
+
+def test_agent_inbox_tail_and_list_active_flags(tmp_path):
+    run(tmp_path, 'agent', 'create', 'bot1')
+    run(tmp_path, 'agent', 'create', 'bot2')
+    run(tmp_path, 'agent', 'archive', 'bot2')
+
+    all_agents = run(tmp_path, 'agent', 'list')
+    assert len(all_agents['data']) == 2
+
+    active_agents = run(tmp_path, 'agent', 'list', '--active')
+    assert len(active_agents['data']) == 1
+    assert active_agents['data'][0]['label'] == 'bot1'
+
+    tail = run(tmp_path, '--agent', 'bot1', 'agent', 'inbox', '--tail')
+    assert tail['data']['items'] == []
+    assert isinstance(tail['data']['cursor'], str)

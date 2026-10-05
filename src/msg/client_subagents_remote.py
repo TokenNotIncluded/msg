@@ -8,6 +8,7 @@ records bind to the immutable account ID, so changing a handle keeps mailboxes
 and history intact; qualified addresses always show the current handle.
 """
 
+import asyncio
 import re
 import uuid
 from collections.abc import Mapping
@@ -357,15 +358,31 @@ class RemoteAgents:
                 return []
             raise
         values = []
-        async for page in self._children(root, 'topic'):
-            for item in page:
-                name = self._label(item['name'])
-                _, config = await self._agent(root, name, active=False)
-                values.append({
+        semaphore = asyncio.Semaphore(10)
+
+        async def inspect_item(item):
+            name = self._label(item['name'])
+            try:
+                async with semaphore:
+                    _, config = await self._agent(root, name, active=False)
+                return {
                     'name': name,
                     'identity': self._full(name),
                     'archived': config['archived'],
-                })
+                    'active': not config['archived'],
+                }
+            except Failure as exc:
+                if exc.code in {
+                    'subagent_not_found',
+                    'subagent_private_namespace_conflict',
+                    'invalid_subagent_message',
+                }:
+                    return None
+                raise
+
+        async for page in self._children(root, 'topic'):
+            results = await asyncio.gather(*(inspect_item(item) for item in page))
+            values.extend(r for r in results if r is not None)
         return sorted(values, key=lambda item: item['name'])
 
     async def archive(self, name):
@@ -495,6 +512,7 @@ class RemoteAgents:
         root = await self._identity()
         agent = self._label(agent)
         require(type(limit) is int and 1 <= limit <= 200, 'invalid_subagent_limit')
+        require(type(tail) is bool and not (tail and cursor is not None), 'invalid_subagent_cursor')
         config_meta = await self._receive_preflight(root, agent)
         scope = {
             'server': self.client.state.server,

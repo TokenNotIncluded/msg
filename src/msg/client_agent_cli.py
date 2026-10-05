@@ -24,6 +24,7 @@ def add_commands(commands):
         command.add_argument('--remote', action='store_true')
     listing = actions.add_parser('list')
     listing.add_argument('--remote', action='store_true')
+    listing.add_argument('--active', action='store_true', help='Show only active subagents.')
     sending = actions.add_parser('send')
     sending.add_argument('recipient')
     sending.add_argument('message', nargs='?')
@@ -42,6 +43,9 @@ def add_commands(commands):
     inbox.add_argument('--cursor')
     inbox.add_argument('--limit', type=int, default=50)
     inbox.add_argument('--remote', action='store_true')
+    inbox.add_argument(
+        '--tail', action='store_true', help='Start at current tail without scanning history.'
+    )
     listener = commands.add_parser(
         'listen', help='Wait for events; output flushed JSONL until stopped.'
     )
@@ -181,13 +185,22 @@ async def run_local(state, args):
             result = store.archive(args.name)
         elif args.action == 'list':
             result = store.list()
+            if getattr(args, 'active', False):
+                result = [
+                    item for item in result if item.get('active', not item.get('archived', False))
+                ]
         elif args.action == 'send':
             require(bool(args.agent), 'agent_required')
             result = store.send(
                 args.agent, args.recipient, message_text(args), message_id=args.message_id
             )
         else:
-            result = store.inbox(inbox_name(args), cursor=args.cursor, limit=args.limit)
+            result = store.inbox(
+                inbox_name(args),
+                cursor=args.cursor,
+                limit=args.limit,
+                tail=getattr(args, 'tail', False),
+            )
         print(canonical({'status': 'ok', 'data': result}).decode(), flush=True)
         return 0
     finally:
@@ -238,6 +251,10 @@ async def run_remote(client, args):
         result = await store.archive(args.name)
     elif args.action == 'list':
         result = await store.list()
+        if getattr(args, 'active', False):
+            result = [
+                item for item in result if item.get('active', not item.get('archived', False))
+            ]
     elif args.action == 'send':
         require(bool(args.agent), 'agent_required')
         result = await store.send(
@@ -248,6 +265,11 @@ async def run_remote(client, args):
             receipt=getattr(args, 'receipt', False),
         )
     else:
-        result = await store.inbox(inbox_name(args), cursor=args.cursor, limit=args.limit)
+        result = await store.inbox(
+            inbox_name(args),
+            cursor=args.cursor,
+            limit=args.limit,
+            tail=getattr(args, 'tail', False),
+        )
     print(canonical({'status': 'ok', 'data': result}).decode(), flush=True)
     return 0
