@@ -3,6 +3,7 @@
 //! An authenticated principal is NOT authorization to execute an operation.
 //! Full resource authorization and the daemon are separate cutover gates.
 pub mod authentication;
+pub mod authorization;
 pub mod certificates;
 pub mod models;
 pub mod oauth;

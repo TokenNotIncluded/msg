@@ -231,3 +231,191 @@ pub struct AuditEvent {
     pub entry_digest: String,
     pub result: String,
 }
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Organization {
+    pub resource_id: String,
+    pub membership_version: i64,
+    #[serde(default)]
+    pub builtin: Option<String>,
+    #[serde(default = "invite")]
+    pub membership_policy: String,
+}
+fn invite() -> String {
+    "invite".into()
+}
+fn active() -> String {
+    "active".into()
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Membership {
+    pub organization_id: String,
+    pub subject_id: String,
+    pub role: String,
+    pub version: i64,
+    #[serde(default = "active")]
+    pub status: String,
+    #[serde(default)]
+    pub joined_at: Option<Timestamp>,
+    #[serde(default)]
+    pub invited_by: Option<String>,
+}
+impl Organization {
+    pub fn validate(&self) -> Result<()> {
+        if self.membership_version < 0
+            || !matches!(
+                self.membership_policy.as_str(),
+                "open" | "approval" | "invite" | "managed"
+            )
+            || self
+                .builtin
+                .as_ref()
+                .is_some_and(|s| !matches!(s.as_str(), "public" | "admins"))
+        {
+            return Err(Error("invalid_identity_record"));
+        }
+        Ok(())
+    }
+}
+impl Membership {
+    pub fn validate(&self) -> Result<()> {
+        if self.version < 0
+            || !matches!(
+                self.role.as_str(),
+                "owner" | "maintainer" | "member" | "admin"
+            )
+            || !matches!(
+                self.status.as_str(),
+                "active" | "pending" | "invited" | "rejected"
+            )
+        {
+            return Err(Error("invalid_identity_record"));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmailSettings {
+    pub subject_id: String,
+    #[serde(deserialize_with = "required_option")]
+    pub address: Option<String>,
+    #[serde(deserialize_with = "required_option")]
+    pub verified_at: Option<Timestamp>,
+    #[serde(default)]
+    pub enabled_events: std::collections::BTreeSet<String>,
+}
+pub enum IdentityRecord<'a> {
+    Subject(&'a msg_identity::models::Subject),
+    Organization(&'a Organization),
+    Membership(&'a Membership),
+    Email(&'a EmailSettings),
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CertificateRequestState {
+    pub request_id: String,
+    pub status: String,
+    pub generation: i64,
+    #[serde(default)]
+    pub certificate_id: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransferSession {
+    pub id: String,
+    pub subject_id: String,
+    pub direction: String,
+    pub state: String,
+    #[serde(deserialize_with = "required_option")]
+    pub target: Option<ResourceRef>,
+    #[serde(deserialize_with = "required_option")]
+    pub expected_size: Option<i64>,
+    #[serde(deserialize_with = "required_option")]
+    pub expected_digest: Option<String>,
+    pub expires_at: Timestamp,
+    pub generation: i64,
+    #[serde(default)]
+    pub output: Option<ResourceRef>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransferChunk {
+    pub transfer_id: String,
+    pub offset: i64,
+    pub content: BlobRef,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EffectJob {
+    pub id: String,
+    pub event_id: String,
+    pub kind: String,
+    pub dedupe_key: String,
+    // A stored snapshot is not an authentication result. Workers must obtain a
+    // freshly validated Principal through the stored-job authentication port.
+    principal: Json,
+    pub operation: String,
+    pub arguments: BTreeMap<String, Json>,
+    pub state: String,
+    pub attempts: i64,
+    pub next_attempt_at: Timestamp,
+    #[serde(deserialize_with = "required_option")]
+    pub lease_until: Option<Timestamp>,
+    #[serde(default)]
+    pub result: Option<ResourceRef>,
+}
+/// Trusted effect description. The identity is supplied separately after authentication.
+pub struct JobDraft {
+    pub id: String,
+    pub event_id: String,
+    pub kind: String,
+    pub dedupe_key: String,
+    pub operation: String,
+    pub arguments: BTreeMap<String, Json>,
+}
+impl EffectJob {
+    pub fn new(
+        principal: &msg_identity::authentication::Principal,
+        draft: JobDraft,
+        now: Timestamp,
+    ) -> Result<Self> {
+        let JobDraft {
+            id,
+            event_id,
+            kind,
+            dedupe_key,
+            operation,
+            arguments,
+        } = draft;
+        Ok(Self {
+            id,
+            event_id,
+            kind,
+            dedupe_key,
+            principal: encode(principal)?,
+            operation,
+            arguments,
+            state: "pending".into(),
+            attempts: 0,
+            next_attempt_at: now,
+            lease_until: None,
+            result: None,
+        })
+    }
+    pub fn subject(&self) -> Result<&str> {
+        self.principal
+            .as_object()?
+            .get("subject")
+            .ok_or(Error("worker_identity_required"))?
+            .as_str()
+    }
+}
+#[derive(Clone, Serialize)]
+pub struct Page<T> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<String>,
+}

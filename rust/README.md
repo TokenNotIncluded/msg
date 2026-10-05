@@ -1,8 +1,56 @@
-# Native MSG migration — identity and atomic SQLite metadata
+# Native Rust server migration
 
-**This is not a replacement daemon or a production cutover.** Python remains the
-running implementation. No Python entry point, live database, configuration,
-route, migration script or deployment is changed.
+Python keeps the CLI, administrator/migration scripts, and development helpers.
+Native Rust code is not yet a replacement for the running Python service. Do not
+change production entry points until the remaining executor, transport, content,
+worker, and deployment gates below pass.
+
+## Fourth implementation slice: resource authority and PostgreSQL
+
+`msg-identity::authorization` implements transaction-bound resource policy:
+ordinary mode/group checks, ancestors, runtime/quarantine fences, current
+certificate ceilings, managed-resource rules, topic roles and bans, direct
+conversation participants/blocking, tool gates, and exact resource sharing with
+live source-chain and owner/credential checks. Authentication alone is never a
+permission to execute. Replayed results must still be checked against current
+resource access by the future executor.
+
+`msg-storage::postgres` opens the existing Python-migrated database without
+creating or upgrading any schema. The startup checks cover required columns,
+exact primary/unique keys, required foreign keys, and the unique root index.
+Each request owns a dedicated connection and repeatable-read snapshot. Writers
+hold Python's same session advisory lock until rollback compensation finishes.
+Transaction-pooled proxies are not supported. Remote connections require TLS
+with certificate and hostname validation, with no plaintext fallback; unsupported
+libpq connection options are rejected rather than silently ignored.
+
+The native PostgreSQL session implements authority reads, canonical resources
+and hexadecimal aliases, migration-only old paths, revisions/relations, tags,
+optimistic resource updates, identities/memberships/email settings, credentials,
+CSRs/certificates, transfer/chunk metadata, events/audit, results, and durable job
+records. These typed storage calls are not business operations. They cannot
+replace the still-pending authenticated executor, issuance/refresh workflows,
+blob/Git recovery or effect runner.
+
+All typed writes poison the transaction on failure, including validation errors
+that a caller catches. Nested savepoints can recover an aborted inner unit only
+after successful rollback. A lost COMMIT acknowledgement returns an uncertain
+outcome, retains potentially referenced external data, and releases no secrets.
+No network-facing handler uses these local test drivers.
+
+New differential coverage consists of 878 resource-policy checks against each
+backend (468 are a mode/identity/check matrix), 102 PostgreSQL record comparisons,
+2 additional native safety checks, 13 real process/protocol-failure checks, and
+4 malformed-schema checks per build profile. The PostgreSQL tests use actual
+Python-created PostgreSQL databases, not a SQLite simulation. A local test-only
+wire proxy drops an acknowledged COMMIT to verify real uncertain-response and
+same-ID retry behavior. All fixture databases have generated names; the harness
+refuses nonlocal servers and never truncates an existing application database.
+
+The CI workflow repeats the old and new suites in debug and optimized builds,
+records the tested source SHA/tree and dependency lock, and uploads the reports.
+Independent cloud results must be read before claiming CI acceptance. The
+one-time offline editor export workflows are removed.
 
 ## Ownership boundary
 
@@ -13,8 +61,8 @@ signature protocol. The tests import the actual Python implementation in the
 same checkout, rather than a translated copy of the expected behavior.
 
 The original inspected main baseline is
-`7e16ca75ff6af4313365814c23912b5997b222c5`. This slice extends phase 2 commit
-`78e8d5d44cbbe49078a1e6eb4bb8e079eea3db72` on the existing draft PR #235.
+`7e16ca75ff6af4313365814c23912b5997b222c5`. This slice extends the phase 3 implementation at
+`fffea47606cf` on the existing draft PR #235.
 
 ## Implemented natively
 
@@ -23,8 +71,8 @@ The original inspected main baseline is
 | `msg-core` | Bounded strict JSON, duplicate rejection, canonical numbers/Unicode, lossless typed JSON, SHA-256/base64url | `core/codec.py` |
 | `msg-crypto` | Existing key/subject IDs, purpose-framed Ed25519 signing/verification | `security/crypto.py` |
 | `msg-protocol` | Request shape/defaults, UTC time, business digest/signature bytes, immutable field access | `core/packet.py`, `core/requests.py`, `core/models.py` |
-| `msg-identity` | Typed identity/credential/certificate/CSR records, credential and current-state admission, pinned CA chains, live delegation, scope/ceiling/mode primitives, read-only browser/API/OAuth and token-recovery validation | `security/authentication.py`, `certificates.py`, `policy.py`, `oauth.py` |
-| `msg-storage` | Transaction-bound authority reads; Unix writer fencing, atomic resource/revision/result/event/audit/settings writes, savepoints and rollback effects | `storage/sqlite.py` and its record/session modules |
+| `msg-identity` | Typed identity/credential/certificate/CSR records, credential and current-state admission, pinned CA chains, live delegation, scope/ceiling/mode primitives, browser/API/OAuth and token-recovery validation, transaction-bound resource authorization | `security/authentication.py`, `certificates.py`, `policy.py`, `oauth.py` |
+| `msg-storage` | Transaction-bound authority reads; SQLite and PostgreSQL writers, identity/certificate/transfer/job records, atomic resource/revision/result/event/audit/settings writes, savepoints and rollback effects | `storage/sqlite.py`, `storage/postgres.py` and their record/session modules |
 
 Authentication validates service/digest/expiry, current credentials, SHA-256
 bearer verifiers with constant-time comparison, actor/subject bindings, permitted
@@ -173,13 +221,13 @@ cryptographic and database primitives are delegated to pinned libraries.
 - Dalek strict verification rejects weak-key forgeries. Historical key/signature
   compatibility still needs characterization before routing production traffic.
 - Storage row decoding uses `invalid_storage_record` rather than every Python
-  field-specific error. Core/domain validation (notably Unicode tag normalization),
-  hex-ID aliases and complete resource policy are pending. Native storage takes
+  field-specific error. Domain validation (notably Unicode tag normalization) remains pending.
+  Resource policy and PostgreSQL hexadecimal aliases are implemented above. Native storage takes
   canonical IDs/validated domain records; its DTOs are not public request schemas.
   The stricter poisoned-write and malformed-result checks are explicit safety
   differences, not assertions of identical behavior for every Python input.
-- Full resource authorization, operation handlers, mutation-side identity/OAuth
-  issuance/refresh/recovery, encrypted-key wrapping, PostgreSQL and remaining stores,
+- Operation handlers, mutation-side identity/OAuth
+  issuance/refresh/recovery, encrypted-key wrapping and remaining content stores,
   native `serve`/HTTP/MCP, `worker`, packaging and deployment remain pending.
 - No RSS, memory-reduction or throughput result is claimed. Benchmark equivalent
   functionality, data, concurrency and complete process trees before comparison.
