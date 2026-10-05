@@ -5,6 +5,7 @@ on:
       - 'rust/**'
       - 'src/msg/core/**'
       - 'src/msg/security/crypto.py'
+      - 'pyproject.toml'
       - '.github/workflows/rust-wire.yml'
   push:
     branches: [main, 'migration/rust-*']
@@ -12,6 +13,7 @@ on:
       - 'rust/**'
       - 'src/msg/core/**'
       - 'src/msg/security/crypto.py'
+      - 'pyproject.toml'
       - '.github/workflows/rust-wire.yml'
   workflow_dispatch:
 permissions:
@@ -35,23 +37,20 @@ jobs:
         run: |
           rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
           python -m pip install cryptography==46.0.3 jsonschema==4.25.1 ruff==0.16.9
-      - name: Check formatting and retain a repair patch
-        working-directory: rust
+      - name: Record exact tested revision and environment
         run: |
-          mkdir -p artifacts
-          cargo +1.85.0 fmt --all
-          git diff -- . > artifacts/rustfmt.patch
-          test ! -s artifacts/rustfmt.patch
+          mkdir -p rust/artifacts
+          git rev-parse HEAD > rust/artifacts/source-commit.txt
+          rustc +1.85.0 --version > rust/artifacts/toolchains.txt
+          python --version >> rust/artifacts/toolchains.txt
+      - name: Check Rust formatting without modifying sources
+        working-directory: rust
+        run: cargo +1.85.0 fmt --all -- --check
       - name: Check Python reference harness style
         if: ${{ !cancelled() }}
         run: |
-          mkdir -p rust/artifacts
-          status=0
-          python -m ruff check rust/tests --fix || status=$?
-          python -m ruff format rust/tests
-          git diff -- rust/tests > rust/artifacts/python-style.patch
-          test ! -s rust/artifacts/python-style.patch
-          exit "$status"
+          python -m ruff check rust/tests
+          python -m ruff format --check rust/tests
       - name: Native tests
         if: ${{ !cancelled() }}
         working-directory: rust
@@ -67,7 +66,14 @@ jobs:
         run: |
           cargo +1.85.0 build --locked --manifest-path rust/Cargo.toml --example wire_check
           python rust/tests/test_python_parity.py --binary rust/target/debug/examples/wire_check --report rust/artifacts/parity.json
-      - name: Preserve evidence and resolved dependency lock
+      - name: Optimized native differential checks
+        if: ${{ !cancelled() }}
+        env:
+          PYTHONPATH: src
+        run: |
+          cargo +1.85.0 build --release --locked --manifest-path rust/Cargo.toml --example wire_check
+          python rust/tests/test_python_parity.py --binary rust/target/release/examples/wire_check --report rust/artifacts/parity-release.json
+      - name: Preserve evidence and dependency lock
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:

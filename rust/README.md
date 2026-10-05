@@ -39,9 +39,9 @@ From the repository root, with Python 3.15 and Rust 1.85.0:
 
 ```sh
 python -m pip install cryptography==46.0.3 jsonschema==4.25.1
-cargo +1.85.0 test --manifest-path rust/Cargo.toml --workspace --all-targets
-cargo +1.85.0 clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
-cargo +1.85.0 build --manifest-path rust/Cargo.toml --example wire_check
+cargo +1.85.0 test --locked --manifest-path rust/Cargo.toml --workspace --all-targets
+cargo +1.85.0 clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
+cargo +1.85.0 build --locked --manifest-path rust/Cargo.toml --example wire_check
 PYTHONPATH=src python rust/tests/test_python_parity.py \
   --binary rust/target/debug/examples/wire_check --report rust/artifacts/parity.json
 ```
@@ -50,7 +50,9 @@ The differential corpus includes 16,384 deterministic random IEEE-754 bit
 patterns (non-finite values are excluded), decimal exponent neighbors, Unicode,
 large integers, malformed JSON/base64/envelopes and bidirectional Ed25519 checks.
 The report records the actual executed count, not the random input budget.
-CI also keeps formatter evidence and the resolved dependency lock.
+CI checks formatting without modifying sources, tests debug and optimized
+release builds, and preserves the exact revision, toolchain versions, differential
+reports and dependency lock as artifacts.
 
 ## Explicit cutover blockers
 
