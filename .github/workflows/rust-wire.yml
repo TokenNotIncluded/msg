@@ -4,7 +4,10 @@ on:
     paths:
       - 'rust/**'
       - 'src/msg/core/**'
-      - 'src/msg/security/crypto.py'
+      - 'src/msg/security/**'
+      - 'src/msg/storage/**'
+      - 'src/msg/oauth_config.py'
+      - 'src/msg/constants.py'
       - 'pyproject.toml'
       - '.github/workflows/rust-wire.yml'
   push:
@@ -12,7 +15,10 @@ on:
     paths:
       - 'rust/**'
       - 'src/msg/core/**'
-      - 'src/msg/security/crypto.py'
+      - 'src/msg/security/**'
+      - 'src/msg/storage/**'
+      - 'src/msg/oauth_config.py'
+      - 'src/msg/constants.py'
       - 'pyproject.toml'
       - '.github/workflows/rust-wire.yml'
   workflow_dispatch:
@@ -54,7 +60,9 @@ jobs:
       - name: Native tests
         if: ${{ !cancelled() }}
         working-directory: rust
-        run: cargo +1.85.0 test --locked --workspace --all-targets
+        run: |
+          cargo +1.85.0 test --locked --workspace --all-targets
+          cargo +1.85.0 test --locked --workspace --doc
       - name: Clippy
         if: ${{ !cancelled() }}
         working-directory: rust
@@ -64,15 +72,17 @@ jobs:
         env:
           PYTHONPATH: src
         run: |
-          cargo +1.85.0 build --locked --manifest-path rust/Cargo.toml --example wire_check
+          cargo +1.85.0 build --locked --manifest-path rust/Cargo.toml --workspace --examples
           python rust/tests/test_python_parity.py --binary rust/target/debug/examples/wire_check --report rust/artifacts/parity.json
+          python rust/tests/test_identity_parity.py --binary rust/target/debug/examples/authority_check --report rust/artifacts/identity-parity.json
       - name: Optimized native differential checks
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: src
         run: |
-          cargo +1.85.0 build --release --locked --manifest-path rust/Cargo.toml --example wire_check
+          cargo +1.85.0 build --release --locked --manifest-path rust/Cargo.toml --workspace --examples
           python rust/tests/test_python_parity.py --binary rust/target/release/examples/wire_check --report rust/artifacts/parity-release.json
+          python rust/tests/test_identity_parity.py --binary rust/target/release/examples/authority_check --report rust/artifacts/identity-parity-release.json
       - name: Preserve evidence and dependency lock
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
