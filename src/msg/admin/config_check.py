@@ -40,6 +40,15 @@ def _vectors():
     # These are independent acceptance expectations, not configuration defaults
     # used by the server. Each case asserts the loader's effective Settings value.
     rows = {
+        'login.enabled': (False, True, 'true', 'invalid_login_config'),
+        'login.registration': ('legacy', 'provider_only', 'any_provider', 'invalid_login_config'),
+        'login.session_ttl': (900, 3600, 3601, 'invalid_login_config'),
+        'login.providers': (
+            {},
+            {'passkey': {'enabled': True}},
+            {'unknown': {}},
+            'invalid_login_provider',
+        ),
         'oauth.enabled': (False, True, 'true', 'invalid_oauth_config'),
         'oauth.access_ttl': (900, 3600, 3601, 'invalid_oauth_config'),
         'oauth.session_ttl': (2592000, 7776000, 7776001, 'invalid_oauth_config'),
@@ -247,6 +256,8 @@ def _effective(settings, field):
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, tuple):
+        if field == 'login.providers':
+            return {item.name: {'enabled': True} for item in value if item.enabled}
         if field == 'oauth.clients':
             return [
                 {
@@ -305,6 +316,8 @@ def configuration_selftest():
                     default_status = 'pass'
                 for accepted, value in ((True, good), (False, bad)):
                     data = deepcopy(baseline)
+                    if field == 'login.enabled':
+                        data['oauth'] = {'enabled': True}
                     mail = None
                     if field.startswith('mail.'):
                         mail = {

@@ -78,7 +78,12 @@ def account_navigation(account, *, compact=False):
         f'<a href="{path}/followers" data-i18n="followers">Followers</a> '
         f'<a href="{path}/bal" data-i18n="wallet">Wallet</a> '
         '<a href="/bookmarks" data-i18n="saved">Saved</a> '
-        '<a href="/oauth/logout" data-i18n="logout">Sign out</a>'
+        + (
+            '<a href="/account/login-methods">Sign-in methods / 登录方式</a> '
+            if account.get('login_methods_enabled')
+            else ''
+        )
+        + '<a href="/oauth/logout" data-i18n="logout">Sign out</a>'
     )
     if compact:
         return (

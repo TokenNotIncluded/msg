@@ -11,7 +11,7 @@ from msg.storage.postgres import PostgresMetadataStore
 from msg.storage.sqlite import SqliteMetadataStore
 
 
-@pytest.fixture(params=['sqlite', 'postgres'])
+@pytest.fixture(params=['sqlite', pytest.param('postgres', marks=pytest.mark.db)])
 def stores(request, tmp_path):
     if request.param == 'postgres':
         dsn = request.getfixturevalue('pg_dsn')
