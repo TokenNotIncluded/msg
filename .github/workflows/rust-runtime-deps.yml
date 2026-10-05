@@ -1,0 +1,89 @@
+name: Rust runtime dependency snapshot
+on:
+  push:
+    branches: ['migration/rust-*']
+    paths: ['.github/workflows/rust-runtime-deps.yml']
+permissions:
+  contents: read
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Export pinned public dependencies and disposable test tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/msg-runtime-editor /tmp/runtime-deps/src /tmp/runtime-deps/.cargo
+          git rev-parse HEAD > /tmp/msg-runtime-editor/source-commit.txt
+          git archive --format=tar.gz HEAD > /tmp/msg-runtime-editor/source.tar.gz
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+          printf '[resolver]\nincompatible-rust-versions="fallback"\n' > /tmp/runtime-deps/.cargo/config.toml
+          cat > /tmp/runtime-deps/Cargo.toml <<'TOML'
+          [package]
+          name="msg-runtime-offline-dependencies"
+          version="0.0.0"
+          edition="2021"
+          rust-version="1.85"
+          [dependencies]
+          axum={version="=0.8.6",features=["ws","http2"]}
+          tokio={version="=1.48.0",features=["full"]}
+          tower={version="=0.5.2",features=["limit","timeout","util"]}
+          tower-http={version="=0.6.6",features=["limit","timeout","trace","catch-panic","compression-gzip"]}
+          reqwest={version="=0.12.24",default-features=false,features=["rustls-tls","json","stream"]}
+          clap={version="=4.5.51",features=["derive","env"]}
+          toml="=0.8.23"
+          hmac="=0.12.1"
+          rand="=0.8.5"
+          aes-gcm="=0.10.3"
+          hkdf="=0.12.4"
+          x25519-dalek={version="=2.0.1",features=["static_secrets"]}
+          age={version="=0.11.1",default-features=false}
+          zeroize="=1.8.2"
+          hex="=0.4.3"
+          url="=2.5.7"
+          percent-encoding="=2.3.2"
+          mime_guess="=2.0.5"
+          uuid={version="=1.18.1",features=["v4"]}
+          regex="=1.12.2"
+          unicode-normalization="=0.1.24"
+          pulldown-cmark="=0.13.0"
+          ammonia="=4.1.2"
+          minijinja={version="=2.12.0",features=["loader","json"]}
+          jsonschema={version="=0.33.0",default-features=false}
+          postgres={version="=0.19.12",features=["with-serde_json-1","with-chrono-0_4"]}
+          redis={version="=0.32.7",default-features=false,features=["tokio-comp"]}
+          flate2="=1.1.5"
+          rustix={version="=1.1.2",features=["fs","process"]}
+          tracing="=0.1.41"
+          tracing-subscriber={version="=0.3.20",features=["env-filter","json"]}
+          futures-util="=0.3.31"
+          tokio-stream={version="=0.1.17",features=["sync"]}
+          graphql-parser="=0.4.1"
+          lettre={version="=0.11.19",default-features=false,features=["builder","smtp-transport","tokio1-rustls-tls"]}
+          similar="=2.7.0"
+          hickory-proto="=0.24.4"
+          TOML
+          printf 'msg-storage={path="%s/rust/crates/msg-storage"}\nmsg-protocol={path="%s/rust/crates/msg-protocol"}\n' "$PWD" "$PWD" >> /tmp/runtime-deps/Cargo.toml
+          echo 'fn main() {}' > /tmp/runtime-deps/src/main.rs
+          (cd /tmp/runtime-deps && cargo +1.85.0 vendor --sync "$GITHUB_WORKSPACE/rust/Cargo.toml" --versioned-dirs /tmp/runtime-vendor > /tmp/runtime-vendor-config.toml)
+          cp /tmp/runtime-deps/Cargo.toml /tmp/runtime-deps/Cargo.lock /tmp/msg-runtime-editor/
+          tar -czf /tmp/msg-runtime-editor/vendor.tar.gz -C /tmp runtime-vendor runtime-vendor-config.toml
+          python -m pip install '.[server]' pytest pytest-asyncio pytest-cov 'ruff==0.16.9'
+          python -m pip freeze > /tmp/msg-runtime-editor/python-requirements.txt
+          tar -cJf /tmp/msg-runtime-editor/python-toolchain.tar.xz -C "$(python -c 'import sys;print(sys.prefix)')" .
+          (cd /tmp/msg-runtime-editor && sha256sum *.tar.* Cargo.lock > SHA256SUMS)
+      - uses: actions/upload-artifact@v7
+        with:
+          name: msg-runtime-editor-${{ github.sha }}
+          path: /tmp/msg-runtime-editor/
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
