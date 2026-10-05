@@ -34,7 +34,7 @@ jobs:
       - name: Install Rust toolchain and Python reference dependencies
         run: |
           rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
-          python -m pip install cryptography==46.0.3 jsonschema==4.25.1
+          python -m pip install cryptography==46.0.3 jsonschema==4.25.1 ruff==0.16.9
       - name: Check formatting and retain a repair patch
         working-directory: rust
         run: |
@@ -42,20 +42,30 @@ jobs:
           cargo +1.85.0 fmt --all
           git diff -- . > artifacts/rustfmt.patch
           test ! -s artifacts/rustfmt.patch
+      - name: Check Python reference harness style
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p rust/artifacts
+          status=0
+          python -m ruff check rust/tests --fix || status=$?
+          python -m ruff format rust/tests
+          git diff -- rust/tests > rust/artifacts/python-style.patch
+          test ! -s rust/artifacts/python-style.patch
+          exit "$status"
       - name: Native tests
         if: ${{ !cancelled() }}
         working-directory: rust
-        run: cargo +1.85.0 test --workspace --all-targets
+        run: cargo +1.85.0 test --locked --workspace --all-targets
       - name: Clippy
         if: ${{ !cancelled() }}
         working-directory: rust
-        run: cargo +1.85.0 clippy --workspace --all-targets -- -D warnings
+        run: cargo +1.85.0 clippy --locked --workspace --all-targets -- -D warnings
       - name: Python and Rust differential checks
         if: ${{ !cancelled() }}
         env:
           PYTHONPATH: src
         run: |
-          cargo +1.85.0 build --manifest-path rust/Cargo.toml --example wire_check
+          cargo +1.85.0 build --locked --manifest-path rust/Cargo.toml --example wire_check
           python rust/tests/test_python_parity.py --binary rust/target/debug/examples/wire_check --report rust/artifacts/parity.json
       - name: Preserve evidence and resolved dependency lock
         if: ${{ always() }}

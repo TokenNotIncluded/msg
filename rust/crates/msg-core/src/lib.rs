@@ -60,7 +60,12 @@ impl Json {
             Some(b'"') => Value::String(serde_json::from_str(text).map_err(invalid)?),
             Some(b'[') => {
                 let values: Vec<Box<RawValue>> = serde_json::from_str(text).map_err(invalid)?;
-                Value::Array(values.iter().map(|v| Self::from_raw(v, depth + 1)).collect::<Result<_>>()?)
+                Value::Array(
+                    values
+                        .iter()
+                        .map(|v| Self::from_raw(v, depth + 1))
+                        .collect::<Result<_>>()?,
+                )
             }
             Some(b'{') => {
                 let members: Members = serde_json::from_str(text).map_err(|e| {
@@ -70,9 +75,13 @@ impl Json {
                         Error("invalid_json")
                     }
                 })?;
-                Value::Object(members.0.into_iter().map(|(k, v)| {
-                    Ok((k, Self::from_raw(&v, depth + 1)?))
-                }).collect::<Result<_>>()?)
+                Value::Object(
+                    members
+                        .0
+                        .into_iter()
+                        .map(|(k, v)| Ok((k, Self::from_raw(&v, depth + 1)?)))
+                        .collect::<Result<_>>()?,
+                )
             }
             _ if text.contains(['.', 'e', 'E']) => {
                 let number: f64 = text.parse().map_err(|_| Error("invalid_json"))?;
@@ -150,11 +159,15 @@ impl Json {
             Value::Bool(v) => out.push_str(if *v { "true" } else { "false" }),
             Value::Integer(v) => out.push_str(v),
             Value::Float(v) => out.push_str(&python_float(*v)),
-            Value::String(v) => out.push_str(&serde_json::to_string(v).map_err(|_| Error("invalid_json_value"))?),
+            Value::String(v) => {
+                out.push_str(&serde_json::to_string(v).map_err(|_| Error("invalid_json_value"))?)
+            }
             Value::Array(values) => {
                 out.push('[');
                 for (i, value) in values.iter().enumerate() {
-                    if i != 0 { out.push(','); }
+                    if i != 0 {
+                        out.push(',');
+                    }
                     value.write(out, depth + 1)?;
                 }
                 out.push(']');
@@ -162,8 +175,12 @@ impl Json {
             Value::Object(values) => {
                 out.push('{');
                 for (i, (key, value)) in values.iter().enumerate() {
-                    if i != 0 { out.push(','); }
-                    out.push_str(&serde_json::to_string(key).map_err(|_| Error("invalid_json_value"))?);
+                    if i != 0 {
+                        out.push(',');
+                    }
+                    out.push_str(
+                        &serde_json::to_string(key).map_err(|_| Error("invalid_json_value"))?,
+                    );
                     out.push(':');
                     value.write(out, depth + 1)?;
                 }
@@ -186,7 +203,10 @@ impl<'de> Deserialize<'de> for Members {
             fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
                 formatter.write_str("an object without duplicate keys")
             }
-            fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> std::result::Result<Members, M::Error> {
+            fn visit_map<M: MapAccess<'de>>(
+                self,
+                mut map: M,
+            ) -> std::result::Result<Members, M::Error> {
                 let mut values = BTreeMap::new();
                 while let Some((key, value)) = map.next_entry::<String, Box<RawValue>>()? {
                     if values.insert(key, value).is_some() {
@@ -204,7 +224,12 @@ impl<'de> Deserialize<'de> for Members {
 /// Keep float/integer distinction, -0.0, exponent sign and two-digit exponent.
 fn python_float(value: f64) -> String {
     if value == 0.0 {
-        return if value.is_sign_negative() { "-0.0" } else { "0.0" }.to_owned();
+        return if value.is_sign_negative() {
+            "-0.0"
+        } else {
+            "0.0"
+        }
+        .to_owned();
     }
     let mut buffer = ryu::Buffer::new();
     let text = buffer.format_finite(value.abs());
@@ -255,7 +280,9 @@ pub fn unb64(value: &str, limit: usize) -> Result<Vec<u8>> {
     if value.len() > limit.saturating_mul(4) / 3 + 4 {
         return Err(Error("invalid_base64"));
     }
-    let bytes = URL_SAFE_NO_PAD.decode(value).map_err(|_| Error("invalid_base64"))?;
+    let bytes = URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| Error("invalid_base64"))?;
     if bytes.len() > limit || b64(&bytes) != value {
         return Err(Error("invalid_base64"));
     }
@@ -269,10 +296,15 @@ mod tests {
     #[test]
     fn canonical_preserves_python_numbers() {
         for (raw, expected) in [
-            ("1E20", "1e+20"), ("1e-7", "1e-07"), ("1e15", "1000000000000000.0"),
-            ("1e-4", "0.0001"), ("-0.0", "-0.0"), ("-0", "0"),
+            ("1E20", "1e+20"),
+            ("1e-7", "1e-07"),
+            ("1e15", "1000000000000000.0"),
+            ("1e-4", "0.0001"),
+            ("-0.0", "-0.0"),
+            ("-0", "0"),
             ("18446744073709551616000", "18446744073709551616000"),
-            ("5e-324", "5e-324"), ("1.7976931348623157e308", "1.7976931348623157e+308"),
+            ("5e-324", "5e-324"),
+            ("1.7976931348623157e308", "1.7976931348623157e+308"),
         ] {
             assert_eq!(Json::parse(raw).unwrap().canonical().unwrap(), expected);
         }
@@ -280,8 +312,20 @@ mod tests {
 
     #[test]
     fn rejects_ambiguous_or_unbounded_inputs() {
-        for raw in [r#"{"a":1,"\u0061":2}"#, r#"[{"x":0,"x":1}]"#, "NaN", "Infinity", "1e999", r#""\ud800""#, "01", "[1,]"] {
-            assert!(Json::parse(raw).and_then(|v| v.canonical()).is_err(), "{raw}");
+        for raw in [
+            r#"{"a":1,"\u0061":2}"#,
+            r#"[{"x":0,"x":1}]"#,
+            "NaN",
+            "Infinity",
+            "1e999",
+            r#""\ud800""#,
+            "01",
+            "[1,]",
+        ] {
+            assert!(
+                Json::parse(raw).and_then(|v| v.canonical()).is_err(),
+                "{raw}"
+            );
         }
         assert!(Json::parse(&" ".repeat(MAX_BYTES + 1)).is_err());
         assert!(Json::parse(&format!("{}0{}", "[".repeat(66), "]".repeat(66))).is_err());
@@ -289,7 +333,13 @@ mod tests {
 
     #[test]
     fn unicode_and_base64_are_canonical() {
-        assert_eq!(Json::parse(r#"{"😀":1,"\ue000":2,"a":"中文\n"}"#).unwrap().canonical().unwrap(), "{\"a\":\"中文\\n\",\"\u{e000}\":2,\"😀\":1}");
+        assert_eq!(
+            Json::parse(r#"{"😀":1,"\ue000":2,"a":"中文\n"}"#)
+                .unwrap()
+                .canonical()
+                .unwrap(),
+            "{\"a\":\"中文\\n\",\"\u{e000}\":2,\"😀\":1}"
+        );
         for bad in ["YQ=", "YQ==", "YR", "+/", "Y Q", "a"] {
             assert!(unb64(bad, 10).is_err());
         }

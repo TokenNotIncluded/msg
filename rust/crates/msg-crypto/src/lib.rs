@@ -62,8 +62,10 @@ pub fn verify(public: &[u8], payload: &[u8], signature: &Signature, purpose: &st
     let public: &[u8; 32] = public.try_into().map_err(invalid)?;
     let key = VerifyingKey::from_bytes(public).map_err(|_| Error("invalid_signature"))?;
     let bytes = unb64(&signature.value, 64).map_err(|_| Error("invalid_signature"))?;
-    let signature = ed25519_dalek::Signature::from_slice(&bytes).map_err(|_| Error("invalid_signature"))?;
-    key.verify_strict(&framed(payload, purpose)?, &signature).map_err(|_| Error("invalid_signature"))
+    let signature =
+        ed25519_dalek::Signature::from_slice(&bytes).map_err(|_| Error("invalid_signature"))?;
+    key.verify_strict(&framed(payload, purpose)?, &signature)
+        .map_err(|_| Error("invalid_signature"))
 }
 
 #[cfg(test)]
@@ -89,7 +91,11 @@ mod tests {
         identity[0] = 1;
         let mut forged = [0; 64];
         forged[0] = 1;
-        let signature = Signature { key_id: key_id(&identity), algorithm: "ed25519".to_owned(), value: b64(&forged) };
+        let signature = Signature {
+            key_id: key_id(&identity),
+            algorithm: "ed25519".to_owned(),
+            value: b64(&forged),
+        };
         assert!(verify(&identity, b"forgery", &signature, "request").is_err());
     }
 }
