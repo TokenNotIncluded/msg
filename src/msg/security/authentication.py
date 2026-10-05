@@ -90,6 +90,18 @@ class AuthenticationService:
             require(request.expires_at is not None and now < request.expires_at, 'request_expired')
             require((request.expires_at - now).total_seconds() <= 300, 'request_expiry_too_long')
         proof = request.proof
+        if (
+            request.operation
+            in {
+                'identity.login_complete',
+                'identity.login_bind',
+                'identity.login_remove',
+            }
+            and spec.version == 1
+        ):
+            from msg.security.login import authenticate_login
+
+            return await authenticate_login(self, request, session)
         if request.operation == 'identity.register':
             require(isinstance(proof, SignatureProof), 'proof_required')
             public = unb64(request.arguments['public_key'], limit=32)

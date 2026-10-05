@@ -22,7 +22,7 @@ _AUDIO = {
 
 ATTACHMENT_CSS = """
 .attachments {
-  margin-block: 2.5rem 0; padding: 1rem; min-width: 0;
+  margin-block: 2.5rem 0; padding: 1rem 1.25rem; min-width: 0; border-radius: 14px;
   background: #111113; color: #f5f5f7; border: 1px solid #39393f;
   color-scheme: dark; font: 14px/1.6 var(--mono);
 }

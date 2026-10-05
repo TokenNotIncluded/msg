@@ -96,7 +96,7 @@ async def test_doctor_does_not_create_database_or_repair_bootstrap(installed, tm
 
 
 @pytest.mark.asyncio
-async def test_selftest_isolated_end_to_end_checks():
+async def test_selftest_isolated_end_to_end_checks(postgres_required):
     result = await selftest()
     assert result['ok'], result
     assert (

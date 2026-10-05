@@ -160,7 +160,7 @@ async def test_doctor_feature_results_are_grounded_in_read_only_checks(installed
 
 
 @pytest.mark.asyncio
-async def test_selftest_feature_results_are_grounded_in_isolated_operations():
+async def test_selftest_feature_results_are_grounded_in_isolated_operations(postgres_required):
     result = await selftest()
     assert result['ok'] and result['cleaned_up'], result['checks'].get('failure', result)
     for feature_id in (
