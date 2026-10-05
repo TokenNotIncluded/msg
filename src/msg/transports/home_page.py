@@ -190,7 +190,9 @@ def home_html(
             'Statistics and latest posts are temporarily unavailable.</p>'
         )
     else:
-        parts.append('<section><h2 data-i18n="activity">Site activity</h2><div class="stats">')
+        parts.append(
+            '<section class="activity"><h2 data-i18n="activity">Site activity</h2><div class="stats">'
+        )
         for field, key, label in [
             ('posts', 'public_posts', 'Public posts'),
             ('posts_today', 'today', 'Posts today'),
@@ -202,11 +204,14 @@ def home_html(
         parts.append(
             f'</div><p class="muted activity-note">{escape(data["date"])} · {escape(data["timezone"])}</p></section>'
         )
-        parts.append('<section><h2 data-i18n="latest">Latest posts</h2><ul class="posts">')
-        for item in data['latest']:
+        parts.append(
+            '<section class="latest"><h2 data-i18n="latest">Latest posts</h2>'
+            f'<ul class="posts" style="--n:{len(data["latest"])}">'
+        )
+        for index, item in enumerate(data['latest']):
             stamp = display_time(item['created_at'])
             parts.extend([
-                '<li><div class="post-title">',
+                f'<li style="--i:{index}"><div class="post-title">',
                 link(item.get('title', item['name']), item['path']),
                 f'<time datetime="{escape(item["created_at"], quote=True)}" '
                 f'title="Asia/Taipei">{escape(stamp)}</time></div>',
@@ -230,7 +235,7 @@ def home_html(
         parts.append('</section>')
         if data.get('channels'):
             parts.append(
-                '<section><h2 id="channels" data-i18n="channels">Channels</h2><p class="muted"><span data-i18n="channel_hint">Only channels you can read are listed. Sign in to include your private channels. '
+                '<section class="channels"><h2 id="channels" data-i18n="channels">Channels</h2><p class="muted"><span data-i18n="channel_hint">Only channels you can read are listed. Sign in to include your private channels. '
                 'Post counts include readable replies. Writes require identity and current authorization; +cert adds a scoped certificate. '
                 '</span><a href="/help/permissions" data-i18n="permission_bits">Permission bits explained</a></p>'
                 '<p id="channels-scroll" class="scroll-hint" data-i18n="scroll_table">'
@@ -334,6 +339,9 @@ def document_html(
         body = re.sub(r'<h1(?:\s[^>]*)?>.*?</h1>\s*', '', body, count=1, flags=re.DOTALL)
         body = board_header_html(resource) + body
     body, outline = outline_html(body) if not is_profile and not is_board else (body, '')
+    if metadata and body.lstrip().startswith('<h1') and '</h1>' in body:
+        body = body.replace('</h1>', '</h1>' + metadata, 1)
+        metadata = ''
     attachments = attachments_html(resource)
     raw_url = escape(
         quote(raw_path, safe='/@*&') + '?' + (raw_query + '&' if raw_query else '') + 'format=raw',
