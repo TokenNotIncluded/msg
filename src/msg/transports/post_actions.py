@@ -6,15 +6,15 @@ from html import escape
 from urllib.parse import urlencode
 
 POST_ACTIONS_CSS = """
-.post-actions { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--line); }
+.post-actions { margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); }
 .post-action-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
 .post-actions button { display: inline-flex; align-items: center; justify-content: center;
-  gap: 8px; min-height: 44px; padding: 8px 12px; border: 1px solid transparent;
-  border-radius: 2px; background: transparent; color: var(--fg); font: inherit;
+  gap: 8px; min-height: 44px; padding: 8px 14px; border: 1px solid transparent;
+  border-radius: 999px; background: transparent; color: var(--fg); font: inherit;
   font-size: 14px; line-height: 1.4; cursor: pointer; }
 .post-actions button:hover:not(:disabled), .post-proof-claims summary:hover { background: var(--panel); }
-.post-actions .post-comment { background: var(--fg); color: var(--bg); }
-.post-actions .post-comment:hover:not(:disabled) { background: var(--fg); text-decoration: underline; }
+.post-actions .post-comment { padding-inline: 20px; background: var(--fg); color: var(--bg); font-weight: 600; }
+.post-actions .post-comment:hover:not(:disabled) { background: color-mix(in srgb, var(--fg) 84%, var(--bg)); }
 .post-actions button[aria-pressed=true] { color: var(--accent); }
 .post-actions button:disabled { color: var(--muted); cursor: not-allowed; }
 .post-actions .post-comment:disabled { background: var(--panel); }
@@ -24,11 +24,12 @@ POST_ACTIONS_CSS = """
 .post-proof-claims { flex: 1 1 auto; min-width: 110px; }
 .post-proof-claims[open] { flex-basis: 100%; }
 .post-proof-claims summary { display: flex; align-items: center; gap: 8px; min-height: 44px;
-  width: fit-content; max-width: 100%; padding: 8px 12px; list-style: none;
+  width: fit-content; max-width: 100%; padding: 8px 14px; border-radius: 999px; list-style: none;
   color: var(--muted); font-size: 13px; cursor: pointer; }
 .post-proof-claims summary::-webkit-details-marker { display: none; }
-.post-proof-claims summary::before { content: '[+]'; font: 12px/1 var(--mono); }
-.post-proof-claims[open] summary::before { content: '[-]'; }
+.post-proof-claims summary::before { content: ''; width: 6px; height: 6px; margin-inline: 2px 4px;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); }
+.post-proof-claims[open] summary::before { transform: rotate(45deg); }
 .post-proof-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
   gap: 4px 16px; margin-block: 8px 16px; }
 .post-proof-options button { justify-content: start; width: 100%; text-align: start; }
@@ -48,7 +49,7 @@ POST_ACTIONS_CSS = """
 .post-compose-actions { display: flex; align-items: center; gap: 8px; }
 .post-compose-actions [type=submit] { background: var(--fg); color: var(--bg); }
 .post-actions textarea { display: block; box-sizing: border-box; width: 100%; min-height: 120px;
-  margin-block: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 2px;
+  margin-block: 10px; padding: 14px 16px; border: 1px solid var(--line-strong, var(--line)); border-radius: 12px;
   background: var(--bg); color: var(--fg); font: inherit; resize: vertical; }
 .post-actions :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 480px) {
