@@ -1,4 +1,4 @@
-name: Rust wire compatibility
+name: Rust native conformance
 on:
   pull_request:
     paths:
@@ -30,7 +30,20 @@ concurrency:
 jobs:
   conformance:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msg_test
+          POSTGRES_PASSWORD: msg_test_local_only
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msg_test -d postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      MSG_PG_TEST_ADMIN_DSN: 'host=127.0.0.1 port=5432 user=msg_test password=msg_test_local_only dbname=postgres sslmode=disable'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -42,7 +55,7 @@ jobs:
       - name: Install Rust toolchain and Python reference dependencies
         run: |
           rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
-          python -m pip install cryptography==46.0.3 jsonschema==4.25.1 ruff==0.16.9
+          python -m pip install cryptography==46.0.3 jsonschema==4.25.1 ruff==0.16.9 "psycopg[binary]==3.3.6"
       - name: Record exact tested revision and environment
         run: |
           mkdir -p rust/artifacts
@@ -78,6 +91,10 @@ jobs:
           python rust/tests/test_python_parity.py --binary rust/target/debug/examples/wire_check --report rust/artifacts/parity.json
           python rust/tests/test_identity_parity.py --binary rust/target/debug/examples/authority_check --report rust/artifacts/identity-parity.json
           python rust/tests/test_storage_parity.py --binary rust/target/debug/examples/writer_check --report rust/artifacts/storage-parity.json
+          python rust/tests/test_authorization_parity.py --binary rust/target/debug/examples/authority_check --report rust/artifacts/authorization.json
+          python rust/tests/test_authorization_parity.py --postgres --binary rust/target/debug/examples/authority_check --report rust/artifacts/authorization-pg.json
+          python rust/tests/test_postgres_parity.py --binary rust/target/debug/examples/pg_writer_check --report rust/artifacts/postgres.json
+          python rust/tests/test_postgres_process.py --binary rust/target/debug/examples/pg_writer_check --report rust/artifacts/postgres-process.json
       - name: Optimized native differential checks
         if: ${{ !cancelled() }}
         env:
@@ -87,6 +104,10 @@ jobs:
           python rust/tests/test_python_parity.py --binary rust/target/release/examples/wire_check --report rust/artifacts/parity-release.json
           python rust/tests/test_identity_parity.py --binary rust/target/release/examples/authority_check --report rust/artifacts/identity-parity-release.json
           python rust/tests/test_storage_parity.py --binary rust/target/release/examples/writer_check --report rust/artifacts/storage-parity-release.json
+          python rust/tests/test_authorization_parity.py --binary rust/target/release/examples/authority_check --report rust/artifacts/authorization-release.json
+          python rust/tests/test_authorization_parity.py --postgres --binary rust/target/release/examples/authority_check --report rust/artifacts/authorization-pg-release.json
+          python rust/tests/test_postgres_parity.py --binary rust/target/release/examples/pg_writer_check --report rust/artifacts/postgres-release.json
+          python rust/tests/test_postgres_process.py --binary rust/target/release/examples/pg_writer_check --report rust/artifacts/postgres-process-release.json
       - name: Preserve evidence and dependency lock
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
