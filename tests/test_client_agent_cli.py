@@ -193,3 +193,51 @@ def test_agent_inbox_tail_and_list_active_flags(tmp_path):
     tail = run(tmp_path, '--agent', 'bot1', 'agent', 'inbox', '--tail')
     assert tail['data']['items'] == []
     assert isinstance(tail['data']['cursor'], str)
+
+
+def test_agent_show_read_and_sender_filter(tmp_path):
+    run(tmp_path, 'agent', 'create', 'bot1')
+    run(tmp_path, 'agent', 'create', 'bot2')
+    run(tmp_path, 'agent', 'create', 'bot3')
+
+    # Test agent show
+    show_bot1 = run(tmp_path, 'agent', 'show', 'bot1')
+    assert show_bot1['data']['label'] == 'bot1'
+    assert show_bot1['data']['active'] is True
+
+    # Test agent send with custom id
+    msg_id = 'test-msg-001'
+    sent = run(
+        tmp_path,
+        '--agent',
+        'bot1',
+        'agent',
+        'send',
+        'bot2',
+        'hello from bot1',
+        '--message-id',
+        msg_id,
+    )
+    assert sent['data']['id'] == msg_id
+
+    # Send another message from bot3 to bot2
+    run(tmp_path, '--agent', 'bot3', 'agent', 'send', 'bot2', 'hello from bot3')
+
+    # Test agent read direct
+    read_msg = run(tmp_path, 'agent', 'read', msg_id, 'bot2')
+    assert read_msg['data']['id'] == msg_id
+    assert read_msg['data']['message'] == 'hello from bot1'
+
+    # Also test agent read with --agent bot2
+    read_msg_agent = run(tmp_path, '--agent', 'bot2', 'agent', 'read', msg_id)
+    assert read_msg_agent['data']['id'] == msg_id
+
+    # Test inbox filtering by sender
+    inbox_bot1 = run(tmp_path, 'agent', 'inbox', 'bot2', '--sender', 'bot1')
+    assert len(inbox_bot1['data']['items']) == 1
+    assert inbox_bot1['data']['items'][0]['id'] == msg_id
+
+    inbox_bot3 = run(tmp_path, 'agent', 'inbox', 'bot2', '--from', 'bot3')
+    assert len(inbox_bot3['data']['items']) == 1
+    assert inbox_bot3['data']['items'][0]['message'] == 'hello from bot3'
+

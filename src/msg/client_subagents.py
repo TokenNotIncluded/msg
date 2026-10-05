@@ -238,6 +238,13 @@ class LocalAgents:
                 connection.execute('SELECT * FROM agents WHERE name=?', (name,)).fetchone()
             )
 
+    def show(self, name):
+        name = normalize_agent(name, self.username)
+        with self._connection() as connection:
+            row = connection.execute('SELECT * FROM agents WHERE name=?', (name,)).fetchone()
+            require(row is not None, 'subagent_not_found')
+            return self._agent(row)
+
     @staticmethod
     def _exists(connection, name, *, active=False):
         row = connection.execute('SELECT * FROM agents WHERE name=?', (name,)).fetchone()
@@ -255,14 +262,33 @@ class LocalAgents:
             'created_at': row['created_at'],
         }
 
+    def read(self, agent, message_id):
+        recipient = normalize_agent(agent, self.username)
+        require(
+            isinstance(message_id, str) and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,64}', message_id)),
+            'invalid_subagent_message_id',
+        )
+        with self._connection() as connection:
+            self._exists(connection, recipient)
+            row = connection.execute(
+                'SELECT * FROM messages WHERE recipient=? AND id=?',
+                (recipient, message_id),
+            ).fetchone()
+            require(row is not None, 'not_found')
+            return self._event(row)
+
     def send(self, sender, recipient, message, message_id=None):
         sender = normalize_agent(sender, self.username)
         recipient = normalize_agent(recipient, self.username)
         require(isinstance(message, str) and bool(message), 'invalid_subagent_message')
-        try:
-            message_id = str(UUID(message_id)) if message_id is not None else str(uuid4())
-        except ValueError, AttributeError, TypeError:
-            raise Failure('invalid_subagent_message_id') from None
+        if message_id is None:
+            message_id = str(uuid4())
+        else:
+            require(
+                isinstance(message_id, str)
+                and bool(re.fullmatch(r'[A-Za-z0-9_-]{1,64}', message_id)),
+                'invalid_subagent_message_id',
+            )
         with self._connection() as connection:
             connection.execute('BEGIN IMMEDIATE')
             self._exists(connection, sender, active=True)
@@ -316,22 +342,39 @@ class LocalAgents:
         except ValueError, KeyError, TypeError:
             raise Failure('invalid_subagent_cursor') from None
 
-    def inbox(self, agent, cursor=None, limit=50, tail=False):
+    def inbox(self, agent, cursor=None, limit=50, tail=False, sender=None):
         recipient = normalize_agent(agent, self.username)
+        sender_norm = normalize_agent(sender, self.username) if sender is not None else None
         require(type(limit) is int and 1 <= limit <= 200, 'invalid_subagent_limit')
         require(type(tail) is bool and not (tail and cursor is not None), 'invalid_subagent_cursor')
         position = self._position(cursor, recipient)
         with self._connection() as connection:
             self._exists(connection, recipient)
+            if sender_norm is not None:
+                self._exists(connection, sender_norm)
             if tail:
-                position = connection.execute(
-                    'SELECT COALESCE(MAX(seq), 0) FROM messages'
-                ).fetchone()[0]
+                if sender_norm is not None:
+                    row = connection.execute(
+                        'SELECT COALESCE(MAX(seq), 0) FROM messages WHERE recipient=? AND sender=?',
+                        (recipient, sender_norm),
+                    ).fetchone()
+                else:
+                    row = connection.execute(
+                        'SELECT COALESCE(MAX(seq), 0) FROM messages WHERE recipient=?',
+                        (recipient,),
+                    ).fetchone()
+                position = row[0]
                 return {'items': [], 'cursor': self._cursor(recipient, position), 'has_more': False}
-            rows = connection.execute(
-                'SELECT * FROM messages WHERE recipient=? AND seq>? ORDER BY seq LIMIT ?',
-                (recipient, position, limit + 1),
-            ).fetchall()
+            if sender_norm is not None:
+                rows = connection.execute(
+                    'SELECT * FROM messages WHERE recipient=? AND sender=? AND seq>? ORDER BY seq LIMIT ?',
+                    (recipient, sender_norm, position, limit + 1),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    'SELECT * FROM messages WHERE recipient=? AND seq>? ORDER BY seq LIMIT ?',
+                    (recipient, position, limit + 1),
+                ).fetchall()
             items = [self._event(row) for row in rows[:limit]]
             return {
                 'items': items,

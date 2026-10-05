@@ -18,10 +18,14 @@ def add_commands(commands):
         'agent', help='Private subagents sharing one account; local by default.'
     )
     actions = agents.add_subparsers(dest='action', required=True)
-    for name in ('create', 'archive'):
+    for name in ('create', 'archive', 'show'):
         command = actions.add_parser(name)
         command.add_argument('name')
         command.add_argument('--remote', action='store_true')
+    reading = actions.add_parser('read', help='Read one known message by ID.')
+    reading.add_argument('message_id')
+    reading.add_argument('name', nargs='?', help='Subagent name (or use --agent).')
+    reading.add_argument('--remote', action='store_true')
     listing = actions.add_parser('list')
     listing.add_argument('--remote', action='store_true')
     listing.add_argument('--active', action='store_true', help='Show only active subagents.')
@@ -45,6 +49,9 @@ def add_commands(commands):
     inbox.add_argument('--remote', action='store_true')
     inbox.add_argument(
         '--tail', action='store_true', help='Start at current tail without scanning history.'
+    )
+    inbox.add_argument(
+        '--sender', '--from', dest='sender', help='Filter messages by sender label.'
     )
     listener = commands.add_parser(
         'listen', help='Wait for events; output flushed JSONL until stopped.'
@@ -181,6 +188,10 @@ async def run_local(state, args):
             return await stream(state, args, fetch, 'local:' + store.username)
         if args.action == 'create':
             result = store.create(args.name)
+        elif args.action == 'show':
+            result = store.show(args.name)
+        elif args.action == 'read':
+            result = store.read(inbox_name(args), args.message_id)
         elif args.action == 'archive':
             result = store.archive(args.name)
         elif args.action == 'list':
@@ -200,6 +211,7 @@ async def run_local(state, args):
                 cursor=args.cursor,
                 limit=args.limit,
                 tail=getattr(args, 'tail', False),
+                sender=getattr(args, 'sender', None),
             )
         print(canonical({'status': 'ok', 'data': result}).decode(), flush=True)
         return 0
@@ -247,6 +259,10 @@ async def run_remote(client, args):
         return await stream(client.state, args, fetch, 'remote')
     if args.action == 'create':
         result = await store.create(args.name)
+    elif args.action == 'show':
+        result = await store.show(args.name)
+    elif args.action == 'read':
+        result = await store.read(inbox_name(args), args.message_id)
     elif args.action == 'archive':
         result = await store.archive(args.name)
     elif args.action == 'list':
@@ -270,6 +286,7 @@ async def run_remote(client, args):
             cursor=args.cursor,
             limit=args.limit,
             tail=getattr(args, 'tail', False),
+            sender=getattr(args, 'sender', None),
         )
     print(canonical({'status': 'ok', 'data': result}).decode(), flush=True)
     return 0
