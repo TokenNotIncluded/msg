@@ -67,6 +67,7 @@ class PublicHomeCache:
         self.cold_wait, self.clock = cold_wait, clock
         self.max_bytes = max_bytes
         self.snapshot = None
+        self.board = None
         self.pending = None
         self.retry_at = 0
         self.closed = False
@@ -83,13 +84,19 @@ class PublicHomeCache:
             data, board = await self.loader()
             if data is None:
                 # A failed scan must not replace a usable snapshot with zeros.
+                # The public board is one setting and stays readable on its own.
+                if board is not None and len(canonical({'board': board})) <= self.max_bytes:
+                    self.board = board
                 self.retry_at = self.clock() + self.ttl
                 return
+            chosen = board if board is not None else self.board
             require(
-                len(canonical({'data': data, 'board': board})) <= self.max_bytes,
+                len(canonical({'data': data, 'board': chosen})) <= self.max_bytes,
                 'response_too_large',
             )
-            self.snapshot = HomeSnapshot(data, board, versions, self.clock(), self.invalidate)
+            if board is not None:
+                self.board = board
+            self.snapshot = HomeSnapshot(data, chosen, versions, self.clock(), self.invalidate)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -112,7 +119,7 @@ class PublicHomeCache:
             except TimeoutError:
                 pass
         if self.snapshot is None or self.clock() - self.snapshot.created > self.stale:
-            return HomeSnapshot()
+            return HomeSnapshot(board=self.board)
         return self.snapshot
 
     async def close(self):
