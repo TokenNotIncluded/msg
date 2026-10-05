@@ -2,6 +2,8 @@
 //!
 //! No schema creation/migration, network entry point or Python subprocess.
 //! Read snapshots and write sessions share the same transaction-bound authority reads.
+mod authorization;
+pub mod postgres;
 pub mod records;
 #[cfg(unix)]
 pub mod writer;

@@ -306,7 +306,7 @@ def kill(process):
     process.communicate(timeout=10)
 
 
-async def parity_cases(native, directory):
+def metadata_cases():
     doc = resource()
     rev = revision()
     cases = [
@@ -597,6 +597,11 @@ async def parity_cases(native, directory):
             )
         ],
     ))
+    return cases
+
+
+async def parity_cases(native, directory):
+    cases = metadata_cases()
     for index, (name, steps) in enumerate(cases):
         py = directory / f'py-{index}.db'
         rs = directory / f'rs-{index}.db'

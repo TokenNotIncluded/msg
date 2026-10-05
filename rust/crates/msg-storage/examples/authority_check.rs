@@ -3,13 +3,16 @@
 use msg_core::{digest, unb64, Error, Json, Result, MAX_BYTES};
 use msg_identity::{
     authentication::{Admission, AuthenticationService, Entry, OperationPolicy},
+    authorization::{
+        AccessRequirement, AuthorizationService, AuthorizationStore, Check, ResourceTypePolicy,
+    },
     certificates::CertificateValidator,
     models::*,
     policy::*,
-    store::{AuthorityStore, Record},
+    store::Record,
 };
 use msg_protocol::Request;
-use msg_storage::SqliteAuthority;
+use msg_storage::{postgres::PgStore, SqliteAuthority};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -27,6 +30,10 @@ struct Context {
     primary_ceiling: Vec<Grant>,
     temporary_ceiling: Vec<Grant>,
     oauth: msg_identity::oauth::OAuthPolicy,
+    #[serde(default)]
+    resource_types: Vec<ResourceTypePolicy>,
+    #[serde(default)]
+    base_families: BTreeSet<String>,
 }
 impl Context {
     fn validator(&self) -> Result<CertificateValidator> {
@@ -59,8 +66,10 @@ fn run(
     input: Value,
     context: &Context,
     auth: &mut AuthenticationService,
-    store: &dyn AuthorityStore,
+    authorization: &mut AuthorizationService,
+    session: &dyn AuthorizationStore,
 ) -> Result<Value> {
+    let store = session.authority();
     let now = || Timestamp::parse(text(&input, "now")?);
     match text(&input, "action")? {
         "authenticate" => {
@@ -83,6 +92,78 @@ fn run(
                 Admission::Fresh(p) => Ok(json!({"kind":"fresh", "principal":p})),
                 Admission::Replay(result) => Ok(json!({"kind":"replay", "result":result})),
             }
+        }
+        "authorize" | "base" | "has" => {
+            let request = Request::parse(text(&input, "raw")?)?;
+            let policy: OperationPolicy = decode(&value(&input, "policy")?)?;
+            let entry = match text(&input, "entry")? {
+                "network" => Entry::Network,
+                "local_admin" => Entry::LocalAdmin,
+                "worker" => Entry::Worker,
+                _ => return Err(Error("invalid_test_input")),
+            };
+            let Admission::Fresh(principal) =
+                auth.authenticate(&request, &policy, store, entry, now()?)?
+            else {
+                return Err(Error("test_fresh_principal_required"));
+            };
+            match text(&input, "action")? {
+                "base" => {
+                    authorization.require_base(
+                        &principal,
+                        text(&input, "operation")?,
+                        text(&input, "id")?,
+                        store,
+                        now()?,
+                    )?;
+                    Ok(json!({"allowed":true}))
+                }
+                "has" => Ok(
+                    json!({"allowed":authorization.has(&principal, text(&input,"capability")?, text(&input,"operation")?, text(&input,"id")?, store, now()?)?}),
+                ),
+                _ => {
+                    let mut checks = Vec::new();
+                    for item in input
+                        .get("checks")
+                        .and_then(Value::as_array)
+                        .ok_or(Error("invalid_test_input"))?
+                    {
+                        checks.push(AccessRequirement {
+                            resource_id: text(item, "resource_id")?.to_owned(),
+                            operation: text(item, "operation")?.to_owned(),
+                            check: Check::parse(text(item, "check")?)?,
+                        });
+                    }
+                    let refs = authorization.require(
+                        &principal,
+                        entry,
+                        now()?,
+                        &checks,
+                        input.get("request_name").and_then(Value::as_str),
+                        session,
+                    )?;
+                    Ok(json!({"refs":refs}))
+                }
+            }
+        }
+        "memberships" => Ok(json!({"groups":session.memberships(text(&input,"subject")?)?})),
+        "share_source" => {
+            let resource = session.policy_resource(text(&input, "id")?)?;
+            Ok(
+                json!({"allowed":authorization.share_source_active(&resource,text(&input,"grant")?,text(&input,"subject")?,now()?,session,input.get("reshare").and_then(Value::as_bool).unwrap_or(false))?}),
+            )
+        }
+        "share_link" => {
+            let resource = session.policy_resource(text(&input, "id")?)?;
+            let mut chain = store
+                .ancestors(&resource.id)?
+                .iter()
+                .map(|r| session.policy_resource(&r.id))
+                .collect::<Result<Vec<_>>>()?;
+            chain.push(resource.clone());
+            Ok(
+                json!({"allowed":authorization.share_link_read_allowed(text(&input,"grantor")?,text(&input,"credential")?,&resource,&chain,now()?,session)?}),
+            )
         }
         "certificate" => {
             let cert = context
@@ -191,53 +272,73 @@ fn main() -> io::Result<()> {
     let input = read_input(&mut reader)?.ok_or(io::Error::other("test_context_required"))?;
     let context: Context =
         serde_json::from_value(input).map_err(|_| io::Error::other("invalid_test_context"))?;
-    let mut store = match SqliteAuthority::open_existing(Path::new(&path)) {
+    enum Backend {
+        Sqlite(SqliteAuthority),
+        Postgres(Box<PgStore>),
+    }
+    impl Backend {
+        fn read<T>(
+            &mut self,
+            body: impl FnOnce(&dyn AuthorizationStore) -> Result<T>,
+        ) -> Result<T> {
+            match self {
+                Self::Sqlite(store) => body(&store.snapshot()?),
+                Self::Postgres(store) => store
+                    .transaction(false, |tx| body(tx))
+                    .map_err(|e| Error(e.code())),
+            }
+        }
+    }
+    let mut store = match std::env::var("MSG_PARITY_POSTGRES_DSN") {
+        Ok(dsn) => PgStore::open_existing(&dsn).map(|store| Backend::Postgres(Box::new(store))),
+        Err(_) => SqliteAuthority::open_existing(Path::new(&path)).map(Backend::Sqlite),
+    };
+    let store = match &mut store {
         Ok(store) => store,
         Err(e) => {
-            output(&mut writer, Err(e))?;
+            output(&mut writer, Err(*e))?;
             return Ok(());
         }
     };
-    let snapshot = match store.snapshot() {
-        Ok(snapshot) => snapshot,
-        Err(e) => {
-            output(&mut writer, Err(e))?;
-            return Ok(());
-        }
-    };
-    let validator = context.validator().map_err(io::Error::other)?;
-    let mut auth = AuthenticationService::new(
-        validator,
-        &snapshot,
-        context.primary_ceiling.clone(),
-        context.temporary_ceiling.clone(),
-    )
-    .map_err(io::Error::other)?
-    .with_oauth_policy(context.oauth.clone());
-    drop(snapshot);
+    let (mut auth, mut authorization) = store
+        .read(|snapshot| {
+            let auth = AuthenticationService::new(
+                context.validator()?,
+                snapshot.authority(),
+                context.primary_ceiling.clone(),
+                context.temporary_ceiling.clone(),
+            )?
+            .with_oauth_policy(context.oauth.clone());
+            let authorization = AuthorizationService::new(
+                context.validator()?,
+                snapshot.authority(),
+                context.resource_types.clone(),
+                context.base_families.clone(),
+            )?;
+            Ok((auth, authorization))
+        })
+        .map_err(io::Error::other)?;
     output(&mut writer, Ok(json!({"ready":true})))?;
     while let Some(input) = read_input(&mut reader)? {
-        let snapshot = match store.snapshot() {
-            Ok(snapshot) => snapshot,
-            Err(e) => {
-                output(&mut writer, Err(e))?;
-                continue;
-            }
-        };
         if input.get("action").and_then(Value::as_str) == Some("hold_snapshot") {
-            let before = snapshot.setting("snapshot_probe");
-            output(&mut writer, before.map(|v| json!({"before":v})))?;
-            if read_input(&mut reader)?.is_none() {
-                return Err(io::Error::other("test_resume_required"));
-            }
-            output(
-                &mut writer,
-                snapshot
-                    .setting("snapshot_probe")
-                    .map(|v| json!({"after":v})),
-            )?;
+            let result = store.read(|snapshot| {
+                output(
+                    &mut writer,
+                    snapshot
+                        .setting("snapshot_probe")
+                        .map(|v| json!({"before":v})),
+                )
+                .map_err(|_| Error("test_io_error"))?;
+                read_input(&mut reader)
+                    .map_err(|_| Error("test_io_error"))?
+                    .ok_or(Error("test_resume_required"))?;
+                Ok(json!({"after":snapshot.setting("snapshot_probe")?}))
+            });
+            output(&mut writer, result)?;
         } else {
-            output(&mut writer, run(input, &context, &mut auth, &snapshot))?;
+            let result = store
+                .read(|snapshot| run(input, &context, &mut auth, &mut authorization, snapshot));
+            output(&mut writer, result)?;
         }
     }
     Ok(())
