@@ -176,7 +176,10 @@ def main() -> None:
     inputs = ''.join(json.dumps(command, ensure_ascii=True) + '\n' for _, command, _ in CASES)
     result = subprocess.run([str(args.binary.resolve())], input=inputs, text=True, capture_output=True,
                             timeout=120, check=True)
-    outputs = result.stdout.splitlines()
+    # JSONL is delimited by LF, not Unicode U+2028/U+2029 inside strings.
+    if not result.stdout.endswith('\n'):
+        raise AssertionError('native output is missing its final LF')
+    outputs = result.stdout.split('\n')[:-1]
     if len(outputs) != len(CASES):
         raise AssertionError(f'native output count {len(outputs)} != {len(CASES)}')
     failures = []
