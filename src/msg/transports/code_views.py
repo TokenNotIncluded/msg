@@ -13,12 +13,12 @@ from pygments.util import ClassNotFound
 from msg.transports.json_layout import json_display
 
 CODE_CSS = r"""
-.code-block,.diff-view{max-width:100%;min-width:0;margin:24px 0;border:1px solid var(--line);border-radius:2px;background:var(--bg)}
-.code-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px 16px;padding:8px 12px;border-bottom:1px solid var(--line);font:12px var(--mono);color:var(--muted)}
-.code-toolbar button{margin-left:auto;min-height:44px;padding:4px 14px;border:1px solid var(--line);border-radius:2px;background:var(--bg);color:var(--fg);font:inherit;cursor:pointer}.code-toolbar button:hover{border-color:var(--fg)}
+.code-block,.diff-view{max-width:100%;min-width:0;margin:28px 0;border:1px solid var(--line);border-radius:12px;background:var(--bg)}
+.code-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:4px 16px;padding:0 4px 0 16px;border-bottom:1px solid var(--line);border-radius:11px 11px 0 0;background:var(--panel);font:12px var(--mono);color:var(--muted)}
+.code-toolbar button{margin-left:auto;min-height:44px;padding:0 14px;border:0;border-radius:999px;background:transparent;color:var(--fg);font:500 12px var(--sans);cursor:pointer}.code-toolbar button:hover{background:var(--bg)}
 .code-copy-status:empty{display:none}.code-copy-status{font-size:11px}
 .code-scroll,.diff-scroll{max-width:100%;overflow-x:auto;overscroll-behavior-inline:contain;outline-offset:3px}
-.prose .code-lines,.prose .diff-lines{margin:0;padding:12px 0;border-radius:0;background:var(--bg);color:var(--fg);font:13px/1.65 var(--mono);direction:ltr;unicode-bidi:isolate;overflow:visible;min-width:max-content}
+.prose .code-lines,.prose .diff-lines{margin:0;padding:14px 0;border-radius:0 0 11px 11px;background:var(--bg);color:var(--fg);font:13px/1.65 var(--mono);direction:ltr;unicode-bidi:isolate;overflow:visible;min-width:max-content}
 .code-lines>code,.diff-lines>code{display:block;min-width:max-content;background:none;padding:0;color:inherit;font:inherit}
 .code-line{display:grid;grid-template-columns:4.5ch 1fr;min-width:max-content}.code-number{padding:0 1ch;text-align:right;color:var(--muted);border-right:1px solid var(--line);user-select:none}.code-text{padding:0 16px;white-space:pre;overflow-wrap:normal;tab-size:4}
 .code-kw,.code-fn{color:#3050a0}.code-string{color:#895420}.code-comment{color:var(--muted);font-style:italic}.code-number-token{color:#895420}.code-op{color:var(--fg)}
@@ -27,7 +27,7 @@ CODE_CSS = r"""
 :root[data-theme=dark] .code-block,:root[data-theme=dark] .diff-view{--code-kw:#a7b9ff;--code-string:#e8bd8b;--diff-add:#9ce4a5;--diff-del:#ffaaa4}
 @media(prefers-color-scheme:dark){:root:not([data-theme=light]) .code-block,:root:not([data-theme=light]) .diff-view{--code-kw:#a7b9ff;--code-string:#e8bd8b;--diff-add:#9ce4a5;--diff-del:#ffaaa4}}
 .code-kw,.code-fn{color:var(--code-kw,#3050a0)}.code-string,.code-number-token{color:var(--code-string,#895420)}.diff-insert{color:var(--diff-add,#236d2c)}.diff-delete{color:var(--diff-del,#a52727)}
-@media(max-width:520px){.code-toolbar{padding:6px 8px;gap:4px 8px}.code-text{padding-inline:12px}.diff-text{padding-right:12px}.code-lines,.diff-lines{font-size:12px}}
+@media(max-width:520px){.code-toolbar{padding:0 4px 0 12px;gap:4px 8px}.code-text{padding-inline:12px}.diff-text{padding-right:12px}.code-lines,.diff-lines{font-size:12px}}
 """
 CODE_SCRIPT = r"""(() => {
   for (const button of document.querySelectorAll('[data-copy-code]')) {
