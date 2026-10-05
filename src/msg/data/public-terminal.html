@@ -4,36 +4,40 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Public terminal · msg</title>
 <style>
-:root { color-scheme:dark; font:14px/1.7 ui-monospace,SFMono-Regular,Consolas,monospace; color:#e7e7e7; background:#000; }
+:root { color-scheme:dark; --bg:#0c0c0e; --fg:#f2f2f4; --muted:#9a9aa4; --line:#2a2a30; --accent:#7eb6ff; font:15px/1.65 ui-monospace,SFMono-Regular,Consolas,monospace; color:var(--fg); background:var(--bg); }
 * { box-sizing:border-box; }
-body { margin:0; padding:32px 24px; }
-main { max-width:900px; margin:auto; }
-header { display:flex; gap:24px; align-items:center; justify-content:space-between; border-bottom:1px solid #303030; padding-bottom:16px; margin-bottom:28px; }
-h1 { font:inherit; margin:0; }
-a { color:#aaa; text-underline-offset:4px; }
-a:hover { color:#fff; }
-header a { display:inline-flex; align-items:center; min-height:44px; }
-p { color:#aaa; margin:0 0 24px; }
-pre { font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; margin:0 0 24px; }
-.command { color:#aaa; margin-bottom:4px; }
+body { margin:0; padding:28px 28px 20px; }
+main { max-width:880px; min-height:calc(100vh - 48px); margin:auto; display:flex; flex-direction:column; }
+header { display:flex; gap:24px; align-items:center; justify-content:space-between; padding-bottom:18px; }
+h1 { font:500 clamp(22px,3vw,28px)/1.1 inherit; letter-spacing:-.03em; margin:0; }
+a { color:var(--muted); text-underline-offset:4px; }
+a:hover { color:var(--fg); }
+header a { display:inline-flex; align-items:center; min-height:44px; color:var(--muted); }
+#instructions { color:var(--muted); max-width:68ch; margin:8px 0 28px; font-size:13.5px; }
+#instructions strong { color:var(--fg); font-weight:500; }
+pre { font:inherit; white-space:pre-wrap; overflow-wrap:anywhere; margin:0 0 18px; }
+#transcript > pre:first-child { color:#8e8e98; }
+.command { color:var(--accent); margin:22px 0 8px; }
 .error { color:#ffb4aa; }
-form { display:flex; align-items:center; gap:12px; padding:8px 0; }
-label { flex:none; }
-input { min-width:0; min-height:44px; flex:1; border:0; background:transparent; color:inherit; font:inherit; padding:8px 0; caret-color:#fff; border-radius:0; }
-input:focus-visible { outline:none; box-shadow:0 1px #aaa; }
-input:read-only { color:#aaa; }
-input::placeholder { color:#aaa; }
-button { min-height:44px; font:inherit; color:#aaa; background:none; border:1px solid #454545; padding:8px 12px; cursor:pointer; }
-button:hover { color:#fff; border-color:#aaa; }
-a:focus-visible,button:focus-visible { outline:2px solid #e7e7e7; outline-offset:4px; }
-::selection { background:#e7e7e7; color:#000; }
-html { scrollbar-color:#555 #000; }
-#status { display:block; color:#aaa; min-height:24px; overflow-wrap:anywhere; }
-.result-links { display:flex; flex-wrap:wrap; align-items:center; gap:8px 20px; margin:-12px 0 24px; }
+form { display:flex; align-items:center; gap:12px; margin-top:auto; padding:6px 6px 6px 16px; border:1px solid #3a3a44; border-radius:999px; background:#141418; }
+form:focus-within { border-color:var(--accent); box-shadow:0 0 0 4px color-mix(in srgb,var(--accent) 18%,transparent); }
+label { flex:none; color:var(--accent); }
+input { min-width:0; min-height:44px; flex:1; border:0; background:transparent; color:inherit; font:inherit; padding:8px 0; caret-color:var(--accent); border-radius:0; }
+input:focus-visible { outline:none; }
+input:read-only { color:var(--muted); }
+input::placeholder { color:#6e6e78; }
+button { min-height:40px; min-width:44px; font:inherit; color:var(--bg); background:var(--fg); border:0; border-radius:999px; padding:0 16px; cursor:pointer; }
+button:hover { background:#fff; }
+a:focus-visible,button:focus-visible { outline:2px solid var(--accent); outline-offset:3px; }
+::selection { background:var(--fg); color:var(--bg); }
+html { scrollbar-color:#3a3a44 var(--bg); }
+#status { display:block; color:var(--muted); min-height:28px; margin-top:10px; overflow-wrap:anywhere; font-size:13px; }
+.result-links { display:flex; flex-wrap:wrap; align-items:center; gap:4px 8px; margin:-8px 0 20px; }
 .result-links a, .result-links button { min-height:44px; overflow-wrap:anywhere; }
-.result-links a { display:inline-flex; align-items:center; max-width:100%; }
-.result-links button { border:0; padding:8px 0; text-decoration:underline; text-underline-offset:4px; }
-@media(max-width:540px) { body { padding:20px 16px; } header { gap:16px; } input { font-size:16px; } }
+.result-links a { display:inline-flex; align-items:center; max-width:100%; padding:0 12px; border:1px solid var(--line); border-radius:999px; text-decoration:none; }
+.result-links a:hover { border-color:var(--accent); color:var(--accent); }
+.result-links button { color:var(--muted); background:transparent; padding:0 8px; text-decoration:underline; text-underline-offset:4px; }
+@media(max-width:540px) { body { padding:16px 16px 12px; } header { gap:12px; } main { min-height:calc(100vh - 28px); } input { font-size:16px; } form { padding-left:14px; } }
 </style>
 <body>
 <!-- THESIS: One public prompt, fixed read commands.

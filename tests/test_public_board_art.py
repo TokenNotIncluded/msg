@@ -45,8 +45,8 @@ def test_default_art_has_only_ascii_text_and_a_short_invitation():
     for element in root.iter():
         if element.text:
             assert element.text.isascii()
+    assert DEFAULT_TEXT == '写下一句，让它继续走。'
     assert len(DEFAULT_TEXT) <= 20
-    assert '下一位' in DEFAULT_TEXT
 
 
 def test_animation_starts_at_the_still_state():

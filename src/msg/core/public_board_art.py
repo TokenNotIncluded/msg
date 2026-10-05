@@ -1,18 +1,55 @@
 """Release-owned ASCII artwork for the shared board's untouched initial state."""
 
-import re
 from html import escape
 
-DEFAULT_TEXT = '留一句话，让下一位接着写。'
+DEFAULT_TEXT = '写下一句，让它继续走。'
 
-# Explicit positions preserve ASCII spaces without CSS or xml:space.
-_LETTERS = (
-    ('__    __', '| \\  / |', '|  \\/  |', '| |\\/| |', '| |  | |', '|_|  |_|'),
-    ('  _____ ', ' / ____|', '| (___  ', ' \\___ \\ ', ' ____) |', '|_____/ '),
-    ('  _____ ', ' / ____|', '| |  __ ', '| | |_ |', '| |__| |', ' \\_____|'),
+# A 7x9 signal-board face. Lit cells carry the bits of MESSAGE; dark cells
+# stay as a faint dot, so every glyph is ASCII and no CSS is needed.
+_FACE = (
+    (
+        '#.....#',
+        '##...##',
+        '#.#.#.#',
+        '#..#..#',
+        '#.....#',
+        '#.....#',
+        '#.....#',
+        '#.....#',
+        '#.....#',
+    ),
+    (
+        '.#####.',
+        '#.....#',
+        '#......',
+        '.##....',
+        '...###.',
+        '......#',
+        '......#',
+        '#.....#',
+        '.#####.',
+    ),
+    (
+        '.#####.',
+        '#.....#',
+        '#......',
+        '#......',
+        '#...###',
+        '#.....#',
+        '#.....#',
+        '#....##',
+        '.####.#',
+    ),
 )
-_INK = '#8491a3'
-_SIGNAL = '#afc9e7'
+MESSAGE = 'msg: pass it on'
+_INK = '#7b8798'
+_DOT = '#8a94a4'
+_SIGNAL = '#4f86c6'
+_COLUMNS = (250, 480, 710)
+_CELL = 22
+_FONT = 20
+_TOP = 44
+_WIRE_Y = 268
 
 
 def _animation(tag, attribute, values, times, **attributes):
@@ -41,102 +78,78 @@ def _text(x, y, value, **attributes):
     return f'<text x="{x:g}" y="{y:g}"{extras}>{escape(value)}</text>'
 
 
-def _packet(values, times, opacity_times, glyph):
-    return ''.join((
-        f'<g font-family="monospace" font-size="23" fill="{_SIGNAL}" opacity="0">',
-        _travel(values, times),
-        _animation('animate', 'opacity', '0;0;1;1;0;0', opacity_times),
-        _text(-22, 6, ':', fill_opacity='0.3'),
-        _text(-8, 6, glyph),
-        '</g>',
-    ))
+def _bits():
+    while True:
+        yield from ''.join(f'{byte:08b}' for byte in MESSAGE.encode())
 
 
 def default_art():
-    """The large word gathers, unfolds into a two-route relay, then returns."""
+    """A packet crosses the wire; each letter it reaches lights and lifts once."""
+    bits = _bits()
+    half = (len(_FACE[0][0]) - 1) / 2 * _CELL
     parts = [
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300">',
-        '<title>MSG in ASCII</title>',
-        '<desc>ASCII character streams gather into a large MSG. The word folds '
-        'into a communication hub, with two packets traveling between bracketed '
-        'message nodes. The twelve-second loop returns to the complete word. '
-        'Shared SVG and text.</desc>',
-        '<g transform="translate(480 135)">',
-        _travel('480 135;480 135;480 69;480 69;480 135;480 135', '0;0.34;0.43;0.77;0.89;1'),
-        f'<g font-family="monospace" font-size="39" fill="{_INK}">',
-        _travel('1;1;0.46;0.46;1;1', '0;0.34;0.43;0.77;0.89;1', kind='scale'),
+        '<title>MSG signal board</title>',
+        '<desc>svg + text</desc>',
+        f'<g font-family="monospace" font-size="{_FONT}" fill="{_INK}" text-anchor="middle">',
     ]
-    for letter, rows in enumerate(_LETTERS):
+    for letter, (face, column) in enumerate(zip(_FACE, _COLUMNS, strict=True)):
+        arrive = 0.3 + letter * 0.14
         parts.append('<g>')
-        arrival = 0.2 + letter * 0.035
         parts.append(
             _animation(
                 'animate',
                 'fill',
                 f'{_INK};{_INK};{_SIGNAL};{_INK};{_INK}',
-                f'0;{arrival - 0.04:g};{arrival:g};{arrival + 0.09:g};1',
+                f'0;{arrive - 0.03:g};{arrive:g};{arrive + 0.16:g};1',
             )
         )
-        for row, glyph in enumerate(rows):
-            sign = 1 if row % 2 == 0 else -1
-            # Alternating streams spread across the whole stage, then arrive
-            # in order. The full word is the base state, never a hidden loader.
-            dx = sign * (38 + row * 4) + (letter - 1) * 13
-            dy = (row - 2.5) * 10
-            parts.extend((
-                '<g>',
-                _travel(
-                    f'0 0;0 0;{dx} {dy:g};{-dx * 0.18:g} {-dy * 0.18:g};0 0;0 0',
-                    f'0;0.035;0.105;{0.145 + row * 0.004:g};{arrival + row * 0.006:g};1',
-                ),
-            ))
-            for run in re.finditer(r'\S+', glyph):
-                x = -384 + (letter * 13 + run.start()) * 23.4
-                parts.append(_text(x, -79 + row * 35, run.group()))
-            parts.append('</g>')
+        parts.append(
+            _travel(
+                '0 0;0 0;0 -8;0 0;0 0',
+                f'0;{arrive - 0.03:g};{arrive + 0.02:g};{arrive + 0.12:g};1',
+            )
+        )
+        for row, pattern in enumerate(face):
+            y = _TOP + row * _CELL
+            for column_index, cell in enumerate(pattern):
+                x = column - half + column_index * _CELL
+                if cell == '#':
+                    parts.append(_text(x, y, next(bits)))
+                else:
+                    parts.append(_text(x, y, '.', fill=_DOT, fill_opacity='0.38'))
         parts.append('</g>')
+    parts.append('</g>')
     parts.extend((
-        '</g></g>',
-        # The alternative composition is entirely ASCII. It only appears after
-        # the large word has folded away, so the two scenes never fight.
-        '<g font-family="monospace" font-size="23" fill="#7d8491" opacity="0">',
-        _animation('animate', 'opacity', '0;0;1;1;0;0', '0;0.37;0.44;0.76;0.84;1'),
-        _text(100, 180, '[ ]'),
-        _text(325, 180, '[@]'),
-        _text(600, 180, '[ ]'),
-        _text(825, 180, '[>]'),
-        _text(153, 180, '-- -- -- --'),
-        _text(378, 180, '-- -- -- -- --'),
-        _text(653, 180, '-- -- -- --'),
-        _text(338, 208, '|'),
-        _text(338, 237, '+'),
-        _text(363, 237, '.. .. .. .. .. ..'),
-        _text(613, 237, '+'),
-        _text(613, 208, '|'),
+        f'<line x1="96" y1="{_WIRE_Y}" x2="864" y2="{_WIRE_Y}" stroke="{_DOT}" '
+        'stroke-opacity="0.45" stroke-width="1.5" stroke-linecap="round"/>',
+    ))
+    for letter, column in enumerate(_COLUMNS):
+        arrive = 0.3 + letter * 0.14
+        parts.extend((
+            f'<circle cx="{column}" cy="{_WIRE_Y}" r="5" fill="{_DOT}" fill-opacity="0.7">',
+            _animation(
+                'animate',
+                'fill',
+                f'{_DOT};{_DOT};{_SIGNAL};{_SIGNAL};{_DOT};{_DOT}',
+                f'0;{arrive - 0.02:g};{arrive:g};0.82;0.9;1',
+            ),
+            '</circle>',
+        ))
+    parts.extend((
+        f'<g fill="{_SIGNAL}" opacity="0">',
+        _travel('96 0;96 0;864 0;864 0;96 0', '0;0.2;0.68;0.74;1'),
+        _animation('animate', 'opacity', '0;0;1;1;0;0', '0;0.2;0.23;0.66;0.7;1'),
+        f'<circle cx="0" cy="{_WIRE_Y}" r="10" fill-opacity="0.22"/>',
+        f'<circle cx="0" cy="{_WIRE_Y}" r="4"/>',
         '</g>',
-        _packet(
-            '120 173;120 173;345 173;620 173;845 173;845 173;120 173;120 173',
-            '0;0.43;0.52;0.62;0.73;0.76;0.85;1',
-            '0;0.43;0.46;0.73;0.77;1',
-            '+',
-        ),
-        _packet(
-            '345 173;345 173;345 230;620 230;620 173;620 173;345 173;345 173',
-            '0;0.51;0.565;0.65;0.7;0.74;0.84;1',
-            '0;0.51;0.54;0.7;0.75;1',
-            '*',
-        ),
-        '<g font-family="monospace" font-size="17" fill="#7d8491">',
-        _text(96, 280, '[ svg + text ]'),
-        _text(841, 280, '>'),
-        '<text x="862" y="280" fill="#5d89bd">_',
-        _animation(
-            'animate',
-            'fill',
-            '#5d89bd;#5d89bd;#afc9e7;#5d89bd;#5d89bd',
-            '0;0.74;0.78;0.89;1',
-        ),
-        '</text></g></svg>',
+        '<g font-family="monospace" font-size="16" fill="#7d8491">',
+        _text(96, 246, '>'),
+        f'<text x="112" y="246" fill="{_SIGNAL}" fill-opacity="1">_',
+        _animation('animate', 'fill-opacity', '1;1;0;1;0;1;1', '0;0.72;0.76;0.8;0.84;0.88;1'),
+        '</text>',
+        _text(864, 246, 'pass it on', text_anchor='end'),
+        '</g></svg>',
     ))
     return ''.join(parts)
 
