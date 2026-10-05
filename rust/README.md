@@ -1,4 +1,4 @@
-# Native MSG migration — identity and SQLite read slice
+# Native MSG migration — identity and atomic SQLite metadata
 
 **This is not a replacement daemon or a production cutover.** Python remains the
 running implementation. No Python entry point, live database, configuration,
@@ -13,8 +13,8 @@ signature protocol. The tests import the actual Python implementation in the
 same checkout, rather than a translated copy of the expected behavior.
 
 The original inspected main baseline is
-`7e16ca75ff6af4313365814c23912b5997b222c5`. This slice extends phase 1 commit
-`91d8d3209d09f04269b4d9807793d6a0a8da7eba` on the existing draft PR.
+`7e16ca75ff6af4313365814c23912b5997b222c5`. This slice extends phase 2 commit
+`78e8d5d44cbbe49078a1e6eb4bb8e079eea3db72` on the existing draft PR #235.
 
 ## Implemented natively
 
@@ -24,7 +24,7 @@ The original inspected main baseline is
 | `msg-crypto` | Existing key/subject IDs, purpose-framed Ed25519 signing/verification | `security/crypto.py` |
 | `msg-protocol` | Request shape/defaults, UTC time, business digest/signature bytes, immutable field access | `core/packet.py`, `core/requests.py`, `core/models.py` |
 | `msg-identity` | Typed identity/credential/certificate/CSR records, credential and current-state admission, pinned CA chains, live delegation, scope/ceiling/mode primitives, read-only browser/API/OAuth and token-recovery validation | `security/authentication.py`, `certificates.py`, `policy.py`, `oauth.py` |
-| `msg-storage` | Read-only SQLite authority snapshots, current revocations/settings, result lookup and digest conflict, source bindings and recovery-delivery metadata | `storage/sqlite.py` and its record/session modules |
+| `msg-storage` | Transaction-bound authority reads; Unix writer fencing, atomic resource/revision/result/event/audit/settings writes, savepoints and rollback effects | `storage/sqlite.py` and its record/session modules |
 
 Authentication validates service/digest/expiry, current credentials, SHA-256
 bearer verifiers with constant-time comparison, actor/subject bindings, permitted
@@ -65,17 +65,44 @@ does not issue credentials or consume a delivery record.
 
 ## Storage safety boundary
 
-The native connection opens an existing database read-only. It does not create,
-repair or migrate a schema. Unsupported schema versions/tables fail closed.
-Each borrowed, non-Send snapshot pins all authority reads to one transaction and
-rolls back on drop. It cannot be reused as a write transaction. JSON columns are
-bounded in SQL before decoding. Secret vault ciphertext is not selected.
+`SqliteAuthority` remains read-only. `SqliteWriter` separately opens an existing,
+Python-migrated WAL database. Neither API creates or migrates a database. The
+writer checks schema version, required tables/columns, primary and unique keys,
+foreign keys, the one-root index and append-only audit guards. It rejects database
+symlink/hard-link aliases; all processes must use the same configured file.
 
-**There is no Rust database writer yet.** Python's `.writer.lock` process fence
-must remain part of a future writer port, including external compensation; a
-SQLite transaction alone is not an equivalent replacement. PostgreSQL, native
-write transactions, delivery/outbox/lease handling, migrations and crash/restart
-execution recovery remain pending. Do not introduce dual writes.
+Read snapshots and write sessions share `AuthorityStore` queries inside their
+own transaction. JSON columns remain bounded in SQL; secret vault ciphertext is
+not selected. Sessions are borrowed and non-Send. Callers have no SQL, COMMIT or
+ROLLBACK handle. Only a successful store-owned COMMIT can return a success value.
+
+The Unix writer uses the same `.writer.lock`/`flock` process fence as Python,
+with no-follow opens, mode 0600 on creation and a bounded acquisition deadline.
+The fence outlives SQL rollback and every reverse-order rollback effect. Nested
+savepoints retain successful inner effects until the outer commit; failed inner
+units undo their own data/effects before the caller can recover. An ignored write
+error poisons its unit rather than allowing a partial commit or an autocommit
+write after SQLite has aborted the transaction.
+
+Implemented mutation ports: resource insertion and generation-checked replacement
+(including immutable creation facts, parent cycles, aliases, tags and authorization
+epoch), revisions/relations, settings, result rows with subject/digest binding and
+the existing 100,000-row cap, events and the existing canonical audit hash chain.
+These ports are **trusted internal storage APIs**, not authorization decisions.
+`save_result` does not sign receipts, redact secrets or execute handlers.
+
+Cleanup errors preserve the primary failure and disable that writer instance.
+A failed COMMIT with no live SQLite transaction is treated conservatively as
+`commit_outcome_uncertain`: no destructive compensation runs, and the instance
+refuses further writes. The future service owner must stop admission, inspect the
+result ledger and reconcile external work before reopening. Reopening alone is
+not recovery. Durable service-wide quarantine and external-work reconciliation
+are not implemented by this slice.
+
+The process-kill tests cover **SQLite metadata only**. Rollback callbacks are not
+run after SIGKILL and are not a durable blob/Git recovery journal. Content/Git
+adapters, identity/OAuth mutations, outbox/lease handling, PostgreSQL and complete
+request execution recovery still need to be ported. Do not introduce dual writes.
 
 ## Reproducible validation
 
@@ -94,6 +121,8 @@ PYTHONPATH=src python rust/tests/test_python_parity.py \
   --binary rust/target/debug/examples/wire_check --report rust/artifacts/parity.json
 PYTHONPATH=src python rust/tests/test_identity_parity.py \
   --binary rust/target/debug/examples/authority_check --report rust/artifacts/identity-parity.json
+PYTHONPATH=src python rust/tests/test_storage_parity.py \
+  --binary rust/target/debug/examples/writer_check --report rust/artifacts/storage-parity.json
 ```
 
 Repeat the build with `--release` and the same suites against
@@ -112,9 +141,19 @@ real concurrent WAL snapshot test. It also checks all 4096 modes across three
 classes and five permissions: **61,440 simple mode decisions**, not 61,440
 independent identity scenarios. Report groups separate these from other cases.
 
-`wire_check` and `authority_check` are local JSONL **test examples**, never HTTP or
+The storage suite compares complete stored rows, canonical bytes, responses,
+rollback order and unchanged schemas against the actual Python storage methods.
+Separate safety/process groups cover swallowed errors, implicit rollback, failed
+COMMIT, result caps, real process kills and Python/Rust fence interoperability.
+Native tests additionally inject panics, cleanup failures and an uncertain commit
+result. The last case is deterministic error injection, not a physical disk test.
+
+`wire_check`, `authority_check` and `writer_check` are local JSONL **test examples**, never HTTP or
 MCP endpoints. They use only deterministic public test keys and disposable data.
-They do not execute business handlers, make network calls, launch Python from
+The writer helper deliberately includes unauthenticated storage orchestration
+(`once`) and failure/checkpoint controls only for disposable tests. It is not a
+production executor and must never be exposed as an endpoint. These examples
+do not execute business handlers, make network calls, launch Python from
 Rust, or access production credentials. The Rust crates forbid unsafe code;
 cryptographic and database primitives are delegated to pinned libraries.
 
@@ -133,8 +172,14 @@ cryptographic and database primitives are delegated to pinned libraries.
   accepting every Python input.
 - Dalek strict verification rejects weak-key forgeries. Historical key/signature
   compatibility still needs characterization before routing production traffic.
+- Storage row decoding uses `invalid_storage_record` rather than every Python
+  field-specific error. Core/domain validation (notably Unicode tag normalization),
+  hex-ID aliases and complete resource policy are pending. Native storage takes
+  canonical IDs/validated domain records; its DTOs are not public request schemas.
+  The stricter poisoned-write and malformed-result checks are explicit safety
+  differences, not assertions of identical behavior for every Python input.
 - Full resource authorization, operation handlers, mutation-side identity/OAuth
-  issuance/refresh/recovery, encrypted-key wrapping, PostgreSQL/write storage,
+  issuance/refresh/recovery, encrypted-key wrapping, PostgreSQL and remaining stores,
   native `serve`/HTTP/MCP, `worker`, packaging and deployment remain pending.
 - No RSS, memory-reduction or throughput result is claimed. Benchmark equivalent
   functionality, data, concurrency and complete process trees before comparison.
@@ -143,9 +188,10 @@ cryptographic and database primitives are delegated to pinned libraries.
 
 1. Integrate the real operation/capability registry and complete resource
    authorization, including private resources, sharing, memberships and tools.
-2. Port writer fencing, atomic result/side-effect transactions and recovery
-   against disposable Python-migrated databases. Test rollback, restarts,
-   competing writers and retry behavior; retain Python migration scripts.
+2. Complete mutation stores, blob/Git staging and durable external recovery;
+   connect the writer to the real authorized executor, receipt signing and secret
+   delivery. Retain Python migration/administration scripts. Extend the current
+   metadata crash/retry checks to complete operation effects.
 3. Integrate a bounded native executor and HTTP/MCP adapters, then worker
    claiming/leases/retries and side effects. Empty loops or Python subprocesses
    do not count as a server port.
@@ -159,4 +205,5 @@ selected MSG signing identity was available in the editor, so no authorized
 private coordination thread could be created. No new production identity or
 public coordination post was created. Work is recorded in the migration
 branch/PR; use an existing authorized identity when private coordination resumes.
-The temporary offline source/toolchain-export workflow is removed by this slice.
+The temporary writer-dependency export workflow is removed by this slice.
+No selected production MSG identity was invented or registered for testing.

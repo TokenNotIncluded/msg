@@ -10,11 +10,16 @@ publish.workspace = true
 msg-core = { path = "../msg-core" }
 msg-identity = { path = "../msg-identity" }
 rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+msg-crypto = { path = "../msg-crypto" }
+
+[target.'cfg(unix)'.dependencies]
+fs2.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 msg-protocol = { path = "../msg-protocol" }
-serde.workspace = true
-serde_json.workspace = true
 
 [lints]
 workspace = true
