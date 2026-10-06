@@ -8,25 +8,32 @@ permissions:
 jobs:
   source:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: bfe46024ab7d396f979688c57077d2c2dd3c0d7e
+          ref: de810d15da747b7be34b64f4e2324e5f5e7da6f7
           fetch-depth: 1
           persist-credentials: false
-      - name: Archive tracked public source only
+      - name: Prepare pinned public build inputs
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD^{tree})" = 56511c906e4efbc7097aa1262c944f3f6824471d
-          mkdir -p /tmp/msg-source
-          git rev-parse HEAD > /tmp/msg-source/source-commit.txt
-          git rev-parse HEAD^{tree} > /tmp/msg-source/source-tree.txt
-          git archive --format=tar.gz HEAD > /tmp/msg-source/source.tar.gz
-          (cd /tmp/msg-source && sha256sum source.tar.gz > SHA256SUMS)
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt --component clippy
+          mkdir -p /tmp/msg-offline
+          cargo +1.85.0 vendor --locked --manifest-path rust/Cargo.toml /tmp/msg-offline/vendor > /tmp/msg-offline/vendor-config.toml
+          toolchain="$(rustup run 1.85.0 rustc --print sysroot)"
+          tar -C "$toolchain" -czf /tmp/msg-offline/rust-toolchain.tar.gz .
+          tar -C /tmp/msg-offline -czf /tmp/msg-offline/vendor.tar.gz vendor vendor-config.toml
+          rm -rf /tmp/msg-offline/vendor
+          git rev-parse HEAD > /tmp/msg-offline/source-commit.txt
+          git rev-parse HEAD^{tree} > /tmp/msg-offline/source-tree.txt
+          git archive --format=tar.gz HEAD > /tmp/msg-offline/source.tar.gz
+          rustup run 1.85.0 rustc -Vv > /tmp/msg-offline/rust-version.txt
+          (cd /tmp/msg-offline && sha256sum *.tar.gz > SHA256SUMS)
       - uses: actions/upload-artifact@v7
         with:
-          name: msg-rust-merged-source
-          path: /tmp/msg-source/
+          name: msg-rust-offline-content-build
+          path: /tmp/msg-offline/
           retention-days: 2
+          compression-level: 0
           if-no-files-found: error
