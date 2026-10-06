@@ -95,6 +95,7 @@ jobs:
           python rust/tests/test_authorization_parity.py --postgres --binary rust/target/debug/examples/authority_check --report rust/artifacts/authorization-pg.json
           python rust/tests/test_postgres_parity.py --binary rust/target/debug/examples/pg_writer_check --report rust/artifacts/postgres.json
           python rust/tests/test_postgres_process.py --binary rust/target/debug/examples/pg_writer_check --report rust/artifacts/postgres-process.json
+          python rust/tests/test_content_parity.py rust/target/debug/examples/content_check --report rust/artifacts/content-debug.json
       - name: Optimized native differential checks
         if: ${{ !cancelled() }}
         env:
@@ -108,6 +109,7 @@ jobs:
           python rust/tests/test_authorization_parity.py --postgres --binary rust/target/release/examples/authority_check --report rust/artifacts/authorization-pg-release.json
           python rust/tests/test_postgres_parity.py --binary rust/target/release/examples/pg_writer_check --report rust/artifacts/postgres-release.json
           python rust/tests/test_postgres_process.py --binary rust/target/release/examples/pg_writer_check --report rust/artifacts/postgres-process-release.json
+          python rust/tests/test_content_parity.py rust/target/release/examples/content_check --report rust/artifacts/content-release.json
       - name: Preserve evidence and dependency lock
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
