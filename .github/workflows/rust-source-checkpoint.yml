@@ -15,14 +15,20 @@ jobs:
           ref: de810d15da747b7be34b64f4e2324e5f5e7da6f7
           fetch-depth: 1
           persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
       - name: Prepare pinned public build inputs
         run: |
           set -euo pipefail
           rustup toolchain install 1.85.0 --profile minimal --component rustfmt --component clippy
+          python -m pip install cryptography==46.0.3 jsonschema==4.25.1 ruff==0.16.9 'psycopg[binary]==3.3.6'
           mkdir -p /tmp/msg-offline
           cargo +1.85.0 vendor --locked --manifest-path rust/Cargo.toml /tmp/msg-offline/vendor > /tmp/msg-offline/vendor-config.toml
           toolchain="$(rustup run 1.85.0 rustc --print sysroot)"
           tar -C "$toolchain" -czf /tmp/msg-offline/rust-toolchain.tar.gz .
+          tar -C "$(python -c 'import sys; print(sys.prefix)')" -czf /tmp/msg-offline/python-toolchain.tar.gz .
           tar -C /tmp/msg-offline -czf /tmp/msg-offline/vendor.tar.gz vendor vendor-config.toml
           rm -rf /tmp/msg-offline/vendor
           git rev-parse HEAD > /tmp/msg-offline/source-commit.txt
