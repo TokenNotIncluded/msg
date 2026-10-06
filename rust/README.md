@@ -2,8 +2,56 @@
 
 Python keeps the CLI, administrator/migration scripts, and development helpers.
 Native Rust code is not yet a replacement for the running Python service. Do not
-change production entry points until the remaining executor, transport, content,
+change production entry points until the remaining executor, transport, content-recovery,
 worker, and deployment gates below pass.
+
+## Fifth implementation slice: native Git/blob content storage
+
+`msg-storage::content::GitContentStore` ports the existing `private.git`, `index`,
+`binary`, `pins` and `revisions` layout without invoking Python. It streams
+admitted input through 64 KiB buffers, checks optional SHA-256 expectations before
+publication, uses direct Git plumbing for text/JSON/templates, and preserves
+existing binary inodes (including LFS hard links). Index replacement and published
+objects/ref updates are durable before success; failed input cannot publish an
+index. Binary publication is on the destination filesystem, including when
+staging is configured elsewhere.
+
+Reads verify a private snapshot before delivering any requested range. This uses
+constant buffered memory but O(blob size) temporary disk and full-object I/O, even
+for a small range. The future adapter must enforce admission, disk and concurrency
+quotas; this is not a free random-access optimization. Pins use the existing
+hashed lease/digest names. Revision trees contain the same canonical manifests,
+content and parent commits. Existing Python commits are reused unchanged; newly
+created native commits use the revision time for deterministic retries. A reused
+revision ID with different content/parents is rejected rather than overwritten.
+
+Git runs with a cleared environment, no inherited/global Git configuration or
+hooks, bounded captured output and a kill-and-wait timeout. Git stdin/stdout use
+private files rather than deadlock-prone pipes. Paths/indices reject traversal,
+symlinks, non-regular files and malformed object IDs. Configured directories must
+be service-owned and protected from hostile writers: this is **not an openat
+sandbox against same-UID races**. Existing shared-reader layouts must already
+have the required modes; no implicit permission migration is performed.
+
+The API is synchronous, Unix-only and a **trusted storage primitive**. Callers
+must supply byte quotas and retain the metadata writer fence until the call has
+actually finished; abandoning a blocking task does not cancel Git. Input-reader
+cancellation and request scheduling belong to the still-pending adapters.
+No handler, listener, root administration or production entry point is changed.
+
+Fourteen native tests exercise success, corrupt objects/indices, quotas, failed
+input, ranges, hard links, path confinement checks, shared modes, pins, immutable
+revision retries and actual Git timeout/reaping. The Python differential suite
+has **170 checks per profile**, importing the actual Python store and reading and
+writing the same disposable directories. It covers both directions, Git objects,
+canonical manifests/parent graphs, cross-language pins, a 4 MiB streamed blob,
+hermetic Git and real process kills before publication and after a lost response.
+`content_check` is a marker-gated local fixture, never an operation endpoint.
+
+These tests do **not** implement LFS shared-object publication/collection, a
+cross-store metadata/content recovery journal, SIGKILL cleanup or an authorized
+executor. Interrupted staging is deliberately retained, not blindly collected.
+See [the fixed migration checklist](MIGRATION.md) for completed/remaining scope.
 
 ## Fourth implementation slice: resource authority and PostgreSQL
 
@@ -72,7 +120,7 @@ The original inspected main baseline is
 | `msg-crypto` | Existing key/subject IDs, purpose-framed Ed25519 signing/verification | `security/crypto.py` |
 | `msg-protocol` | Request shape/defaults, UTC time, business digest/signature bytes, immutable field access | `core/packet.py`, `core/requests.py`, `core/models.py` |
 | `msg-identity` | Typed identity/credential/certificate/CSR records, credential and current-state admission, pinned CA chains, live delegation, scope/ceiling/mode primitives, browser/API/OAuth and token-recovery validation, transaction-bound resource authorization | `security/authentication.py`, `certificates.py`, `policy.py`, `oauth.py` |
-| `msg-storage` | Transaction-bound authority reads; SQLite and PostgreSQL writers, identity/certificate/transfer/job records, atomic resource/revision/result/event/audit/settings writes, savepoints and rollback effects | `storage/sqlite.py`, `storage/postgres.py` and their record/session modules |
+| `msg-storage` | Transaction-bound authority reads; SQLite/PostgreSQL writers and typed records, savepoints/rollback effects; native Git/blob content, ranges, pins and revision trees | `storage/sqlite.py`, `storage/postgres.py`, `storage/git.py` and their record/session modules |
 
 Authentication validates service/digest/expiry, current credentials, SHA-256
 bearer verifiers with constant-time comparison, actor/subject bindings, permitted
@@ -147,10 +195,12 @@ result ledger and reconcile external work before reopening. Reopening alone is
 not recovery. Durable service-wide quarantine and external-work reconciliation
 are not implemented by this slice.
 
-The process-kill tests cover **SQLite metadata only**. Rollback callbacks are not
-run after SIGKILL and are not a durable blob/Git recovery journal. Content/Git
-adapters, identity/OAuth mutations, outbox/lease handling, PostgreSQL and complete
-request execution recovery still need to be ported. Do not introduce dual writes.
+The earlier process-kill tests cover **SQL metadata**, not a complete operation.
+The content tests above additionally cover standalone blob publication. Neither
+rollback callbacks nor private staging implement a durable cross-store recovery
+journal: callbacks do not run after SIGKILL. Identity/OAuth workflows, outbox/lease
+execution and complete operation recovery still need to be ported. PostgreSQL
+metadata primitives are already implemented above. Do not introduce dual writes.
 
 ## Reproducible validation
 
@@ -171,6 +221,8 @@ PYTHONPATH=src python rust/tests/test_identity_parity.py \
   --binary rust/target/debug/examples/authority_check --report rust/artifacts/identity-parity.json
 PYTHONPATH=src python rust/tests/test_storage_parity.py \
   --binary rust/target/debug/examples/writer_check --report rust/artifacts/storage-parity.json
+PYTHONPATH=src python rust/tests/test_content_parity.py \
+  rust/target/debug/examples/content_check --report rust/artifacts/content-debug.json
 ```
 
 Repeat the build with `--release` and the same suites against
@@ -196,8 +248,8 @@ COMMIT, result caps, real process kills and Python/Rust fence interoperability.
 Native tests additionally inject panics, cleanup failures and an uncertain commit
 result. The last case is deterministic error injection, not a physical disk test.
 
-`wire_check`, `authority_check` and `writer_check` are local JSONL **test examples**, never HTTP or
-MCP endpoints. They use only deterministic public test keys and disposable data.
+`wire_check`, `authority_check`, `writer_check`, `pg_writer_check` and
+`content_check` are local JSONL **test examples**, never HTTP or MCP endpoints. They use only deterministic public test keys and disposable data.
 The writer helper deliberately includes unauthenticated storage orchestration
 (`once`) and failure/checkpoint controls only for disposable tests. It is not a
 production executor and must never be exposed as an endpoint. These examples
@@ -236,7 +288,7 @@ cryptographic and database primitives are delegated to pinned libraries.
 
 1. Integrate the real operation/capability registry and complete resource
    authorization, including private resources, sharing, memberships and tools.
-2. Complete mutation stores, blob/Git staging and durable external recovery;
+2. Complete remaining workflow mutations, LFS and durable cross-store recovery;
    connect the writer to the real authorized executor, receipt signing and secret
    delivery. Retain Python migration/administration scripts. Extend the current
    metadata crash/retry checks to complete operation effects.
@@ -253,5 +305,5 @@ selected MSG signing identity was available in the editor, so no authorized
 private coordination thread could be created. No new production identity or
 public coordination post was created. Work is recorded in the migration
 branch/PR; use an existing authorized identity when private coordination resumes.
-The temporary writer-dependency export workflow is removed by this slice.
+The temporary offline-input export workflow is removed by the fifth slice.
 No selected production MSG identity was invented or registered for testing.
