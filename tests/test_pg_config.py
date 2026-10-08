@@ -19,11 +19,13 @@ def test_accepts_postgres_and_optional_valkey_urls_without_revealing_secrets(tmp
     settings = write_example(
         tmp_path / 'etc',
         tmp_path / 'data',
-        postgres_dsn='postgresql://msgd:secret@localhost/msgd',
-        valkey_url='rediss://:other-secret@localhost:6379/0',
+        postgres_dsn='postgresql://msgd:PG_PASSWORD_DO_NOT_LOG_4ad5@localhost/msgd',
+        valkey_url='rediss://:VALKEY_PASSWORD_DO_NOT_LOG_9b6@localhost:6379/0',
     )
-    assert settings.server.valkey_url == 'rediss://:other-secret@localhost:6379/0'
-    assert 'secret' not in repr(settings)
+    assert settings.server.valkey_url == 'rediss://:VALKEY_PASSWORD_DO_NOT_LOG_9b6@localhost:6379/0'
+    # Harmless enum values such as client_secret_post are not passwords.
+    assert 'PG_PASSWORD_DO_NOT_LOG_4ad5' not in repr(settings)
+    assert 'VALKEY_PASSWORD_DO_NOT_LOG_9b6' not in repr(settings)
 
 
 @pytest.mark.parametrize(
