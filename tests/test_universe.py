@@ -50,7 +50,7 @@ async def test_universe_account_hint_is_minimal_current_identity_without_private
         assert response.status_code == 200, response.text
         assert response.json() == {
             'version': 1,
-            'account': {'id': subject, 'name': '@oauth-owner'},
+            'account': {'id': subject, 'name': '@oauth-owner', 'login_methods_enabled': False},
         }
         assert response.headers['cache-control'] == 'private, no-store'
         assert {value.strip() for value in response.headers['vary'].split(',')} == {'Cookie'}
