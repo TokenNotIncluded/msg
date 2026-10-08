@@ -12,6 +12,7 @@ from msg.core.codec import canonical, wire
 from msg.core.errors import Failure, require
 from msg.core.requests import request_for
 from msg.plugins.public_board import default, projection
+from msg.transports.ascii_art import CONTROLS
 from msg.transports.http_common import BASE_HEADERS
 
 SCRIPT = r"""(() => {
@@ -53,12 +54,14 @@ const limits=()=>{const svg=fields.svg.value,text=fields.text.value;
  fields.svg.setAttribute('aria-invalid',String(svgBytes>16384));fields.text.setAttribute('aria-invalid',String(textCount>2000||textBytes>8192));};
 form.addEventListener('input',limits);limits();
 const latest=value=>{
+ const svgChanged=value.svg!==base.svg;
  for(const name of Object.keys(fields)){if(fields[name].value===base[name])fields[name].value=value[name];}
  base={svg:value.svg,text:value.text};panel.dataset.generation=String(value.generation);
  panel.querySelector('[data-content]').textContent=value.text;panel.querySelector('[data-version]').textContent='版本 / Version '+value.generation;
  if(value.quota)panel.querySelector('[data-quota]').textContent='本小时已用 '+value.quota.hour_count+'/5；今天已用 '+value.quota.day_count+'/20。';
  else if(panel.dataset.signedIn==='true')panel.querySelector('[data-quota]').textContent='当前会话未能读取个人修改次数，不代表额度已用完；保存时仍会检查限额。';
  art();limits();
+ panel.dispatchEvent(new CustomEvent("msg:board-updated",{detail:{svgChanged}}));
 };
 addEventListener('beforeunload',event=>{if(changed().length){event.preventDefault();event.returnValue='';}});
 refresh.addEventListener('click',async()=>{
@@ -138,14 +141,22 @@ def html(value=None, account=None, csrf=''):
     )
     return (
         '<section class="public-board" id="public-board" '
+        f'data-ascii-default="{str(value["svg"] == default()["svg"]).lower()}" '
         f'data-generation="{value["generation"]}" data-signed-in="{str(bool(account)).lower()}" '
         f'data-csrf="{escape(csrf, quote=True)}" aria-label="公共栏 / Shared board">'
         '<details class="public-board-menu" data-menu><summary aria-label="公共栏选项 / Shared board options" title="公共栏选项 / Shared board options">⋯</summary>'
         '<div class="public-board-options" role="group" aria-label="公共栏操作 / Shared board actions">'
         '<button type="button" data-edit aria-controls="public-board-editor" aria-expanded="false">编辑 / Edit</button>'
         '<button type="button" data-pause aria-pressed="true">播放动图 / Play</button></div></details>'
+        '<div class="signal-stage" data-ascii-surface>'
+        '<canvas data-ascii-canvas hidden aria-hidden="true"></canvas>'
         f'<img src="/_public-board/art.svg?v={value["generation"]}&amp;motion=still" width="960" height="300" alt="用户共同编辑的 SVG 动图 / Community SVG animation">'
-        f'<p class="public-board-text" data-content>{escape(value["text"])}</p>'
+        + CONTROLS
+        + '<p class="signal-caption" data-ascii-caption hidden></p></div>'
+        + f'<p class="public-board-text" data-content>{escape(value["text"])}</p>'
+        '<nav class="signal-links" aria-label="Explore msg"><a href="/@root/web/">Explore the field'
+        '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg></a>'
+        '<a href="/AGENTS.md">Agent guide</a></nav>'
         '<p role="status" aria-live="polite" aria-atomic="true" data-success hidden></p>'
         '<form id="public-board-editor" hidden>'
         '<div class="public-board-editor-head"><h2>编辑公共栏 / Edit board</h2>'

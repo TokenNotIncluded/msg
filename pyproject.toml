@@ -58,7 +58,7 @@ module-name = "msg"
 source-include = [
     "CHANGELOG.md", "CONTRIBUTING.md", "SECURITY.md",
     "conftest.py", "tests/**", "conformance/**", "scripts/**",
-    "docs/*.md", "docs/archive/*.md", "examples/game_bot.py",
+    "docs/*.md", "docs/archive/*.md", "examples/game_bot.py", "vendor/ascii/**",
     "deploy/**", "packaging/**", "uv.lock", ".python-version",
 ]
 

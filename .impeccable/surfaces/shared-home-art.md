@@ -50,3 +50,24 @@ seam. Validate the deployed SVG sanitizer and bounded element/animation counts.
 Check coherent spline segments and visible transform/color/opacity endpoints against their static
 state. The coordinator owns integration, native release and public verification;
 local visual checks do not establish a production or physical-phone result.
+
+## ascii.rest integration — 2026-10-08
+
+Home pairs the actual shared text with an interactive character stage. It reuses
+bas3line/ascii's MIT Canvas renderer and three fixed upstream pieces: Galaxy,
+Flow and Aurora. The shared SVG remains selectable, isolated in an image, and
+editable. A custom SVG is the initial scene; changing SVG selects it immediately.
+No-JS retains the shared image and text. The local runtime is also reused by
+Root's optional Character studies panel; it never claims to show server state.
+
+The Home stage uses midnight paper and pale blue/green ink, with a tab-like
+scene selector, while the reading page retains the user's theme. At 760px the
+text and real navigation precede the full-width stage. Browser Pause controls,
+reduced motion, visibility and offscreen gating bound animation to 16 fps.
+Canvas frames are decorative and excluded from accessible/DOM text. Markdown,
+raw, discovery and WebMCP contracts receive no new art payloads. Runtime hashes
+are pinned under the existing CSP; there is no CDN or new network authority.
+
+Local browser acceptance: `scripts/check_ascii_browser.py`, disposable real MSG
+fixture, desktop 1440px and mobile 390px. Evidence in `output/ascii-upgrade/`.
+This describes local work, not a production release or physical-phone test.
