@@ -26,7 +26,7 @@
 <footer class="flightbar">
 <section class="expedition" data-intro aria-label="Exploration progress"><span class="eyebrow">A SMALL EXPEDITION</span><div id="mission">Discover 3 stars · Read 2 posts · Follow a reply</div><div class="progress-track"><span id="progress"></span></div><span id="progress-label" class="mono">0 / 6 discoveries · this visit only</span></section>
 <div class="flight-controls"><div class="control-capsule"><button id="home" title="Return to the constellation [H]" aria-label="Return to overview">⌖</button><button id="pilot-toggle" lang="zh-CN" aria-pressed="false" aria-controls="pilot-hud" title="驾驶飞船 [F]">驾驶</button><button id="drift">Find a signal <span aria-hidden="true">↗</span></button><button id="pause" aria-pressed="false" title="Pause motion" aria-label="Pause motion">Ⅱ</button><button id="help-toggle" aria-label="Open field guide" title="Field guide [?]">?</button></div><p data-intro>Drag to orbit <span>·</span> Scroll to approach <span>·</span> Pilot to fly</p></div>
-<div class="telemetry"><p id="counts" class="mono">CONNECTING TO THE CONSTELLATION</p><div><button id="observer-status" type="button" hidden lang="zh-CN" title="只读旁观真实在线玩家，不占玩家名额">旁观连接中</button><button id="catalog-toggle">Star catalog</button><button id="compose-open">+ New post</button></div></div>
+<div class="telemetry"><p id="counts" class="mono">CONNECTING TO THE CONSTELLATION</p><div><button id="observer-status" type="button" hidden lang="zh-CN" title="只读旁观真实在线玩家，不占玩家名额">旁观连接中</button><button type="button" data-ascii-toggle aria-expanded="false" aria-controls="ascii-studies">ASCII</button><button id="catalog-toggle">Star catalog</button><button id="compose-open">+ New post</button></div></div>
 </footer>
 <div id="pilot-reticle" class="pilot-reticle" aria-hidden="true"></div>
 <section id="pilot-hud" lang="zh-CN" hidden aria-label="飞船控制">
@@ -70,6 +70,13 @@
   <button type="button" class="game-action" data-game-action="dash" disabled><kbd>K</kbd><span>冲刺</span><output class="game-cooldown">—</output></button>
 </div>
 <section id="region-map" lang="zh-CN" hidden aria-label="区域地图"><div class="panel-top"><h2>选择区域</h2><button id="region-map-close" type="button">返回飞行</button></div><canvas id="region-map-canvas" tabindex="0" aria-label="平面区域地图"></canvas><p id="region-map-status" role="status"></p><div id="region-map-actions"></div></section>
+<section id="ascii-studies" class="ascii-studies" data-ascii-surface hidden aria-label="Character studies">
+<div class="ascii-studies-heading"><h2>Character studies.</h2><button type="button" data-ascii-close aria-label="Close character studies">Close</button></div>
+<canvas data-ascii-canvas aria-hidden="true"></canvas>
+<div class="ascii-controls" data-ascii-controls role="group" aria-label="Character scene">
+<button type="button" data-ascii-piece="galaxy" aria-pressed="false">Galaxy</button><button type="button" data-ascii-piece="flow" aria-pressed="true">Flow</button><button type="button" data-ascii-piece="aurora" aria-pressed="false">Aurora</button></div>
+<p data-ascii-caption>Character study · ascii.rest</p><p>Ambient art. Use the field’s Pause control for a still view.</p>
+</section>
 <p id="status" class="status" role="status" aria-live="polite">Connecting…</p>
 </main>
 <dialog id="help-dialog" aria-labelledby="help-title">

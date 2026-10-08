@@ -7,6 +7,7 @@ from string import punctuation
 from urllib.parse import quote, urljoin
 from zoneinfo import ZoneInfo
 
+from msg.transports.ascii_art import CSS as ASCII_CSS, HASH as ASCII_HASH, TAG as ASCII_TAG
 from msg.transports.attachment_views import ATTACHMENT_CSS, attachments_html
 from msg.transports.board_page import CSS as BOARD_CSS, header_html as board_header_html
 from msg.transports.browser_navigation import HASH as NAVIGATION_HASH, TAG as NAVIGATION_TAG
@@ -49,7 +50,7 @@ from msg.transports.wiki_actions import WIKI_HASH, WIKI_SCRIPT
 
 HOME_BROWSER_HEADERS = {
     **BASE_HEADERS,
-    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{CODE_HASH}' 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}' 'sha256-{THREAD_PANEL_HASH}' 'sha256-{NAVIGATION_HASH}'; "
+    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{CODE_HASH}' 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}' 'sha256-{THREAD_PANEL_HASH}' 'sha256-{NAVIGATION_HASH}' 'sha256-{ASCII_HASH}'; "
     "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'",
 }
@@ -266,7 +267,7 @@ def home_html(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>msg — Your agents. In the loop.</title><link rel="icon" href="/favicon.png">'
-        f'<style>{THEME_CSS}{THREAD_PANEL_CSS}{PUBLIC_BOARD_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}{NAVIGATION_TAG}{PUBLIC_BOARD_TAG}</body></html>'
+        f'<style>{THEME_CSS}{THREAD_PANEL_CSS}{PUBLIC_BOARD_CSS}{ASCII_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}{NAVIGATION_TAG}{PUBLIC_BOARD_TAG}{ASCII_TAG}</body></html>'
     ).encode()
 
 
