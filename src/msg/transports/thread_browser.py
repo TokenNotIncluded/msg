@@ -124,7 +124,7 @@ async def root_post_index(
                     source='manual',
                 )
             )
-        title = item['name']
+        preview = {'title': item['name'], 'excerpt': ''}
         if response.error and response.error.code in {
             'permission_denied',
             'not_found',
@@ -134,10 +134,10 @@ async def root_post_index(
         }:
             return None
         if not response.error:
-            title = thread_preview({**item, 'content': wire(response.data)['text']})['title']
-            if title == 'Untitled post':
-                title = '未命名主帖'
-        return {**item, 'path': '/*' + hex_id(item['id']), 'title': title}
+            preview = thread_preview({**item, 'content': wire(response.data)['text']})
+            if preview['title'] == 'Untitled post':
+                preview['title'] = '未命名主帖'
+        return {**item, 'path': '/*' + hex_id(item['id']), **preview}
 
     return {
         **page,

@@ -97,6 +97,43 @@ def account_navigation(account, *, compact=False):
     return links
 
 
+def latest_posts_html(index, statuses=None):
+    """Render the independent, already-authorized post index, never false empty data."""
+    parts = [
+        '<section class="latest" aria-labelledby="latest-posts">'
+        '<div class="section-heading"><h2 id="latest-posts" data-i18n="latest">Latest posts</h2>'
+        '<a class="section-link" href="/topics"><span data-i18n="topics">Topics</span>'
+        '<span aria-hidden="true"> ↗</span></a></div>'
+    ]
+    if index.get('error'):
+        parts.append('<p class="empty-state" role="status">主帖列表暂时无法读取，请稍后刷新。</p>')
+    elif not index['items']:
+        parts.append('<p class="empty-state" data-i18n="no_posts">No public posts yet.</p>')
+    else:
+        parts.append('<ul class="posts">')
+        for item in index['items']:
+            path = escape(quote(item['path'], safe='/@*&'), quote=True)
+            title = escape(str(item.get('title', item['name'])))
+            stamp = display_time(item['created_at'])
+            parts.extend([
+                '<li><article class="post-preview">',
+                f'<h3 class="post-title"><a href="{path}">{title}</a></h3>',
+            ])
+            if item.get('excerpt'):
+                parts.append(f'<p class="post-excerpt">{escape(item["excerpt"])}</p>')
+            parts.extend([
+                '<div class="post-engagement">',
+                f'<time datetime="{escape(item["created_at"], quote=True)}" '
+                f'title="Asia/Taipei">{escape(stamp)}</time>',
+                f'<span class="muted" title="Approximate views / 近似浏览量">{int(item.get("view_count", 0))} 浏览 · views</span>',
+                reply_link((statuses or {}).get(item['path']), item['path']),
+                '</div></article></li>',
+            ])
+        parts.append('</ul>')
+    parts.append('</section>')
+    return ''.join(parts)
+
+
 def home_html(
     data=None,
     *,
@@ -107,6 +144,7 @@ def home_html(
     public_board=None,
     csrf_token='',
     reply_status=None,
+    post_index=None,
 ):
     def link(label, path):
         keys = {
@@ -186,10 +224,18 @@ def home_html(
             '<section class="account"><a class="primary" href="/login" data-i18n="login">Sign in</a>'
             '<p data-i18n="signin_hint">Sign in to view your inbox and direct messages. Confirm the approval code using your CLI.</p></section>'
         )
+    # A bounded post index can be ready while the full-site summary is still cold.
+    if post_index is None:
+        post_index = (
+            {'items': data['latest'], 'error': data.get('latest_unavailable')}
+            if data is not None
+            else {'items': [], 'error': 'unavailable'}
+        )
+    parts.append(latest_posts_html(post_index, reply_status))
     if data is None:
         parts.append(
-            '<p class="notice" role="status" data-i18n="unavailable">'
-            'Statistics and latest posts are temporarily unavailable.</p>'
+            '<p class="activity-unavailable" role="status">'
+            '统计暂时无法读取。 / Site activity is temporarily unavailable.</p>'
         )
     else:
         parts.append(
@@ -206,35 +252,6 @@ def home_html(
         parts.append(
             f'</div><p class="muted activity-note">{escape(data["date"])} · {escape(data["timezone"])}</p></section>'
         )
-        parts.append(
-            '<section class="latest"><h2 data-i18n="latest">Latest posts</h2>'
-            f'<ul class="posts" style="--n:{len(data["latest"])}">'
-        )
-        for index, item in enumerate(data['latest']):
-            stamp = display_time(item['created_at'])
-            parts.extend([
-                f'<li style="--i:{index}"><div class="post-title">',
-                link(item.get('title', item['name']), item['path']),
-                f'<time datetime="{escape(item["created_at"], quote=True)}" '
-                f'title="Asia/Taipei">{escape(stamp)}</time></div>',
-            ])
-            parts.append(
-                '<div class="post-engagement">'
-                f'<span class="muted" title="Approximate views / 近似浏览量">{int(item.get("view_count", 0))} 浏览 · views</span>'
-                + reply_link((reply_status or {}).get(item['path']), item['path'])
-                + '</div>'
-            )
-            if item.get('excerpt'):
-                parts.append(f'<p>{escape(item["excerpt"])}</p>')
-            parts.append('</li>')
-        parts.append('</ul>')
-        if not data['latest']:
-            parts.append(
-                '<p class="empty-state">主帖列表暂时无法读取，请稍后刷新。</p>'
-                if data.get('latest_unavailable')
-                else '<p class="empty-state" data-i18n="no_posts">No public posts yet.</p>'
-            )
-        parts.append('</section>')
         if data.get('channels'):
             parts.append(
                 '<section class="channels"><h2 id="channels" data-i18n="channels">Channels</h2><p class="muted"><span data-i18n="channel_hint">Only channels you can read are listed. Sign in to include your private channels. '
