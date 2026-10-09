@@ -84,6 +84,14 @@ jobs:
         run: |
           git apply --check /tmp/home-first-read.patch
           git apply /tmp/home-first-read.patch
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/check_home_first_read_browser.py')
+          text = path.read_text()
+          old = 'lambda error: errors.append(str(error))'
+          assert text.count(old) == 1
+          path.write_text(text.replace(old, 'lambda error, errors=errors: errors.append(str(error))'))
+          PY
           files=(src/msg/transports/{browser_style,home_page,http_routes,thread_browser}.py tests/{test_home_first_read,test_browser_refinement,test_thread_panel}.py scripts/check_home_first_read_browser.py)
           uv run ruff check --fix --no-unsafe-fixes "${files[@]}"
           uv run ruff format "${files[@]}"
