@@ -1,0 +1,36 @@
+[workspace]
+members = ["crates/msg-core", "crates/msg-crypto", "crates/msg-protocol", "crates/msg-identity", "crates/msg-storage"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+base64 = "=0.22.1"
+chrono = { version = "=0.4.42", default-features = false, features = ["std"] }
+ed25519-dalek = "=2.2.0"
+ryu = "=1.0.20"
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = { version = "=1.0.145", features = ["raw_value", "arbitrary_precision"] }
+sha2 = "=0.10.9"
+subtle = "=2.6.1"
+fs2 = "=0.4.3"
+libc = "=0.2.190"
+rusqlite = { version = "=0.32.1", features = ["bundled"] }
+
+postgres = { version = "=0.19.12", features = ["with-serde_json-1", "with-chrono-0_4"] }
+postgres-native-tls = "=0.5.2"
+native-tls = "=0.2.14"
+bytes = "=1.12.1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
