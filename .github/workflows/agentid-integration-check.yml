@@ -25,7 +25,7 @@ jobs:
           POSTGRES_DB: postgres
         ports: ['5432:5432']
         options: >-
-          --health-cmd "pg_isready -U msgtest"
+          --health-cmd "pg_isready -U msgtest -d postgres"
           --health-interval 10s --health-timeout 5s --health-retries 5
       valkey:
         image: valkey/valkey:9.0.6
@@ -56,19 +56,35 @@ jobs:
         id: baseline
         continue-on-error: true
         run: |
-          uv run pytest -q tests/test_login_providers.py tests/test_account_login.py tests/test_oauth.py --junitxml=artifacts/agentid/baseline.xml
+          set -o pipefail
+          uv run pytest -q tests/test_login_providers.py tests/test_account_login.py tests/test_account_login_core.py tests/test_oauth.py --junitxml=artifacts/agentid/baseline.xml 2>&1 | tee artifacts/agentid/baseline.log
       - name: Apply guarded source edits
         run: |
           python - <<'PY'
           from pathlib import Path
           path = Path('.github/agentid-integration-patch.py')
           text = path.read_text()
-          # Correct two copied transport characters; the immutable SHA256 below
-          # still validates the entire decoded edit document before any write.
+          # The immutable digest validates the complete decoded edit document.
           text = text.replace('GI6PDP/xo', 'GI6PD/xo').replace('wfeXPXPIL', 'wfeXPIL')
           path.write_text(text)
           PY
           python .github/agentid-integration-patch.py
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          path = Path('tests/test_agentid_account_login.py')
+          text = path.read_text()
+          # Ordinary helpers must not shadow the imported pytest fixture.
+          for name in ('begin', 'callback'):
+              start = text.index('async def ' + name + '(')
+              end = text.index('\n\n', start)
+              text = text[:start] + re.sub(r'\baccount\b', 'case', text[start:end]) + text[end:]
+          old = "        assert tx.rows('SELECT id,body FROM credentials WHERE subject=?', (subject,)) == before"
+          assert text.count(old) == 1
+          # A login adds browser credentials, but existing keys must not change.
+          text = text.replace(old, "        after = dict(tx.rows('SELECT id,body FROM credentials WHERE subject=?', (subject,)))\n        assert all(after[key_id] == body for key_id, body in before)")
+          path.write_text(text)
+          PY
       - name: Format and check changed Python files
         run: |
           files=(src/msg/login_config.py src/msg/security/login_flow.py src/msg/security/login_jwt.py src/msg/transports/login_providers.py src/msg/transports/account_login.py src/msg/transports/account_login_page.py tests/test_agentid_providers.py tests/test_agentid_account_login.py)
@@ -79,17 +95,19 @@ jobs:
           uv run python -W error -m compileall -q src
       - name: Verify AgentID and existing login behavior
         run: |
-          uv run pytest -q tests/test_agentid_providers.py tests/test_agentid_account_login.py tests/test_login_providers.py tests/test_account_login.py tests/test_oauth.py --junitxml=artifacts/agentid/acceptance.xml
+          set -o pipefail
+          uv run pytest -q tests/test_agentid_providers.py tests/test_agentid_account_login.py tests/test_login_providers.py tests/test_account_login.py tests/test_account_login_core.py tests/test_oauth.py --junitxml=artifacts/agentid/acceptance.xml 2>&1 | tee artifacts/agentid/acceptance.log
           git diff --check
-      - name: Commit only verified source and remove bootstrap files
+      - name: Commit only verified source
         run: |
           set -euo pipefail
           test "${GITHUB_REF_NAME}" = feat/agentid-native-login-20261009
-          git rm .github/agentid-integration-patch.py .github/workflows/agentid-integration-check.yml
+          git rm -f .github/agentid-integration-patch.py
           git add src/msg/login_config.py src/msg/security/login_flow.py src/msg/security/login_jwt.py src/msg/transports/login_providers.py src/msg/transports/account_login.py src/msg/transports/account_login_page.py tests/test_agentid_providers.py tests/test_agentid_account_login.py deploy/login.example.toml docs/ACCOUNT_LOGIN.md
           git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' commit -m 'feat(auth): add verified native AgentID login and account binding'
           git rev-parse HEAD | tee artifacts/agentid/verified-commit.txt
           git rev-parse HEAD^{tree} | tee artifacts/agentid/verified-tree.txt
+          git diff --binary 2d89b3313bd3324e6eefcb87a4d3747753bed73f HEAD -- src/msg/login_config.py src/msg/security/login_flow.py src/msg/security/login_jwt.py src/msg/transports/login_providers.py src/msg/transports/account_login.py src/msg/transports/account_login_page.py tests/test_agentid_providers.py tests/test_agentid_account_login.py deploy/login.example.toml docs/ACCOUNT_LOGIN.md > artifacts/agentid/verified-source.patch
           git show --stat --oneline HEAD
           git push origin HEAD:refs/heads/feat/agentid-native-login-20261009
       - uses: actions/upload-artifact@v7.0.1
