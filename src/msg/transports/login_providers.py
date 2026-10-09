@@ -23,17 +23,21 @@ from msg.security.login_jwt import token_key_id, verify_identity_token
 GOOGLE_ISSUER = 'https://accounts.google.com'
 GITHUB_ISSUER = 'https://github.com'
 CHATGPT_ISSUER = 'https://auth.openai.com'
+AGENTID_ISSUER = 'https://auth.agentid.com'
 _AUTHORIZATION = {
+    'agentid': AGENTID_ISSUER + '/v0/authorize',
     'google': 'https://accounts.google.com/o/oauth2/v2/auth',
     'github': 'https://github.com/login/oauth/authorize',
     'chatgpt': 'https://auth.openai.com/api/accounts/authorize',
 }
 _TOKEN = {
+    'agentid': AGENTID_ISSUER + '/v0/token',
     'google': 'https://oauth2.googleapis.com/token',
     'github': 'https://github.com/login/oauth/access_token',
     'chatgpt': 'https://auth.openai.com/api/accounts/oauth/token',
 }
 _JWKS = {
+    'agentid': AGENTID_ISSUER + '/v0/jwks.json',
     'google': 'https://www.googleapis.com/oauth2/v3/certs',
     'chatgpt': 'https://auth.openai.com/.well-known/jwks.json',
 }
@@ -66,7 +70,7 @@ class _JwksEntry:
     expires_at: float
 
 
-# Only the two pinned JWKS URLs can enter these maps. No provider token is cached.
+# Only the pinned JWKS URLs can enter these maps. No provider token is cached.
 _jwks_cache: dict[str, _JwksEntry] = {}
 _jwks_locks: dict[str, asyncio.Lock] = {}
 _discovery_expires_at = 0.0
@@ -107,8 +111,20 @@ def _settings(provider, config):
     client_id = _text(_get(config, 'client_id'), limit=1024, code='login_provider_configuration')
     method = _alias(config, 'token_auth_method', 'client_auth_method')
     if method is None:
-        method = 'none' if provider == 'chatgpt' else 'client_secret_post'
-    allowed = {'none', 'client_secret_basic'} if provider == 'chatgpt' else {'client_secret_post'}
+        method = (
+            'none'
+            if provider == 'chatgpt'
+            else 'client_secret_basic'
+            if provider == 'agentid'
+            else 'client_secret_post'
+        )
+    allowed = (
+        {'none', 'client_secret_basic'}
+        if provider == 'chatgpt'
+        else {'client_secret_basic', 'client_secret_post'}
+        if provider == 'agentid'
+        else {'client_secret_post'}
+    )
     if (
         type(method) is not str
         or method not in allowed
@@ -143,7 +159,9 @@ def _callback_inputs(verifier, nonce, redirect_uri):
     return verifier, nonce, redirect_uri
 
 
-def authorization_url(provider, config, state, verifier, nonce, redirect_uri) -> str:
+def authorization_url(
+    provider, config, state, verifier, nonce, redirect_uri, *, login_hint=None
+) -> str:
     """Build a pinned authorization URL; the HTTP boundary owns one-use state."""
     client_id, _ = _settings(provider, config)
     state = _text(state, limit=1024)
@@ -161,6 +179,10 @@ def authorization_url(provider, config, state, verifier, nonce, redirect_uri) ->
         parameters['allow_signup'] = 'false'
     else:
         parameters['nonce'] = nonce
+    if login_hint is not None:
+        if provider != 'agentid':
+            raise Failure('login_provider_invalid_request')
+        parameters['login_hint'] = _text(login_hint, limit=254)
     return _AUTHORIZATION[provider] + '?' + urlencode(parameters)
 
 
@@ -259,6 +281,20 @@ def _cache_seconds(headers) -> int:
     return min(int(match[1][:10]), 3600) if match else 300
 
 
+def _check_discovery(document, provider, issuer, algorithm):
+    required = {
+        'issuer': issuer,
+        'authorization_endpoint': _AUTHORIZATION[provider],
+        'token_endpoint': _TOKEN[provider],
+        'jwks_uri': _JWKS[provider],
+    }
+    if any(document.get(key) != value for key, value in required.items()):
+        raise Failure('login_provider_invalid_discovery')
+    algorithms = document.get('id_token_signing_alg_values_supported')
+    if type(algorithms) is not list or algorithm not in algorithms:
+        raise Failure('login_provider_invalid_discovery')
+
+
 async def _openai_discovery(client, instant):
     global _discovery_expires_at, _discovery_lock
     if instant < _discovery_expires_at:
@@ -269,17 +305,7 @@ async def _openai_discovery(client, instant):
         if instant < _discovery_expires_at:
             return
         document, headers = await _json_request(client, 'GET', _DISCOVERY)
-        required = {
-            'issuer': CHATGPT_ISSUER,
-            'authorization_endpoint': _AUTHORIZATION['chatgpt'],
-            'token_endpoint': _TOKEN['chatgpt'],
-            'jwks_uri': _JWKS['chatgpt'],
-        }
-        if any(document.get(key) != value for key, value in required.items()):
-            raise Failure('login_provider_invalid_discovery')
-        algorithms = document.get('id_token_signing_alg_values_supported')
-        if type(algorithms) is not list or 'RS256' not in algorithms:
-            raise Failure('login_provider_invalid_discovery')
+        _check_discovery(document, 'chatgpt', CHATGPT_ISSUER, 'RS256')
         _discovery_expires_at = instant + _cache_seconds(headers)
 
 
@@ -326,6 +352,13 @@ async def exchange_identity(
             )
     if provider == 'chatgpt':
         await _openai_discovery(client, instant)
+    elif provider == 'agentid':
+        document, _ = await _json_request(
+            client, 'GET', AGENTID_ISSUER + '/.well-known/openid-configuration'
+        )
+        _check_discovery(document, provider, AGENTID_ISSUER, 'ES256')
+        if document.get('authorization_response_iss_parameter_supported') is not True:
+            raise Failure('login_provider_invalid_discovery')
     data = {
         'grant_type': 'authorization_code',
         'code': code,
@@ -365,17 +398,21 @@ async def exchange_identity(
             raise Failure('login_provider_invalid_identity')
         return VerifiedIdentity(provider, GITHUB_ISSUER, str(subject))
     id_token = tokens.get('id_token')
-    kid = token_key_id(id_token)
+    algorithm = 'ES256' if provider == 'agentid' else 'RS256'
+    kid = token_key_id(id_token, algorithm=algorithm)
     jwks = await _identity_jwks(provider, client, instant, kid)
     identity = verify_identity_token(
         id_token,
         jwks,
         issuers={GOOGLE_ISSUER, 'accounts.google.com'}
         if provider == 'google'
+        else {AGENTID_ISSUER}
+        if provider == 'agentid'
         else {CHATGPT_ISSUER},
         audience=client_id,
         nonce=nonce,
         now=now,
+        algorithm=algorithm,
     )
     issuer = GOOGLE_ISSUER if provider == 'google' else identity.issuer
     return VerifiedIdentity(

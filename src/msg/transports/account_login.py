@@ -4,15 +4,16 @@ import re
 from dataclasses import replace
 from html import escape
 from types import SimpleNamespace
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 from starlette.requests import Request
 from starlette.responses import RedirectResponse
 
 from msg.core.errors import Failure, require
+from msg.login_config import OAUTH_PROVIDERS
 from msg.security.email_login import begin_email, verify_email
 from msg.security.login import VerifiedLogin, bind_login, complete_login, remove_login
-from msg.security.login_flow import consume_flow, flow, receive_callback, start_flow
+from msg.security.login_flow import TTL, consume_flow, flow, receive_callback, start_flow
 from msg.security.oauth import OAuthService, get, put, secret, state_id
 from msg.transports.account_login_page import (
     approval_page,
@@ -21,7 +22,7 @@ from msg.transports.account_login_page import (
     login_page,
     methods_page,
 )
-from msg.transports.login_providers import authorization_url, exchange_identity
+from msg.transports.login_providers import AGENTID_ISSUER, authorization_url, exchange_identity
 from msg.transports.oauth_http import HEADERS, csrf, form, json, page
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
 
@@ -50,9 +51,7 @@ class AccountLoginBoundary:
 
     def providers(self):
         return tuple(
-            p.name
-            for p in self.config.providers
-            if p.enabled and p.name in {'google', 'github', 'chatgpt'}
+            p.name for p in self.config.providers if p.enabled and p.name in OAUTH_PROVIDERS
         )
 
     def enabled(self, name):
@@ -261,7 +260,7 @@ class AccountLoginBoundary:
                     if self.enabled('passkey') and path != '/register'
                     else '',
                 )
-            self.cookie(response, self.flow_cookie, browser, 600)
+            self.cookie(response, self.flow_cookie, browser, TTL)
             return response
         if path == '/login/finish':
             require(request.method == 'GET', 'method_not_allowed')
@@ -272,12 +271,29 @@ class AccountLoginBoundary:
                 body = flow(app, tx, state, browser)
                 require(body['phase'] == 'returned', 'invalid_login_transaction')
             return finish_page(csrf(browser), state)
-        if path == '/-/login/start':
-            args, browser = await self.args(
-                request, {'csrf', 'provider', 'mode', 'handle', 'custody'}
+        if path == '/login/agentid':
+            require(request.method == 'GET', 'method_not_allowed')
+            self.provider('agentid')
+            require(set(request.query_params) <= {'iss', 'login_hint'}, 'invalid_request')
+            # This public alias only redirects. The existing transaction route creates state.
+            return RedirectResponse(
+                '/-/login/start?' + urlencode({'provider': 'agentid', **request.query_params}),
+                303,
+                headers=HEADERS,
             )
+        if path == '/-/login/start':
+            if request.method == 'GET':
+                args = dict(request.query_params)
+                require(set(args) <= {'provider', 'iss', 'login_hint'}, 'invalid_request')
+                require(args.get('provider') == 'agentid', 'method_not_allowed')
+                require(args.get('iss') in {None, AGENTID_ISSUER}, 'login_provider_invalid_issuer')
+                browser = secret()
+            else:
+                args, browser = await self.args(
+                    request, {'csrf', 'provider', 'mode', 'handle', 'custody'}
+                )
             provider = self.provider(args.get('provider'))
-            require(provider.name in {'google', 'github', 'chatgpt'}, 'login_provider_disabled')
+            require(provider.name in OAUTH_PROVIDERS, 'login_provider_disabled')
             mode, handle = self.mode(args)
             source = await self.source(request) if mode == 'bind' else None
             async with app.metadata.transaction(write=True) as tx:
@@ -286,12 +302,23 @@ class AccountLoginBoundary:
                     app, tx, provider.name, browser, mode=mode, source=source, handle=handle
                 )
             callback = app.settings.service_url + '/-/login/callback/' + provider.name
-            url = authorization_url(provider.name, provider, state, verifier, nonce, callback)
-            return RedirectResponse(url, 303, headers=HEADERS)
+            url = authorization_url(
+                provider.name,
+                provider,
+                state,
+                verifier,
+                nonce,
+                callback,
+                **({'login_hint': args.get('login_hint')} if provider.name == 'agentid' else {}),
+            )
+            response = RedirectResponse(url, 303, headers=HEADERS)
+            # Start a fresh ten-minute window even when the sign-in page was left open.
+            self.cookie(response, self.flow_cookie, browser, TTL)
+            return response
         if path.startswith('/-/login/callback/'):
             require(request.method == 'GET', 'method_not_allowed')
             provider = self.provider(path.rsplit('/', 1)[-1])
-            require(provider.name in {'google', 'github', 'chatgpt'}, 'login_provider_disabled')
+            require(provider.name in OAUTH_PROVIDERS, 'login_provider_disabled')
             require(
                 set(request.query_params)
                 <= {
@@ -305,6 +332,10 @@ class AccountLoginBoundary:
                     'iss',
                 },
                 'invalid_request',
+            )
+            require(
+                provider.name != 'agentid' or request.query_params.get('iss') == AGENTID_ISSUER,
+                'login_provider_invalid_issuer',
             )
             require('error' not in request.query_params, 'login_provider_denied')
             state = request.query_params.get('state', '')
@@ -442,7 +473,13 @@ class AccountLoginBoundary:
     async def __call__(self, scope, receive, send):
         path = scope.get('path', '')
         enabled = getattr(getattr(self.service.settings, 'login', None), 'enabled', False)
-        routes = {'/login', '/register', '/login/finish', '/account/login-methods'}
+        routes = {
+            '/login',
+            '/login/agentid',
+            '/register',
+            '/login/finish',
+            '/account/login-methods',
+        }
         if self.config.registration == 'provider_only':
             routes.add('/oauth/signup')
         if (

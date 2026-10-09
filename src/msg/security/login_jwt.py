@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 import jwt
+from cryptography.hazmat.primitives.asymmetric.ec import SECP256R1, EllipticCurvePublicKey
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from msg.core.errors import Failure
@@ -68,14 +69,15 @@ def _token_parts(token: str) -> tuple[str, str, str]:
     return parts[0], parts[1], parts[2]
 
 
-def token_key_id(token: str) -> str:
-    """Read only a bounded RS256 key ID; header URLs never cause a network request."""
+def token_key_id(token: str, *, algorithm: str = 'RS256') -> str:
+    """Read a bounded key ID with the caller-pinned algorithm; header URLs never cause a network request."""
     try:
         header_part, _, _ = _token_parts(token)
         header = _json_part(header_part, limit=_MAX_HEADER_BYTES)
         key_id = header.get('kid')
         if (
-            header.get('alg') != 'RS256'
+            algorithm not in {'RS256', 'ES256'}
+            or header.get('alg') != algorithm
             or 'crit' in header
             or header.get('b64', True) is not True
             or not isinstance(key_id, str)
@@ -87,7 +89,9 @@ def token_key_id(token: str) -> str:
         raise _invalid() from None
 
 
-def _public_key(jwks: Mapping[str, object], key_id: str) -> RSAPublicKey:
+def _public_key(
+    jwks: Mapping[str, object], key_id: str, algorithm: str
+) -> RSAPublicKey | EllipticCurvePublicKey:
     if not isinstance(jwks, Mapping):
         raise _invalid()
     keys = jwks.get('keys')
@@ -103,9 +107,10 @@ def _public_key(jwks: Mapping[str, object], key_id: str) -> RSAPublicKey:
             not isinstance(candidate_id, str)
             or not _KEY_ID.fullmatch(candidate_id)
             or candidate_id in seen
-            or key.get('kty') != 'RSA'
+            or key.get('kty') != ('EC' if algorithm == 'ES256' else 'RSA')
+            or (algorithm == 'ES256' and key.get('crv') != 'P-256')
             or key.get('use', 'sig') != 'sig'
-            or key.get('alg', 'RS256') != 'RS256'
+            or key.get('alg', algorithm) != algorithm
             or ('key_ops' in key and key['key_ops'] != ['verify'])
             or any(
                 private_field in key for private_field in ('d', 'p', 'q', 'dp', 'dq', 'qi', 'oth')
@@ -117,16 +122,22 @@ def _public_key(jwks: Mapping[str, object], key_id: str) -> RSAPublicKey:
             selected = key
     if selected is None:
         raise _invalid()
-    for field in ('n', 'e'):
+    for field in ('x', 'y') if algorithm == 'ES256' else ('n', 'e'):
         value = selected.get(field)
         if (
             not isinstance(value, str)
             or not 1 <= len(value) <= 1400
+            or (algorithm == 'ES256' and len(value) != 43)
             or not _COMPACT_PART.fullmatch(value)
         ):
             raise _invalid()
-    public_key = jwt.PyJWK.from_dict(selected, algorithm='RS256').key
-    if not isinstance(public_key, RSAPublicKey) or not 2048 <= public_key.key_size <= 8192:
+    public_key = jwt.PyJWK.from_dict(selected, algorithm=algorithm).key
+    if algorithm == 'ES256':
+        if not isinstance(public_key, EllipticCurvePublicKey) or not isinstance(
+            public_key.curve, SECP256R1
+        ):
+            raise _invalid()
+    elif not isinstance(public_key, RSAPublicKey) or not 2048 <= public_key.key_size <= 8192:
         raise _invalid()
     return public_key
 
@@ -143,10 +154,11 @@ def verify_identity_token(
     audience: str,
     nonce: str,
     now: datetime,
+    algorithm: str = 'RS256',
 ) -> TokenIdentity:
     """Verify a real signature and return only the provider's immutable identity."""
     try:
-        key_id = token_key_id(token)
+        key_id = token_key_id(token, algorithm=algorithm)
         if (
             isinstance(issuers, str)
             or not isinstance(issuers, Collection)
@@ -167,8 +179,8 @@ def verify_identity_token(
         _json_part(payload_part, limit=_MAX_TOKEN_BYTES)
         claims = jwt.decode(
             token,
-            _public_key(jwks, key_id),
-            algorithms=['RS256'],
+            _public_key(jwks, key_id, algorithm),
+            algorithms=[algorithm],
             options={
                 'require': list(_REQUIRED_CLAIMS),
                 'verify_signature': True,
