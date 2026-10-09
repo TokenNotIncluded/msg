@@ -425,6 +425,7 @@ async def test_root_index_discards_a_post_when_title_read_authorization_has_chan
     assert len(result['items']) == 1
     assert result['items'][0]['id'] == visible['id']
     assert result['items'][0]['title'] == '仍可读的主帖'
+    assert result['items'][0]['excerpt'] == '摘要'
     assert hidden['id'] not in str(result) and hidden['name'] not in str(result)
 
 
