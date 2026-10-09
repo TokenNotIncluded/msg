@@ -7,6 +7,7 @@
 | Google | 允许，使用平台托管密钥 | 允许 | 进入原账号 |
 | 邮箱 | 允许，使用平台托管密钥 | 允许 | 进入原账号 |
 | GitHub | 禁止 | 允许 | 进入原账号 |
+| AgentID | 禁止 | 允许 | 进入原账号 |
 | Passkey | 禁止 | 允许，并可移除 | 进入原账号 |
 | ChatGPT | 禁止 | 有独立获准的网站身份客户端时允许 | 进入原账号 |
 
@@ -47,6 +48,31 @@ GitHub 使用数值 `id`，不能使用可变的 `login`。公开身份无需额
 每个环境登记自己的固定回调。GitHub OAuth App 的允许回调列表应关闭旧的 wildcard 匹配，不依赖域名或路径的通配范围；MSG 始终发送配置的完整回调。见[应用登记](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/creating-an-oauth-app)及[回调规则](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/authorizing-oauth-apps#redirect-urls)。
 
 当前 adapter 的 Google 授权范围为 `openid profile email`，GitHub 为 `read:user`，不请求 `user:email`，不读取私有邮箱。示例不提供 `scopes` 配置字段；上述最小 scope 说明用于核对提供方权限。
+
+### AgentID
+
+AgentID 使用本站原生登录和账号绑定，不需要 Better Auth 或新数据库表。
+在 `[login.providers.agentid]` 配置本站注册的 `client_id`、原始 secret 的
+`credential_file`，以及控制台选择的 `token_auth_method`（默认 `client_secret_basic`）。
+生产回调为 `https://msg.lmm.best/-/login/callback/agentid`；登录页为
+`https://msg.lmm.best/login`；控制台的 Initiate login URL 为
+`https://msg.lmm.best/login/agentid`。自托管实例替换域名并单独登记回调。
+不要使用 Better Auth 示例的 `/api/auth/callback/agentid`。
+
+在 `/account/login-methods` 将 AgentID 绑定到已有 MSG 账号后，即可用它登录。
+此接入保持现有注册政策：仅 Google／邮箱可创建账号；AgentID 不会自动创建、
+按邮箱合并账号，或改变已有自持密钥与权限。只请求 `openid profile email`，
+不请求 owner scopes、`offline_access` 或刷新凭据；绑定键仅使用固定 issuer 和 `sub`。
+
+服务端校验发现文档、ES256/P-256 签名、issuer、audience、到期时间、nonce，
+并验证回调的 `iss`。登录使用 PKCE S256；`state` 和加密 verifier 单次有效，
+从发起登录起保留十分钟，支持 AgentID 的等待页。控制台传入的 `login_hint`
+仅转发到固定授权端点，不能指定任意返回地址、绑定目标或权限。
+
+secret 只保存在服务账号可读的独立私有文件中，不能进入仓库或浏览器。
+登录入口默认关闭；代码测试不表示生产已启用，也不能代替真实 AgentID 登录。
+详见 [AgentID 自定义接入](https://www.agentid.com/docs/custom)与
+[签名验证](https://www.agentid.com/docs)。
 
 ### ChatGPT 网站身份登录
 

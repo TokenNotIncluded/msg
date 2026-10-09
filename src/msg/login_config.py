@@ -6,7 +6,8 @@ from urllib.parse import urlsplit
 
 from msg.core.errors import require
 
-PROVIDERS = frozenset({'google', 'github', 'chatgpt', 'email', 'passkey'})
+OAUTH_PROVIDERS = frozenset({'google', 'github', 'chatgpt', 'agentid'})
+PROVIDERS = OAUTH_PROVIDERS | {'email', 'passkey'}
 REGISTER_PROVIDERS = frozenset({'google', 'email'})
 
 
@@ -54,7 +55,7 @@ def load_login(data, service):
         item = raw.get(name, {})
         allowed = (
             {'enabled', 'client_id', 'credential_file', 'token_auth_method'}
-            if name in {'google', 'github', 'chatgpt'}
+            if name in OAUTH_PROVIDERS
             else {'enabled', 'transport', 'credential_file', 'sender'}
             if name == 'email'
             else {'enabled'}
@@ -64,7 +65,12 @@ def load_login(data, service):
         require(type(active) is bool, 'invalid_login_provider')
         client_id, credential_file = item.get('client_id', ''), item.get('credential_file', '')
         token_auth_method = item.get(
-            'token_auth_method', 'client_secret_post' if name in {'google', 'github'} else 'none'
+            'token_auth_method',
+            {
+                'google': 'client_secret_post',
+                'github': 'client_secret_post',
+                'agentid': 'client_secret_basic',
+            }.get(name, 'none'),
         )
         transport, sender = item.get('transport', 'sequenzy'), item.get('sender', '')
         require(
@@ -85,7 +91,17 @@ def load_login(data, service):
             and isinstance(sender, str)
             and len(sender) <= 512
             and not any(ord(c) < 32 for c in sender)
-            and (name != 'chatgpt' or not active or client_id.startswith('oaiapp_')),
+            and (name != 'chatgpt' or not active or client_id.startswith('oaiapp_'))
+            and (
+                name != 'agentid'
+                or not active
+                or (
+                    client_id
+                    and client_id.isascii()
+                    and credential_file
+                    and token_auth_method in {'client_secret_basic', 'client_secret_post'}
+                )
+            ),
             'invalid_login_provider',
         )
         providers.append(

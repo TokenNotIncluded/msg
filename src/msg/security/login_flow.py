@@ -9,6 +9,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from msg.core.codec import b64, unb64
 from msg.core.errors import Failure, require
+from msg.login_config import OAUTH_PROVIDERS
 from msg.security.oauth import get, put, save, secret, state_id
 
 TTL = 600
@@ -33,7 +34,7 @@ def _open(app, state, value):
 
 
 def start_flow(app, tx, provider, browser, *, mode='login', source=None, handle=None):
-    require(provider in {'google', 'github', 'chatgpt'}, 'login_provider_disabled')
+    require(provider in OAUTH_PROVIDERS, 'login_provider_disabled')
     require(mode in {'login', 'register', 'bind'}, 'invalid_login_mode')
     require(mode != 'register' or provider == 'google', 'login_registration_forbidden')
     require(mode != 'bind' or source is not None, 'authentication_required')
