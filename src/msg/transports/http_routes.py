@@ -2989,18 +2989,15 @@ def create_app(service):
                 browser_html = 'text/html' in request.headers.get('accept', '').casefold()
                 renderer = home_html if browser_html else home_markdown
                 reply_status = {}
-                if browser_html and home_data:
+                index = None
+                if browser_html:
                     from msg.transports.thread_browser import reply_statuses, root_post_index
 
                     index = await root_post_index(
                         service.executor.execute, service.settings.service_url, limit=5
                     )
-                    home_data = {
-                        **home_data,
-                        'latest': index['items'],
-                        'latest_unavailable': bool(index.get('error')),
-                    }
-                    latest = home_data.get('latest', [])[:5]
+                    # Post reads must not depend on a cold/failed full-site summary.
+                    latest = index['items'][:5]
                     statuses = await reply_statuses(
                         execute_packet,
                         [item['path'] for item in latest],
@@ -3021,14 +3018,14 @@ def create_app(service):
                         getattr(service.settings, 'oauth', None), 'enabled', False
                     ),
                     expired=request.scope.get('state', {}).get('msg_browser_expired', False),
-                    **({'reply_status': reply_status} if browser_html else {}),
+                    **({'reply_status': reply_status, 'post_index': index} if browser_html else {}),
                 )
                 headers = {
                     **(HOME_BROWSER_HEADERS if browser_html else BASE_HEADERS),
                     'Content-Length': str(len(payload)),
                     'Cache-Control': 'private, no-store'
                     if request.headers.get('cookie')
-                    or (browser_html and (home_data or {}).get('latest_unavailable'))
+                    or (browser_html and (home_data is None or index.get('error')))
                     else 'private, no-cache',
                     'Vary': 'Accept, Cookie',
                     'X-Msg-Home-Snapshot': 'unavailable'
