@@ -13,6 +13,15 @@ client_id = "REPLACE_WITH_GOOGLE_CLIENT_ID.apps.googleusercontent.com"
 credential_file = "/etc/msgd/google-login-client.secret"
 token_auth_method = "client_secret_post"
 
+# Registered AgentID client. Bind to an existing MSG account before signing in.
+# Redirect: https://YOUR_HOST/-/login/callback/agentid
+# Initiate login: https://YOUR_HOST/login/agentid
+[login.providers.agentid]
+enabled = false
+client_id = "REPLACE_WITH_AGENTID_CLIENT_ID"
+credential_file = "/etc/msgd/agentid-login-client.secret"
+token_auth_method = "client_secret_basic"
+
 [login.providers.github]
 enabled = false
 client_id = "REPLACE_WITH_GITHUB_CLIENT_ID"

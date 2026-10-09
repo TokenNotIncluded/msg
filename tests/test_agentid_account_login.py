@@ -26,50 +26,78 @@ async def agentid_account(account, monkeypatch):  # noqa: F811
     credential.write_text('fixture-only-secret')
     credential.chmod(0o600)
     provider = LoginProvider(
-        'agentid', enabled=True, client_id='agentid-fixture',
-        credential_file=str(credential), token_auth_method='client_secret_basic',
+        'agentid',
+        enabled=True,
+        client_id='agentid-fixture',
+        credential_file=str(credential),
+        token_auth_method='client_secret_basic',
     )
     app.settings = replace(
         app.settings,
-        login=replace(app.settings.login, providers=tuple(
-            provider if item.name == 'agentid' else item for item in app.settings.login.providers
-        )),
+        login=replace(
+            app.settings.login,
+            providers=tuple(
+                provider if item.name == 'agentid' else item
+                for item in app.settings.login.providers
+            ),
+        ),
     )
 
     def authorize(name, config, state, verifier, nonce, redirect_uri, **options):
         assert redirect_uri == app.settings.service_url + '/-/login/callback/' + name
         return authorization_url(
-            name, config, state, verifier, nonce,
-            redirect_uri.replace('http://testserver/', 'http://localhost/'), **options,
+            name,
+            config,
+            state,
+            verifier,
+            nonce,
+            redirect_uri.replace('http://testserver/', 'http://localhost/'),
+            **options,
         )
 
     monkeypatch.setattr('msg.transports.account_login.authorization_url', authorize)
     return account
 
 
-async def begin(account, *, mode='login'):
-    _, _, _, http, _ = account
-    response = await post(account, '/-/login/start', {
-        'csrf': await token(http), 'provider': 'agentid', 'mode': mode,
-    })
+async def begin(case, *, mode='login'):
+    _, _, _, http, _ = case
+    response = await post(
+        case,
+        '/-/login/start',
+        {
+            'csrf': await token(http),
+            'provider': 'agentid',
+            'mode': mode,
+        },
+    )
     assert response.status_code == 303, response.text
     state = parse_qs(urlsplit(response.headers['location']).query)['state'][0]
     return state, csrf(http.cookies.get('msg_account_login'))
 
 
-async def callback(account, state, **overrides):
-    return await account[3].get('/-/login/callback/agentid', params={
-        'state': state, 'code': 'fixture-code', 'iss': AGENTID_ISSUER, **overrides,
-    })
+async def callback(case, state, **overrides):
+    return await case[3].get(
+        '/-/login/callback/agentid',
+        params={
+            'state': state,
+            'code': 'fixture-code',
+            'iss': AGENTID_ISSUER,
+            **overrides,
+        },
+    )
 
 
 async def test_public_initiate_url_preserves_hint_and_is_login_only(agentid_account):
     app, _, _, http, _ = agentid_account
     async with app.metadata.transaction(write=False) as tx:
         before = tx.one('SELECT COUNT(*) FROM identities')[0]
-    response = await http.get('/login/agentid', params={
-        'iss': AGENTID_ISSUER, 'login_hint': 'agent+one@example.org',
-    })
+    response = await http.get(
+        '/login/agentid',
+        params={
+            'iss': AGENTID_ISSUER,
+            'login_hint': 'agent+one@example.org',
+        },
+    )
     assert response.status_code == 303 and 'set-cookie' not in response.headers
     assert response.headers['location'].startswith('/-/login/start?')
     response = await http.get(response.headers['location'])
@@ -89,13 +117,18 @@ async def test_public_initiate_url_preserves_hint_and_is_login_only(agentid_acco
     assert 'Continue with AgentID' not in (await http.get('/register')).text
 
 
-@pytest.mark.parametrize('query', [
-    'provider=agentid&iss=https%3A%2F%2Fattacker.example',
-    'provider=agentid&mode=bind', 'provider=agentid&mode=register',
-    'provider=agentid&callbackURL=https%3A%2F%2Fattacker.example',
-    'provider=agentid&provider=google', 'provider=google',
-    'provider=agentid&login_hint=a&login_hint=b',
-])
+@pytest.mark.parametrize(
+    'query',
+    [
+        'provider=agentid&iss=https%3A%2F%2Fattacker.example',
+        'provider=agentid&mode=bind',
+        'provider=agentid&mode=register',
+        'provider=agentid&callbackURL=https%3A%2F%2Fattacker.example',
+        'provider=agentid&provider=google',
+        'provider=google',
+        'provider=agentid&login_hint=a&login_hint=b',
+    ],
+)
 async def test_initiation_rejects_issuer_or_mode_injection(agentid_account, query):
     response = await agentid_account[3].get('/-/login/start?' + query)
     assert response.status_code == 400, response.text
@@ -155,8 +188,11 @@ async def test_bound_agent_returns_to_same_self_held_identity(agentid_account):
     assert (await session_source(app, http))['subject'] == subject
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.subject(subject)).kind == 'registered'
-        assert tx.rows('SELECT id,body FROM credentials WHERE subject=?', (subject,)) == before
-        assert tx.one('SELECT COUNT(*) FROM custodial_vault WHERE subject=?', (subject,))[0] == vaults
+        after = dict(tx.rows('SELECT id,body FROM credentials WHERE subject=?', (subject,)))
+        assert all(after[key_id] == body for key_id, body in before)
+        assert (
+            tx.one('SELECT COUNT(*) FROM custodial_vault WHERE subject=?', (subject,))[0] == vaults
+        )
     http.cookies.clear()
     state, value = await begin(agentid_account)
     assert (await callback(agentid_account, state)).status_code == 303

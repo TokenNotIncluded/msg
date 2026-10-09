@@ -155,18 +155,27 @@ def test_agentid_config_rejects_missing_or_unsafe_credentials(flow, override):
 
 def test_authorize_is_pinned_has_pkce_nonce_and_minimal_scopes(flow):
     url = providers.authorization_url(
-        'agentid', flow.config, 'original-state', VERIFIER, NONCE, CALLBACK,
+        'agentid',
+        flow.config,
+        'original-state',
+        VERIFIER,
+        NONCE,
+        CALLBACK,
         login_hint='agent+test@example.org',
     )
     parsed = urlsplit(url)
     params = parse_qs(parsed.query)
     assert parsed._replace(query='').geturl() == AUTHORIZE
     assert params == {
-        'client_id': [CLIENT], 'response_type': ['code'], 'redirect_uri': [CALLBACK],
-        'state': ['original-state'], 'nonce': [NONCE],
+        'client_id': [CLIENT],
+        'response_type': ['code'],
+        'redirect_uri': [CALLBACK],
+        'state': ['original-state'],
+        'nonce': [NONCE],
         'code_challenge_method': ['S256'],
         'code_challenge': [b64(hashlib.sha256(VERIFIER.encode()).digest())],
-        'scope': ['openid profile email'], 'login_hint': ['agent+test@example.org'],
+        'scope': ['openid profile email'],
+        'login_hint': ['agent+test@example.org'],
     }
     assert VERIFIER not in url and 'fixture-only-secret' not in url
 
@@ -203,7 +212,9 @@ async def test_real_es256_identity_and_registered_authentication(flow, method):
 
 async def test_profile_changes_do_not_change_identity_or_merge_inboxes(flow):
     original = await flow.exchange()
-    flow.claims.update(email='renamed@example.org', name='Renamed agent', owner_email='owner@example.org')
+    flow.claims.update(
+        email='renamed@example.org', name='Renamed agent', owner_email='owner@example.org'
+    )
     assert await flow.exchange() == original
     flow.claims['sub'] = 'other-inbox'
     assert (await flow.exchange()).stable_id != original.stable_id
@@ -213,11 +224,18 @@ async def test_profile_changes_do_not_change_identity_or_merge_inboxes(flow):
 @pytest.mark.parametrize(
     ('claim', 'value'),
     [
-        ('iss', 'https://attacker.example'), ('aud', 'other-client'),
-        ('nonce', 'another-browser'), ('exp', int(NOW.timestamp())),
-        ('exp', True), ('iat', int(NOW.timestamp()) + 6), ('iat', True),
-        ('sub', ''), ('sub', 42), ('aud', [CLIENT, 'other-client']),
-        ('azp', 'other-client'), ('nbf', int(NOW.timestamp()) + 1),
+        ('iss', 'https://attacker.example'),
+        ('aud', 'other-client'),
+        ('nonce', 'another-browser'),
+        ('exp', int(NOW.timestamp())),
+        ('exp', True),
+        ('iat', int(NOW.timestamp()) + 6),
+        ('iat', True),
+        ('sub', ''),
+        ('sub', 42),
+        ('aud', [CLIENT, 'other-client']),
+        ('azp', 'other-client'),
+        ('nbf', int(NOW.timestamp()) + 1),
     ],
 )
 async def test_rejects_signed_wrong_claims(flow, claim, value):
@@ -242,9 +260,14 @@ async def test_rejects_forged_or_wrong_algorithm(flow, kind):
     else:
         key = (
             rsa.generate_private_key(public_exponent=65537, key_size=2048)
-            if kind == 'RS256' else 'x' * 32 if kind == 'HS256' else ''
+            if kind == 'RS256'
+            else 'x' * 32
+            if kind == 'HS256'
+            else ''
         )
-        flow.token_override = jwt.encode(flow.claims, key, algorithm=kind, headers={'kid': 'current'})
+        flow.token_override = jwt.encode(
+            flow.claims, key, algorithm=kind, headers={'kid': 'current'}
+        )
     with pytest.raises(Failure, match='^login_provider_invalid_token$'):
         await flow.exchange()
     if kind != 'forged':
@@ -253,8 +276,16 @@ async def test_rejects_forged_or_wrong_algorithm(flow, kind):
 
 @pytest.mark.parametrize(
     ('field', 'value'),
-    [('kty', 'RSA'), ('crv', 'P-384'), ('alg', 'RS256'), ('use', 'enc'),
-     ('key_ops', ['sign']), ('d', 'a' * 43), ('x', 'a' * 42), ('y', '!' * 43)],
+    [
+        ('kty', 'RSA'),
+        ('crv', 'P-384'),
+        ('alg', 'RS256'),
+        ('use', 'enc'),
+        ('key_ops', ['sign']),
+        ('d', 'a' * 43),
+        ('x', 'a' * 42),
+        ('y', '!' * 43),
+    ],
 )
 async def test_rejects_invalid_or_private_jwks(flow, field, value):
     flow.jwks['keys'][0][field] = value
@@ -281,11 +312,14 @@ async def test_rotation_refresh_is_bounded(flow):
 
 @pytest.mark.parametrize(
     ('field', 'value'),
-    [('issuer', 'https://attacker.example'), ('token_endpoint', 'https://attacker.example/token'),
-     ('authorization_endpoint', 'https://attacker.example/auth'),
-     ('jwks_uri', 'https://attacker.example/keys'),
-     ('id_token_signing_alg_values_supported', ['RS256']),
-     ('authorization_response_iss_parameter_supported', False)],
+    [
+        ('issuer', 'https://attacker.example'),
+        ('token_endpoint', 'https://attacker.example/token'),
+        ('authorization_endpoint', 'https://attacker.example/auth'),
+        ('jwks_uri', 'https://attacker.example/keys'),
+        ('id_token_signing_alg_values_supported', ['RS256']),
+        ('authorization_response_iss_parameter_supported', False),
+    ],
 )
 async def test_discovery_mismatch_fails_before_sending_credentials(flow, field, value):
     flow.metadata[field] = value
