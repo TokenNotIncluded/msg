@@ -81,16 +81,28 @@ jobs:
           Path('tests/test_home_first_read.py').unlink()
           PY
       - name: Apply reviewed changes and normalize with repository formatter
+        id: apply
         run: |
           git apply --check /tmp/home-first-read.patch
           git apply /tmp/home-first-read.patch
           python - <<'PY'
           from pathlib import Path
-          path = Path('scripts/check_home_first_read_browser.py')
-          text = path.read_text()
-          old = 'lambda error: errors.append(str(error))'
-          assert text.count(old) == 1
-          path.write_text(text.replace(old, 'lambda error, errors=errors: errors.append(str(error))'))
+          edits = [
+              ('scripts/check_home_first_read_browser.py',
+               'lambda error: errors.append(str(error))',
+               'lambda error, errors=errors: errors.append(str(error))'),
+              ('tests/test_home_first_read.py',
+               "assert 'No public posts yet.' not in first.text",
+               'assert \'<p class="empty-state" data-i18n="no_posts">\' not in first.text'),
+              ('src/msg/transports/http_routes.py',
+               "or home_data is None\n                    or (browser_html and index.get('error'))",
+               "or (browser_html and (home_data is None or index.get('error')))"),
+          ]
+          for filename, old, new in edits:
+              path = Path(filename)
+              text = path.read_text()
+              assert text.count(old) == 1, filename
+              path.write_text(text.replace(old, new))
           PY
           files=(src/msg/transports/{browser_style,home_page,http_routes,thread_browser}.py tests/{test_home_first_read,test_browser_refinement,test_thread_panel}.py scripts/check_home_first_read_browser.py)
           uv run ruff check --fix --no-unsafe-fixes "${files[@]}"
@@ -113,6 +125,7 @@ jobs:
           assert not tree.findall('.//skipped')
           PY
       - name: Verify real browser navigation and render desktop/mobile themes under CSP
+        if: ${{ !cancelled() && steps.apply.outcome == 'success' }}
         env:
           PYTHONPATH: src
         run: |
