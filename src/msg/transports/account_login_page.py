@@ -5,6 +5,7 @@ from html import escape
 from msg.transports.oauth_http import fields, page
 
 PROVIDER_NAMES = {
+    'agentid': 'AgentID',
     'google': 'Google',
     'github': 'GitHub',
     'chatgpt': 'ChatGPT',
@@ -76,8 +77,10 @@ def login_page(
     else:
         for provider in providers:
             body += provider_form(provider, token)
-        if 'github' in providers or 'chatgpt' in providers:
-            body += '<p>GitHub／ChatGPT 须先绑定已有 MSG 账号；相同邮箱不会自动合并账号。</p>'
+        if any(provider in providers for provider in ('github', 'chatgpt', 'agentid')):
+            body += (
+                '<p>GitHub／ChatGPT／AgentID 须先绑定已有 MSG 账号；相同邮箱不会自动合并账号。</p>'
+            )
     if email:
         body += email_form(token, mode='register' if register else 'login', handle=register)
     if passkey and not register:
