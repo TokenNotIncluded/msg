@@ -1,0 +1,136 @@
+name: Key-only Git compatibility
+on:
+  push:
+    branches: [ci/key-only-identity-20261011]
+    paths: [.github/workflows/key-only-git.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: work
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      valkey:
+        image: valkey/valkey:9.0.6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+      MSG_TEST_VALKEY_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: stage
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: 705b44f0f9583a644fbfaf974635be5ca65b4fca
+          path: work
+          persist-credentials: true
+      - name: Reconstruct the exact previously verified inputs
+        run: |
+          python - <<'PY'
+          import textwrap
+          from pathlib import Path
+          workflow = Path('../stage/.github/workflows/key-only-stage.yml').read_text()
+          script = workflow.split("          python - <<'PY'\n", 1)[1].split('          PY\n', 1)[0]
+          exec(compile(textwrap.dedent(script), 'verified-key-only-inputs', 'exec'))
+          PY
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install locked test requirements
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq libpcsclite-dev swig age git-lfs
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+          echo "$GITHUB_WORKSPACE/work/.venv/bin" >> "$GITHUB_PATH"
+          uv pip check
+      - name: Record base tree and apply native Git correction
+        run: |
+          uv run --no-sync ruff check --fix .
+          uv run --no-sync ruff format .
+          git add -A
+          git write-tree > ../artifacts/verified-parent-tree.txt
+          python ../stage/.ci/key-only-git.py
+      - name: Check source quality
+        id: quality
+        continue-on-error: true
+        run: |
+          uv run --no-sync ruff check --fix . > ../artifacts/ruff.txt 2>&1
+          uv run --no-sync ruff format . >> ../artifacts/ruff.txt 2>&1
+          uv run --no-sync python -W error -m compileall -q src > ../artifacts/compile.txt 2>&1
+          git diff --check >> ../artifacts/compile.txt 2>&1
+      - name: Verify Git and native identity boundaries
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run --no-sync python -m pytest tests/test_git_http_push.py tests/test_git_lfs.py tests/test_git_transport_boundaries.py tests/test_browser_sessions.py tests/test_oauth.py tests/test_oauth_custodial_ceiling.py tests/test_key_identity_migration.py --maxfail=12 --junitxml=../artifacts/git-identity.xml 2>&1 | tee ../artifacts/tests.txt
+      - name: Verify complete JavaScript suite
+        id: javascript
+        continue-on-error: true
+        run: node --test tests/js/*.test.cjs > ../artifacts/javascript.txt 2>&1
+      - name: Build distribution
+        id: build
+        continue-on-error: true
+        run: uv build --no-sources > ../artifacts/build.txt 2>&1
+      - name: Preserve complete source and evidence
+        if: always()
+        run: |
+          mkdir -p ../artifacts
+          git add -A
+          tree=$(git write-tree)
+          printf '%s\n' "$tree" > ../artifacts/result-tree.txt
+          git archive --format=tar.gz "$tree" > ../artifacts/source.tar.gz
+          git diff --cached --binary > ../artifacts/change.patch
+      - name: Publish only on verified unchanged feature parent
+        id: publish
+        if: steps.quality.outcome == 'success' && steps.tests.outcome == 'success' && steps.javascript.outcome == 'success' && steps.build.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          conclusion=$(gh api repos/TokenNotIncluded/msg/actions/runs/38156955977 --jq .conclusion)
+          if test "$conclusion" != success; then
+            echo "Core verification has not completed successfully; source is preserved but not published." > ../artifacts/publish.txt
+            exit 0
+          fi
+          git fetch origin refs/heads/refactor/key-only-identity-20261011
+          parent=$(git rev-parse FETCH_HEAD)
+          test "$(git rev-parse "$parent^{tree}")" = "$(cat ../artifacts/verified-parent-tree.txt)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          commit=$(git commit-tree "$(cat ../artifacts/result-tree.txt)" -p "$parent" -m 'fix(identity): retain key-issued Git credentials without OAuth fallback')
+          git push origin "$commit:refs/heads/refactor/key-only-identity-20261011"
+          printf '%s\n' "$commit" > ../artifacts/feature-commit.txt
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: key-only-git-verification
+          path: artifacts/
+      - name: Require all checks
+        if: always()
+        env:
+          QUALITY: ${{ steps.quality.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+          JAVASCRIPT: ${{ steps.javascript.outcome }}
+          BUILD: ${{ steps.build.outcome }}
+        run: test "$QUALITY/$TESTS/$JAVASCRIPT/$BUILD" = success/success/success/success
