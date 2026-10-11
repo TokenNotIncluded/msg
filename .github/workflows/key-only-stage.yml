@@ -8,7 +8,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: work
@@ -74,6 +74,8 @@ jobs:
               print('Verified source tree:', payload['tree'])
           apply('key-only.delta', (1, 2, 3), '9a630fb12bfaf2d72951db713ccb4240d750179828b668716af7af59fa8c5cf1')
           apply('key-only.fix', (1, 2), 'bd238ce0cca672b779c5b6cf3120d7e795fd05a080fc500a4ce16338a34f4af4')
+          subprocess.run(['python', '../stage/.ci/key-only-final.py'], check=True)
+          subprocess.run(['git', 'add', '-A'], check=True)
           Path('../artifacts').mkdir(exist_ok=True)
           Path('../artifacts/input-tree.txt').write_text(git('write-tree') + '\n')
           PY
@@ -84,7 +86,8 @@ jobs:
       - name: Install locked requirements
         run: |
           sudo apt-get update -qq
-          sudo env NEEDRESTART_MODE=l apt-get install -y -qq libpcsclite-dev swig age
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq libpcsclite-dev swig age postgresql-client-16
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
           python -m pip install uv==0.12.20
           uv sync --locked --extra dev --python "$(command -v python)"
           echo "$GITHUB_WORKSPACE/work/.venv/bin" >> "$GITHUB_PATH"
@@ -101,7 +104,7 @@ jobs:
         id: collect
         continue-on-error: true
         run: uv run --no-sync python -m pytest --collect-only -q > ../artifacts/collection.txt 2>&1
-      - name: Run all changed tests and configuration contracts
+      - name: Run changed tests and configuration contracts
         id: tests
         continue-on-error: true
         run: |
@@ -111,11 +114,18 @@ jobs:
           paths = subprocess.check_output(['git', 'diff', 'HEAD', '--name-only'], text=True).splitlines()
           tests = {p for p in paths if p.startswith('tests/test_') and p.endswith('.py') and Path(p).is_file()}
           tests.update(['tests/test_config_safety.py', 'tests/test_configuration_field_contracts.py', 'tests/test_pg_config.py'])
+          tests.discard('tests/test_complete_recovery_proof.py')
           Path('../artifacts/targets.txt').write_text('\n'.join(sorted(tests)))
           PY
           mapfile -t targets < ../artifacts/targets.txt
           set -o pipefail
-          uv run --no-sync python -m pytest "${targets[@]}" --maxfail=15 --junitxml=../artifacts/key-identity.xml 2>&1 | tee ../artifacts/tests.txt
+          uv run --no-sync python -m pytest "${targets[@]}" --maxfail=30 --junitxml=../artifacts/key-identity.xml 2>&1 | tee ../artifacts/tests.txt
+      - name: Verify strict backup recovery contracts
+        id: recovery
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run --no-sync python -m pytest tests/test_complete_recovery_proof.py --maxfail=8 --junitxml=../artifacts/recovery.xml 2>&1 | tee ../artifacts/recovery.txt
       - name: Run client JavaScript contracts
         id: javascript
         continue-on-error: true
@@ -134,7 +144,7 @@ jobs:
           git archive --format=tar.gz "$tree" > ../artifacts/source.tar.gz
           git diff --cached --binary > ../artifacts/change.patch
       - name: Publish verified feature source only
-        if: steps.apply.outcome == 'success' && steps.quality.outcome == 'success' && steps.collect.outcome == 'success' && steps.tests.outcome == 'success' && steps.javascript.outcome == 'success' && steps.build.outcome == 'success'
+        if: steps.apply.outcome == 'success' && steps.quality.outcome == 'success' && steps.collect.outcome == 'success' && steps.tests.outcome == 'success' && steps.recovery.outcome == 'success' && steps.javascript.outcome == 'success' && steps.build.outcome == 'success'
         run: |
           test -z "$(git diff --cached --name-only -- .github)"
           git config user.name 'github-actions[bot]'
@@ -153,6 +163,7 @@ jobs:
           QUALITY: ${{ steps.quality.outcome }}
           COLLECTION: ${{ steps.collect.outcome }}
           TESTS: ${{ steps.tests.outcome }}
+          RECOVERY: ${{ steps.recovery.outcome }}
           JAVASCRIPT: ${{ steps.javascript.outcome }}
           BUILD: ${{ steps.build.outcome }}
-        run: test "$QUALITY/$COLLECTION/$TESTS/$JAVASCRIPT/$BUILD" = success/success/success/success/success
+        run: test "$QUALITY/$COLLECTION/$TESTS/$RECOVERY/$JAVASCRIPT/$BUILD" = success/success/success/success/success/success
