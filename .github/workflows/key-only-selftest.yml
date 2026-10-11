@@ -1,0 +1,123 @@
+name: Key-only final acceptance
+on:
+  push:
+    branches: [ci/key-only-identity-20261011]
+    paths: [.github/workflows/key-only-selftest.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  accept:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      valkey:
+        image: valkey/valkey:9.0.6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+      MSG_TEST_VALKEY_URL: redis://127.0.0.1:6379/0
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 705b44f0f9583a644fbfaf974635be5ca65b4fca
+          persist-credentials: true
+      - name: Restore exact reviewed source
+        run: |
+          gh run download 38158343052 --repo "$GITHUB_REPOSITORY" --name key-only-complete-2 --dir "$RUNNER_TEMP/reviewed"
+          git apply --index "$RUNNER_TEMP/reviewed/change.patch"
+          test "$(git write-tree)" = 61cf6b7799080d9d126b1f07fa55a74c66bbbe20
+          test -z "$(git diff --cached --name-only -- .github .ci)"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install the same system tools as repository CI
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq postgresql-client-16 age nginx openssl git-lfs bubblewrap apparmor-profiles libpcsclite-dev swig
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+          sudo apparmor_parser -r /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          bwrap --version
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+          uv pip check
+          mkdir -p "$RUNNER_TEMP/acceptance"
+      - name: Verify formatting and configuration plus real system selftest
+        run: |
+          uv run --no-sync ruff check . > "$RUNNER_TEMP/acceptance/ruff.txt" 2>&1
+          uv run --no-sync ruff format --check . >> "$RUNNER_TEMP/acceptance/ruff.txt" 2>&1
+          set -o pipefail
+          uv run --no-sync python -m pytest tests/test_configuration_field_contracts.py --showlocals -vv --junitxml="$RUNNER_TEMP/acceptance/retest.xml" 2>&1 | tee "$RUNNER_TEMP/acceptance/retest.txt"
+      - name: Run JavaScript and distribution build
+        run: |
+          node --test tests/js/*.test.cjs > "$RUNNER_TEMP/acceptance/javascript.txt" 2>&1
+          uv build --no-sources > "$RUNNER_TEMP/acceptance/build.txt" 2>&1
+      - name: Require complete coverage of the exact source and all fresh results
+        run: |
+          gh run download 38158343052 --repo "$GITHUB_REPOSITORY" --pattern 'key-only-complete-*' --dir "$RUNNER_TEMP/matrix-evidence"
+          python - <<'PY'
+          import copy, json, os, xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP'])
+          groups = [root / 'matrix-evidence' / f'key-only-complete-{n}' for n in range(3)]
+          assert {(p / 'result-tree.txt').read_text().strip() for p in groups} == {'61cf6b7799080d9d126b1f07fa55a74c66bbbe20'}
+          assigned = []
+          cases = {}
+          original_failures = []
+          for path in groups:
+              assigned += (path / 'targets.txt').read_text().splitlines()
+              for case in ET.parse(path / 'results.xml').iter('testcase'):
+                  key = (case.attrib['classname'], case.attrib['name'])
+                  assert key not in cases, key
+                  cases[key] = case
+                  if any(case.find(tag) is not None for tag in ('failure', 'error', 'skipped')):
+                      original_failures.append(key)
+          assert len(assigned) == len(set(assigned))
+          assert set(assigned) == set((groups[0] / 'all-targets.txt').read_text().splitlines())
+          expected = ('tests.test_configuration_field_contracts', 'test_official_selftest_runs_configuration_field_vectors')
+          assert original_failures == [expected], original_failures
+          rerun = list(ET.parse(root / 'acceptance/retest.xml').iter('testcase'))
+          assert rerun and expected in {(c.attrib['classname'], c.attrib['name']) for c in rerun}
+          for case in rerun:
+              key = (case.attrib['classname'], case.attrib['name'])
+              assert key in cases, key
+              cases[key] = case
+          assert cases and all(all(case.find(tag) is None for tag in ('failure', 'error', 'skipped')) for case in cases.values())
+          suite = ET.Element('testsuite', name='key-only-acceptance', tests=str(len(cases)), failures='0', errors='0', skipped='0')
+          for key in sorted(cases):
+              suite.append(copy.deepcopy(cases[key]))
+          ET.ElementTree(suite).write(root / 'acceptance/combined.xml', encoding='utf-8', xml_declaration=True)
+          summary = {'source_tree': '61cf6b7799080d9d126b1f07fa55a74c66bbbe20', 'unique_backend_cases': len(cases), 'failures': 0, 'errors': 0, 'skipped': 0, 'source_test_files': len(assigned), 'matrix_run': 38158343052, 'retested_with_required_system_tools': list(expected)}
+          (root / 'acceptance/summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, indent=2))
+          PY
+      - name: Publish only the verified feature source
+        run: |
+          test "$(git write-tree)" = 61cf6b7799080d9d126b1f07fa55a74c66bbbe20
+          test -z "$(git diff --name-only)"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'refactor(identity): remove OAuth and use native local-key approvals' -m 'Remove third-party account binding and OAuth authority; preserve native signing, bounded browser sessions, Git credentials, legacy certificates, content and atomic upgrade/recovery.'
+          git push origin HEAD:refs/heads/refactor/key-only-identity-20261011
+          git rev-parse HEAD > "$RUNNER_TEMP/acceptance/feature-commit.txt"
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: key-only-acceptance
+          path: ${{ runner.temp }}/acceptance/
