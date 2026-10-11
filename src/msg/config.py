@@ -9,11 +9,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from msg.browser_config import BrowserConfig, load_browser
 from msg.config_contracts import configuration_keys, validate_sections
 from msg.core.errors import Failure, require
 from msg.core.models import MailConfig, ServerConfig, TransportLimits
-from msg.login_config import LoginConfig, load_login
-from msg.oauth_config import OAuthConfig, load_oauth
 from msg.paths import ROOT_PRIVATE_DIR, SERVER_CONFIG_DIR, ServerPaths
 from msg.security.age_keys import encryption_key_id, public_from_recipient
 from msg.service_origin import service_origin
@@ -108,8 +107,7 @@ class Settings:
     hosting_base_capacity_bytes: int = 10 * 1024 * 1024
     hosting_recovery_marker: Path | None = None
     hosting_content_group_read: bool = False
-    oauth: OAuthConfig = OAuthConfig()
-    login: LoginConfig = LoginConfig()
+    browser: BrowserConfig = BrowserConfig()
     websub_hubs: tuple[str, ...] = ()
 
     @property
@@ -495,9 +493,7 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
     for hub in hubs:
         validate_endpoint(hub)
     hubs = tuple(dict.fromkeys(hubs))
-    oauth = load_oauth(data.get('oauth', {}), service)
-    login = load_login(data.get('login', {}), service)
-    require(not login.enabled or oauth.enabled, 'login_requires_oauth')
+    browser = load_browser(data.get('browser', {}), service)
     return Settings(
         server=ServerConfig(
             config_dir=config_dir,
@@ -537,8 +533,7 @@ def load_settings(config_dir=SERVER_CONFIG_DIR):
         hosting_base_capacity_bytes=hosting_base,
         hosting_recovery_marker=Path(recovery_marker) if recovery_marker is not None else None,
         hosting_content_group_read=content_group_read,
-        oauth=oauth,
-        login=login,
+        browser=browser,
     )
 
 

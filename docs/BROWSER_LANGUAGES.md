@@ -18,4 +18,4 @@ selection does not change authorization or translate identifiers sent to APIs.
 
 Add a locale to `LANGUAGES` and a complete column in `browser_i18n.py`; catalogs
 are embedded in the existing CSP-hashed script without another network request.
-Run the browser language, rendering and OAuth integrity tests after changes.
+Run the browser language, rendering and browser-session integrity tests after changes.

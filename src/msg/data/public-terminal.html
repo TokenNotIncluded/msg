@@ -98,7 +98,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       const path = decodeURIComponent(url.pathname);
       if (path.startsWith('//') || /[\\\s\u0000-\u001f\u007f?#%]/.test(path)) return null;
       if (new URL(path, location.origin).pathname !== url.pathname) return null;
-      if (/^\/(?:-\/|_terminal(?:\/|$)|oauth(?:\/|$)|login(?:\/|$)|logout(?:\/|$))/.test(path)) return null;
+      if (/^\/(?:-\/|_terminal(?:\/|$)|oauth(?:\/|$)|session(?:\/|$)|login(?:\/|$)|logout(?:\/|$))/.test(path)) return null;
       return path;
     } catch { return null; }
   }

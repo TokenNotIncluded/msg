@@ -8,7 +8,7 @@ import pytest
 from starlette.requests import Request
 
 from msg.core.errors import Failure
-from msg.transports.oauth_http import HEADERS, OAuthBoundary, csrf, page
+from msg.transports.session_http import HEADERS, BrowserSessionBoundary, csrf, page
 from msg.transports.webmcp import WEBMCP_HASH
 
 
@@ -32,7 +32,7 @@ def test_optional_page_script_is_pinned_to_exact_bytes():
 
 @pytest.mark.parametrize('token', ['非ASCII', '', 'wrong', None, ['wrong']])
 def test_invalid_csrf_values_fail_with_a_controlled_error(token):
-    boundary = OAuthBoundary.__new__(OAuthBoundary)
+    boundary = BrowserSessionBoundary.__new__(BrowserSessionBoundary)
     boundary.service = SimpleNamespace(settings=SimpleNamespace(service_url='https://msg.test'))
     request = Request({
         'type': 'http',
@@ -46,7 +46,7 @@ def test_invalid_csrf_values_fail_with_a_controlled_error(token):
 
 
 def test_valid_csrf_still_requires_the_origin_and_cookie():
-    boundary = OAuthBoundary.__new__(OAuthBoundary)
+    boundary = BrowserSessionBoundary.__new__(BrowserSessionBoundary)
     boundary.service = SimpleNamespace(settings=SimpleNamespace(service_url='https://msg.test'))
     for origin, good in [(b'https://msg.test', True), (b'https://other.test', False)]:
         request = Request({

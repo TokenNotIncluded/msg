@@ -6,7 +6,7 @@ from datetime import timedelta
 
 import httpx
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call
 
 from msg.core.codec import b64, canonical, loads, unb64
@@ -15,8 +15,8 @@ from msg.storage.sqlite import SqliteMetadataStore
 from msg.transports.post_views import HASH
 
 
-async def post(oauth, body='# Browser heat\n\nA readable post.'):
-    app, key, subject, _ = oauth
+async def post(signed_browser, body='# Browser heat\n\nA readable post.'):
+    app, key, subject, _ = signed_browser
     result = await call(
         app, 'content.post_create', {'parent': '/main', 'body': body}, key=key, subject=subject
     )
@@ -34,8 +34,8 @@ async def page_token(http, rid):
     return match[1], page
 
 
-async def event(oauth, token, **kwargs):
-    app, _, _, http = oauth
+async def event(signed_browser, token, **kwargs):
+    app, _, _, http = signed_browser
     return await http.post(
         '/-/view-event',
         json={'token': token},
@@ -45,9 +45,9 @@ async def event(oauth, token, **kwargs):
 
 
 @pytest.mark.asyncio
-async def test_reads_do_not_count_and_visible_event_dedupes_in_metadata(oauth):
-    app, _, _, http = oauth
-    rid = await post(oauth)
+async def test_reads_do_not_count_and_visible_event_dedupes_in_metadata(signed_browser):
+    app, _, _, http = signed_browser
+    rid = await post(signed_browser)
     token, page = await page_token(http, rid)
     assert 'data-msg-view-count>0</span>' in page.text
     for path in (
@@ -60,13 +60,13 @@ async def test_reads_do_not_count_and_visible_event_dedupes_in_metadata(oauth):
         await http.head(path, headers={'Accept': 'text/html'})
     initial = await call(app, 'discovery.get', {'id': rid})
     assert initial.data['view_count'] == 0
-    first = await event(oauth, token)
+    first = await event(signed_browser, token)
     assert first.status_code == 200 and first.json()['view_count'] == 1, first.text
-    retry = await event(oauth, token)
+    retry = await event(signed_browser, token)
     assert retry.json()['view_count'] == 1
     fresh_token, refreshed = await page_token(http, rid)
     assert refreshed.headers.get('set-cookie') is None
-    assert (await event(oauth, fresh_token)).json()['view_count'] == 1
+    assert (await event(signed_browser, fresh_token)).json()['view_count'] == 1
     meta = await call(app, 'discovery.get', {'id': rid, 'view': 'meta'})
     assert meta.data['view_count'] == 1
     explicit = await call(app, 'discovery.get', {'id': rid, 'fields': ['id', 'view_count']})
@@ -81,11 +81,11 @@ async def test_reads_do_not_count_and_visible_event_dedupes_in_metadata(oauth):
 
 
 @pytest.mark.asyncio
-async def test_concurrent_events_count_each_visitor_once_and_expire_by_taipei_day(oauth):
-    app, _, _, http = oauth
-    rid = await post(oauth)
+async def test_concurrent_events_count_each_visitor_once_and_expire_by_taipei_day(signed_browser):
+    app, _, _, http = signed_browser
+    rid = await post(signed_browser)
     token, _ = await page_token(http, rid)
-    duplicates = await asyncio.gather(*(event(oauth, token) for _ in range(8)))
+    duplicates = await asyncio.gather(*(event(signed_browser, token) for _ in range(8)))
     assert all(
         result.status_code == 200 and result.json()['view_count'] == 1 for result in duplicates
     )
@@ -100,31 +100,33 @@ async def test_concurrent_events_count_each_visitor_once_and_expire_by_taipei_da
             headers={'Origin': app.settings.service_url},
         )
         assert second.json()['view_count'] == 2
-    app._oauth_clock[0] += timedelta(days=1)
-    assert (await event(oauth, token)).status_code >= 400
+    app._session_clock[0] += timedelta(days=1)
+    assert (await event(signed_browser, token)).status_code >= 400
     next_day, _ = await page_token(http, rid)
-    assert (await event(oauth, next_day)).json()['view_count'] == 3
+    assert (await event(signed_browser, next_day)).json()['view_count'] == 3
     async with app.metadata.transaction(write=False) as tx:
         assert len(tx.rows('SELECT * FROM post_view_days')) == 1
 
 
 @pytest.mark.asyncio
-async def test_event_rejects_forged_binding_origin_private_or_inactive_target(oauth):
-    app, key, subject, http = oauth
-    rid = await post(oauth)
+async def test_event_rejects_forged_binding_origin_private_or_inactive_target(signed_browser):
+    app, key, subject, http = signed_browser
+    rid = await post(signed_browser)
     token, _ = await page_token(http, rid)
-    assert (await event(oauth, token + 'x')).status_code >= 400
+    assert (await event(signed_browser, token + 'x')).status_code >= 400
     assert (
-        await event(oauth, token, headers={'Origin': 'https://evil.example'})
+        await event(signed_browser, token, headers={'Origin': 'https://evil.example'})
     ).status_code >= 400
     assert (
-        await event(oauth, token, headers={'Authorization': 'Bearer invalid'})
+        await event(signed_browser, token, headers={'Authorization': 'Bearer invalid'})
     ).status_code >= 400
     assert (await http.get('/-/view-event')).status_code == 405
     payload, signature = token.split('.')
     forged = loads(unb64(payload))
     forged['id'] = 'r_' + '0' * 32
-    assert (await event(oauth, b64(canonical(forged)) + '.' + signature)).status_code >= 400
+    assert (
+        await event(signed_browser, b64(canonical(forged)) + '.' + signature)
+    ).status_code >= 400
     changed = await call(
         app,
         'content.chmod',
@@ -134,10 +136,10 @@ async def test_event_rejects_forged_binding_origin_private_or_inactive_target(oa
         expected=((rid, 1),),
     )
     assert changed.status == 'ok', changed.error
-    assert (await event(oauth, token)).status_code >= 400
-    await browser_login(oauth)
+    assert (await event(signed_browser, token)).status_code >= 400
+    await browser_login(signed_browser)
     private_token, _ = await page_token(http, rid)
-    assert (await event(oauth, private_token)).json()['view_count'] == 1
+    assert (await event(signed_browser, private_token)).json()['view_count'] == 1
     async with app.metadata.transaction(write=True) as tx:
         tx.execute("UPDATE resources SET state='archived' WHERE id=?", (rid,), write=True)
         from dataclasses import replace
@@ -149,34 +151,34 @@ async def test_event_rejects_forged_binding_origin_private_or_inactive_target(oa
             (canonical(replace(resource, state='archived')).decode(), rid),
             write=True,
         )
-    assert (await event(oauth, private_token)).status_code >= 400
+    assert (await event(signed_browser, private_token)).status_code >= 400
     async with app.metadata.transaction(write=False) as tx:
         assert view_count(tx, rid) == 1
 
 
 @pytest.mark.asyncio
-async def test_signing_in_does_not_turn_same_browser_refresh_into_new_view(oauth):
-    _, _, _, http = oauth
-    rid = await post(oauth)
+async def test_signing_in_does_not_turn_same_browser_refresh_into_new_view(signed_browser):
+    _, _, _, http = signed_browser
+    rid = await post(signed_browser)
     anonymous, _ = await page_token(http, rid)
-    assert (await event(oauth, anonymous)).json()['view_count'] == 1
-    await browser_login(oauth)
+    assert (await event(signed_browser, anonymous)).json()['view_count'] == 1
+    await browser_login(signed_browser)
     signed_in, _ = await page_token(http, rid)
-    assert (await event(oauth, signed_in)).json()['view_count'] == 1
+    assert (await event(signed_browser, signed_in)).json()['view_count'] == 1
 
 
 @pytest.mark.asyncio
-async def test_event_obeys_runtime_pause_and_quarantine(oauth):
-    app, _, _, http = oauth
-    rid = await post(oauth)
+async def test_event_obeys_runtime_pause_and_quarantine(signed_browser):
+    app, _, _, http = signed_browser
+    rid = await post(signed_browser)
     token, _ = await page_token(http, rid)
     async with app.metadata.transaction(write=True) as tx:
         tx.set_setting('runtime_config', {'accept_writes': False})
-    assert (await event(oauth, token)).status_code >= 400
+    assert (await event(signed_browser, token)).status_code >= 400
     async with app.metadata.transaction(write=True) as tx:
         tx.set_setting('runtime_config', {'accept_writes': True})
         tx.set_setting('recovery_quarantine', {})
-    assert (await event(oauth, token)).status_code >= 400
+    assert (await event(signed_browser, token)).status_code >= 400
     async with app.metadata.transaction(write=False) as tx:
         assert view_count(tx, rid) == 0
 

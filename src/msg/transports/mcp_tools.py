@@ -91,7 +91,7 @@ SCHEMAS = {
 }
 DESCRIPTIONS = {
     'msg_me': 'Show the connected MSG account and available capabilities. Never returns secrets.',
-    'msg_connect': 'Ask the host to connect a MSG account using OAuth. No credentials are entered here.',
+    'msg_connect': 'Show how to use a local signing key with MSG. No third-party account or credential is accepted.',
     'msg_resolve': 'Resolve a MSG path, URL, stable reference or @handle using current access.',
     'msg_read': 'Read one bounded text segment or resource metadata. Reading never acknowledges it. Continue with cursor only.',
     'msg_list': 'List a bounded page of children or replies. Continue with cursor only.',
@@ -152,25 +152,6 @@ def _available(name, available):
     )
 
 
-def _scopes(name, operations):
-    if name == 'msg_connect':
-        return ['msg.mcp.read', 'msg.mcp.message', 'msg.mcp.post']
-    if name in PUBLIC or name in {'msg_inbox', 'msg_notifications'}:
-        return ['msg.mcp.read']
-    if name in {'msg_send', 'msg_dm_decide', 'msg_ack'}:
-        return ['msg.mcp.read', 'msg.mcp.message']
-    if name == 'msg_reply':
-        return ['msg.mcp.read'] + [
-            scope
-            for operation, scope in (
-                ('communication.dm_send@2', 'msg.mcp.message'),
-                ('discussion.reply@2', 'msg.mcp.post'),
-            )
-            if operation in operations
-        ]
-    return ['msg.mcp.read', 'msg.mcp.post']
-
-
 def tool_catalog(registry, identity=None):
     """Catalog only installed contracts and the account's finite operation ceiling."""
     installed = frozenset(
@@ -182,15 +163,10 @@ def tool_catalog(registry, identity=None):
         available = installed if name in PUBLIC else permitted
         if not _available(name, available) or name not in PUBLIC and identity is None:
             continue
-        schemes = ([{'type': 'noauth'}] if name in PUBLIC else []) + [
-            {'type': 'oauth2', 'scopes': _scopes(name, available)}
-        ]
         tools.append({
             'name': name,
             'description': DESCRIPTIONS[name],
             'inputSchema': deepcopy(schema),
-            'securitySchemes': schemes,
-            '_meta': {'securitySchemes': deepcopy(schemes)},
             'annotations': {
                 'readOnlyHint': name in PUBLIC or name in {'msg_inbox', 'msg_notifications'},
                 'destructiveHint': name == 'msg_dm_decide',
@@ -203,10 +179,10 @@ def tool_catalog(registry, identity=None):
 
 
 _HINTS = {
-    'authentication_required': 'Connect your MSG account with msg_connect, then retry.',
-    'credential_ceiling': 'Reconnect with permission for this tool; the host must request the required MSG scope.',
-    'credential_expired': 'Reconnect your MSG account to renew access.',
-    'invalid_token': 'Reconnect your MSG account to obtain a valid host credential.',
+    'authentication_required': 'Use the locally signed CLI or native signed MCP packet endpoint.',
+    'credential_ceiling': 'Use a local key with permission for this operation.',
+    'credential_expired': 'Use a current local signing key.',
+    'invalid_token': 'Use a valid local signing key or native limited grant.',
     'jsonrpc_id_conflict': 'Keep the same ID only for an unchanged retry; use a new call ID for a new action.',
     'idempotency_conflict': 'Keep the same ID only for an unchanged retry; use a new call ID for a new action.',
     'payload_digest_mismatch': 'Retry through the high-level MSG tool; the SDK must construct the authenticated request.',
@@ -467,7 +443,10 @@ async def _run(name, arguments, call, identity):
             ],
         }
     if name == 'msg_connect':
-        raise _ToolFailure(_error('authentication_required'))
+        return {
+            'authentication': 'public-key-signature',
+            'instructions': 'Use msg register HANDLE to create local keys, or select an existing key account. Use the signed CLI or /-/mcp/raw with a signed MSG packet. Never send a private key in tool arguments.',
+        }
     if name == 'msg_resolve':
         ref, data = await _resolve(call, arguments['address'], arguments.get('revision'))
         return {**data, 'ref': ref}

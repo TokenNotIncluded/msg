@@ -4,17 +4,17 @@ from dataclasses import replace
 from uuid import uuid4
 
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call, register
 
 from msg.core.codec import wire
 from msg.security.browser_actions import BROWSER_POST_WRITES
-from msg.security.oauth import OAuthService
-from msg.transports.oauth_http import csrf
+from msg.security.sessions import BrowserSessionService
+from msg.transports.session_http import csrf
 
 
-async def post(oauth):
-    app, _, _, _ = oauth
+async def post(signed_browser):
+    app, _, _, _ = signed_browser
     key, author, _ = await register(app, 'post-author')
     result = await call(
         app,
@@ -27,10 +27,10 @@ async def post(oauth):
     return result.resources[0], author
 
 
-async def action(oauth, operation, resource, **extra):
-    app, _, _, http = oauth
+async def action(signed_browser, operation, resource, **extra):
+    app, _, _, http = signed_browser
     return await http.post(
-        '/oauth/post-action',
+        '/session/post-action',
         json={
             'csrf': csrf(http.cookies.get('msg_session')),
             'id': resource,
@@ -43,9 +43,9 @@ async def action(oauth, operation, resource, **extra):
 
 
 @pytest.mark.asyncio
-async def test_post_buttons_persist_and_keep_bookmarks_private(oauth):
-    app, key, subject, http = oauth
-    resource, author = await post(oauth)
+async def test_post_buttons_persist_and_keep_bookmarks_private(signed_browser):
+    app, key, subject, http = signed_browser
+    resource, author = await post(signed_browser)
     path = '/_id/' + resource.id
     anonymous = await http.get(path, headers={'Accept': 'text/html'})
     assert anonymous.status_code == 200
@@ -62,13 +62,15 @@ async def test_post_buttons_persist_and_keep_bookmarks_private(oauth):
     ):
         assert f'data-action="{name}"' in anonymous.text
     assert anonymous.text.index('A readable post.') < anonymous.text.index('id="post-actions"')
-    await browser_login(oauth)
+    await browser_login(signed_browser)
     for operation, field in [
         ('discussion.like', 'liked'),
         ('discussion.bookmark', 'bookmarked'),
         ('communication.follow', 'following'),
     ]:
-        response = await action(oauth, operation, author if field == 'following' else resource.id)
+        response = await action(
+            signed_browser, operation, author if field == 'following' else resource.id
+        )
         assert response.status_code == 200, response.text
         assert response.json()['data'][field] is True
     state = (await http.get('/_post/state', params={'id': resource.id})).json()['data']
@@ -98,7 +100,7 @@ async def test_post_buttons_persist_and_keep_bookmarks_private(oauth):
     hidden = await http.get('/_post/state', params={'id': resource.id})
     assert hidden.status_code == 403
     assert 'button-demo.md' not in (await http.get('/bookmarks')).text
-    denied = await action(oauth, 'discussion.bookmark', resource.id)
+    denied = await action(signed_browser, 'discussion.bookmark', resource.id)
     assert denied.status_code == 403
     async with app.metadata.transaction(write=True) as tx:
         current = await tx.resource(resource.id)
@@ -111,48 +113,50 @@ async def test_post_buttons_persist_and_keep_bookmarks_private(oauth):
         ('discussion.unbookmark', 'bookmarked'),
         ('communication.unfollow', 'following'),
     ]:
-        response = await action(oauth, operation, author if field == 'following' else resource.id)
+        response = await action(
+            signed_browser, operation, author if field == 'following' else resource.id
+        )
         assert response.status_code == 200, response.text
         assert response.json()['data'][field] is False
     assert 'button-demo.md' not in (await http.get('/bookmarks')).text
 
 
 @pytest.mark.asyncio
-async def test_post_action_csrf_allowlist_reply_and_replay(oauth):
-    app, _, _, http = oauth
-    resource, _ = await post(oauth)
-    await browser_login(oauth)
+async def test_post_action_csrf_allowlist_reply_and_replay(signed_browser):
+    app, _, _, http = signed_browser
+    resource, _ = await post(signed_browser)
+    await browser_login(signed_browser)
     payload = {
         'csrf': csrf(http.cookies.get('msg_session')),
         'id': resource.id,
         'operation': 'discussion.like',
         'request_id': uuid4().hex,
     }
-    assert (await http.post('/oauth/post-action', json=payload)).status_code == 400
+    assert (await http.post('/session/post-action', json=payload)).status_code == 400
     assert (
         await http.post(
-            '/oauth/post-action',
+            '/session/post-action',
             json={**payload, 'csrf': 'bad'},
             headers={'Origin': app.settings.service_url},
         )
     ).status_code == 400
     for operation in ('content.post_create', 'root.provision', {}):
         response = await http.post(
-            '/oauth/post-action',
+            '/session/post-action',
             json={**payload, 'operation': operation},
             headers={'Origin': app.settings.service_url},
         )
         assert response.status_code == 400, response.text
     first = await http.post(
-        '/oauth/post-action', json=payload, headers={'Origin': app.settings.service_url}
+        '/session/post-action', json=payload, headers={'Origin': app.settings.service_url}
     )
     replay = await http.post(
-        '/oauth/post-action', json=payload, headers={'Origin': app.settings.service_url}
+        '/session/post-action', json=payload, headers={'Origin': app.settings.service_url}
     )
     assert first.status_code == replay.status_code == 200, first.text
     assert replay.json()['replayed'] is True
     response = await action(
-        oauth,
+        signed_browser,
         'discussion.reply',
         resource.id,
         body='A browser comment.',
@@ -169,12 +173,12 @@ async def test_post_action_csrf_allowlist_reply_and_replay(oauth):
 
 
 @pytest.mark.asyncio
-async def test_old_read_only_session_does_not_gain_write_permissions(oauth):
-    app, _, subject, http = oauth
-    resource, _ = await post(oauth)
-    cookie = await browser_login(oauth)
+async def test_old_read_only_session_does_not_gain_write_permissions(signed_browser):
+    app, _, subject, http = signed_browser
+    resource, _ = await post(signed_browser)
+    cookie = await browser_login(signed_browser)
     async with app.metadata.transaction(write=True) as tx:
-        _, credential_id, _ = await OAuthService(app).browser_credentials(tx, cookie)
+        _, credential_id, _ = await BrowserSessionService(app).browser_credentials(tx, cookie)
         credential = await tx.credential(credential_id)
         await tx.save_credential(
             replace(
@@ -193,22 +197,22 @@ async def test_old_read_only_session_does_not_gain_write_permissions(oauth):
             ),
             (await tx.subject(subject)).auth_version,
         )
-    response = await action(oauth, 'discussion.like', resource.id)
+    response = await action(signed_browser, 'discussion.like', resource.id)
     assert response.status_code == 403 and response.json()['error']['code'] == 'credential_ceiling'
     state = (await http.get('/_post/state', params={'id': resource.id})).json()['data']
     assert state['likes'] == 0 and state['liked'] is False
 
 
 @pytest.mark.asyncio
-async def test_browser_claims_and_fork_are_explicit_revision_writes(oauth):
-    app, _, _, http = oauth
-    resource, _ = await post(oauth)
-    await browser_login(oauth)
+async def test_browser_claims_and_fork_are_explicit_revision_writes(signed_browser):
+    app, _, _, http = signed_browser
+    resource, _ = await post(signed_browser)
+    await browser_login(signed_browser)
     page = await http.get('/_id/' + resource.id, headers={'Accept': 'text/html'})
     assert 'data-action="like"' not in page.text
     for kind in ('ACK', 'USED', 'VERIFIED', 'SOLVED', 'THANKS'):
         response = await action(
-            oauth,
+            signed_browser,
             'discussion.prove',
             resource.id,
             revision=resource.revision,
@@ -229,7 +233,11 @@ async def test_browser_claims_and_fork_are_explicit_revision_writes(oauth):
     assert len(records.json()['data']['items']) == 5
     assert all(record['auth'] == 'token' for record in records.json()['data']['items'])
     branch = await action(
-        oauth, 'discussion.fork', resource.id, revision=resource.revision, body='New direction'
+        signed_browser,
+        'discussion.fork',
+        resource.id,
+        revision=resource.revision,
+        body='New direction',
     )
     assert branch.status_code == 200, branch.text
     root = await call(app, 'discussion.thread', {'id': branch.json()['resources'][0]['id']})

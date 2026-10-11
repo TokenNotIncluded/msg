@@ -32,7 +32,7 @@ def configure(state, methods):
         state.data['token'] = {'credential_id': 't_temporary', 'value': b64(b't' * 32)}
     if 'api-key' in methods:
         state.data['api_key'] = {'credential_id': 't_api', 'value': b64(b'a' * 32)}
-    if 'oauth' in methods:
+    if 'signed_browser' in methods:
         durable_write(
             state.file('oauth-session.json'),
             canonical({
@@ -55,7 +55,7 @@ def configure(state, methods):
         (('yubikey',), 'signature'),
         (('signature', 'api-key'), 'api-key'),
         (('signature', 'api-key', 'token'), 'token'),
-        (('signature', 'api-key', 'token', 'oauth'), 'oauth'),
+        (('signature', 'api-key', 'token', 'signed_browser'), 'token'),
     ],
 )
 async def test_cli_identity_show_reports_actual_local_account_and_auth(
@@ -72,7 +72,6 @@ async def test_cli_identity_show_reports_actual_local_account_and_auth(
     def read_secret(state):
         raise AssertionError('status needs only session presence, not its token bytes')
 
-    monkeypatch.setattr('msg.client_oauth.read_session', read_secret)
     monkeypatch.setattr('msg.client_yubikey.device_session', read_secret)
     async with httpx.AsyncClient(transport=httpx.MockTransport(forbidden)) as http:
         monkeypatch.setitem(cli.TRANSPORTS, 'http', lambda server: HTTPTransport(server, http=http))
@@ -95,7 +94,7 @@ async def test_cli_identity_show_reports_actual_local_account_and_auth(
 async def test_invocation_key_override_remains_the_reported_signer(home, monkeypatch, capsys):
     state = ClientState(account='alice')
     state.data.update(handle='alice', subject_id='u_alice')
-    configure(state, ('signature', 'token', 'api-key', 'oauth'))
+    configure(state, ('signature', 'token', 'api-key', 'signed_browser'))
     override = Ed25519Signer.generate()
     override_path = home / 'invocation.key'
     durable_write(override_path, override.private_bytes(), mode=0o600)

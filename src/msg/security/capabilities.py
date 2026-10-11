@@ -19,8 +19,10 @@ BASE_FAMILIES = {
         'identity.upgrade',
         'identity.token_rotate',
         'identity.token_create',
+        'identity.session_request',
         'identity.oauth_request',
         'identity.oauth_approve',
+        'identity.session_approve',
         'identity.token_recover',
         'identity.upgrade_result',
         'identity.key_add',
@@ -105,8 +107,8 @@ BASE_FAMILIES = {
 EXCLUDED_BASE = {'content.purge', 'content.chown', 'identity.recover'}
 TEMPORARY_OPERATIONS = frozenset({
     'identity.rename',
-    'identity.oauth_request',
-    'identity.oauth_approve',
+    'identity.session_request',
+    'identity.session_approve',
     'identity.temporary',
     'identity.custodial_create',
     'identity.upgrade',

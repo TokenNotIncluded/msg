@@ -26,7 +26,7 @@ sandbox and opaque-origin behavior, without cookies or server write authority.
 
 Clients explicitly keep the original `--server` while selecting `--endpoint`, or
 use `ServiceURL` in their SSH-style host configuration. All four operation
-transports, OAuth endpoints and signed hosting previews use the selected endpoint.
+transports, native browser-session endpoints and signed hosting previews use the selected endpoint.
 The discovery response must still report the original authority. Requests signed
 for the alias itself fail `wrong_service`; another installation cannot accept the
 original installation's packets or certificates. Endpoint selection never moves
@@ -69,7 +69,7 @@ current authorization or promotion requirements.
 
 `tests/test_service_aliases.py` covers parsing, rejection, canonical signed
 publication/replay, wrong-service rejection, all four transports, identity
-reuse, Origin/Host denial, no redirect, OAuth endpoint security and configuration.
+reuse, Origin/Host denial, no redirect, native session endpoint security and configuration.
 `tests/test_hosting_alias_ingress.py` runs against the real read-only PostgreSQL
 hosting role. `tests/test_backup_daemon.py` checks alias preservation in a real
 backup/restore with quarantine. The connection tests reject unsafe IdentityFile

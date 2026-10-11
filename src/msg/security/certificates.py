@@ -8,7 +8,7 @@ from msg.constants import ONLINE_CA, ROOT_SUBJECT
 from msg.core.codec import canonical, digest, wire
 from msg.core.errors import require
 from msg.security.crypto import key_id, verify
-from msg.security.policy import constraints_subset, grant_covers, scope_subset
+from msg.security.policy import constraints_subset, grant_covers, operations_cover, scope_subset
 
 # Keep this list explicit. Adding a new ordinary capability must not silently
 # enlarge the permanent online issuer's signing authority.
@@ -104,7 +104,7 @@ class CertificateValidator:
             if (
                 grant.capability == allowed.capability
                 and grant.version == allowed.version
-                and grant.operations <= allowed.operations
+                and operations_cover(allowed.operations, grant.operations)
                 and await scope_subset(grant.scope, allowed.scope, session)
                 and constraints_subset(grant.constraints, allowed.constraints)
             ):
@@ -298,7 +298,7 @@ class CertificateValidator:
                     any([
                         g.capability == grant.capability
                         and g.version == grant.version
-                        and grant.operations <= g.operations
+                        and operations_cover(g.operations, grant.operations)
                         and await scope_subset(grant.scope, g.scope, session)
                         and constraints_subset(grant.constraints, g.constraints)
                         for g in credential.ceiling
@@ -311,7 +311,7 @@ class CertificateValidator:
                 any([
                     g.capability == grant.capability
                     and g.version == grant.version
-                    and grant.operations <= g.operations
+                    and operations_cover(g.operations, grant.operations)
                     and await scope_subset(grant.scope, g.scope, session)
                     and constraints_subset(grant.constraints, g.constraints)
                     for g in allowed

@@ -1,7 +1,7 @@
 """Visual rendering must not expand machine reads or execute shared user art."""
 
 import pytest
-from test_oauth import oauth as oauth
+from test_browser_sessions import signed_browser as signed_browser
 
 from msg.plugins.public_board import default, projection
 from msg.transports.ascii_art import HASH, SCRIPT
@@ -22,8 +22,8 @@ def test_visual_bundle_is_pinned_and_scoped_to_home():
 
 
 @pytest.mark.asyncio
-async def test_machine_home_and_public_board_have_no_visual_payload(oauth):
-    _, _, _, http = oauth
+async def test_machine_home_and_public_board_have_no_visual_payload(signed_browser):
+    _, _, _, http = signed_browser
     browser = await http.get('/', headers={'Accept': 'text/html'})
     assert 'data-ascii-canvas' in browser.text and SCRIPT in browser.text
     machine = await http.get('/', headers={'Accept': 'text/markdown'})

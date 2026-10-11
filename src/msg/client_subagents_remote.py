@@ -155,7 +155,7 @@ class RemoteAgents:
                 results = await read_many([self.client.prepare(op, args) for op, args in calls])
             except httpx.TimeoutException, httpx.NetworkError:
                 # Reads have no uncertain mutation. Normal calls retain the
-                # client's retry and OAuth-refresh behavior on the fallback.
+                # client's signed retry behavior on the fallback.
                 pass
             except Failure as exc:
                 if not exc.retryable and exc.code not in {'not_found', 'dependency_unavailable'}:

@@ -8,16 +8,16 @@ from uuid import uuid4
 
 import httpx
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call, register
 
 from msg.core.codec import canonical, wire
 from msg.core.identifiers import hex_id
 from msg.core.models import OperationError
-from msg.security.oauth import OAuthService
+from msg.security.sessions import BrowserSessionService
 from msg.transports import thread_browser
 from msg.transports.http import create_app
-from msg.transports.oauth_http import csrf
+from msg.transports.session_http import csrf
 
 
 class Links(HTMLParser):
@@ -75,7 +75,7 @@ def assert_fixed_body_reads(requests, segments, ref, body):
 
 async def restrict_browser_reads(app, cookie, subject):
     async with app.metadata.transaction(write=True) as tx:
-        _, credential_id, _ = await OAuthService(app).browser_credentials(tx, cookie)
+        _, credential_id, _ = await BrowserSessionService(app).browser_credentials(tx, cookie)
         credential = await tx.credential(credential_id)
         await tx.save_credential(
             replace(
@@ -681,7 +681,12 @@ async def test_fragment_rejects_ambiguous_queries_and_explicit_execution_headers
     assert bad_cursor.status_code == 400, bad_cursor.text
     for header in ({'Authorization': 'Bearer rejected'}, {'X-Msg-Request': '{}'}):
         response = await http.get(base, headers=header)
-        assert response.status_code == 400 and response.json()['error']['code'] == 'invalid_request'
+        if 'Authorization' in header:
+            assert response.status_code == 401
+            assert response.json()['error'] == 'signature_required'
+        else:
+            assert response.status_code == 400
+            assert response.json()['error']['code'] == 'invalid_request'
     response = await http.post(
         base, json={'operation': 'discussion.reply', 'body': 'No implicit write'}
     )
@@ -699,15 +704,22 @@ async def test_fragment_rejects_ambiguous_queries_and_explicit_execution_headers
         assert 'no-store' in response.headers['cache-control']
     for header in ({'Authorization': 'Bearer rejected'}, {'X-Msg-Request': '{}'}):
         response = await http.get(status_base, headers=header)
-        assert response.status_code == 400 and response.json()['error']['code'] == 'invalid_request'
+        if 'Authorization' in header:
+            assert response.status_code == 401
+            assert response.json()['error'] == 'signature_required'
+        else:
+            assert response.status_code == 400
+            assert response.json()['error']['code'] == 'invalid_request'
     response = await http.post(status_base, json={'body': 'No implicit write'})
     assert response.status_code == 405
     assert await counts(app) == before
 
 
 @pytest.mark.asyncio
-async def test_browser_reply_remains_explicit_csrf_write_and_read_ceiling_is_not_widened(oauth):
-    app, key, subject, http = oauth
+async def test_browser_reply_remains_explicit_csrf_write_and_read_ceiling_is_not_widened(
+    signed_browser,
+):
+    app, key, subject, http = signed_browser
     created = await call(
         app,
         'content.post_create',
@@ -717,7 +729,7 @@ async def test_browser_reply_remains_explicit_csrf_write_and_read_ceiling_is_not
     )
     assert created.status == 'ok', wire(created)
     root = created.resources[0]
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     url = '/_post/thread-fragment?id=' + root.id
     before = await counts(app)
     fragment = await http.get(url)
@@ -732,12 +744,12 @@ async def test_browser_reply_remains_explicit_csrf_write_and_read_ceiling_is_not
         'body': '只有显式发送后才出现的回复。',
     }
     denied = await http.post(
-        '/oauth/post-action', json=payload, headers={'Origin': app.settings.service_url}
+        '/session/post-action', json=payload, headers={'Origin': app.settings.service_url}
     )
     assert denied.status_code == 400, denied.text
     assert await counts(app) == before
     accepted = await http.post(
-        '/oauth/post-action',
+        '/session/post-action',
         json={**payload, 'csrf': csrf(cookie)},
         headers={'Origin': app.settings.service_url},
     )
@@ -757,9 +769,9 @@ async def test_browser_reply_remains_explicit_csrf_write_and_read_ceiling_is_not
 
 @pytest.mark.asyncio
 async def test_limited_browser_cookie_uses_only_current_public_counts_and_never_private_data(
-    oauth, monkeypatch
+    signed_browser, monkeypatch
 ):
-    app, key, subject, http = oauth
+    app, key, subject, http = signed_browser
 
     async def write(operation, arguments):
         result = await call(app, operation, arguments, key=key, subject=subject)
@@ -776,7 +788,7 @@ async def test_limited_browser_cookie_uses_only_current_public_counts_and_never_
         await tx.replace(
             replace(resource, mode=0o600, generation=resource.generation + 1), resource.generation
         )
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     await restrict_browser_reads(app, cookie, subject)
     before = await counts(app)
     requests = []
@@ -828,9 +840,9 @@ async def test_limited_browser_cookie_uses_only_current_public_counts_and_never_
 @pytest.mark.asyncio
 @pytest.mark.parametrize('error_code', ['permission_denied', 'server_busy'])
 async def test_non_ceiling_count_failures_do_not_fall_back_to_anonymous(
-    oauth, monkeypatch, error_code
+    signed_browser, monkeypatch, error_code
 ):
-    app, key, subject, http = oauth
+    app, key, subject, http = signed_browser
     result = await call(
         app,
         'content.post_create',
@@ -840,7 +852,7 @@ async def test_non_ceiling_count_failures_do_not_fall_back_to_anonymous(
     )
     assert result.status == 'ok', wire(result)
     root = result.resources[0]
-    await browser_login(oauth)
+    await browser_login(signed_browser)
     requests = []
     execute = app.executor.execute
 

@@ -8,6 +8,21 @@ READ, WRITE, EXECUTE = 4, 2, 1
 CERTGATE, SETGID, STICKY = 0o4000, 0o2000, 0o1000
 
 
+# The new browser-only operation is a strict subset of the former approval.
+# This finite rename preserves existing signed grants without changing their
+# bytes, reviving endpoints, adding authority, or accepting provider assertions.
+_OPERATION_ENTITLEMENTS = {
+    'identity.session_request@1': 'identity.oauth_request@1',
+    'identity.session_approve@1': 'identity.oauth_approve@1',
+}
+
+
+def operations_cover(allowed, required):
+    return {_OPERATION_ENTITLEMENTS.get(op, op) for op in required} <= {
+        _OPERATION_ENTITLEMENTS.get(op, op) for op in allowed
+    }
+
+
 def selected_class(resource, subject, memberships):
     if subject is not None and subject == resource.owner:
         return 'owner'
@@ -55,7 +70,7 @@ async def grant_covers(grant, capability, operation, resource_id, session):
     return (
         grant.capability == capability
         and grant.version == 1
-        and operation in grant.operations
+        and operations_cover(grant.operations, {operation})
         and await scope_contains(grant.scope, resource_id, session)
     )
 

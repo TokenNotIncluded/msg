@@ -44,8 +44,8 @@ PAGE_NAMES = (
 def pages(service):
     """注册表值只渲染内存数据；不实例化应用或存储连接。"""
     from msg.transports.home_page import document_html, home_html
-    from msg.transports.oauth_http import page as form_page
     from msg.transports.search_page import search_document
+    from msg.transports.session_http import page as form_page
 
     data = {
         'posts': 24,
@@ -182,7 +182,7 @@ def static_headers(name):
 def fixture_server():
     from msg.extensions.hosting import hosted_headers
     from msg.transports.home_page import HOME_BROWSER_HEADERS
-    from msg.transports.oauth_http import page as form_page
+    from msg.transports.session_http import page as form_page
 
     fixture = root_fixture()
     rendered = {}

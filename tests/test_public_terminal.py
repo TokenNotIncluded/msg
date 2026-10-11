@@ -6,7 +6,7 @@ from urllib.parse import unquote
 
 import httpx
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call, register
 
 from msg.core.codec import b64
@@ -334,7 +334,10 @@ async def test_terminal_rejects_mutations_and_credentials(installed):
                 assert (await http.request(method, path)).status_code == 405
             for header in ('Authorization', 'X-Msg-Request', 'X-Msg-Signature', 'X-Msg-Proof'):
                 for value in ('', 'untrusted'):
-                    assert (await http.get(path, headers={header: value})).status_code == 400
+                    response = await http.get(path, headers={header: value})
+                    assert response.status_code == (401 if header == 'Authorization' else 400)
+                    if header == 'Authorization':
+                        assert response.json()['error'] == 'signature_required'
         for command in ('ls', 'cat /etc/passwd', 'status;id', '$(id)', 'stats\nserver'):
             assert (await http.get('/_terminal', params={'command': command})).status_code == 400
         for query in ('', '?command=help&command=stats', '?command=help&path=/etc/passwd'):
@@ -388,8 +391,8 @@ async def test_terminal_feed_uses_only_anonymous_data(installed):
     assert all(packet.subject is None and packet.proof is None for packet in captured)
 
 
-async def test_terminal_browsing_rechecks_visibility_and_bounds(oauth):
-    app, _, _, login_http = oauth
+async def test_terminal_browsing_rechecks_visibility_and_bounds(signed_browser):
+    app, _, _, login_http = signed_browser
     key, subject, _ = await register(app, 'terminal-browser')
     _, hidden_user, _ = await register(app, 'terminal-hidden')
     topic = await call(
