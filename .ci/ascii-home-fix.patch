@@ -1,0 +1,43 @@
+--- a/src/msg/transports/ascii_art.py
++++ b/src/msg/transports/ascii_art.py
+@@ -75,7 +75,8 @@
+   grid-area: 1 / 1; display: block; width: 100%; min-width: 0; height: auto; margin: 0;
+ }
+ .public-board .signal-viewport img { aspect-ratio: 16 / 5; object-fit: contain; }
+-.public-board .signal-viewport :is(canvas, img)[hidden] { display: none; }
++/* The vendor sets inline display:block; the hidden state must still win. */
++.public-board .signal-viewport :is(canvas, img)[hidden] { display: none !important; }
+ .public-board .ascii-controls {
+   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px;
+   margin-top: 16px; padding: 0;
+--- a/scripts/check_ascii_home_browser.py
++++ b/scripts/check_ascii_home_browser.py
+@@ -84,13 +84,16 @@
+     )
+ 
+ 
+-def check_scenes(page):
++def check_scenes(page, *, touch=False):
+     controls = page.locator('[data-ascii-controls]')
+     before = controls.bounding_box()
+     for name in ('flow', 'aurora', 'community', 'galaxy'):
+         button = page.locator(f'[data-ascii-piece={name}]')
+-        button.focus()
+-        page.keyboard.press('Enter')
++        if touch:
++            button.tap()
++        else:
++            button.focus()
++            page.keyboard.press('Enter')
+         expect(button).to_have_attribute('aria-pressed', 'true')
+         settled(page)
+         after = controls.bounding_box()
+@@ -150,6 +153,8 @@
+                     check_layout(page)
+                     page.screenshot(path=str(OUTPUT / f'home-{width}-{theme}.png'), full_page=True)
+                     check_scenes(page)
++                    if width < 768:
++                        check_scenes(page, touch=True)
+                     # A still frame changes ink with the theme, but never resumes motion.
+                     before = ink(page)
+                     page.emulate_media(color_scheme='dark' if theme == 'light' else 'light')

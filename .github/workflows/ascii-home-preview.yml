@@ -48,6 +48,7 @@ jobs:
           assert hashlib.sha256(data).hexdigest() == 'c31ec646fd77c7f3ff70d70d837f8c47cfb4ab4da0e9d48d55b195080d180e6f'
           Path(os.environ['RUNNER_TEMP'], 'ascii-home.patch').write_bytes(data)
           PY
+          cp .ci/ascii-home-fix.patch "$RUNNER_TEMP/ascii-home-fix.patch"
           mkdir -p "$RUNNER_TEMP/msg-ascii-product/artifacts"
       - name: Install locked tools
         working-directory: ${{ runner.temp }}/msg-ascii-product
@@ -72,13 +73,11 @@ jobs:
         working-directory: ${{ runner.temp }}/msg-ascii-product
         run: |
           git apply "$RUNNER_TEMP/ascii-home.patch"
+          uv run ruff format src/msg/transports/{ascii_art,browser_style,public_board}.py tests/test_ascii_art.py scripts/check_ascii_home_browser.py
+          git apply "$RUNNER_TEMP/ascii-home-fix.patch"
           bun scripts/build_ascii.mjs
           uv run ruff check --fix src/msg/transports/{ascii_art,browser_style,public_board}.py tests/test_ascii_art.py scripts/check_ascii_home_browser.py
           uv run ruff format src/msg/transports/{ascii_art,browser_style,public_board}.py tests/test_ascii_art.py scripts/check_ascii_home_browser.py
-      - name: Verify related frontend and server behavior
-        working-directory: ${{ runner.temp }}/msg-ascii-product
-        run: |
-          uv run pytest tests/test_home_first_read.py tests/test_home_cache.py tests/test_browser_refinement.py tests/test_browser_html.py tests/test_browser_languages.py tests/test_thread_panel.py tests/test_thread_panel_http.py tests/test_board_presentation.py tests/test_ascii_art.py tests/test_public_board.py tests/test_public_board_art.py tests/test_public_board_details.py tests/test_public_board_read_fallback.py --junitxml=artifacts/ascii-home-tests.xml
       - name: Verify actual browser layouts, colors, pause and editing
         working-directory: ${{ runner.temp }}/msg-ascii-product
         env:
@@ -86,6 +85,10 @@ jobs:
         run: |
           uv run python scripts/check_ascii_home_browser.py
           uv run python scripts/check_home_first_read_browser.py
+      - name: Verify related frontend and server behavior
+        working-directory: ${{ runner.temp }}/msg-ascii-product
+        run: |
+          uv run pytest tests/test_home_first_read.py tests/test_home_cache.py tests/test_browser_refinement.py tests/test_browser_html.py tests/test_browser_languages.py tests/test_thread_panel.py tests/test_thread_panel_http.py tests/test_board_presentation.py tests/test_ascii_art.py tests/test_public_board.py tests/test_public_board_art.py tests/test_public_board_details.py tests/test_public_board_read_fallback.py --junitxml=artifacts/ascii-home-tests.xml
       - name: Verify formatting, compilation and the generated asset
         working-directory: ${{ runner.temp }}/msg-ascii-product
         run: |
@@ -96,27 +99,28 @@ jobs:
           bun scripts/build_ascii.mjs
           sha256sum --check artifacts/ascii-runtime.sha256
           git diff --check
-      - name: Commit only reviewed product files to an isolated feature branch
+      - name: Commit verified source to an isolated feature branch
         working-directory: ${{ runner.temp }}/msg-ascii-product
         env:
           PUBLISH_TOKEN: ${{ github.token }}
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add .github/workflows/home-first-read.yml src/msg/transports/ascii_art.py src/msg/transports/browser_style.py src/msg/transports/public_board.py src/msg/data/ascii-runtime.js vendor/ascii/msg-entry.ts tests/test_ascii_art.py scripts/check_ascii_home_browser.py
+          git add src/msg/transports/ascii_art.py src/msg/transports/browser_style.py src/msg/transports/public_board.py src/msg/data/ascii-runtime.js vendor/ascii/msg-entry.ts tests/test_ascii_art.py scripts/check_ascii_home_browser.py
           git diff --cached --binary > artifacts/ascii-home.patch
           git commit -m 'style: refine the ASCII homepage and mobile reading layout'
           git rev-parse HEAD HEAD^{tree} > artifacts/product-revision.txt
           auth=$(printf 'x-access-token:%s' "$PUBLISH_TOKEN" | base64 -w0)
           git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/style/ascii-home-20261012
-      - name: Export source and evidence without fonts or private runtime files
+      - name: Export source and evidence
         if: always()
         working-directory: ${{ runner.temp }}/msg-ascii-product
         run: |
           mkdir -p artifacts/source
-          for path in .github/workflows/home-first-read.yml src/msg/transports/ascii_art.py src/msg/transports/browser_style.py src/msg/transports/public_board.py src/msg/data/ascii-runtime.js vendor/ascii/msg-entry.ts tests/test_ascii_art.py scripts/check_ascii_home_browser.py; do
+          for path in src/msg/transports/ascii_art.py src/msg/transports/browser_style.py src/msg/transports/public_board.py src/msg/data/ascii-runtime.js vendor/ascii/msg-entry.ts tests/test_ascii_art.py scripts/check_ascii_home_browser.py; do
             if test -f "$path"; then mkdir -p "artifacts/source/$(dirname "$path")"; cp "$path" "artifacts/source/$path"; fi
           done
+          cp .github/workflows/home-first-read.yml artifacts/home-first-read.yml
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
