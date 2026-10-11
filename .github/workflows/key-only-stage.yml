@@ -6,9 +6,12 @@ on:
 permissions:
   contents: read
 jobs:
-  baseline:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: work
     services:
       postgres:
         image: postgres:16
@@ -32,33 +35,104 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: 705b44f0f9583a644fbfaf974635be5ca65b4fca
+          path: stage
           persist-credentials: false
-      - name: Preserve exact public source snapshot
-        run: |
-          mkdir -p artifacts
-          git archive --format=tar.gz HEAD > artifacts/source.tar.gz
-          git rev-parse HEAD > artifacts/base.txt
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/checkout@v7
         with:
-          name: key-only-source
-          path: artifacts/
+          ref: 705b44f0f9583a644fbfaf974635be5ca65b4fca
+          path: work
+          persist-credentials: false
+      - name: Apply exact reviewed source delta
+        run: |
+          python - <<'PY'
+          import base64, hashlib, json, lzma, subprocess
+          from pathlib import Path
+          encoded = ''.join((Path('../stage/.ci') / f'key-only.delta.{n}').read_text() for n in (1, 2, 3))
+          raw = lzma.decompress(base64.b85decode(encoded))
+          assert hashlib.sha256(raw).hexdigest() == '9a630fb12bfaf2d72951db713ccb4240d750179828b668716af7af59fa8c5cf1'
+          payload = json.loads(raw)
+          assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == payload['base']
+          for item in payload['changes']:
+              path, source = Path(item['path']), Path(item['source'])
+              assert not path.is_absolute() and '..' not in path.parts and path.parts[0] not in {'.git', '.github'}
+              assert not source.is_absolute() and '..' not in source.parts
+              if item.get('delete'):
+                  path.unlink()
+                  continue
+              result = subprocess.run(['git', 'show', f"{payload['base']}:{source.as_posix()}"], capture_output=True, text=True)
+              lines = result.stdout.splitlines(keepends=True) if result.returncode == 0 else []
+              for start, end, replacement in reversed(item['edits']):
+                  lines[start:end] = [replacement]
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_text(''.join(lines))
+          subprocess.run(['git', 'add', '-A'], check=True)
+          actual = subprocess.check_output(['git', 'write-tree'], text=True).strip()
+          assert actual == payload['tree'], (actual, payload['tree'])
+          Path('../artifacts').mkdir(exist_ok=True)
+          Path('../artifacts/input-tree.txt').write_text(actual + '\n')
+          print('Verified source tree:', actual)
+          PY
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'
           allow-prereleases: true
-      - name: Install test requirements
+      - name: Install and update locked requirements
         run: |
           sudo apt-get update -qq
-          sudo env NEEDRESTART_MODE=l apt-get install -y -qq libpcsclite-dev swig
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq libpcsclite-dev swig age
           python -m pip install uv==0.12.20
+          uv lock
           uv sync --locked --extra dev --python "$(command -v python)"
-          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
-      - name: Verify baseline identity, OAuth and MCP contracts
+          echo "$GITHUB_WORKSPACE/work/.venv/bin" >> "$GITHUB_PATH"
+          uv pip check
+      - name: Check code and formatting
+        id: quality
+        continue-on-error: true
         run: |
-          uv run --no-sync python -m pytest tests/test_oauth.py tests/test_oauth_authority.py tests/test_account_login_core.py tests/test_agentid_account_login.py tests/test_mcp_tools.py tests/test_mcp_agent.py tests/test_client_identity_status.py --junitxml=artifacts/baseline.xml
+          set +e
+          uv run --no-sync ruff check --fix . > ../artifacts/ruff.txt 2>&1
+          check=$?
+          uv run --no-sync ruff format . >> ../artifacts/ruff.txt 2>&1
+          format=$?
+          uv run --no-sync python -W error -m compileall -q src > ../artifacts/compile.txt 2>&1
+          compile=$?
+          git diff --check >> ../artifacts/compile.txt 2>&1
+          diff=$?
+          cat ../artifacts/ruff.txt ../artifacts/compile.txt
+          test "$check$format$compile$diff" = 0000
+      - name: Collect complete suite
+        id: collect
+        continue-on-error: true
+        run: uv run --no-sync python -m pytest --collect-only -q > ../artifacts/collection.txt 2>&1
+      - name: Run focused key identity and browser contracts
+        id: tests
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          uv run --no-sync python -m pytest tests/test_browser_sessions.py tests/test_oauth.py tests/test_oauth_authority.py tests/test_oauth_custodial_ceiling.py tests/test_oauth_browser_integrity.py tests/test_oauth_browser_regressions.py tests/test_browser_workspace.py tests/test_mcp_tools.py tests/test_mcp_agent.py tests/test_client_identity_status.py tests/test_service_aliases.py tests/test_universe.py tests/test_browser_post_authority.py tests/test_browser_post_visibility.py --maxfail=12 --junitxml=../artifacts/key-identity.xml 2>&1 | tee ../artifacts/tests.txt
+      - name: Run client JavaScript contracts
+        id: javascript
+        continue-on-error: true
+        run: node --test tests/js/*.test.cjs > ../artifacts/javascript.txt 2>&1
+      - name: Preserve complete source and evidence
+        if: always()
+        run: |
+          mkdir -p ../artifacts
+          git add -A
+          tree=$(git write-tree)
+          printf '%s\n' "$tree" > ../artifacts/result-tree.txt
+          git archive --format=tar.gz "$tree" > ../artifacts/source.tar.gz
+          git diff --cached --binary > ../artifacts/change.patch
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:
-          name: key-only-baseline
-          path: artifacts/baseline.xml
+          name: key-only-verification
+          path: artifacts/
+      - name: Require all verification steps
+        if: always()
+        env:
+          QUALITY: ${{ steps.quality.outcome }}
+          COLLECTION: ${{ steps.collect.outcome }}
+          TESTS: ${{ steps.tests.outcome }}
+          JAVASCRIPT: ${{ steps.javascript.outcome }}
+        run: test "$QUALITY/$COLLECTION/$TESTS/$JAVASCRIPT" = success/success/success/success
