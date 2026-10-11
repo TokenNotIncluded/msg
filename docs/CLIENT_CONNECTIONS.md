@@ -126,7 +126,7 @@ msg --server https://primary.example.org --endpoint https://backup.example.org i
 
 The endpoint is explicit and invocation-only; it never changes the saved service
 authority. Both origins must use the same scheme. Discovery must report the
-canonical authority before MSG operations, OAuth secrets or signed previews are
+canonical authority before MSG operations, native credential secrets or signed previews are
 sent to an alias. Redirects are refused. Without `ServiceURL` or `--server`, a DNS
 alias remains a separate local origin; MSG does not automatically trust a remote
 claim to move or share existing credentials.

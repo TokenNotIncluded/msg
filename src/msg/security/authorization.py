@@ -6,7 +6,7 @@ from msg.constants import ROOT_SUBJECT, TOOLS_SPACE
 from msg.core.codec import loads, parse_time, wire
 from msg.core.errors import Failure, require
 from msg.core.models import ResourceRef
-from msg.security.policy import CERTGATE, allows, grant_covers, scope_contains
+from msg.security.policy import CERTGATE, allows, grant_covers, operations_cover, scope_contains
 from msg.security.quarantine import (
     RuntimeGeneration,
     active as quarantine_active,
@@ -78,7 +78,8 @@ class AuthorizationService:
         if principal.method == 'anonymous':
             return
         allowed = any([
-            operation in g.operations and await scope_contains(g.scope, resource, session)
+            operations_cover(g.operations, {operation})
+            and await scope_contains(g.scope, resource, session)
             for g in principal.ceiling
         ])
         if not allowed and operation in {
@@ -108,7 +109,8 @@ class AuthorizationService:
                             delegated.extend(cert.grants)
             require(
                 any([
-                    operation in g.operations and await scope_contains(g.scope, resource, session)
+                    operations_cover(g.operations, {operation})
+                    and await scope_contains(g.scope, resource, session)
                     for g in delegated
                 ]),
                 'delegation_scope',
@@ -121,7 +123,7 @@ class AuthorizationService:
 
         return any([
             g.capability in BASE_FAMILIES
-            and operation in g.operations
+            and operations_cover(g.operations, {operation})
             and await scope_contains(g.scope, resource, session)
             for g in principal.ceiling
         ])

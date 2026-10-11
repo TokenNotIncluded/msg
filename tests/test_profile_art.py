@@ -5,7 +5,7 @@ from xml.etree import ElementTree as ET
 
 import httpx
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call, register
 
 from msg.core.codec import b64
@@ -257,13 +257,13 @@ async def test_owner_can_create_and_replace_artwork_with_existing_signed_file_op
 
 
 @pytest.mark.asyncio
-async def test_artwork_editor_does_not_expand_browser_file_write_authority(oauth):
-    from msg.security.oauth import OAuthService
+async def test_artwork_editor_does_not_expand_browser_file_write_authority(signed_browser):
+    from msg.security.sessions import BrowserSessionService
 
-    app, _, subject, _ = oauth
-    cookie = await browser_login(oauth)
+    app, _, subject, _ = signed_browser
+    cookie = await browser_login(signed_browser)
     async with app.metadata.transaction(write=False) as tx:
-        _, credential_id, token = await OAuthService(app).browser_credentials(tx, cookie)
+        _, credential_id, token = await BrowserSessionService(app).browser_credentials(tx, cookie)
         credential = await tx.credential(credential_id)
         operations = {operation for grant in credential.ceiling for operation in grant.operations}
     assert not operations & {'file.create@1', 'file.write@1', 'content.file_put@1'}
@@ -271,7 +271,7 @@ async def test_artwork_editor_does_not_expand_browser_file_write_authority(oauth
         app,
         'file.create',
         {
-            'parent': '/@oauth-owner',
+            'parent': '/@key-owner',
             'name': 'AVATAR.svg',
             'data': b64(b'<svg xmlns="http://www.w3.org/2000/svg"/>'),
             'media_type': 'image/svg+xml',

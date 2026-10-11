@@ -2,7 +2,7 @@
 
 Run with the candidate's src on PYTHONPATH and an ordinary OS user. Supply new
 --ready-file and --accounts-file paths. SIGTERM or --lifetime removes all test
-data and private OAuth files. No production settings or credentials are used.
+data and private key-approved browser files. No production settings or credentials are used.
 """
 
 from __future__ import annotations
@@ -27,10 +27,10 @@ import msg
 from msg.admin.diagnostics import temporary_postgres
 from msg.admin.root import _approve_csr, _provision
 from msg.application import Application
+from msg.browser_config import BrowserConfig
 from msg.config import write_example
 from msg.core.codec import b64
 from msg.core.requests import request_for
-from msg.oauth_config import OAuthConfig
 from msg.security.age_keys import generate_age_key
 from msg.security.crypto import Ed25519Signer, subject_id
 from msg.transports.http import create_app
@@ -152,7 +152,7 @@ async def serve(options):
                     postgres = Path(parse_qs(urlsplit(dsn).query)['host'][0]).parent
                     settings = replace(
                         write_example(folder / 'etc', folder / 'data', origin, postgres_dsn=dsn),
-                        oauth=OAuthConfig(enabled=True),
+                        browser=BrowserConfig(enabled=True),
                     )
                     if settings.server.mail is not None or settings.server.valkey_url:
                         raise RuntimeError('Fixture must not use mail or Valkey')

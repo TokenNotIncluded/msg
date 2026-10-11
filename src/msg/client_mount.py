@@ -242,11 +242,7 @@ class MountBackend:
             # A zero-byte read must not keep accepting a revoked open handle.
             await self.query('file.stat', {'id': node.metadata['id']})
             return node.projection[offset : offset + length] if node.projection is not None else b''
-        from msg.client_oauth import read_session, refresh
-
         client = self.client
-        if client.signer_override is None and read_session(client.state) is not None:
-            await refresh(client)
         transport = client.transport
         description = await transport.description()
         require(description['operations'].get('discovery.raw') == 'read', 'effect_mismatch')

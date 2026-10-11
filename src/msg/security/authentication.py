@@ -12,12 +12,12 @@ from msg.core.errors import Failure, require
 from msg.core.models import Principal, SignatureProof, TokenProof
 from msg.core.requests import payload_fields, signing_bytes
 from msg.security.crypto import key_id, subject_id, verify
+from msg.security.policy import operations_cover
 from msg.security.quarantine import RuntimeGeneration, active as quarantine_active
 from msg.security.token_delivery import recovery_verifier
 
 CUSTODIAL_SIGNED_WRITES = frozenset({
     'identity.rename',
-    'identity.oauth_approve',
     'content.post_create',
     'content.post_edit',
     'content.file_put',
@@ -54,7 +54,7 @@ class AuthenticationService:
         )
         self.primary_ceiling, self.temporary_ceiling = primary_ceiling, temporary_ceiling
         self.runtime_generation = RuntimeGeneration()
-        self.oauth_config = None
+        self.browser_config = None
 
     async def authenticate(self, request, session, *, entry):
         require(
@@ -90,18 +90,6 @@ class AuthenticationService:
             require(request.expires_at is not None and now < request.expires_at, 'request_expired')
             require((request.expires_at - now).total_seconds() <= 300, 'request_expiry_too_long')
         proof = request.proof
-        if (
-            request.operation
-            in {
-                'identity.login_complete',
-                'identity.login_bind',
-                'identity.login_remove',
-            }
-            and spec.version == 1
-        ):
-            from msg.security.login import authenticate_login
-
-            return await authenticate_login(self, request, session)
         if request.operation == 'identity.register':
             require(isinstance(proof, SignatureProof), 'proof_required')
             public = unb64(request.arguments['public_key'], limit=32)
@@ -144,10 +132,10 @@ class AuthenticationService:
         if request.operation == 'identity.token_recover':
             require(proof is None and request.subject is not None, 'invalid_recovery_proof')
             old = await session.credential(request.arguments['credential_id'])
-            from msg.security.oauth import require_binding
+            from msg.security.sessions import require_binding
 
             await require_binding(
-                session, old, now, self.oauth_config, custodial_ceiling=self.temporary_ceiling()
+                session, old, now, self.browser_config, custodial_ceiling=self.temporary_ceiling()
             )
             require(
                 old.kind == 'token' and old.subject_id == request.subject, 'recovery_unavailable'
@@ -181,7 +169,7 @@ class AuthenticationService:
             ceiling = tuple(
                 replace(g, operations=frozenset({operation}))
                 for g in self.primary_ceiling()
-                if g.capability == 'identity.basic' and operation in g.operations
+                if g.capability == 'identity.basic' and operations_cover(g.operations, {operation})
             )
             require(bool(ceiling), 'recovery_unavailable')
             return Principal(
@@ -238,13 +226,13 @@ class AuthenticationService:
             )
             method = 'token'
             ids = ()
-            from msg.security.oauth import require_binding
+            from msg.security.sessions import require_binding
 
             await require_binding(
                 session,
                 credential,
                 now,
-                self.oauth_config,
+                self.browser_config,
                 custodial_ceiling=self.temporary_ceiling(),
             )
         else:
@@ -296,7 +284,10 @@ class AuthenticationService:
         )
         require(entry in spec.entries, 'entry_not_allowed')
         operation = f'{spec.name}@{spec.version}'
-        require(any(operation in g.operations for g in credential.ceiling), 'credential_ceiling')
+        require(
+            any(operations_cover(g.operations, {operation}) for g in credential.ceiling),
+            'credential_ceiling',
+        )
         if actor.kind == 'custodial' and method == 'token' and spec.effect != 'read':
             download_only = (
                 spec.name == 'transfer.open' and request.arguments.get('direction') == 'download'

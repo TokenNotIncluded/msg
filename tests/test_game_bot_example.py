@@ -9,9 +9,9 @@ from urllib.parse import urlsplit
 
 import aiohttp
 import pytest
-from test_flight_websocket import active_count, flight_server, oauth
+from test_flight_websocket import active_count, flight_server, signed_browser
 
-__all__ = ['flight_server', 'oauth']
+__all__ = ['flight_server', 'signed_browser']
 
 
 @pytest.mark.asyncio

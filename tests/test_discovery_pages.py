@@ -2,7 +2,7 @@
 
 import httpx
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call, register
 
 from msg.transports.http import create_app
@@ -60,10 +60,10 @@ async def test_feed_html_markdown_raw_and_json_use_same_public_posts(installed):
 
 
 @pytest.mark.asyncio
-async def test_browser_feed_uses_follows_and_topics_respect_membership(oauth):
+async def test_browser_feed_uses_follows_and_topics_respect_membership(signed_browser):
     from msg.plugins.identity import set_member
 
-    app, key, subject, http = oauth
+    app, key, subject, http = signed_browser
     bk, bob, _ = await register(app, 'page-followed')
     made = await call(
         app,
@@ -79,7 +79,7 @@ async def test_browser_feed_uses_follows_and_topics_respect_membership(oauth):
     assert '/admins' not in public.text
     async with app.metadata.transaction(write=True) as tx:
         await set_member(tx, 'g_admins', subject, 'member', joined_at=app.clock())
-    await browser_login(oauth)
+    await browser_login(signed_browser)
     personal = await http.get('/feed', headers={'Accept': 'text/html'})
     assert personal.status_code == 200 and '已关注' in personal.text
     topics = await http.get('/topics', headers={'Accept': 'text/html'})
@@ -87,12 +87,14 @@ async def test_browser_feed_uses_follows_and_topics_respect_membership(oauth):
 
 
 @pytest.mark.asyncio
-async def test_old_browser_ceiling_shows_public_feed_without_widening_api_permissions(oauth):
+async def test_old_browser_ceiling_shows_public_feed_without_widening_api_permissions(
+    signed_browser,
+):
     from dataclasses import replace
 
-    from msg.security.oauth import OAuthService
+    from msg.security.sessions import BrowserSessionService
 
-    app, key, subject, http = oauth
+    app, key, subject, http = signed_browser
     made = await call(
         app,
         'content.post_create',
@@ -101,9 +103,9 @@ async def test_old_browser_ceiling_shows_public_feed_without_widening_api_permis
         subject=subject,
     )
     assert made.status == 'ok'
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     async with app.metadata.transaction(write=True) as tx:
-        _, cid, _ = await OAuthService(app).browser_credentials(tx, cookie)
+        _, cid, _ = await BrowserSessionService(app).browser_credentials(tx, cookie)
         original = await tx.credential(cid)
         narrowed = replace(
             original,

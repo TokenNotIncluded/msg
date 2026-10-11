@@ -3,7 +3,7 @@
 from datetime import timedelta
 
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_post_read_views import restrict
 from test_service import call
 
@@ -13,11 +13,11 @@ from msg.plugins.public_board import KEY
 
 
 @pytest.mark.asyncio
-async def test_browser_board_refresh_survives_old_ceiling_without_granting_writes(oauth):
-    app, _, subject, http = oauth
-    cookie = await browser_login(oauth)
+async def test_browser_board_refresh_survives_old_ceiling_without_granting_writes(signed_browser):
+    app, _, subject, http = signed_browser
+    cookie = await browser_login(signed_browser)
     credential_id, secret, restricted = await restrict(
-        oauth, cookie, {'discovery.public_board', 'content.public_board_update'}
+        signed_browser, cookie, {'discovery.public_board', 'content.public_board_update'}
     )
     async with app.metadata.transaction(write=False) as tx:
         before = tx.setting(KEY)
@@ -59,8 +59,15 @@ async def test_browser_board_refresh_survives_old_ceiling_without_granting_write
     for header in ('Authorization', 'X-Msg-Request'):
         for value in ('invalid', ''):
             explicit = await http.get('/_public-board', headers={header: value})
-            assert explicit.status_code == 400
-            assert explicit.json()['error']['code'] in {'ambiguous_credentials', 'invalid_request'}
+            if header == 'Authorization':
+                assert explicit.status_code == 401
+                assert explicit.json()['error'] == 'signature_required'
+            else:
+                assert explicit.status_code == 400
+                assert explicit.json()['error']['code'] in {
+                    'ambiguous_credentials',
+                    'invalid_request',
+                }
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.credential(credential_id)).ceiling == restricted.ceiling
         assert tx.setting(KEY) == before

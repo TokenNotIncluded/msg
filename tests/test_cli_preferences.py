@@ -6,7 +6,7 @@ import json
 from types import SimpleNamespace
 
 import pytest
-from test_oauth import oauth as oauth
+from test_browser_sessions import signed_browser as signed_browser
 
 from msg import cli
 from msg.client import ClientState
@@ -186,7 +186,7 @@ def test_invalid_approval_explains_recovery_and_selected_identity():
     }
     value = {
         'status': 'error',
-        'operation': 'identity.oauth_approve',
+        'operation': 'identity.session_approve',
         'request_id': 'req_failed',
         'subject': 'u_alice',
         'error': {'code': 'invalid_grant', 'message': 'The operation could not be completed.'},
@@ -229,19 +229,19 @@ def test_approval_success_identifies_account_and_read_scope():
 
 
 async def test_browser_approval_success_and_consumed_code_use_cli_identity(
-    oauth,
+    signed_browser,
     home,
     monkeypatch,
     capsys,
 ):
     from msg.client import MsgClient
     from msg.transports.client import HTTPTransport
-    from msg.transports.oauth_http import csrf
+    from msg.transports.session_http import csrf
 
-    app, key, subject, http = oauth
+    app, key, subject, http = signed_browser
     state = ClientState(server=app.settings.service_url, account='owner')
     state.save_signer(key)
-    state.data.update(subject_id=subject, handle='oauth-owner')
+    state.data.update(subject_id=subject, handle='key-owner')
     state._save()
     monkeypatch.setitem(
         cli.TRANSPORTS, 'http', lambda server, **kw: HTTPTransport(server, http=http)
@@ -251,7 +251,7 @@ async def test_browser_approval_success_and_consumed_code_use_cli_identity(
         'MsgClient',
         lambda state, transport: MsgClient(state, transport, clock=app.clock),
     )
-    page = await http.get('/oauth/login')
+    page = await http.get('/login')
     code = page.text.split('msg auth approve ')[1].split('</code>')[0]
     argv = [
         '--format',
@@ -266,10 +266,10 @@ async def test_browser_approval_success_and_consumed_code_use_cli_identity(
     ]
     assert await cli.run(parse(argv)) == 0
     shown = capsys.readouterr().out
-    assert 'Authorization: approved' in shown and 'Identity: @oauth-owner' in shown
+    assert 'Authorization: approved' in shown and 'Identity: @key-owner' in shown
     cookie = http.cookies.get('msg_login')
     response = await http.post(
-        '/oauth/login/poll',
+        '/session/poll',
         json={'csrf': csrf(cookie)},
         headers={'Origin': app.settings.service_url},
     )
@@ -278,5 +278,5 @@ async def test_browser_approval_success_and_consumed_code_use_cli_identity(
     shown = capsys.readouterr().out
     assert 'Error: invalid_grant' in shown
     assert 'Open the sign-in page again' in shown
-    assert 'Account: owner' in shown and 'Identity: @oauth-owner' in shown
+    assert 'Account: owner' in shown and 'Identity: @key-owner' in shown
     assert code not in shown

@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import httpx
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_post_actions import action
 from test_service import NOW, call, register
 
@@ -12,7 +12,7 @@ from msg.core.codec import wire
 from msg.core.identifiers import hex_id
 from msg.core.models import ResourceRef
 from msg.core.wiki import sync_wiki
-from msg.security.oauth import OAuthService
+from msg.security.sessions import BrowserSessionService
 from msg.transports.http import create_app
 from msg.transports.wiki_actions import wiki_actions_html
 
@@ -203,8 +203,8 @@ async def test_existing_wiki_upgrade_preserves_revisions_and_is_idempotent(insta
 
 
 @pytest.mark.asyncio
-async def test_browser_wiki_create_edit_conflicts_and_scope(oauth):
-    app, _, _, http = oauth
+async def test_browser_wiki_create_edit_conflicts_and_scope(signed_browser):
+    app, _, _, http = signed_browser
     author_key, author, _ = await register(app, 'browser-wiki-author')
     article = await call(
         app,
@@ -214,9 +214,11 @@ async def test_browser_wiki_create_edit_conflicts_and_scope(oauth):
         subject=author,
     )
     ref = article.resources[0]
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     async with app.metadata.transaction(write=False) as tx:
-        browser_subject, credential, token = await OAuthService(app).browser_credentials(tx, cookie)
+        browser_subject, credential, token = await BrowserSessionService(app).browser_credentials(
+            tx, cookie
+        )
     bypass = await call(
         app,
         'content.post_create',
@@ -230,7 +232,7 @@ async def test_browser_wiki_create_edit_conflicts_and_scope(oauth):
     page = await http.get('/_id/' + ref.id, headers={'Accept': 'text/html'})
     assert 'First version</textarea>' in page.text
     changed = await action(
-        oauth,
+        signed_browser,
         'content.post_edit',
         ref.id,
         body='Second version',
@@ -239,7 +241,7 @@ async def test_browser_wiki_create_edit_conflicts_and_scope(oauth):
     )
     assert changed.status_code == 200, changed.text
     stale = await action(
-        oauth,
+        signed_browser,
         'content.post_edit',
         ref.id,
         body='Stale',
@@ -247,9 +249,13 @@ async def test_browser_wiki_create_edit_conflicts_and_scope(oauth):
         generation=article.data['generation'],
     )
     assert stale.status_code == 403 and stale.json()['error']['code'] == 'generation_conflict'
-    new = await action(oauth, 'content.post_create', 't_wiki', name='browser-entry', body='New')
+    new = await action(
+        signed_browser, 'content.post_create', 't_wiki', name='browser-entry', body='New'
+    )
     assert new.status_code == 200, new.text
-    denied = await action(oauth, 'content.post_create', 't_main', name='outside', body='No')
+    denied = await action(
+        signed_browser, 'content.post_create', 't_main', name='outside', body='No'
+    )
     assert denied.status_code == 400 and denied.json()['error'] == 'wiki_only'
 
 

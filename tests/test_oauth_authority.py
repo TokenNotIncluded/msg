@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import pytest
 from read_only_evidence import business_snapshot, readonly_evidence
-from test_oauth import device_tokens, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call
 
 from msg.core.codec import b64, unb64, wire
@@ -13,14 +13,21 @@ from msg.core.models import Scope
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('kind', ['oauth', 'api'])
+@pytest.mark.parametrize('kind', ['browser', 'api'])
 @pytest.mark.parametrize('contraction', ['operations', 'scope'])
-async def test_derived_credentials_recheck_current_source_ceiling(oauth, kind, contraction):
-    app, key, subject, _http = oauth
-    if kind == 'oauth':
-        issued = await device_tokens(oauth)
-        credential_id, _, value = issued['access_token'].partition('.')
-        token = (credential_id, unb64(value))
+async def test_derived_credentials_recheck_current_source_ceiling(
+    signed_browser, kind, contraction
+):
+    app, key, subject, _http = signed_browser
+    if kind == 'browser':
+        cookie = await browser_login(signed_browser)
+        from msg.security.sessions import BrowserSessionService
+
+        async with app.metadata.transaction(write=False) as tx:
+            _, credential_id, secret = await BrowserSessionService(app).browser_credentials(
+                tx, cookie
+            )
+        token = (credential_id, secret)
     else:
         issued = await call(
             app,
@@ -55,18 +62,9 @@ async def test_derived_credentials_recheck_current_source_ceiling(oauth, kind, c
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('method', ['GET', 'POST'])
-async def test_userinfo_is_read_only_including_authoritative_oauth_state(
-    oauth, monkeypatch, method
-):
-    app, _key, subject, http = oauth
-    issued = await device_tokens(oauth)
+async def test_private_browser_get_preserves_read_only_authority(signed_browser, monkeypatch):
+    app, _, _, http = signed_browser
+    await browser_login(signed_browser)
     async with readonly_evidence(app, monkeypatch):
-        response = await http.request(
-            method,
-            '/oauth/userinfo',
-            headers={'Authorization': 'Bearer ' + issued['access_token']},
-            **({'json': {}} if method == 'POST' else {}),
-        )
+        response = await http.get('/@key-owner/in')
         assert response.status_code == 200, response.text
-        assert response.json() == {'sub': subject, 'preferred_username': 'oauth-owner'}

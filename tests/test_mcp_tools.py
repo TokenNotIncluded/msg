@@ -52,7 +52,7 @@ def identity(operations=ALL, **kwargs):
         credential_id=SECRET,
         token=SECRET,
         operations=operations,
-        credential_type='oauth_token',
+        credential_type='key-grant',
         expires_at=kwargs.get('expires_at'),
         session_binding=SECRET,
     )
@@ -117,15 +117,7 @@ def test_default_schemas_hide_envelopes_and_credentials(registry):
         Draft202012Validator.check_schema(tool['inputSchema'])
         assert not forbidden.intersection(_property_names(tool['inputSchema']))
         assert tool['inputSchema']['additionalProperties'] is False
-        assert tool['securitySchemes'] == tool['_meta']['securitySchemes']
-        assert tool['securitySchemes'][0]['type'] == (
-            'noauth' if tool['name'] in PUBLIC else 'oauth2'
-        )
-        assert all(
-            scope in {'msg.mcp.read', 'msg.mcp.message', 'msg.mcp.post'}
-            for scheme in tool['securitySchemes']
-            for scope in scheme.get('scopes', ())
-        )
+        assert 'securitySchemes' not in tool and '_meta' not in tool
     anonymous[0]['inputSchema']['properties']['token'] = {}
     assert 'token' not in tool_catalog(registry)[0]['inputSchema']['properties']
 
@@ -148,9 +140,7 @@ def test_catalog_uses_exact_installed_versions_and_ceilings(registry):
     assert read == PUBLIC | {'msg_inbox', 'msg_notifications'}
     message = tool_catalog(registry, identity(DEPENDENCIES['msg_send'] | REPLY_ALTERNATIVES[0]))
     reply = next(tool for tool in message if tool['name'] == 'msg_reply')
-    assert reply['securitySchemes'] == [
-        {'type': 'oauth2', 'scopes': ['msg.mcp.read', 'msg.mcp.message']}
-    ]
+    assert 'securitySchemes' not in reply
     assert 'msg_post' not in {tool['name'] for tool in message}
 
 
@@ -187,7 +177,7 @@ async def test_me_returns_no_identity_secret(registry):
         'ack',
         'decide_dm',
     ]
-    assert result['data']['credential_type'] == 'oauth_token'
+    assert result['data']['credential_type'] == 'key-grant'
     assert SECRET not in json.dumps(result)
     assert call.calls == [
         ('discovery.get', {'id': 's_current', 'fields': ['id', 'name', 'type']}, 1)
@@ -631,20 +621,19 @@ async def test_errors_never_echo_exception_or_private_details(registry, failure)
     assert set(result['error']) <= {'code', 'message', 'hint', 'retryable'}
 
 
-async def test_connect_requests_all_limited_scopes_and_returns_host_challenge(registry):
+async def test_connect_explains_native_signing_without_external_authority(registry):
     catalog = tool_catalog(registry)
     connect = next(tool for tool in catalog if tool['name'] == 'msg_connect')
-    assert connect['securitySchemes'][1]['scopes'] == [
-        'msg.mcp.read',
-        'msg.mcp.message',
-        'msg.mcp.post',
-    ]
+    assert 'securitySchemes' not in connect
+    assert 'oauth' not in json.dumps(catalog).lower()
 
     async def call(*args, **kwargs):
         pytest.fail('connect is handled by the host, not a business operation')
 
     result = await run_tool('msg_connect', {}, call=call)
-    assert result['error']['code'] == 'authentication_required'
+    assert result['status'] == 'ok'
+    assert result['data']['authentication'] == 'public-key-signature'
+    assert '_meta' not in result
 
 
 async def test_send_new_conversation_keeps_full_intro_and_returns_pending(registry):
@@ -769,7 +758,7 @@ async def test_expired_executor_credential_has_safe_reconnect_hint(registry):
     )
     result = await run_tool('msg_resolve', {'address': '/main'}, call=call, identity=identity())
     assert result['error']['code'] == 'credential_expired'
-    assert 'Reconnect' in result['error']['hint'] and SECRET not in json.dumps(result)
+    assert 'local signing key' in result['error']['hint'] and SECRET not in json.dumps(result)
 
 
 @pytest.mark.parametrize(

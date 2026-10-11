@@ -127,7 +127,7 @@ POST_ACTIONS_SCRIPT = r"""(() => {
     if(auth) { const link=document.createElement('a');link.href='/login';link.textContent=text('Sign in again','重新登录');status.append(link); }
   };
   const send = async (operation, extra, requestId) => {
-    const response = await fetch('/oauth/post-action', {
+    const response = await fetch('/session/post-action', {
       method:'POST', credentials:'same-origin',redirect:'error',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({csrf:panel.dataset.csrf,id:panel.dataset.id,operation,request_id:requestId,...extra}),
