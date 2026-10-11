@@ -1,0 +1,64 @@
+name: Key-only identity verification
+on:
+  push:
+    branches: [ci/key-only-identity-20261011]
+    paths: [.github/workflows/key-only-stage.yml]
+permissions:
+  contents: read
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      valkey:
+        image: valkey/valkey:9.0.6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+      MSG_TEST_VALKEY_URL: redis://127.0.0.1:6379/0
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 705b44f0f9583a644fbfaf974635be5ca65b4fca
+          persist-credentials: false
+      - name: Preserve exact public source snapshot
+        run: |
+          mkdir -p artifacts
+          git archive --format=tar.gz HEAD > artifacts/source.tar.gz
+          git rev-parse HEAD > artifacts/base.txt
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: key-only-source
+          path: artifacts/
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install test requirements
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq libpcsclite-dev swig
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Verify baseline identity, OAuth and MCP contracts
+        run: |
+          uv run --no-sync python -m pytest tests/test_oauth.py tests/test_oauth_authority.py tests/test_account_login_core.py tests/test_agentid_account_login.py tests/test_mcp_tools.py tests/test_mcp_agent.py tests/test_client_identity_status.py --junitxml=artifacts/baseline.xml
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: key-only-baseline
+          path: artifacts/baseline.xml
