@@ -3,22 +3,123 @@ on:
   push:
     branches: [ci/ascii-home-20261012]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  source:
+  verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest -d postgres"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      valkey:
+        image: valkey/valkey:9.0.6
+        ports: ['6379:6379']
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+      MSG_TEST_VALKEY_URL: redis://127.0.0.1:6379/0
     steps:
       - uses: actions/checkout@v7
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - name: Export the exact public source for isolated frontend checks
-        run: |
-          mkdir -p artifacts
-          git archive --format=tar.gz HEAD > artifacts/msg-source.tar.gz
-          git rev-parse HEAD HEAD^{tree} > artifacts/source-revision.txt
-      - uses: actions/upload-artifact@v7.0.1
+      - uses: actions/setup-python@v7
         with:
-          name: ascii-home-source
-          path: artifacts/
+          python-version: '3.15'
+          allow-prereleases: true
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.0'
+      - name: Prepare exact baseline and check patch integrity
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/msg-ascii-product" fab1772f2c35deeba99af33c639dd8dccc730d1e
+          python - <<'PY'
+          import base64, gzip, hashlib, os
+          from pathlib import Path
+          encoded = Path('.ci/ascii-home.patch.gz.b64').read_text().replace('G9twY8c fiaA', 'G9twY8fiaA')
+          data = gzip.decompress(base64.b64decode(encoded))
+          assert hashlib.sha256(data).hexdigest() == 'c31ec646fd77c7f3ff70d70d837f8c47cfb4ab4da0e9d48d55b195080d180e6f'
+          Path(os.environ['RUNNER_TEMP'], 'ascii-home.patch').write_bytes(data)
+          PY
+          mkdir -p "$RUNNER_TEMP/msg-ascii-product/artifacts"
+      - name: Install locked tools
+        working-directory: ${{ runner.temp }}/msg-ascii-product
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq age libpcsclite-dev swig
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+          uv run python -m playwright install --with-deps chromium
+      - name: Record baseline and confirm new layout regression
+        working-directory: ${{ runner.temp }}/msg-ascii-product
+        run: |
+          uv run pytest tests/test_ascii_art.py tests/test_browser_refinement.py tests/test_public_board_details.py --junitxml=artifacts/baseline.xml
+          git apply --include=tests/test_ascii_art.py "$RUNNER_TEMP/ascii-home.patch"
+          set +e
+          uv run pytest tests/test_ascii_art.py -k test_home_art_has_ordered_copy_and_a_stable_viewport --junitxml=artifacts/baseline-layout-regression.xml
+          result=$?
+          set -e
+          test "$result" = 1
+          git restore tests/test_ascii_art.py
+      - name: Apply source changes and rebuild the pinned runtime
+        working-directory: ${{ runner.temp }}/msg-ascii-product
+        run: |
+          git apply "$RUNNER_TEMP/ascii-home.patch"
+          bun scripts/build_ascii.mjs
+          uv run ruff check --fix src/msg/transports/{ascii_art,browser_style,public_board}.py tests/test_ascii_art.py scripts/check_ascii_home_browser.py
+          uv run ruff format src/msg/transports/{ascii_art,browser_style,public_board}.py tests/test_ascii_art.py scripts/check_ascii_home_browser.py
+      - name: Verify related frontend and server behavior
+        working-directory: ${{ runner.temp }}/msg-ascii-product
+        run: |
+          uv run pytest tests/test_home_first_read.py tests/test_home_cache.py tests/test_browser_refinement.py tests/test_browser_html.py tests/test_browser_languages.py tests/test_thread_panel.py tests/test_thread_panel_http.py tests/test_board_presentation.py tests/test_ascii_art.py tests/test_public_board.py tests/test_public_board_art.py tests/test_public_board_details.py tests/test_public_board_read_fallback.py --junitxml=artifacts/ascii-home-tests.xml
+      - name: Verify actual browser layouts, colors, pause and editing
+        working-directory: ${{ runner.temp }}/msg-ascii-product
+        env:
+          PYTHONPATH: src
+        run: |
+          uv run python scripts/check_ascii_home_browser.py
+          uv run python scripts/check_home_first_read_browser.py
+      - name: Verify formatting, compilation and the generated asset
+        working-directory: ${{ runner.temp }}/msg-ascii-product
+        run: |
+          uv run ruff check src/msg/transports/{ascii_art,browser_style,public_board}.py tests/test_ascii_art.py scripts/check_ascii_home_browser.py
+          uv run ruff format --check src/msg/transports/{ascii_art,browser_style,public_board}.py tests/test_ascii_art.py scripts/check_ascii_home_browser.py
+          uv run python -W error -m compileall -q src
+          sha256sum src/msg/data/ascii-runtime.js > artifacts/ascii-runtime.sha256
+          bun scripts/build_ascii.mjs
+          sha256sum --check artifacts/ascii-runtime.sha256
+          git diff --check
+      - name: Commit only reviewed product files to an isolated feature branch
+        working-directory: ${{ runner.temp }}/msg-ascii-product
+        env:
+          PUBLISH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/home-first-read.yml src/msg/transports/ascii_art.py src/msg/transports/browser_style.py src/msg/transports/public_board.py src/msg/data/ascii-runtime.js vendor/ascii/msg-entry.ts tests/test_ascii_art.py scripts/check_ascii_home_browser.py
+          git diff --cached --binary > artifacts/ascii-home.patch
+          git commit -m 'style: refine the ASCII homepage and mobile reading layout'
+          git rev-parse HEAD HEAD^{tree} > artifacts/product-revision.txt
+          auth=$(printf 'x-access-token:%s' "$PUBLISH_TOKEN" | base64 -w0)
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" push origin HEAD:refs/heads/style/ascii-home-20261012
+      - name: Export source and evidence without fonts or private runtime files
+        if: always()
+        working-directory: ${{ runner.temp }}/msg-ascii-product
+        run: |
+          mkdir -p artifacts/source
+          for path in .github/workflows/home-first-read.yml src/msg/transports/ascii_art.py src/msg/transports/browser_style.py src/msg/transports/public_board.py src/msg/data/ascii-runtime.js vendor/ascii/msg-entry.ts tests/test_ascii_art.py scripts/check_ascii_home_browser.py; do
+            if test -f "$path"; then mkdir -p "artifacts/source/$(dirname "$path")"; cp "$path" "artifacts/source/$path"; fi
+          done
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: ascii-home-verification
+          path: ${{ runner.temp }}/msg-ascii-product/artifacts/
           retention-days: 7
