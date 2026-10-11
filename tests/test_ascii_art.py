@@ -35,3 +35,32 @@ async def test_machine_home_and_public_board_have_no_visual_payload(signed_brows
     board = await http.get('/_public-board')
     assert set(board.json()) == set(projection(default()))
     assert 'ascii' not in board.json()
+
+
+def test_home_art_has_ordered_copy_and_a_stable_viewport():
+    page = html()
+    assert page.index('class="signal-copy"') < page.index('class="signal-stage"')
+    assert page.index('class="signal-meta"') < page.index('data-content')
+    assert page.count('class="signal-viewport"') == 1
+    assert 'data-ascii-canvas hidden aria-hidden="true"' in page
+    for piece, label in (
+        ('galaxy', 'Galaxy / 星系'),
+        ('flow', 'Flow / 信号流'),
+        ('aurora', 'Aurora / 极光'),
+        ('community', 'Shared SVG / 公共作品'),
+    ):
+        assert f'data-ascii-piece="{piece}"' in page
+        assert f'aria-label="{label}"' in page
+    assert page.count('class="ascii-piece-name"') == 4
+    assert page.count('class="ascii-piece-label"') == 4
+
+
+def test_restyled_home_keeps_shared_text_and_svg_escaped():
+    board = projection(default())
+    board['text'] = '<img src=x onerror=alert(1)> 字符仍然是文本'
+    board['svg'] = '<svg viewBox="0 0 960 300"><text>Shared &amp; public</text></svg>'
+    page = html(board)
+    assert board['text'] not in page
+    assert '&lt;img src=x onerror=alert(1)&gt; 字符仍然是文本' in page
+    assert board['svg'] not in page
+    assert 'data-ascii-default="false"' in page
