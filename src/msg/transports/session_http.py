@@ -183,10 +183,8 @@ class BrowserSessionBoundary:
         # Hosted pages in an opaque sandbox use anonymous authority, even
         # when ambient Authorization headers or cookies are present. Non-hosted
         # null-Origin requests remain subject to the router's Origin fence.
-        sandbox_read = (
-            request.method in {'GET', 'HEAD'}
-            and request.headers.getlist('origin') == ['null']
-        )
+        opaque_origin = request.headers.getlist('origin') == ['null']
+        sandbox_read = request.method in {'GET', 'HEAD'} and opaque_origin
         if authorization and not sandbox_read:
             # Standard Git clients carry native, key-issued MSG credentials in
             # Basic auth. The Git adapter still validates their current scope,
