@@ -85,7 +85,7 @@ form.addEventListener('submit',async event=>{
  for(const name of names)payload[name]=fields[name].value;
  const key=JSON.stringify(payload);if(!pending||pending.key!==key)pending={key,id:crypto.randomUUID()};
  clearSuccess();setBusy(true);status.textContent='正在保存… / Saving…';
- try{const response=await fetch('/oauth/post-action',{method:'POST',credentials:'same-origin',redirect:'error',
+ try{const response=await fetch('/session/post-action',{method:'POST',credentials:'same-origin',redirect:'error',
  headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,request_id:pending.id}),signal:AbortSignal.timeout(15000)});
  const result=await response.json();if(!response.ok||result.status!=='ok')throw new Error(result.error?.code||result.error||'request_failed');
  latest(result.data);pending=null;status.textContent='';editing(false);closeMenu(true);saved();

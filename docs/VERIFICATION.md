@@ -63,11 +63,9 @@ Root 内存 fixture 没有飞行 WebSocket 服务，因此只豁免回环 `/_fli
 ## 面向 agent 的 MCP
 
 `tests/test_mcp_tools.py` 检查有限目录、无凭据参数、精简投影和用户名映射。
-`tests/test_mcp_oauth.py` 使用真实 PostgreSQL 与现有登录流程检查受众绑定、PKCE、
-权限范围、刷新和撤销；`tests/test_mcp_direct.py` 检查新私信授权版本及旧签名版本兼容。
-`tests/test_mcp_agent.py` 从 HTTP 入口检查默认目录、连接提示、身份、私信、回复、
-读取不 ACK、重试和重启幂等。高级操作兼容仍由 HTTP、stdio 和 Agent Link 测试覆盖。
-
-发布后再次读取 OAuth 元数据和默认 MCP 目录，确认不存在完整 envelope 字段。
+`tests/test_browser_sessions.py` 使用真实 PostgreSQL、原生签名和浏览器会话检查
+确认、权限收缩与撤销；`tests/test_mcp_agent.py` 检查公开工具及原始签名 MCP。
+`tests/test_oauth.py` 验证旧入口和旧凭据被拒绝，不再测试可用的 OAuth 服务。
+升级后读取默认 MCP 目录，确认没有第三方授权提示；私有操作另验原生签名传输。
 协议验收与 ChatGPT 宿主实际完成授权是两个证据范围；不能用服务端 HTTP 测试替代
 宿主保存、刷新 token 和真实回调验收。

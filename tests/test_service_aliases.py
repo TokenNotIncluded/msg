@@ -176,15 +176,12 @@ def test_endpoint_cannot_downgrade_secret_delivery():
 
 
 @pytest.mark.asyncio
-async def test_oauth_security_uses_actual_endpoint_not_canonical_loopback(tmp_path):
-    from msg.client_oauth import secure_transport
+async def test_native_security_uses_actual_endpoint_not_canonical_loopback(tmp_path):
 
     state = ClientState(tmp_path / 'client', server='http://testserver')
     transport = HTTPTransport(state.server, endpoint=ALIAS)
     client = MsgClient(state, transport)
     try:
-        with pytest.raises(Failure, match='^secure_channel_required$'):
-            secure_transport(client)
         with pytest.raises(Failure, match='^secure_channel_required$'):
             client._require_token_secret_transport()
     finally:
@@ -192,8 +189,7 @@ async def test_oauth_security_uses_actual_endpoint_not_canonical_loopback(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_oauth_alias_rejects_foreign_authority_before_sending_secret(tmp_path):
-    from msg.client_oauth import endpoint
+async def test_native_alias_rejects_foreign_authority_before_sending_secret(tmp_path):
 
     calls = []
 
@@ -210,7 +206,7 @@ async def test_oauth_alias_rejects_foreign_authority_before_sending_secret(tmp_p
             state, HTTPTransport(state.server, endpoint='https://alias.example.org', http=http)
         )
         with pytest.raises(Failure, match='^service_mismatch$'):
-            await endpoint(client, '/oauth/token', {'refresh_token': 'must-not-send'})
+            await client.transport.description()
     assert len(calls) == 1 and calls[0].method == 'GET' and not calls[0].content
 
 

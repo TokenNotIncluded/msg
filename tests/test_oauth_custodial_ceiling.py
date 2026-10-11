@@ -5,11 +5,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from msg.browser_config import BrowserConfig
 from msg.core.codec import canonical, wire
 from msg.core.errors import Failure
 from msg.core.models import CapabilityGrant, Scope
-from msg.oauth_config import OAuthConfig
-from msg.security.oauth import require_binding, require_source
+from msg.security.sessions import require_binding, require_source
 
 NOW = datetime(2026, 9, 27, tzinfo=UTC)
 
@@ -48,7 +48,7 @@ class SourceSession:
             'custodial': custodial,
             'ceiling': wire((grant('read'),)),
         }
-        self.api = self.oauth = False
+        self.api = self.signed_browser = False
 
     async def credential(self, _id):
         return self.parent
@@ -65,9 +65,9 @@ class SourceSession:
                     name: self.body[name] for name in ('subject', 'parent', 'auth_version')
                 }).decode(),
             )
-        if self.oauth and args[0] == 'access:t_oauth_test':
+        if self.signed_browser and args[0] == 'access:t_oauth_test':
             return (canonical({'family': 'family:test'}).decode(),)
-        if self.oauth and args[0] == 'family:test':
+        if self.signed_browser and args[0] == 'family:test':
             return (
                 wire(NOW + timedelta(hours=1)),
                 canonical({**self.body, 'client_id': 'msg-cli', 'scopes': ['msg.read']}).decode(),
@@ -121,27 +121,18 @@ async def test_registered_source_remains_independent_of_custodial_policy():
 @pytest.mark.parametrize('expanded', [False, True])
 async def test_derived_credential_cannot_exceed_captured_custodial_grants(expanded):
     tx = SourceSession()
-    tx.oauth = True
+    tx.signed_browser = True
     credential = SimpleNamespace(
         id='t_oauth_test',
         source_credential_id='key',
         ceiling=(grant('read', 'write') if expanded else grant('read'),),
     )
-    if expanded:
-        with pytest.raises(Failure, match='invalid_grant'):
-            await require_binding(
-                tx,
-                credential,
-                NOW,
-                OAuthConfig(enabled=True),
-                custodial_ceiling=(grant('read', 'write'),),
-            )
-    else:
+    with pytest.raises(Failure, match='invalid_grant'):
         await require_binding(
             tx,
             credential,
             NOW,
-            OAuthConfig(enabled=True),
+            BrowserConfig(enabled=True),
             custodial_ceiling=(grant('read', 'write'),),
         )
 
@@ -160,3 +151,12 @@ async def test_api_binding_without_captured_ceiling_uses_current_signing_key(con
             await require_binding(tx, credential, NOW, None, custodial_ceiling=())
     else:
         await require_binding(tx, credential, NOW, None, custodial_ceiling=())
+
+
+@pytest.mark.parametrize('prefix', ['t_oauth_', 't_browser_'])
+async def test_retired_parent_cannot_back_a_restored_native_api_source(prefix):
+    tx = SourceSession(custodial=False)
+    tx.parent.id = prefix + 'restored'
+    tx.body['parent'] = tx.parent.id
+    with pytest.raises(Failure, match='invalid_grant'):
+        await require_source(tx, tx.body, NOW, custodial_ceiling=())

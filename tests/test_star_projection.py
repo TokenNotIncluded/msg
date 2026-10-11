@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import httpx
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import NOW, call, register
 
 from msg.admin.money import apply_money
@@ -183,10 +183,12 @@ async def test_root_anchor_refresh_boundaries_and_hidden_user_removal(installed)
 
 
 @pytest.mark.asyncio
-async def test_owner_reserve_requires_current_browser_session_and_never_joins_public(oauth):
-    app, _, subject, http = oauth
+async def test_owner_reserve_requires_current_browser_session_and_never_joins_public(
+    signed_browser,
+):
+    app, _, subject, http = signed_browser
     assert (await http.get('/_universe/me')).json()['account'] is None
-    await browser_login(oauth)
+    await browser_login(signed_browser)
     private = await http.get('/_universe/me')
     assert private.status_code == 200, private.text
     account = private.json()['account']

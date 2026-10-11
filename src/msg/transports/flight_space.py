@@ -1,6 +1,6 @@
 """Process-local authoritative flight playground, isolated from MSG resource writes.
 
-Only explicitly joined players are broadcast. OAuth is checked on ingress and
+Only explicitly joined players are broadcast. Key-approved browser access is checked on ingress and
 again while connected; game presence never becomes an MSG online declaration.
 One uvicorn worker owns one world. This is not a distributed state service.
 """
@@ -25,8 +25,8 @@ from msg.core.models import ExecutionContext, Principal
 from msg.core.planet_layout import planet_layout
 from msg.core.requests import request_for
 from msg.plugins.discovery import visible
-from msg.security.oauth import OAuthService
 from msg.security.quarantine import require_live_authority
+from msg.security.sessions import BrowserSessionService
 from msg.transports.flight_simulation import (
     BRAKE_ACCELERATION,
     COAST_DRAG,
@@ -92,7 +92,7 @@ class FlightHub:
 
     def __init__(self, service):
         self.service = service
-        self.oauth = OAuthService(service)
+        self.sessions = BrowserSessionService(service)
         self.world = FlightWorld(max_players=MAX_CLIENTS, max_retained=512, retention_seconds=300)
         self.peers: dict[str, Peer] = {}
         self.addresses: dict[str, int] = {}
@@ -281,7 +281,7 @@ class FlightHub:
                         'handle': 'guest-' + secrets.token_hex(4),
                         'guest': True,
                     }
-                subject, _, _ = await self.oauth.browser_credentials(tx, peer.cookie)
+                subject, _, _ = await self.sessions.browser_credentials(tx, peer.cookie)
                 resource = await tx.resource(subject)
                 require(resource.type == 'user' and resource.state == 'active', 'invalid_grant')
                 peer.subject = subject
@@ -419,7 +419,7 @@ class FlightHub:
                         'invalid_grant',
                     )
                 elif peer.cookie:
-                    subject, _, _ = await self.oauth.browser_credentials(tx, peer.cookie)
+                    subject, _, _ = await self.sessions.browser_credentials(tx, peer.cookie)
                     require(subject == peer.subject, 'invalid_grant')
                     require(
                         await self._public_identity(tx, subject) == peer.public_identity,
@@ -536,7 +536,8 @@ class FlightHub:
                 else 1009
                 if exc.code == 'flight_frame_too_large'
                 else 4013
-                if exc.code in {'invalid_grant', 'credential_not_found', 'oauth_disabled'}
+                if exc.code
+                in {'invalid_grant', 'credential_not_found', 'browser_sessions_disabled'}
                 or exc.code.startswith(('credential_', 'certificate_'))
                 else 1013
                 if exc.code in {'server_busy', 'recovery_quarantined', 'recovery_runtime_stale'}
@@ -713,7 +714,7 @@ class FlightHub:
                             )
                             subject = peer.machine_principal.subject
                         else:
-                            subject, _, _ = await self.oauth.browser_credentials(tx, peer.cookie)
+                            subject, _, _ = await self.sessions.browser_credentials(tx, peer.cookie)
                         resource = await tx.resource(subject)
                         require(
                             subject == peer.subject

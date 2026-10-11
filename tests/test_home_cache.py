@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import httpx
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call, register
 
 from msg.core.errors import Failure
@@ -287,16 +287,16 @@ async def test_home_conditional_get_validates_first_and_cookie_never_reuses_it(c
 
 
 @pytest.mark.asyncio
-async def test_browser_quota_is_live_and_never_enters_anonymous_snapshot(oauth):
+async def test_browser_quota_is_live_and_never_enters_anonymous_snapshot(signed_browser):
     from msg.plugins.public_board import quota
 
-    app, _, subject, http = oauth
+    app, _, subject, http = signed_browser
     asgi = http._transport.app
     cache = asgi.state.home_cache
     try:
         await warm(cache)
         assert cache.snapshot.board.get('quota') is None
-        await browser_login(oauth)
+        await browser_login(signed_browser)
         for count in (3, 4):
             async with app.metadata.transaction(write=True) as tx:
                 record = quota(None, app.clock())

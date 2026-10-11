@@ -118,9 +118,9 @@ def parser():
     ).add_subparsers(dest='action', required=True)
     servers.add_parser('show')
     servers.add_parser('use').add_argument('url')
-    login = commands.add_parser('login', help='Login once using an OAuth device code.')
-    login.add_argument('--no-browser', action='store_true')
-    login.add_argument('--scope', default='openid profile msg.read msg.write offline_access')
+    commands.add_parser(
+        'login', help='Show local key identity and native browser sign-in instructions.'
+    )
     accounts = commands.add_parser(
         'account', help='List, select, import or age-backup local accounts.'
     ).add_subparsers(dest='action', required=True)
@@ -172,7 +172,6 @@ def parser():
     account_fetch.add_argument('--from', dest='from_profile', required=True)
     account_fetch.add_argument('--output', type=Path, required=True)
     account_fetch.add_argument('--expected-sha256')
-    commands.add_parser('logout')
     auth = commands.add_parser('auth').add_subparsers(dest='action', required=True)
     auth.add_parser('status')
     for action in ('request', 'approve', 'deny'):
@@ -668,8 +667,8 @@ async def run(args):
             from msg.client_mount import run_mount
 
             return await run_mount(client, args)
-        if command in {'login', 'logout', 'auth'}:
-            from msg.client_oauth import run_command
+        if command in {'login', 'auth'}:
+            from msg.client_browser import run_command
 
             result = await run_command(client, args)
             if args.user and command == 'login':

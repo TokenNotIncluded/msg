@@ -14,17 +14,17 @@ from test_flight_websocket import (
     controls,
     flight_server,
     make_private,
-    oauth,
     player,
     receive_until,
+    signed_browser,
     snapshot,
 )
 
-from msg.transports.oauth_http import csrf
+from msg.transports.session_http import csrf
 
 # Imported fixtures are deliberate: this is the same real PostgreSQL-backed
 # OAuth and TCP harness used by the driving acceptance suite.
-__all__ = ['flight_server', 'oauth']
+__all__ = ['flight_server', 'signed_browser']
 
 
 async def observe(flight, *, cookie=None):
@@ -104,11 +104,11 @@ async def test_observer_cannot_move_attack_relocate_or_join(flight_server, packe
 
 
 async def test_observer_private_pilot_has_only_existing_public_game_projection(
-    flight_server, oauth
+    flight_server, signed_browser
 ):
-    app, key, subject, _ = oauth
+    app, key, subject, _ = signed_browser
     await make_private(app, key, subject)
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     signed, secret = await flight_server.join(cookie=cookie)
     observer, hello = await observe(flight_server)
     public = await observed(observer, lambda body: body['total_players'] == 1)
@@ -130,7 +130,7 @@ async def test_observer_private_pilot_has_only_existing_public_game_projection(
     assert pilot['subject_id'] is None and pilot['handle'].startswith('pilot-')
     assert pilot == player(private_state, secret['self']['id'])
     encoded = json.dumps([hello, public])
-    assert subject not in encoded and 'oauth-owner' not in encoded
+    assert subject not in encoded and 'key-owner' not in encoded
     assert 'home_position' not in encoded and 'home_body' not in encoded
     assert secret['self']['home_body']['id'] not in encoded
     assert len(flight_server.hub.world.ships) == 1
@@ -138,14 +138,16 @@ async def test_observer_private_pilot_has_only_existing_public_game_projection(
 
 
 @pytest.mark.parametrize('mutation', ['logout', 'runtime', 'quarantine'])
-async def test_observer_current_authority_is_rechecked_without_ship(flight_server, oauth, mutation):
-    app, _, _, http = oauth
-    cookie = await browser_login(oauth)
+async def test_observer_current_authority_is_rechecked_without_ship(
+    flight_server, signed_browser, mutation
+):
+    app, _, _, http = signed_browser
+    cookie = await browser_login(signed_browser)
     observer, _ = await observe(flight_server, cookie=cookie)
     await observed(observer)
     if mutation == 'logout':
         logout = await http.post(
-            '/oauth/logout', json={'csrf': csrf(cookie)}, headers={'Origin': 'http://testserver'}
+            '/session/logout', json={'csrf': csrf(cookie)}, headers={'Origin': 'http://testserver'}
         )
         assert logout.status_code == 200
     else:
@@ -175,8 +177,10 @@ async def test_observer_retains_origin_and_bounded_admission(flight_server, monk
     assert flight_server.hub.world.active_count == 1
 
 
-async def test_observer_receives_current_public_geometry_after_acl_removal(flight_server, oauth):
-    app, key, subject, _ = oauth
+async def test_observer_receives_current_public_geometry_after_acl_removal(
+    flight_server, signed_browser
+):
+    app, key, subject, _ = signed_browser
     observer, hello = await observe(flight_server)
     assert subject in {well['id'] for well in hello['gravity']['wells']}
     # An empty observed room stays on the same public geometry across its 2s

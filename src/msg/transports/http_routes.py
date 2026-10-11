@@ -112,7 +112,7 @@ def home_markdown(
             '\n## Your account\n',
             f'Signed in as [{name}]({path}).',
             f'\n[Inbox]({path}/in) · [Direct messages]({path}/dm) · '
-            f'[Outbox]({path}/out) · [Sign out](/oauth/logout)\n',
+            f'[Outbox]({path}/out) · [Sign out](/session/logout)\n',
             'These links use your browser session and current permissions.\n',
             'Groups: '
             + ' · '.join(
@@ -298,19 +298,6 @@ def operation_route(spec):
 
 def classify_route(path, method, registry):
     """Classify the matched HTTP boundary before interpreting a request body."""
-    if path.startswith('/-/login/'):
-        if (
-            path == '/-/login/start'
-            or path.startswith('/-/login/callback/')
-            or path.endswith('/options')
-        ):
-            return RouteSpec('login_transaction', RouteEffect.LOCAL_EPHEMERAL)
-        effect = (
-            RouteEffect.EXTERNAL_EFFECT
-            if path == '/-/login/email/start'
-            else RouteEffect.BUSINESS_WRITE
-        )
-        return RouteSpec('account_login', effect)
     if path in {'/-/d', '/-/schema'} or path.startswith('/-/d/'):
         return RouteSpec('contract', RouteEffect.PURE_READ)
     protocol = re.match(r'^/-/([pg])/([a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+)', path)
@@ -1009,9 +996,6 @@ def create_app(service):
                 return None
             return dict(
                 identity.data,
-                login_methods_enabled=getattr(
-                    getattr(service.settings, 'login', None), 'enabled', False
-                ),
             )
 
         async def execute_packet(packet, *, entry='network'):
@@ -2945,9 +2929,6 @@ def create_app(service):
                     if not identity.error:
                         account = dict(
                             identity.data,
-                            login_methods_enabled=getattr(
-                                getattr(service.settings, 'login', None), 'enabled', False
-                            ),
                         )
                         channels = await execute_packet(
                             request_for(
@@ -2959,7 +2940,7 @@ def create_app(service):
                         )
                         if home_data is not None and not channels.error:
                             home_data = {**home_data, 'channels': channels.data['channels']}
-                from msg.transports.oauth_http import csrf
+                from msg.transports.session_http import csrf
 
                 board_packet = request_for(
                     'discovery.public_board', {}, service.settings.service_url, source='manual'
@@ -3015,7 +2996,7 @@ def create_app(service):
                     service_url=service.settings.service_url,
                     account=account,
                     login_enabled=getattr(
-                        getattr(service.settings, 'oauth', None), 'enabled', False
+                        getattr(service.settings, 'browser', None), 'enabled', False
                     ),
                     expired=request.scope.get('state', {}).get('msg_browser_expired', False),
                     **({'reply_status': reply_status, 'post_index': index} if browser_html else {}),
@@ -4238,8 +4219,8 @@ def create_app(service):
                         'Vary': 'Accept, Cookie',
                     })
                 if value.get('type') == 'post' and value.get('state', 'active') == 'active':
-                    from msg.transports.oauth_http import csrf
                     from msg.transports.post_actions import post_actions_html
+                    from msg.transports.session_http import csrf
 
                     session_cookie = (
                         '__Host-msg_session' if expected.scheme == 'https' else 'msg_session'
@@ -4264,7 +4245,7 @@ def create_app(service):
                     headers['Vary'] = 'Accept, Cookie'
             if browser_html and value.get('type') in {'post', 'topic'}:
                 from msg.core.wiki import in_wiki
-                from msg.transports.oauth_http import csrf
+                from msg.transports.session_http import csrf
                 from msg.transports.wiki_actions import wiki_actions_html
 
                 async with service.metadata.transaction(write=False) as tx:

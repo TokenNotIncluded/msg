@@ -5,14 +5,14 @@ import xml.etree.ElementTree as ET
 from datetime import timedelta
 
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import NOW, call, register
 
 from msg.core.errors import Failure
 from msg.core.requests import request_for
 from msg.plugins.public_board import DEFAULT_SVG, KEY, LIMITS, validate_svg
 from msg.transports.home_page import home_html
-from msg.transports.oauth_http import csrf
+from msg.transports.session_http import csrf
 
 
 @pytest.mark.parametrize(
@@ -218,9 +218,9 @@ async def test_batch_size_and_payload_limits_cannot_bypass_gate(installed):
     assert own.data['generation'] == 0 and own.data['quota']['hour_count'] == 0
 
 
-async def test_browser_save_requires_csrf_and_uses_same_quota(oauth):
-    app, _, user, http = oauth
-    await browser_login(oauth)
+async def test_browser_save_requires_csrf_and_uses_same_quota(signed_browser):
+    app, _, user, http = signed_browser
+    await browser_login(signed_browser)
     cookie = http.cookies.get('msg_session')
     page = await http.get('/', headers={'Accept': 'text/html'})
     assert page.status_code == 200, page.text
@@ -241,9 +241,9 @@ async def test_browser_save_requires_csrf_and_uses_same_quota(oauth):
         'text': '<img src=x onerror=bad()>',
         'request_id': 'public-browser',
     }
-    assert (await http.post('/oauth/post-action', json=args)).status_code == 400
+    assert (await http.post('/session/post-action', json=args)).status_code == 400
     changed = await http.post(
-        '/oauth/post-action',
+        '/session/post-action',
         json={**args, 'csrf': csrf(cookie)},
         headers={'Origin': app.settings.service_url},
     )

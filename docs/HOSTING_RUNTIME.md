@@ -34,7 +34,7 @@ A PostgreSQL service entry `msgd-hosting` plus a reader-owned 0600 pgpass/peer m
 supplies the dedicated database credential. Protect those files and the config.
 
 The SQL template grants only SELECT on schema_version, resources, revisions,
-identities, memberships, credentials, certificates, oauth_states, settings,
+identities, memberships, credentials, certificates, credential_states, settings,
 share_grants, share_grants_v2, dm_conversations, system_sources and
 resource_path_aliases. It does not grant table
 ownership, sequence use, CREATE, role membership or token delivery/vault/job/ledger

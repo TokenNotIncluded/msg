@@ -392,11 +392,9 @@ async def validate_ceiling(app, ctx, tx, grants):
 
 def install(app):
     op, finish = registration(app, 'identity')
-    from msg.plugins.login_identity import install as install_login
-    from msg.plugins.oauth_identity import install as install_oauth
+    from msg.plugins.browser_identity import install as install_browser
 
-    install_oauth(app, op)
-    install_login(app, op)
+    install_browser(app, op)
 
     @op(
         'identity.rename',
@@ -449,9 +447,6 @@ def install(app):
         version=2,
     )
     async def custodial_create(ctx, request, tx):
-        from msg.login_config import registration_closed
-
-        require(not registration_closed(app.settings), 'provider_registration_required')
         token = app.issued_token(request, ctx.principal.subject)
         signer = Ed25519Signer.generate()
         age_identity, recipient = generate_age_key()
@@ -851,9 +846,6 @@ def install(app):
         version=2,
     )
     async def register(ctx, request, tx):
-        from msg.login_config import registration_closed
-
-        require(not registration_closed(app.settings), 'provider_registration_required')
         await app.online_issuer(tx)
         public = unb64(request.arguments['public_key'], limit=32)
         encryption_public = public_from_recipient(request.arguments['encryption_recipient'])
@@ -2023,9 +2015,6 @@ def install(app):
         version=3,
     )
     async def temporary(ctx, request, tx):
-        from msg.login_config import registration_closed
-
-        require(not registration_closed(app.settings), 'provider_registration_required')
         if request.contract_version < 3:
             raise Failure('temporary_dual_keys_required', details={'contract_version': 3})
         token = app.issued_token(request, ctx.principal.subject)
@@ -2513,7 +2502,7 @@ def install(app):
         await tx.save_credential(credential, subject.auth_version)
         app.record_token_delivery(tx, request, credential, ctx.now)
         if request.contract_version >= 3:
-            from msg.security.oauth import put
+            from msg.security.sessions import put
 
             put(
                 tx,
@@ -2536,7 +2525,7 @@ def install(app):
                     'credential_owner_required',
                 )
                 require(
-                    tx.one('SELECT id FROM oauth_states WHERE id=?', ('api:' + previous.id,))
+                    tx.one('SELECT id FROM credential_states WHERE id=?', ('api:' + previous.id,))
                     is not None,
                     'api_key_required',
                 )
@@ -2615,9 +2604,9 @@ def install(app):
         )
         await tx.save_credential(credential, subject.auth_version)
         await tx.save_credential(replace(old, revoked_at=ctx.now), subject.auth_version)
-        api = tx.one('SELECT body FROM oauth_states WHERE id=?', ('api:' + old.id,))
+        api = tx.one('SELECT body FROM credential_states WHERE id=?', ('api:' + old.id,))
         if api is not None:
-            from msg.security.oauth import put
+            from msg.security.sessions import put
 
             put(tx, 'api:' + credential.id, 'api', credential.expires_at, loads(api[0]))
         consumed = tx.execute(

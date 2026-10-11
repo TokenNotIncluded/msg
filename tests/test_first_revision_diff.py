@@ -4,8 +4,8 @@ from dataclasses import replace
 from uuid import uuid4
 
 import httpx
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_linkset_diff import business_state
-from test_oauth import browser_login, oauth as oauth
 from test_service import call, register
 
 from msg.core.identifiers import hex_id
@@ -126,8 +126,8 @@ async def test_first_revision_default_diff_preserves_explicit_ranges_and_html(in
     assert merge.error.code == 'previous_revision_not_found'
 
 
-async def test_browser_first_revision_diff_rechecks_current_private_authority(oauth):
-    app, key, user, http = oauth
+async def test_browser_first_revision_diff_rechecks_current_private_authority(signed_browser):
+    app, key, user, http = signed_browser
     created = await call(
         app,
         'content.post_create',
@@ -149,7 +149,7 @@ async def test_browser_first_revision_diff_rechecks_current_private_authority(oa
     denied = await http.get(path, headers={'Accept': 'text/html'})
     assert denied.status_code == 403 and 'no_previous_revision' not in denied.text
     assert ref.revision not in denied.text and 'private first revision' not in denied.text
-    await browser_login(oauth)
+    await browser_login(signed_browser)
     before = await business_state(app)
     allowed = await http.get(path, headers={'Accept': 'text/html'})
     assert allowed.status_code == 200 and 'This is the first version' in allowed.text
