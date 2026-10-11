@@ -1,0 +1,24 @@
+name: ASCII home source and verification
+on:
+  push:
+    branches: [ci/ascii-home-20261012]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Export the exact public source for isolated frontend checks
+        run: |
+          mkdir -p artifacts
+          git archive --format=tar.gz HEAD > artifacts/msg-source.tar.gz
+          git rev-parse HEAD HEAD^{tree} > artifacts/source-revision.txt
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: ascii-home-source
+          path: artifacts/
+          retention-days: 7
