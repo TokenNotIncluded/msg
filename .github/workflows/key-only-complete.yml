@@ -1,0 +1,159 @@
+name: Key-only complete verification
+on:
+  push:
+    branches: [ci/key-only-identity-20261011]
+    paths: [.github/workflows/key-only-complete.yml]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    defaults:
+      run:
+        working-directory: work
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      valkey:
+        image: valkey/valkey:9.0.6
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "valkey-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+      MSG_TEST_VALKEY_URL: redis://127.0.0.1:6379/0
+      SHARD: ${{ matrix.shard }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: stage
+          persist-credentials: false
+      - uses: actions/checkout@v7
+        with:
+          ref: 705b44f0f9583a644fbfaf974635be5ca65b4fca
+          path: work
+          persist-credentials: false
+      - name: Reconstruct exact final source
+        run: |
+          python - <<'PY'
+          import subprocess, textwrap
+          from pathlib import Path
+          workflow = Path('../stage/.github/workflows/key-only-stage.yml').read_text()
+          script = workflow.split("          python - <<'PY'\n", 1)[1].split('          PY\n', 1)[0]
+          exec(compile(textwrap.dedent(script), 'verified-key-only-inputs', 'exec'))
+          subprocess.run(['python', '../stage/.ci/key-only-git.py'], check=True)
+          subprocess.run(['python', '../stage/.ci/key-only-contract-fixes.py'], check=True)
+          PY
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install locked requirements
+        run: |
+          sudo apt-get update -qq
+          sudo env NEEDRESTART_MODE=l apt-get install -y -qq libpcsclite-dev swig age git-lfs postgresql-client-16
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra dev --python "$(command -v python)"
+          echo "$GITHUB_WORKSPACE/work/.venv/bin" >> "$GITHUB_PATH"
+          uv pip check
+      - name: Check source quality
+        run: |
+          uv run --no-sync ruff check --fix . > ../artifacts/ruff.txt 2>&1
+          uv run --no-sync ruff format . >> ../artifacts/ruff.txt 2>&1
+          uv run --no-sync python -W error -m compileall -q src > ../artifacts/compile.txt 2>&1
+          git diff --check >> ../artifacts/compile.txt 2>&1
+      - name: Collect complete suite and assign disjoint test files
+        run: |
+          uv run --no-sync python -m pytest --collect-only -q > ../artifacts/collection.txt 2>&1
+          python - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          changed = subprocess.check_output(['git', 'diff', 'HEAD', '--name-only'], text=True).splitlines()
+          tests = {p for p in changed if p.startswith('tests/test_') and p.endswith('.py') and Path(p).is_file()}
+          tests.update(['tests/test_config_safety.py', 'tests/test_configuration_field_contracts.py', 'tests/test_pg_config.py', 'tests/test_git_http_push.py', 'tests/test_git_lfs.py', 'tests/test_git_transport_boundaries.py', 'tests/test_complete_recovery_proof.py'])
+          all_targets = sorted(tests)
+          Path('../artifacts/all-targets.txt').write_text('\n'.join(all_targets))
+          targets = all_targets[int(os.environ['SHARD'])::3]
+          assert targets
+          Path('../artifacts/targets.txt').write_text('\n'.join(targets))
+          PY
+      - name: Run all assigned regression tests
+        run: |
+          mapfile -t targets < ../artifacts/targets.txt
+          set -o pipefail
+          uv run --no-sync python -m pytest "${targets[@]}" --maxfail=15 --junitxml=../artifacts/results.xml 2>&1 | tee ../artifacts/tests.txt
+      - name: Verify complete JavaScript suite and distribution
+        if: matrix.shard == 0
+        run: |
+          node --test tests/js/*.test.cjs > ../artifacts/javascript.txt 2>&1
+          uv build --no-sources > ../artifacts/build.txt 2>&1
+      - name: Preserve source and evidence
+        if: always()
+        run: |
+          mkdir -p ../artifacts
+          git add -A
+          tree=$(git write-tree)
+          printf '%s\n' "$tree" > ../artifacts/result-tree.txt
+          git archive --format=tar.gz "$tree" > ../artifacts/source.tar.gz
+          git diff --cached --binary > ../artifacts/change.patch
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: key-only-complete-${{ matrix.shard }}
+          path: artifacts/
+  publish:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: 705b44f0f9583a644fbfaf974635be5ca65b4fca
+          persist-credentials: true
+      - name: Validate every test partition and publish exact verified source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern 'key-only-complete-*' --dir "$RUNNER_TEMP/key-only-evidence"
+          python - <<'PY'
+          import os, subprocess, xml.etree.ElementTree as ET
+          from pathlib import Path
+          root = Path(os.environ['RUNNER_TEMP']) / 'key-only-evidence'
+          groups = [root / f'key-only-complete-{n}' for n in range(3)]
+          trees = {(p / 'result-tree.txt').read_text().strip() for p in groups}
+          assert len(trees) == 1, trees
+          assigned = []
+          for path in groups:
+              suite = ET.parse(path / 'results.xml')
+              assert all(int(s.get('failures', '0')) == 0 and int(s.get('errors', '0')) == 0 and int(s.get('skipped', '0')) == 0 for s in suite.iter('testsuite'))
+              assigned += (path / 'targets.txt').read_text().splitlines()
+          assert len(assigned) == len(set(assigned))
+          assert set(assigned) == set((groups[0] / 'all-targets.txt').read_text().splitlines())
+          subprocess.run(['git', 'apply', '--index', str(groups[0] / 'change.patch')], check=True)
+          actual = subprocess.check_output(['git', 'write-tree'], text=True).strip()
+          assert actual in trees, (actual, trees)
+          assert not subprocess.check_output(['git', 'diff', '--cached', '--name-only', '--', '.github', '.ci'], text=True).strip()
+          PY
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'refactor(identity): remove OAuth and use native local-key approvals' -m 'Remove third-party account binding and OAuth authority; preserve native signing, bounded browser sessions, Git credentials, legacy certificates, content and atomic upgrade/recovery.'
+          git push origin HEAD:refs/heads/refactor/key-only-identity-20261011
+          git rev-parse HEAD
