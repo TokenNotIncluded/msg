@@ -180,7 +180,14 @@ class BrowserSessionBoundary:
             await json({'error': 'identity_protocol_removed'}, 410)(scope, receive, send)
             return
         authorization = request.headers.getlist('authorization')
-        if authorization:
+        # Hosted pages in an opaque sandbox use anonymous authority, even
+        # when ambient Authorization headers or cookies are present. Non-hosted
+        # null-Origin requests remain subject to the router's Origin fence.
+        sandbox_read = (
+            request.method in {'GET', 'HEAD'}
+            and request.headers.getlist('origin') == ['null']
+        )
+        if authorization and not sandbox_read:
             # Standard Git clients carry native, key-issued MSG credentials in
             # Basic auth. The Git adapter still validates their current scope,
             # signing source, revocation and request id; this is not OAuth.
@@ -200,6 +207,7 @@ class BrowserSessionBoundary:
             cookie
             and request.method in {'GET', 'HEAD'}
             and self.sessions.config.enabled
+            and not sandbox_read
             and not path.startswith('/-/')
             and not request.headers.get('x-msg-request')
         )
