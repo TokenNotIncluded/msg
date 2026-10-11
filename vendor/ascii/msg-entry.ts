@@ -64,6 +64,10 @@ function attach(surface: HTMLElement) {
     if ((event as CustomEvent).detail.svgChanged) choose('community');
   });
   if (pause) new MutationObserver(play).observe(pause, {attributes: true, attributeFilter: ['aria-pressed']});
+  // A paused canvas still needs a new ink color when the reader changes theme.
+  // Restarting the renderer preserves elapsed scene time and its pause/motion gates.
+  new MutationObserver(play).observe(document.documentElement, {attributes: true, attributeFilter: ['data-theme']});
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', play);
   surface.dataset.asciiReady = 'true';
   if (controls) controls.hidden = false;
   choose(name);

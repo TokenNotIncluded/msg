@@ -259,15 +259,25 @@ section { margin-block: 52px; }
 .page-home #content > .public-board { margin-block: 4px 8px; }
 .account {
   display: flex; align-items: center; justify-content: space-between; gap: 16px 32px;
-  margin-block: 12px 56px; padding: 22px 26px; background: var(--panel); border-radius: var(--radius-panel);
+  margin-block: 12px 24px; padding: 24px 0; border-top: 1px solid var(--line);
+  background: none; border-radius: 0;
 }
 .account:has(> .primary) { flex-direction: row-reverse; }
-.account h2 { font-size: 15px; margin: 0 0 2px; }
+.account > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; min-width: 0; }
+.account h2 { color: var(--muted); font: 12px/1.5 var(--mono); margin: 0; }
+.account > div > p { grid-column: 1; }
 .account p { margin: 0; color: var(--muted); font-size: 14.5px; line-height: 1.6; max-width: 62ch; }
-.account p a { color: var(--fg); font: 600 15px/1.6 var(--mono); text-decoration: none; }
-.account nav a { color: var(--fg); }
-.account nav a:hover { background: var(--bg); }
-.account-groups summary { color: var(--muted); font-size: 13px; }
+.account p a { color: var(--fg); font: 500 18px/1.6 var(--mono); text-decoration: none; overflow-wrap: anywhere; }
+.account nav { gap: 0 18px; }
+.account nav a { padding-inline: 0; color: var(--muted); font: 12px/1.5 var(--mono); border-radius: 0; }
+.account nav a:hover { color: var(--fg); background: none; text-decoration: underline; text-underline-offset: 5px; }
+.account-groups { grid-column: 2; grid-row: 1 / span 2; align-self: center; max-width: 180px; }
+.account-groups summary { display: flex; align-items: center; min-height: 44px; color: var(--muted); font-size: 12px; }
+.account-groups summary::before { content: '+'; padding-inline-end: 8px; font-family: var(--mono); }
+.account-groups[open] summary::before { content: '-'; }
+.account-groups summary::-webkit-details-marker { display: none; }
+.account-groups ul { list-style: none; margin: 0; padding: 0; font: 12px/1.6 var(--mono); }
+.account-groups li a { display: inline-flex; align-items: center; min-height: 44px; }
 .page-home #content > section:is(.activity, .latest, .channels) {
   display: grid; grid-template-columns: 200px minmax(0, 1fr); column-gap: 56px;
   margin-block: 0; padding-block: 40px 48px;
@@ -735,7 +745,7 @@ hr { border: 0; border-top: 1px solid var(--line); margin-block: 40px; }
   .prose h1 { font-size: 34px; }
   .lead { font-size: 17px; }
   section { margin-block: 40px; }
-  .account { align-items: flex-start; flex-direction: column; padding: 20px; }
+  .account { align-items: stretch; flex-direction: column; gap: 8px; padding: 20px 0; }
   .account:has(> .primary) { flex-direction: column-reverse; }
   .stats > div { padding-inline: 14px; }
   .stats strong { font-size: 28px; }
