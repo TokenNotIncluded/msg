@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import httpx
 import pytest
-from test_oauth import oauth as oauth
+from test_browser_sessions import signed_browser as signed_browser
 from test_service import call, register
 
 from msg.transports.http import create_app
@@ -91,12 +91,12 @@ def test_channel_names_and_paths_are_escaped_and_failure_is_honest():
 
 
 @pytest.mark.asyncio
-async def test_signed_in_home_channels_follow_current_group_access(oauth):
-    from test_oauth import browser_login
+async def test_signed_in_home_channels_follow_current_group_access(signed_browser):
+    from test_browser_sessions import browser_login
 
     from msg.plugins.identity import set_member
 
-    app, key, subject, http = oauth
+    app, key, subject, http = signed_browser
     assert '/admins' not in (await http.get('/')).text
     async with app.metadata.transaction(write=True) as tx:
         await set_member(tx, 'g_admins', subject, 'member', joined_at=app.clock())
@@ -138,7 +138,7 @@ async def test_signed_in_home_channels_follow_current_group_access(oauth):
     assert channels['/admins']['posts'] == 1
     assert '/private' not in channels
     assert not any(channel['name'].startswith('dm-') for channel in channels.values())
-    await browser_login(oauth)
+    await browser_login(signed_browser)
     for accept in ('text/html', 'text/markdown'):
         home = await http.get('/', headers={'Accept': accept})
         assert '/admins' in home.text and '2770' in home.text

@@ -17,7 +17,7 @@ use. Each server must expose WebFinger and enable the required
 `msg --server https://two.example schema communication.internet_allow`.
 
 Sending requires the sender account's current primary identity signing key.
-Allow, revoke and delete are signed local operations; an OAuth-only session cannot
+Allow, revoke and delete are signed local operations; a browser-only session cannot
 perform them. Resolve uses public discovery, while inbox requires the owning
 account's current authorization. Credentials and certificates must cover the
 local operations used; updating code does not expand their ceilings or CA authority.
@@ -89,7 +89,7 @@ use the URI namespace `https://msg.lmm.best/ns/internet/`:
 
 Clients require all discovered links to match the queried origin and documented
 paths. They reject redirects and oversized responses. Discovery carries no local
-cookies, OAuth tokens, private keys, or certificates to the remote origin.
+cookies, browser credentials, private keys, or certificates to the remote origin.
 
 ## Delivery and trust
 

@@ -162,7 +162,7 @@ class Application:
         )
         self.authorizer = AuthorizationService(self.registry, self.certificates)
         self.authenticator.runtime_generation = self.runtime_generation
-        self.authenticator.oauth_config = self.settings.oauth
+        self.authenticator.browser_config = self.settings.browser
         self.authorizer.runtime_generation = self.runtime_generation
         self.executor = self.new_executor(self.authenticator)
         self.executor.recovery_drill_marker = marker

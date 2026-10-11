@@ -434,18 +434,7 @@ class MsgClient:
         if token is None and signer is None and self.state.data.get('api_key'):
             saved = self.state.data['api_key']
             token = (saved['credential_id'], unb64(saved['value']))
-        if (
-            not anonymous
-            and signer is None
-            and operation not in {'identity.oauth_request', 'identity.oauth_approve'}
-        ):
-            from msg.client_oauth import read_session
 
-            session = read_session(self.state)
-            if session is not None:
-                credential, _, encoded = session['access_token'].partition('.')
-                token = (credential, unb64(encoded, limit=32))
-                selected_subject = selected_subject or session['subject_id']
         if token:
             selected_signer = None
         return request_for(
@@ -493,15 +482,6 @@ class MsgClient:
         return result
 
     async def call(self, operation, arguments=None, **kwargs):
-        if (
-            not kwargs.get('anonymous')
-            and kwargs.get('signer') is None
-            and self.signer_override is None
-        ):
-            from msg.client_oauth import read_session, refresh
-
-            if read_session(self.state) is not None:
-                await refresh(self)
         return await self.send(self.prepare(operation, arguments or {}, **kwargs))
 
     async def _website_generation(self, website):

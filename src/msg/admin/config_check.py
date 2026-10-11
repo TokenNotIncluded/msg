@@ -23,54 +23,11 @@ def _vectors():
 
     recipient = recipient_from_public(bytes.fromhex('09' + '00' * 31))
     custodian = {'id': 'test-custodian', 'name': 'Isolated custodian', 'recipient': recipient}
-    # 独立固定默认客户端的验收值，避免与加载器一起漂移。
-    builtin_chatgpt = {
-        'client_id': 'msg-chatgpt',
-        'name': 'MSG for ChatGPT',
-        'redirect_uris': ['https://chatgpt.com/connector_platform_oauth_redirect'],
-        'scopes': [
-            'msg.mcp.message',
-            'msg.mcp.post',
-            'msg.mcp.read',
-            'offline_access',
-            'openid',
-            'profile',
-        ],
-    }
     # These are independent acceptance expectations, not configuration defaults
     # used by the server. Each case asserts the loader's effective Settings value.
     rows = {
-        'login.enabled': (False, True, 'true', 'invalid_login_config'),
-        'login.registration': ('legacy', 'provider_only', 'any_provider', 'invalid_login_config'),
-        'login.session_ttl': (900, 3600, 3601, 'invalid_login_config'),
-        'login.providers': (
-            {},
-            {'passkey': {'enabled': True}},
-            {'unknown': {}},
-            'invalid_login_provider',
-        ),
-        'oauth.enabled': (False, True, 'true', 'invalid_oauth_config'),
-        'oauth.access_ttl': (900, 3600, 3601, 'invalid_oauth_config'),
-        'oauth.session_ttl': (2592000, 7776000, 7776001, 'invalid_oauth_config'),
-        'oauth.clients': (
-            [builtin_chatgpt],
-            [
-                {
-                    'client_id': 'selftest',
-                    'name': 'Config test',
-                    'redirect_uris': ['https://example.invalid/callback'],
-                    'scopes': ['msg.read', 'openid'],
-                },
-            ],
-            [
-                {
-                    'client_id': 'selftest',
-                    'name': 'Config test',
-                    'redirect_uris': ['http://example.invalid/callback'],
-                }
-            ],
-            'invalid_redirect_uri',
-        ),
+        'browser.enabled': (True, False, 'true', 'invalid_browser_config'),
+        'browser.session_ttl': (3600, 86400, 86401, 'invalid_browser_config'),
         'server.service_url': (
             _REQUIRED,
             'https://config.invalid',
@@ -256,19 +213,6 @@ def _effective(settings, field):
     if isinstance(value, Path):
         return str(value)
     if isinstance(value, tuple):
-        if field == 'login.providers':
-            return {item.name: {'enabled': True} for item in value if item.enabled}
-        if field == 'oauth.clients':
-            return [
-                {
-                    'client_id': item.client_id,
-                    'name': item.name,
-                    'redirect_uris': list(item.redirect_uris),
-                    'scopes': sorted(item.scopes),
-                }
-                for item in value
-                if item.client_id != 'msg-cli'
-            ]
         if field == 'recovery.custodians':
             return [
                 {key: getattr(item, key) for key in ('id', 'name', 'recipient')} for item in value
@@ -316,8 +260,6 @@ def configuration_selftest():
                     default_status = 'pass'
                 for accepted, value in ((True, good), (False, bad)):
                     data = deepcopy(baseline)
-                    if field == 'login.enabled':
-                        data['oauth'] = {'enabled': True}
                     mail = None
                     if field.startswith('mail.'):
                         mail = {
@@ -349,8 +291,6 @@ def configuration_selftest():
                             if field == 'identity.credential_delivery_recovery_window'
                             else None
                             if field == 'mail.enabled'
-                            else default + good
-                            if field == 'oauth.clients'
                             else good
                         )
                         require(

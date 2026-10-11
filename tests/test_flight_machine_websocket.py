@@ -13,8 +13,8 @@ from test_flight_websocket import (
     controls,
     flight_server,
     make_private,
-    oauth,
     receive_until,
+    signed_browser,
     snapshot,
 )
 from test_service import NOW
@@ -22,11 +22,11 @@ from test_service import NOW
 from msg.core.codec import wire
 from msg.core.requests import request_for
 
-__all__ = ['flight_server', 'oauth']
+__all__ = ['flight_server', 'signed_browser']
 
 
-async def ticket(flight, oauth):
-    app, key, subject, _ = oauth
+async def ticket(flight, signed_browser):
+    app, key, subject, _ = signed_browser
     nonce = secrets.token_urlsafe(32)
     request = request_for(
         'communication.game_join_ticket',
@@ -55,20 +55,22 @@ async def machine(flight, proof):
     return peer, hello
 
 
-async def revoke(oauth):
-    app, key, _, _ = oauth
+async def revoke(signed_browser):
+    app, key, _, _ = signed_browser
     async with app.metadata.transaction(write=True) as tx:
         old = await tx.credential(key.key_id)
         owner = await tx.subject(old.subject_id)
         await tx.save_credential(replace(old, revoked_at=NOW), owner.auth_version)
 
 
-async def test_signed_machine_ticket_drives_the_same_authoritative_world(flight_server, oauth):
-    _, _, subject, _ = oauth
-    proof = await ticket(flight_server, oauth)
+async def test_signed_machine_ticket_drives_the_same_authoritative_world(
+    flight_server, signed_browser
+):
+    _, _, subject, _ = signed_browser
+    proof = await ticket(flight_server, signed_browser)
     peer, hello = await machine(flight_server, proof)
     assert hello['self']['subject_id'] == subject and not hello['self']['guest']
-    assert hello['self']['handle'].removeprefix('@') == 'oauth-owner'
+    assert hello['self']['handle'].removeprefix('@') == 'key-owner'
     assert flight_server.hub.world.active_count == 1
     assert sum(p.machine_principal is not None for p in flight_server.hub.peers.values()) == 1
     await peer.send_json(controls(1, throttle=1, yaw=0.3, pitch=0.1))
@@ -82,8 +84,10 @@ async def test_signed_machine_ticket_drives_the_same_authoritative_world(flight_
     assert flight_server.hub.world.active_count == 1
 
 
-async def test_ticket_with_a_wrong_nonce_cannot_create_a_machine_player(flight_server, oauth):
-    proof = await ticket(flight_server, oauth)
+async def test_ticket_with_a_wrong_nonce_cannot_create_a_machine_player(
+    flight_server, signed_browser
+):
+    proof = await ticket(flight_server, signed_browser)
     peer = await flight_server.connect()
     await peer.send_json({
         'v': 1,
@@ -97,9 +101,11 @@ async def test_ticket_with_a_wrong_nonce_cannot_create_a_machine_player(flight_s
     assert (await snapshot(valid))['total_players'] == 1
 
 
-async def test_machine_ticket_cannot_mix_cookies_resume_or_observer_mode(flight_server, oauth):
-    proof = await ticket(flight_server, oauth)
-    cookie = await browser_login(oauth)
+async def test_machine_ticket_cannot_mix_cookies_resume_or_observer_mode(
+    flight_server, signed_browser
+):
+    proof = await ticket(flight_server, signed_browser)
+    cookie = await browser_login(signed_browser)
     peer = await flight_server.connect(cookie=cookie)
     await peer.send_json({'v': 1, 'type': 'join', 'ticket': proof})
     await closed(peer, 1008)
@@ -117,16 +123,18 @@ async def test_machine_ticket_cannot_mix_cookies_resume_or_observer_mode(flight_
     assert (await snapshot(valid))['total_players'] == 1
 
 
-async def test_private_machine_reuses_existing_anonymous_public_projection(flight_server, oauth):
-    app, key, subject, _ = oauth
+async def test_private_machine_reuses_existing_anonymous_public_projection(
+    flight_server, signed_browser
+):
+    app, key, subject, _ = signed_browser
     await make_private(app, key, subject)
-    proof = await ticket(flight_server, oauth)
+    proof = await ticket(flight_server, signed_browser)
     signed, hello = await machine(flight_server, proof)
     assert hello['self']['subject_id'] is None and hello['self']['home_body']['private']
     guest, _ = await flight_server.join()
     public = await snapshot(guest, lambda body: body['total_players'] == 2)
     encoded = json.dumps(public)
-    assert subject not in encoded and 'oauth-owner' not in encoded
+    assert subject not in encoded and 'key-owner' not in encoded
     assert 'home_body' not in encoded and 'home_position' not in encoded
     assert hello['self']['home_body']['id'] not in encoded
     assert signed.close_code is None
@@ -134,16 +142,16 @@ async def test_private_machine_reuses_existing_anonymous_public_projection(fligh
 
 @pytest.mark.parametrize('before_join', [False, True])
 async def test_machine_revocation_is_enforced_before_join_and_while_connected(
-    flight_server, oauth, before_join
+    flight_server, signed_browser, before_join
 ):
-    proof = await ticket(flight_server, oauth)
+    proof = await ticket(flight_server, signed_browser)
     if before_join:
-        await revoke(oauth)
+        await revoke(signed_browser)
         peer = await flight_server.connect()
         await peer.send_json({'v': 1, 'type': 'join', 'ticket': proof})
     else:
         peer, _ = await machine(flight_server, proof)
         await snapshot(peer)
-        await revoke(oauth)
+        await revoke(signed_browser)
     await closed(peer, 4013, timeout=2.5)
     await active_count(flight_server, 0)
