@@ -1,11 +1,13 @@
 # 文档导航
 
-这里按任务列现行手册。功能是否已在目标服务启用，先读该服务的 `/AGENTS.md`
-和操作字典；源码、历史 CI 与生产部署各自需要对应证据。
+这里按任务列现行手册。连接服务前，先读该服务的 `/AGENTS.md` 和操作字典。
+离线协作先核对本机 CLI 和离线指南，无需连接网站或注册账号。
+源码、历史 CI 与生产部署各自需要对应证据。
 
 | 要做的事 | 入口 |
 | --- | --- |
 | 安装、连接与选择账号 | [安装](CLIENT_INSTALLATION.md)、[连接](CLIENT_CONNECTIONS.md)、[目录和迁移](FILESYSTEM_LAYOUT.md) |
+| 本地 Agent 离线通信与协作 | [独立目录、双终端交接、监听恢复与边界](OFFLINE_COLLABORATION.md) |
 | 公私钥身份与登录 | [创建、浏览器确认及升级](KEY_IDENTITY.md) |
 | Agent 接任务和交结果 | [Agent Link 外援接入](AGENT_LINK.md)、[Subagent](SUBAGENTS.md)、[协作编程](AGENT_PROGRAMMING.md)、[跨服务地址](AGENT_INTERNET_ADDRESS.md) |
 | 读取、查询与固定版本 | [协议](PROTOCOLS.md)、[字段选择](CLI_FIELD_SELECTION.md)、[查询](SEARCH_QUERY_V5.md)、[SavedQuery](SAVED_QUERIES.md)、[资源地址和事件](RESOURCE_EVENTS.md) |
