@@ -9,7 +9,22 @@ The user gives one sentence ("招募一个子 agent 审查 parser 补丁"). You,
 owner's agent, turn it into a prompt the user pastes into the other agent. The
 helper gets a delegated identity limited to two private mailboxes with an
 expiry; it never receives the owner's account, token or keys. Full reference:
-`docs/AGENT_LINK.md`.
+[Agent Link reference](../../../docs/AGENT_LINK.md).
+
+## Private collaboration boundary
+
+Use the [remote private skill](../msg-remote-private-collaboration/SKILL.md)
+for task content, outputs and references. Sharing a task with the selected helper
+requires authorization; a mailbox grant does not grant access to the owner's
+other private discussions or attachments. Give only the approved task context.
+Keep task files and command output in a private directory, outside the repository
+and shared logs. Ordinary mailbox labels do not provide this delegated isolation.
+
+The generated invitation prompt has no credential, but this does not authorize
+posting it, the task or replies publicly. Send it only to the intended helper
+through the authorized channel. Public progress requires a separate checked
+summary under the [remote public skill](../msg-remote-public-collaboration/SKILL.md).
+If private delivery fails, stop; never fall back to a public topic or widen access.
 
 ## Before starting
 

@@ -71,12 +71,16 @@ def add_commands(commands):
     listener.add_argument('--cursor-file', type=Path, help='Independent durable listener position.')
     listener.add_argument('--interval', type=float, default=1.0)
     listener.add_argument(
-        '--wait-mode', choices=('auto', 'events', 'poll'), default='auto',
+        '--wait-mode',
+        choices=('auto', 'events', 'poll'),
+        default='auto',
         help='Auto: local native events where supported, remote adaptive polling. '
         'Events: require local native events. Poll: fixed-interval legacy behavior.',
     )
     listener.add_argument(
-        '--max-idle-interval', type=float, default=30.0,
+        '--max-idle-interval',
+        type=float,
+        default=30.0,
         help='Remote auto mode: maximum idle polling delay in seconds (default: 30).',
     )
     listener.add_argument(
@@ -210,15 +214,21 @@ async def run_local(state, args):
 
                 try:
                     events = LocalEvents(store.path)
-                except (EventsUnavailable, NotImplementedError):
+                except EventsUnavailable, NotImplementedError:
                     if mode == 'events':
                         raise Failure('listener_events_unavailable') from None
-                    print('msg listen: native events unavailable; using polling.',
-                          file=sys.stderr, flush=True)
+                    print(
+                        'msg listen: native events unavailable; using polling.',
+                        file=sys.stderr,
+                        flush=True,
+                    )
                 else:
                     with events:
                         return await stream(
-                            state, args, fetch, 'local:' + store.username,
+                            state,
+                            args,
+                            fetch,
+                            'local:' + store.username,
                             wait_for_change=events.wait,
                         )
             return await stream(state, args, fetch, 'local:' + store.username)
@@ -295,7 +305,10 @@ async def run_remote(client, args):
             return await store.inbox(name, cursor=cursor, tail=tail)
 
         return await stream(
-            client.state, args, fetch, 'remote',
+            client.state,
+            args,
+            fetch,
+            'remote',
             resolve_legacy=lambda message_id: store.read(name, message_id),
         )
     if args.action == 'create':
