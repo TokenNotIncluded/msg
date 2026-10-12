@@ -99,7 +99,9 @@ Call these operations through the existing signed client/API:
 
 Mutations provide the plan's expected generation in the ordinary request envelope.
 The database serializes writes across processes. A competing generation loses
-rather than claiming the same slot. Retry a lost response with the **same request
+rather than claiming the same slot. If no task is ready and no lease expired,
+`task_claim` returns `task_not_ready` without writing a revision or completion
+event. Wait for a new event instead of retrying immediately. Retry a lost response with the **same request
 ID and unchanged packet**. After a confirmed generation conflict, read the current
 plan and make a new decision/request. Do not change a packet under an existing ID.
 

@@ -14,7 +14,8 @@ async def test_resume_refreshes_pending_body_and_drops_revoked_item(tmp_path):
     async def fetch(cursor, tail=False):
         return {
             'items': [{'id': 1}, {'id': 2, 'body': 'old secret'}, {'id': 3}],
-            'cursor': 'end', 'has_more': False,
+            'cursor': 'end',
+            'has_more': False,
         }
 
     await listen(fetch, context={}, cursor_file=path, max_events=1, output=output)
@@ -23,10 +24,16 @@ async def test_resume_refreshes_pending_body_and_drops_revoked_item(tmp_path):
         return {'id': 2, 'body': 'current allowed'} if item['id'] == 2 else None
 
     await listen(
-        fetch, context={}, cursor_file=path, once=True, output=output, revalidate=refresh,
+        fetch,
+        context={},
+        cursor_file=path,
+        once=True,
+        output=output,
+        revalidate=refresh,
     )
     assert [json.loads(line) for line in output.getvalue().splitlines()] == [
-        {'id': 1}, {'id': 2, 'body': 'current allowed'},
+        {'id': 1},
+        {'id': 2, 'body': 'current allowed'},
     ]
     assert json.loads(path.read_text())['pending'] == []
 
@@ -46,7 +53,9 @@ async def test_resume_permission_failure_leaves_checkpoint_and_stdout_unchanged(
         raise Failure('permission_denied')
 
     with pytest.raises(Failure, match='permission_denied'):
-        await listen(fetch, context={}, cursor_file=path, once=True, output=output, revalidate=refresh)
+        await listen(
+            fetch, context={}, cursor_file=path, once=True, output=output, revalidate=refresh
+        )
     assert path.read_bytes() == original
     assert output.getvalue() == stdout
 

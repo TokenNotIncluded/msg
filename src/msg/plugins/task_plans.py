@@ -39,8 +39,13 @@ WORKERS = {'type': 'array', 'items': IDENTIFIER, 'minItems': 1, 'maxItems': 64, 
 LEASE = {'type': 'integer', 'minimum': 1, 'maximum': 3600}
 # Loss of resource access is not a transient failure or a reason to publish a result.
 HIDDEN = {
-    'permission_denied', 'credential_ceiling', 'certificate_gate', 'delegation_scope',
-    'ancestor_inactive', 'not_found', 'collaboration_ref_forbidden',
+    'permission_denied',
+    'credential_ceiling',
+    'certificate_gate',
+    'delegation_scope',
+    'ancestor_inactive',
+    'not_found',
+    'collaboration_ref_forbidden',
 }
 
 
@@ -77,12 +82,20 @@ def install(app, op):
             'status': 'open',
             'scheduler_version': 1,
             'workers': workers,
-            'graph': task_graph.create(args['tasks'], args['concurrency']),
+            'graph': task_graph.create(wire(args['tasks']), args['concurrency']),
         }
         parent = await _folder(app, ctx, request, tx, subject, 'request')
         resource = await create_resource(
-            app, ctx, request, tx, parent=parent, type=KINDS['request'], name=new_id('plan'),
-            body=canonical(record), media_type='application/json', mode=0o600,
+            app,
+            ctx,
+            request,
+            tx,
+            parent=parent,
+            type=KINDS['request'],
+            name=new_id('plan'),
+            body=canonical(record),
+            media_type='application/json',
+            mode=0o600,
         )
         return _result(resource, record)
 
@@ -98,29 +111,46 @@ def install(app, op):
     @op('communication.task_status', obj({'id': IDENTIFIER}, ('id',)), effect='read')
     async def status(ctx, request, tx):
         _, resource, revision, record = await load(ctx, request, tx)
-        return HandlerOutput(data={
-            'plan': await _project(app, ctx, request, tx, resource, revision, record),
-        })
+        return HandlerOutput(
+            data={
+                'plan': await _project(app, ctx, request, tx, resource, revision, record),
+            }
+        )
 
     async def save(ctx, request, tx, resource, revision, record, graph, *, task=None):
         state = task_graph.summary(graph)
         record = {**record, 'graph': graph, 'updated_at': wire(ctx.now)}
         record['status'] = (
-            'fulfilled' if state['succeeded'] == state['total']
-            else 'cancelled' if state['done'] else 'claimed' if state['running'] else 'open'
+            'fulfilled'
+            if state['succeeded'] == state['total']
+            else 'cancelled'
+            if state['done']
+            else 'claimed'
+            if state['running']
+            else 'open'
         )
         resource = await revise_resource(
-            app, ctx, request, tx, resource, canonical(record), 'application/json',
-            relations=revision.relations, preserve_existing_relations=True,
+            app,
+            ctx,
+            request,
+            tx,
+            resource,
+            canonical(record),
+            'application/json',
+            relations=revision.relations,
+            preserve_existing_relations=True,
         )
         output = _result(resource, record)
         # No cached instructions, dependency results, or private reference bodies.
-        return HandlerOutput(resources=output.resources, data={
-            **output.data,
-            'task_id': task['id'] if task else None,
-            'attempt': task['attempt'] if task else None,
-            'summary': state,
-        })
+        return HandlerOutput(
+            resources=output.resources,
+            data={
+                **output.data,
+                'task_id': task['id'] if task else None,
+                'attempt': task['attempt'] if task else None,
+                'summary': state,
+            },
+        )
 
     @op(
         'communication.task_claim',
@@ -143,9 +173,21 @@ def install(app, op):
             else:
                 permitted.add(name)
         graph, task = task_graph.claim(
-            graph, worker=subject + '#' + request.arguments['worker'], attempt=new_id('attempt'),
-            now=ctx.now.timestamp(), lease_seconds=request.arguments.get('lease_seconds', 300),
+            graph,
+            worker=subject + '#' + request.arguments['worker'],
+            attempt=new_id('attempt'),
+            now=ctx.now.timestamp(),
+            lease_seconds=request.arguments.get('lease_seconds', 300),
             permitted=permitted,
+        )
+        require(
+            task is not None or graph != record['graph'],
+            'task_not_ready',
+            details={
+                'id': resource.id,
+                'generation': resource.generation,
+                'summary': task_graph.summary(graph),
+            },
         )
         return await save(ctx, request, tx, resource, revision, record, graph, task=task)
 
@@ -175,12 +217,22 @@ def install(app, op):
                 relations.append(relation)
             slot = relations.index(relation)
         graph = task_graph.finish(
-            record['graph'], task_id=args['task_id'], worker=subject + '#' + args['worker'],
-            attempt=args['attempt'], now=ctx.now.timestamp(), result_slot=slot,
+            record['graph'],
+            task_id=args['task_id'],
+            worker=subject + '#' + args['worker'],
+            attempt=args['attempt'],
+            now=ctx.now.timestamp(),
+            result_slot=slot,
             error=args.get('error'),
         )
         return await save(
-            ctx, request, tx, resource, replace(revision, relations=tuple(relations)), record, graph,
+            ctx,
+            request,
+            tx,
+            resource,
+            replace(revision, relations=tuple(relations)),
+            record,
+            graph,
             task=next(task for task in graph['tasks'] if task['id'] == args['task_id']),
         )
 
@@ -193,11 +245,20 @@ def install(app, op):
         subject, resource, revision, record = await load(ctx, request, tx, mutate=True)
         args = request.arguments
         graph = task_graph.renew(
-            record['graph'], task_id=args['task_id'], worker=subject + '#' + args['worker'],
-            attempt=args['attempt'], now=ctx.now.timestamp(),
+            record['graph'],
+            task_id=args['task_id'],
+            worker=subject + '#' + args['worker'],
+            attempt=args['attempt'],
+            now=ctx.now.timestamp(),
             lease_seconds=args.get('lease_seconds', 300),
         )
         return await save(
-            ctx, request, tx, resource, revision, record, graph,
+            ctx,
+            request,
+            tx,
+            resource,
+            revision,
+            record,
+            graph,
             task=next(task for task in graph['tasks'] if task['id'] == args['task_id']),
         )
