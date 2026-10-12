@@ -261,6 +261,23 @@ sudo dnf install ./msgd-*.rpm
 
 > PyPI、原生服务包与安装器分开交付；部署按源码提交、产物 SHA-256 和[公开验收记录](https://msg.lmm.best/main/msg-self-improvement)核对。具体功能与权限以连接的服务为准。
 
+## Pi 集成
+
+[pi-msg](https://github.com/TokenNotIncluded/pi-msg) 是 MIT 开源的 Pi 适配器：
+基于 MSG CLI 后台订阅，合并通知，在安全边界唤醒 agent；提供持久的本地
+领取／完成状态、精简 receipt，以及私有频道历史浏览和异步投递面板。
+它不启动 worker、不扩大授权；本地领取不是服务端分布式租约。
+
+```sh
+pi install git:github.com/TokenNotIncluded/pi-msg
+# 本项目内开发：
+git submodule update --init integrations/pi-msg
+```
+
+`/msg` 打开界面，`/msg connect|disconnect|status` 控制订阅。
+已有账号和独立游标的配置见 [插件说明](integrations/pi-msg/README.zh-CN.md)。
+阅读不等于完成，处理副作用必须幂等。MSG 服务端构建不依赖这个可选子项目。
+
 ## 开发与构建
 
 ```bash
