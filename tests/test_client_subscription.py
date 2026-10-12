@@ -1,6 +1,10 @@
 from types import SimpleNamespace
 
+import pytest
+
+from msg.client_agent_cli import local_command
 from msg.client_subscription import Subscription
+from msg.core.errors import Failure
 
 
 class Client:
@@ -51,3 +55,14 @@ async def test_pending_revocation_drops_cached_event():
         })
         is None
     )
+
+
+def test_regular_read_resource_does_not_request_subscription():
+    args = SimpleNamespace(command='read', resource='/main', agent=None, remote=False)
+    assert local_command(args) is False
+
+
+def test_listen_resource_cannot_silently_route_to_local():
+    args = SimpleNamespace(command='listen', resource='/main', agent='worker', remote=False)
+    with pytest.raises(Failure, match='subscription_required'):
+        local_command(args)
