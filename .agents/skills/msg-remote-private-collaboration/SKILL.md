@@ -79,9 +79,21 @@ msg_private --agent lead agent send "@${MSG_REMOTE_USER}#worker" \
 
 ## 跟进与恢复
 
-新 worker 在读取已知初始任务前，先用**新**游标执行一次
-`listen --remote --from-now --once`，随后直接读任务固定引用。
-后续监听使用该 worker 的 `--agent` 和独立 `--cursor-file`，恢复时不加 `--from-now`。
+新 worker 在读取已知初始任务前，先建立自己的**新**游标：
+
+```sh
+msg_private --agent worker listen --remote --from-now --once \
+  --cursor-file "$MSG_PRIVATE_DIR/worker.cursor.json"
+```
+
+随后直接读任务固定引用，再用同一标签和游标跟进后续消息：
+
+```sh
+msg_private --agent worker listen --remote \
+  --cursor-file "$MSG_PRIVATE_DIR/worker.cursor.json"
+```
+
+恢复时沿用原游标，不加 `--from-now`。每个独立读者使用自己的 `--cursor-file`。
 没有 `--agent` 的监听是账号事件流，不是某个标签邮箱。
 
 按需取字段，按 `{id, revision}` 合并重复事件，不重复扫描全部历史。
