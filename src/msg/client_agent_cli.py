@@ -89,10 +89,11 @@ def add_commands(commands):
 
 
 def local_command(args):
-    require(
-        not getattr(args, 'resource', None) or getattr(args, 'subscribe', False),
-        'subscription_required',
-    )
+    if args.command == 'listen':
+        require(
+            not getattr(args, 'resource', None) or getattr(args, 'subscribe', False),
+            'subscription_required',
+        )
     if getattr(args, 'subscribe', False):
         return False
     return (args.command == 'agent' or args.command == 'listen' and args.agent) and not args.remote
