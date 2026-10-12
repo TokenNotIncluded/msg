@@ -21,3 +21,6 @@ htmlcov/
 .impeccable/review/
 .playwright-cli/
 /output/
+
+# Private per-workspace MSG account/mailbox and subscription binding
+/.pi/msg.json

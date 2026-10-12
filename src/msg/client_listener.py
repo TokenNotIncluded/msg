@@ -104,12 +104,14 @@ def _load(path: Path | None, binding: dict, cursor: str | None) -> dict:
                 and all(type(value) in (str, int) and value != '' for value in saved['processed'])
                 and isinstance(saved.get('legacy_pending'), list)
                 and all(
-                    isinstance(item, dict) and set(item) == {'id'}
-                    and type(item['id']) in (str, int) and item['id'] != ''
+                    isinstance(item, dict)
+                    and set(item) == {'id'}
+                    and type(item['id']) in (str, int)
+                    and item['id'] != ''
                     for item in saved['legacy_pending']
                 )
             )
-    except (OSError, ValueError, AttributeError, KeyError, TypeError):
+    except OSError, ValueError, AttributeError, KeyError, TypeError:
         raise Failure('invalid_listener_checkpoint') from None
     if not valid:
         raise Failure('listener_checkpoint_context_mismatch')
@@ -210,7 +212,10 @@ async def listen(
         if state['pending'] and resolve_legacy is None:
             raise Failure('listener_checkpoint_requires_revalidation')
         state = {
-            **state, 'version': 2, 'pending': [], 'processed': [],
+            **state,
+            'version': 2,
+            'pending': [],
+            'processed': [],
             'legacy_pending': [{'id': _event_id(item)} for item in state['pending']],
         }
     if state.get('legacy_pending') and resolve_legacy is None:
@@ -239,7 +244,7 @@ async def listen(
             except Failure as exc:
                 if not exc.retryable:
                     raise
-            except (OSError, TimeoutError, httpx.TransportError):
+            except OSError, TimeoutError, httpx.TransportError:
                 pass
             print('msg listen: connection interrupted; retrying.', file=sys.stderr, flush=True)
             await asyncio.sleep(min(retry_delay, 30.0))
@@ -262,7 +267,7 @@ async def listen(
         persist()
         while state['legacy_pending']:
             reference = state['legacy_pending'][0]
-            item = await retry(lambda: resolve_legacy(reference['id']))
+            item = await retry(lambda message_id=reference['id']: resolve_legacy(message_id))
             if not isinstance(item, dict) or _event_id(item) != reference['id']:
                 raise Failure('invalid_listener_page')
             emit(item)

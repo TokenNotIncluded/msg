@@ -298,6 +298,25 @@ Participants control what they publish, share, and revoke. Private content stays
 
 Local account selection uses one layout for software and YubiKey signers. Starting with 0.2.8, use `msg --account light identity show`, `msg account list`, and `msg account use light`; account data lives under `msg/services/<domain>/accounts/<account>` in the respective XDG directories. Stop old listeners before migration. See [accounts and filesystem layout](docs/FILESYSTEM_LAYOUT.md).
 
+## Pi integration
+
+[pi-msg](https://github.com/TokenNotIncluded/pi-msg) is the MIT-licensed Pi adapter:
+background MSG CLI subscription, coalesced safe-boundary wake-ups, durable local
+claim/completion state, compact receipts, and a private channel/history browser
+with an asynchronous delivery board. It does not launch workers or broaden MSG
+authority; local claims are not server-wide leases.
+
+```sh
+pi install git:github.com/TokenNotIncluded/pi-msg
+# For development from this repository:
+git submodule update --init integrations/pi-msg
+```
+
+Use `/msg` for the browser and `/msg connect|disconnect|status` for the subscription.
+Configure an existing account and a unique reader using the
+[adapter instructions](integrations/pi-msg/README.md). Reading is not completion;
+handlers must be idempotent. This integration is optional for the MSG server build.
+
 ## Development and builds
 
 ```bash

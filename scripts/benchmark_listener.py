@@ -88,11 +88,17 @@ async def trial(function, native, durations, workers, interval, idle_seconds):
                 pass
 
         options = {'wait_for_change': events.wait} if events is not None else {}
-        reader = asyncio.create_task(function(
-            fetch, context={'source': 'local', 'agent': 'lead'},
-            cursor_file=directory / 'cursor.json', interval=interval,
-            max_events=len(durations), output=Output(), **options,
-        ))
+        reader = asyncio.create_task(
+            function(
+                fetch,
+                context={'source': 'local', 'agent': 'lead'},
+                cursor_file=directory / 'cursor.json',
+                interval=interval,
+                max_events=len(durations),
+                output=Output(),
+                **options,
+            )
+        )
         tasks = []
         try:
             await asyncio.wait_for(ready.wait(), 10)
@@ -113,24 +119,35 @@ async def trial(function, native, durations, workers, interval, idle_seconds):
                     await asyncio.sleep(durations[number])
                     body = json.dumps({'task': number, 'completed_ns': time.monotonic_ns()})
                     await asyncio.to_thread(
-                        store.send, 'worker', 'lead', body, message_id=f'task-{number}',
+                        store.send,
+                        'worker',
+                        'lead',
+                        body,
+                        message_id=f'task-{number}',
                     )
                     await acknowledged[number].wait()
 
             started, cpu, active_reads = time.perf_counter(), time.process_time(), reads
             tasks = [asyncio.create_task(worker(index)) for index in range(workers)]
-            await asyncio.wait_for(asyncio.gather(*tasks, reader), max(30, len(durations) * interval * 3))
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, reader), max(30, len(durations) * interval * 3)
+            )
             elapsed, cpu_seconds = time.perf_counter() - started, time.process_time() - cpu
             expected = {f'task-{number}' for number in range(len(durations))}
             if seen != expected:
                 raise RuntimeError('Incomplete task results')
             ordered = sorted(latencies)
             return {
-                'status': 'measured', 'workers': workers, 'tasks': len(durations),
-                'task_successes': len(seen), 'duplicate_deliveries': 0,
-                'total_task_seconds': elapsed, 'active_cpu_seconds': cpu_seconds,
+                'status': 'measured',
+                'workers': workers,
+                'tasks': len(durations),
+                'task_successes': len(seen),
+                'duplicate_deliveries': 0,
+                'total_task_seconds': elapsed,
+                'active_cpu_seconds': cpu_seconds,
                 'active_source_reads': reads - active_reads,
-                'http_requests': requests['attempts'], 'idle': idle,
+                'http_requests': requests['attempts'],
+                'idle': idle,
                 'completion_to_observation_ms': {
                     'median': statistics.median(latencies),
                     'p95_nearest_rank': ordered[math.ceil(len(ordered) * 0.95) - 1],
@@ -147,27 +164,37 @@ async def measure(args):
     modes = [('local_events', listen, True)]
     missing = {
         'remote_events': {'status': 'not_implemented'},
-        'harness_native': {'status': 'not_measured', 'reason': 'No native harness adapters or runs.'},
+        'harness_native': {
+            'status': 'not_measured',
+            'reason': 'No native harness adapters or runs.',
+        },
         'remote_polling': {'status': 'separate_test', 'artifact': 'remote-idle.json'},
     }
     if args.baseline_listener:
         modes.append(('legacy_listen', load_baseline(args.baseline_listener), False))
     else:
-        missing['legacy_listen'] = {'status': 'not_measured', 'reason': 'Provide --baseline-listener.'}
+        missing['legacy_listen'] = {
+            'status': 'not_measured',
+            'reason': 'Provide --baseline-listener.',
+        }
     if platform.system() != 'Linux':
         modes = [entry for entry in modes if not entry[2]]
-        missing['local_events'] = {'status': 'not_supported', 'reason': 'Native test requires Linux.'}
+        missing['local_events'] = {
+            'status': 'not_supported',
+            'reason': 'Native test requires Linux.',
+        }
     results, failed = [], False
     for number in range(args.trials):
         rng = random.Random(args.seed + number)
         durations = [rng.uniform(0.02, 0.08) for _ in range(args.tasks)]
         # Alternate order to reduce systematic warm-up/order bias.
-        for name, function, native in (modes if number % 2 == 0 else list(reversed(modes))):
+        for name, function, native in modes if number % 2 == 0 else list(reversed(modes)):
             pair = {}
             for workers in (1, args.workers):
                 try:
-                    row = await trial(function, native, durations, workers,
-                                      args.poll_interval, args.idle_seconds)
+                    row = await trial(
+                        function, native, durations, workers, args.poll_interval, args.idle_seconds
+                    )
                 except Exception as exc:
                     traceback.print_exc()
                     row = {'status': 'failed', 'error_type': type(exc).__name__, 'workers': workers}
@@ -175,20 +202,30 @@ async def measure(args):
                 pair[str(workers)] = row
             result = {'mode': name, 'trial': number, 'runs': pair}
             if all(row['status'] == 'measured' for row in pair.values()):
-                speedup = pair['1']['total_task_seconds'] / pair[str(args.workers)]['total_task_seconds']
+                speedup = (
+                    pair['1']['total_task_seconds'] / pair[str(args.workers)]['total_task_seconds']
+                )
                 result.update(observed_speedup=speedup, parallel_efficiency=speedup / args.workers)
             results.append(result)
     return {
-        'schema_version': 1, 'status': 'failed' if failed else 'measured',
-        'revision': args.revision, 'python': platform.python_version(),
-        'platform': platform.platform(), 'poll_interval_seconds': args.poll_interval,
-        'idle_seconds_requested': args.idle_seconds, 'seed': args.seed,
+        'schema_version': 1,
+        'status': 'failed' if failed else 'measured',
+        'revision': args.revision,
+        'python': platform.python_version(),
+        'platform': platform.platform(),
+        'poll_interval_seconds': args.poll_interval,
+        'idle_seconds_requested': args.idle_seconds,
+        'seed': args.seed,
         'baseline_sha256': hashlib.sha256(args.baseline_listener.read_bytes()).hexdigest()
-            if args.baseline_listener else None,
+        if args.baseline_listener
+        else None,
         'workload': 'Seeded synthetic sleep tasks, real local MSG SQLite send/read/checkpoint operations.',
         'scope': 'Single process with concurrent tasks and SQLite worker threads; not LLM or harness work.',
-        'model_calls': 0, 'model_tokens': None, 'ranking': None,
-        'missing_comparisons': missing, 'results': results,
+        'model_calls': 0,
+        'model_tokens': None,
+        'ranking': None,
+        'missing_comparisons': missing,
+        'results': results,
     }
 
 
