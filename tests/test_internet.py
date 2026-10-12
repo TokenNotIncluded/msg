@@ -25,7 +25,7 @@ async def peer(tmp_path, installation_seed, pg_cluster):
         from msg.admin.root import _approve_csr, _provision
 
         root = tmp_path / 'peer'
-        settings = write_example(root / 'etc', root / 'data', 'http://peer.test', postgres_dsn=dsn)
+        settings = write_example(root / 'etc', root / 'data', 'https://peer.test', postgres_dsn=dsn)
         app = Application(settings, clock=lambda: NOW)
         csr, root_key = await _provision(app, 'correct-horse-test-passphrase')
         await _approve_csr(app, csr, root_key, expected_digest=None, operator='test-fixture')
@@ -51,7 +51,7 @@ async def test_two_servers_discover_allow_send_reply_and_replay(installed, peer)
         ) as peer_http,
     ):
         alice = await discover(home_http, 'alice@testserver', allow_http=True)
-        bob = await discover(peer_http, 'bob@peer.test', allow_http=True)
+        bob = await discover(peer_http, 'bob@peer.test')
         assert alice['subject_id'] == alice_id and bob['subject_id'] == bob_id
         envelope = make_envelope(alice, bob, '你好，来自另一台 MSG。', alice_key, now=NOW)
         denied = await call(peer, 'communication.internet_receive', {'envelope': envelope})
