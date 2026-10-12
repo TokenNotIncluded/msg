@@ -102,8 +102,14 @@ def install(app, op):
             'epoch': tx.setting('authorization_epoch', 0),
             'watches': sorted(watches),
             'topics': [tuple(row) for row in memberships],
-            **({'credential_id': ctx.principal.credential_id,
-                'certificates': sorted(ctx.principal.certificates)} if subscription else {}),
+            **(
+                {
+                    'credential_id': ctx.principal.credential_id,
+                    'certificates': sorted(ctx.principal.certificates),
+                }
+                if subscription
+                else {}
+            ),
         })
         floor = tx.setting('sync_floor', 0)
         position = floor
@@ -212,11 +218,15 @@ def install(app, op):
                 'cursor': token,
                 **({'next': next_link(app, request.operation, args)} if not subscription else {}),
                 'next_requires_auth': True,
-                **({
-                    'has_more': position < tail,
-                    'authority_changed': authority_changed,
-                    'wait_supported': getattr(app.metadata, 'event_signal', None) is not None,
-                } if subscription else {}),
+                **(
+                    {
+                        'has_more': position < tail,
+                        'authority_changed': authority_changed,
+                        'wait_supported': getattr(app.metadata, 'event_signal', None) is not None,
+                    }
+                    if subscription
+                    else {}
+                ),
             }
         )
 

@@ -22,9 +22,13 @@ class Subscription:
             args['cursor'] = cursor
         if tail:
             args['tail'] = True
-        result = self.client.checked(await self.client.call(
-            'communication.events', args, contract_version=2,
-        ))
+        result = self.client.checked(
+            await self.client.call(
+                'communication.events',
+                args,
+                contract_version=2,
+            )
+        )
         return wire(result.data)
 
     async def fetch(self, cursor, tail=False):
@@ -32,10 +36,14 @@ class Subscription:
         if page.get('authority_changed'):
             print(
                 'msg listen: authority changed; position retained. Refresh derived resource state.',
-                file=sys.stderr, flush=True,
+                file=sys.stderr,
+                flush=True,
             )
         if (
-            not self.once and not tail and not page['items'] and not page['has_more']
+            not self.once
+            and not tail
+            and not page['items']
+            and not page['has_more']
             and not page.get('wait_supported')
         ):
             # Explicitly advertised fallback, not a silent switch of source or account.

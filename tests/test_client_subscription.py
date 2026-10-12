@@ -42,6 +42,12 @@ async def test_pending_revalidation_returns_new_projection_not_cached_body():
 
 async def test_pending_revocation_drops_cached_event():
     client = Client([{'items': [{'id': 'e_later', 'seq': 11}], 'cursor': 'end', 'has_more': True}])
-    assert await Subscription(client).revalidate({
-        'id': 'e_done', 'seq': 10, 'before_cursor': 'before', 'secret': 'stale',
-    }) is None
+    assert (
+        await Subscription(client).revalidate({
+            'id': 'e_done',
+            'seq': 10,
+            'before_cursor': 'before',
+            'secret': 'stale',
+        })
+        is None
+    )

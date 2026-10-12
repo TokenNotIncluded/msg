@@ -66,7 +66,8 @@ def add_commands(commands):
         help='Exact event type; repeat to include more types.',
     )
     listener.add_argument(
-        '--subscribe', action='store_true',
+        '--subscribe',
+        action='store_true',
         help='Use authorized server event waits (events@2); no mailbox or offline fallback.',
     )
     listener.add_argument('--resource', help='With --subscribe, limit events to this resource.')
@@ -88,6 +89,10 @@ def add_commands(commands):
 
 
 def local_command(args):
+    require(
+        not getattr(args, 'resource', None) or getattr(args, 'subscribe', False),
+        'subscription_required',
+    )
     if getattr(args, 'subscribe', False):
         return False
     return (args.command == 'agent' or args.command == 'listen' and args.agent) and not args.remote
@@ -237,11 +242,18 @@ async def run_remote(client, args):
 
         require(not args.agent, 'subscription_requires_account_reader')
         source = Subscription(
-            client, resource=args.resource, once=args.once, interval=args.interval,
+            client,
+            resource=args.resource,
+            once=args.once,
+            interval=args.interval,
         )
         return await stream(
-            client.state, args, source.fetch, 'subscription:' + (args.resource or ''),
-            revalidate=source.revalidate, server_wait=True,
+            client.state,
+            args,
+            source.fetch,
+            'subscription:' + (args.resource or ''),
+            revalidate=source.revalidate,
+            server_wait=True,
         )
     require(not getattr(args, 'resource', None), 'subscription_required')
     if args.command == 'listen' and not args.agent:
@@ -272,13 +284,18 @@ async def run_remote(client, args):
             event = wire(client.checked(current).data)
             # Old audit bodies must not survive a current-authorization refresh.
             return {
-                **event, 'type': event['operation'],
+                **event,
+                'type': event['operation'],
                 'data': {'operation': event['operation']},
                 'resources': [address['ref'] for address in event['resources']],
             }
 
         return await stream(
-            client.state, args, fetch, 'account-events', revalidate=revalidate,
+            client.state,
+            args,
+            fetch,
+            'account-events',
+            revalidate=revalidate,
         )
     from msg.client_subagents_remote import RemoteAgents
 

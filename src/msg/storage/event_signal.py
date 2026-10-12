@@ -49,7 +49,7 @@ class EventSignal:
                     async with aclosing(connection.notifies()) as notices:
                         async for _ in notices:
                             self._bump()
-            except (psycopg.Error, OSError):
+            except psycopg.Error, OSError:
                 # The durable log remains authoritative. Reconnection wakes
                 # every reader, which repeats its independently authorized read.
                 pass

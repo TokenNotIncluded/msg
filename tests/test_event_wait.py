@@ -40,7 +40,9 @@ def executor(monkeypatch, read):
     signal = Signal()
     service.metadata = SimpleNamespace(event_signal=signal)
     packet = SimpleNamespace(
-        operation='communication.events', contract_version=2, arguments={'wait_ms': 200},
+        operation='communication.events',
+        contract_version=2,
+        arguments={'wait_ms': 200},
     )
     return service, signal, packet
 

@@ -29,7 +29,9 @@ def create(tasks, concurrency):
         'unknown_task_dependency',
     )
     try:
-        order = list(TopologicalSorter({k: t['dependencies'] for k, t in records.items()}).static_order())
+        order = list(
+            TopologicalSorter({k: t['dependencies'] for k, t in records.items()}).static_order()
+        )
     except CycleError:
         require(False, 'task_dependency_cycle')
     return {'concurrency': concurrency, 'tasks': [records[name] for name in order]}
@@ -51,7 +53,7 @@ def settled(graph, now):
 
 def summary(graph):
     tasks = {task['id']: task for task in graph['tasks']}
-    counts = {status: 0 for status in ('pending', 'running', 'succeeded', 'failed', 'blocked')}
+    counts = dict.fromkeys(('pending', 'running', 'succeeded', 'failed', 'blocked'), 0)
     ready = []
     for task in tasks.values():
         counts[task['status']] += 1
@@ -78,8 +80,11 @@ def claim(graph, *, worker, attempt, now, lease_seconds, permitted=None):
     for task in graph['tasks']:
         if task['id'] in state['ready'] and (permitted is None or task['id'] in permitted):
             task.update(
-                status='running', worker=worker, attempt=attempt,
-                lease_until=now + lease_seconds, started_at=now,
+                status='running',
+                worker=worker,
+                attempt=attempt,
+                lease_until=now + lease_seconds,
+                started_at=now,
             )
             return graph, deepcopy(task)
     return graph, None
