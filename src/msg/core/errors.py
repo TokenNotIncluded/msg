@@ -27,6 +27,8 @@ _PUBLIC_MESSAGES = {
     'subagent_account_mismatch': 'Subagents can exchange internal messages only within the same account.',
     'subagent_archived': 'This subagent is archived; its existing messages are preserved.',
     'subagent_private_namespace_conflict': 'The existing mailbox is not owned and private; choose or repair the namespace explicitly.',
+    'listener_events_unavailable': 'Native event waiting is not available for this source. Use auto or poll; remote event push is not implemented.',
+    'listener_checkpoint_requires_revalidation': 'This old checkpoint has cached events without a safe reread. Keep it and use a new cursor file to reread authorized history; deduplicate event IDs.',
     'cursor_in_use': 'Another listener is using this cursor file. Give each listener its own file.',
     'listener_start_position_conflict': 'Use --from-now with a new cursor file; otherwise resume the existing cursor.',
     'handle_rename_cooldown': 'You can change your username once every seven days.',

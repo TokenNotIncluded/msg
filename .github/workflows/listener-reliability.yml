@@ -10,6 +10,8 @@ on:
       - 'src/msg/client_events.py'
       - 'tests/test_client_listener*.py'
       - 'tests/test_client_subagents*.py'
+      - 'tests/test_client_agent_cli.py'
+      - 'src/msg/core/errors.py'
       - 'scripts/benchmark_listener.py'
       - '.github/workflows/listener-reliability.yml'
   workflow_dispatch:
@@ -35,11 +37,13 @@ jobs:
           --health-cmd "pg_isready -U msgtest -d postgres"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
+      MSG_BENCHMARK_OUTPUT: artifacts
       MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
+          fetch-depth: 0
       - name: Record source for reproduction
         run: |
           mkdir -p artifacts
@@ -59,8 +63,17 @@ jobs:
         run: >-
           uv run --locked --extra dev pytest
           tests/test_client_listener.py tests/test_client_subagents.py
-          tests/test_client_subagents_remote.py
+          tests/test_client_subagents_remote.py tests/test_client_agent_cli.py
+          tests/test_client_listener_reliability.py tests/test_client_listener_remote.py
+          tests/test_client_listener_cli.py
           --junitxml=artifacts/listener.xml
+      - name: Record bounded local measurements, not a harness ranking
+        run: |
+          git show 459f3f7be28eaa2f5639669d05add2a342bab20f:src/msg/client_listener.py > artifacts/baseline_listener.py
+          uv run --locked --extra dev python scripts/benchmark_listener.py \
+            --baseline-listener artifacts/baseline_listener.py \
+            --revision "$(git rev-parse HEAD)" --trials 3 --tasks 8 --workers 4 \
+            --poll-interval 0.1 --idle-seconds 0.4 --output artifacts/local-listener.json
       - uses: actions/upload-artifact@v7.0.1
         if: always()
         with:

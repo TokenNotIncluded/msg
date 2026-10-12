@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import math
+import sys
 from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
@@ -68,6 +70,15 @@ def add_commands(commands):
     listener.add_argument('--cursor')
     listener.add_argument('--cursor-file', type=Path, help='Independent durable listener position.')
     listener.add_argument('--interval', type=float, default=1.0)
+    listener.add_argument(
+        '--wait-mode', choices=('auto', 'events', 'poll'), default='auto',
+        help='Auto: local native events where supported, remote adaptive polling. '
+        'Events: require local native events. Poll: fixed-interval legacy behavior.',
+    )
+    listener.add_argument(
+        '--max-idle-interval', type=float, default=30.0,
+        help='Remote auto mode: maximum idle polling delay in seconds (default: 30).',
+    )
     listener.add_argument(
         '--from-now', action='store_true', help='Skip existing events on a new listener.'
     )
@@ -148,9 +159,15 @@ def cursor_path(state, args, source):
     return private_directory(state.paths.state / 'agent-listeners') / (key + '.json')
 
 
-async def stream(state, args, fetch, source):
+async def stream(state, args, fetch, source, *, wait_for_change=None, resolve_legacy=None):
     from msg.client_listener import listen
 
+    remote = not source.startswith('local:')
+    idle_limit = args.interval
+    if remote and getattr(args, 'wait_mode', 'auto') == 'auto':
+        maximum = getattr(args, 'max_idle_interval', 30.0)
+        require(math.isfinite(maximum) and maximum > 0, 'invalid_listener_interval')
+        idle_limit = max(args.interval, maximum)
     await listen(
         fetch,
         context={
@@ -167,6 +184,10 @@ async def stream(state, args, fetch, source):
         max_events=args.max_events,
         max_pages=getattr(args, 'max_pages', None),
         from_now=args.from_now,
+        wait_for_change=wait_for_change,
+        max_idle_interval=idle_limit,
+        cursor_only=remote,
+        resolve_legacy=resolve_legacy,
     )
     return 0
 
@@ -183,6 +204,23 @@ async def run_local(state, args):
             async def fetch(cursor, tail=False):
                 return await asyncio.to_thread(store.inbox, name, cursor=cursor, tail=tail)
 
+            mode = getattr(args, 'wait_mode', 'auto')
+            if mode != 'poll' and not args.once:
+                from msg.client_events import EventsUnavailable, LocalEvents
+
+                try:
+                    events = LocalEvents(store.path)
+                except (EventsUnavailable, NotImplementedError):
+                    if mode == 'events':
+                        raise Failure('listener_events_unavailable') from None
+                    print('msg listen: native events unavailable; using polling.',
+                          file=sys.stderr, flush=True)
+                else:
+                    with events:
+                        return await stream(
+                            state, args, fetch, 'local:' + store.username,
+                            wait_for_change=events.wait,
+                        )
             return await stream(state, args, fetch, 'local:' + store.username)
         if args.action == 'create':
             result = store.create(args.name)
@@ -221,6 +259,8 @@ async def run_local(state, args):
 
 async def run_remote(client, args):
     require(not args.offline, 'offline_remote_conflict')
+    if args.command == 'listen':
+        require(getattr(args, 'wait_mode', 'auto') != 'events', 'listener_events_unavailable')
     if args.user:
         await client.require_username(args.user)
     if args.command == 'listen' and not args.agent:
@@ -254,7 +294,10 @@ async def run_remote(client, args):
         async def fetch(cursor, tail=False):
             return await store.inbox(name, cursor=cursor, tail=tail)
 
-        return await stream(client.state, args, fetch, 'remote')
+        return await stream(
+            client.state, args, fetch, 'remote',
+            resolve_legacy=lambda message_id: store.read(name, message_id),
+        )
     if args.action == 'create':
         result = await store.create(args.name)
     elif args.action == 'show':
