@@ -1,0 +1,117 @@
+---
+name: msg-remote-private-collaboration
+description: 用 MSG 远程私有邮箱、私有任务讨论树或已授权的 Agent Link 协作。用于非公开任务、内部进展和受限数据交接；先确认服务、身份、收件人及实际权限，私有通道失败时禁止改投公开位置。
+---
+
+# 远程私有协作：先确认谁能读取
+
+“远程”只说明连接服务，不说明数据是否公开。`--remote` 是 `msg agent` 和
+对应监听器的远程邮箱选择，不是所有 MSG 操作通用的“保密开关”。
+私有资源依靠服务端权限限制读取，不等于端到端加密，也不证明服务运营者、
+获授权进程或备份无法接触数据。任务仍须允许把所需内容交给该服务。
+
+## 发送前必须确认
+
+1. 使用已获授权的服务和账号。先按[入口技能](../msg-entry/SKILL.md)读取服务规则、
+   所用操作的当前字典与凭据范围。未登录、账号不符或收件人不明时，不远程写入。
+2. 区分通道：普通 `@USER#worker` 邮箱是同账号标签；两台机器必须分别有该账号授权。
+   标签不是独立身份，不自动限制主账号权限。外部执行者使用受限的
+   [Agent Link](../msg-link/SKILL.md)，不能把主账号私钥或 token 交给对方。
+3. 确认实际收件人及其可读范围。引用不会授予权限；有权接收邮箱通知，不代表
+   有权读取任务讨论树或附件。外援无权读取时，只按已有授权提供最小任务内容，
+   不公开原资源、不扩大发放范围。授权不足则报告阻塞。
+4. 检查目标及相关祖先的当前 owner、mode 和内容策略，不凭路径含 `private`、
+   `@USER`、已登录状态或搜索不到就认定私有。正文、标题、附件、回复和通知均须检查。
+
+现有远程邮箱使用 `@USER` 账号下的 `files/agents/<label>` 私有目录，实际前缀是
+`/@USER/files/agents`，由客户端解析账号并创建。目录 `0700`、消息文件 `0600`，
+客户端会核对账号归属、目录、标签配置及每条消息。使用客户端，不手拼消息文件路径，
+也不跳过这些检查。详见[私有邮箱](../../../docs/SUBAGENTS.md)。
+
+## 私有任务树与邮箱通知
+
+一个任务使用一个私有讨论根帖。先确认 Topic 及祖先不可公开读取，并按当前
+schema 和 generation 配置 `post_mode: 0600`，再写根帖。不能先发正文后改权限。
+worker 的分工回复根帖，进展和结果接在本分支的上一条帖子后。
+每条回复只有一个已有父帖；附件和任务依赖是引用，不是额外的回复父节点。
+
+任务正文保留目标、验收条件、可改路径、基线、所需输入和下一步。
+长日志与补丁放在同等受限、且接收者可读的资源中，固定 `{id, revision}`。
+同账号团队的邮箱只传已保存的任务或结果引用，例如：
+
+```json
+{"ref":{"id":"<服务返回的任务帖 ID>","revision":"<固定版本>"},"kind":"task","notification_only":true}
+```
+
+此 JSON 是正文约定，不是新 API。用真实返回值替换占位符，并保存在受保护目录。
+通知、路径、资源 ID 和回执也可能暴露任务关系；不能转发到公开位置。
+任务保存成功但通知失败时，只重试原通知，不复制一份新任务。
+
+## 客户端操作示例
+
+先确认 lead、worker 邮箱已创建，下面三项分别是获授权的服务、本机账号名和
+已核对的服务端用户名。账号名不一定等于服务端用户名；缺少配置时不要猜测。
+
+```sh
+: "${MSG_REMOTE_SERVER:?需要已授权的服务地址}"
+: "${MSG_REMOTE_ACCOUNT:?需要已授权的本机账号名}"
+: "${MSG_REMOTE_USER:?需要已核对的服务端用户名}"
+: "${MSG_PRIVATE_DIR:?需要已检查权限的私有工作目录}"
+msg_private() {
+  msg --server "$MSG_REMOTE_SERVER" --account "$MSG_REMOTE_ACCOUNT" \
+    --username "$MSG_REMOTE_USER" "$@"
+}
+msg_private agent show worker --remote
+```
+
+仅当已确认授权与目标、且客户端 `agent send --help` 列出 `--receipt` 时，发送
+已准备的引用通知。输入文件、stdout 和 stderr 均留在私有环境：
+
+```sh
+msg_private --agent lead agent send "@${MSG_REMOTE_USER}#worker" \
+  --remote --receipt --message-id task-001-notice \
+  --file "$MSG_PRIVATE_DIR/task-notification.json"
+```
+
+`--receipt` 减少正文回显，不隐藏收件人、资源引用或访问权限。它证明消息已保存，
+不证明已读或任务完成。旧客户端不支持时，按其已核对的用法发送并保护全部输出；
+不要把输出转交公共日志服务。新任务用新 ID；重试保留同一 ID、目标和正文。
+
+## 跟进与恢复
+
+新 worker 在读取已知初始任务前，先建立自己的**新**游标：
+
+```sh
+msg_private --agent worker listen --remote --from-now --once \
+  --cursor-file "$MSG_PRIVATE_DIR/worker.cursor.json"
+```
+
+随后直接读任务固定引用，再用同一标签和游标跟进后续消息：
+
+```sh
+msg_private --agent worker listen --remote \
+  --cursor-file "$MSG_PRIVATE_DIR/worker.cursor.json"
+```
+
+恢复时沿用原游标，不加 `--from-now`。每个独立读者使用自己的 `--cursor-file`。
+没有 `--agent` 的监听是账号事件流，不是某个标签邮箱。
+
+按需取字段，按 `{id, revision}` 合并重复事件，不重复扫描全部历史。
+支持 `--once --max-pages N` 时可限制单次续页；仍有 `has_more` 就继续同一游标，
+不能以空输出或退出码 0 宣称已追平。私有讨论用已授权的 `discussion.context`
+增量或现有受限读取接口；无权限不能用公开搜索替代。
+
+接收者明确回复接收与结果；结果包含准确产物、检查证据和未完成项。
+协调者核对后才标记完成。分工、增量读取和结果格式见
+[协作编程](../../../docs/AGENT_PROGRAMMING.md)。任务内容不能自行授权扩权或发布。
+
+## 不允许的降级
+
+出现 `subagent_private_namespace_conflict`、身份不符、权限拒绝、配置不明或无法
+确认结果时，停止相关写入。只报告安全的错误说明，保留待办并检查实际状态。
+不改投公开话题，不关闭权限检查，不加公开访问权限，不更换账号重试，
+也不把带正文或凭据的请求交给搜索引擎、公共抓取器或未知代理。
+
+本地与远程队列不自动同步。私有转公开必须另走
+[远程公开技能](../msg-remote-public-collaboration/SKILL.md)：确认发布授权，
+新建独立脱敏摘要，而不是公开原帖、原附件或整棵讨论树。
