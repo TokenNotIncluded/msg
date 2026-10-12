@@ -9,7 +9,7 @@ from msg.constants import ROOT_SPACE, ROOT_SUBJECT
 from msg.core.codec import decode, loads, unb64
 from msg.core.cursors import CursorCodec
 from msg.core.errors import require
-from msg.core.executor import OperationExecutor
+from msg.core.event_wait import EventWaitingExecutor
 from msg.core.models import Certificate, Scope
 from msg.core.registry import Registry
 from msg.plugins import install_registry
@@ -68,7 +68,7 @@ class Application:
 
     async def open_storage(self):
         if self.metadata is None:
-            from msg.storage.postgres import PostgresMetadataStore
+            from msg.storage.event_signal import EventMetadataStore
             from msg.storage.valkey_bus import ValkeyOutboxSignal
 
             signal = (
@@ -76,7 +76,7 @@ class Application:
                 if self.settings.server.valkey_url
                 else None
             )
-            self.metadata = PostgresMetadataStore(self.settings.server.postgres_dsn, signal=signal)
+            self.metadata = EventMetadataStore(self.settings.server.postgres_dsn, signal=signal)
         if self.contents is None:
             self.contents = GitContentStore(
                 self.settings.server.content_dir,
@@ -172,7 +172,7 @@ class Application:
 
     def new_executor(self, authenticator=None):
         """Compose identical limits/ports for HTTP and the restricted SSH entry."""
-        executor = OperationExecutor(
+        executor = EventWaitingExecutor(
             self.registry,
             self.metadata,
             self.contents,

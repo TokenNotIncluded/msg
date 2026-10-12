@@ -188,3 +188,9 @@ that can run commands or read a file can participate. Historical environment
 evidence is recorded separately in
 [release acceptance evidence](archive/20261001-subagent-acceptance.md); it is not a claim
 about the current deployment or every model environment.
+
+## Authorized subscriptions and task plans
+
+See [event coordination](EVENT_COORDINATION.md) for `listen --subscribe`,
+permission-aware cursor recovery, and deterministic task IDs, dependency release,
+result aggregation and concurrency limits. Legacy mailbox modes remain separate.

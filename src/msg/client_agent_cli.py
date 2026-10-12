@@ -65,6 +65,11 @@ def add_commands(commands):
         default=[],
         help='Exact event type; repeat to include more types.',
     )
+    listener.add_argument(
+        '--subscribe', action='store_true',
+        help='Use authorized server event waits (events@2); no mailbox or offline fallback.',
+    )
+    listener.add_argument('--resource', help='With --subscribe, limit events to this resource.')
     listener.add_argument('--cursor')
     listener.add_argument('--cursor-file', type=Path, help='Independent durable listener position.')
     listener.add_argument('--interval', type=float, default=1.0)
@@ -83,6 +88,8 @@ def add_commands(commands):
 
 
 def local_command(args):
+    if getattr(args, 'subscribe', False):
+        return False
     return (args.command == 'agent' or args.command == 'listen' and args.agent) and not args.remote
 
 
@@ -148,7 +155,7 @@ def cursor_path(state, args, source):
     return private_directory(state.paths.state / 'agent-listeners') / (key + '.json')
 
 
-async def stream(state, args, fetch, source):
+async def stream(state, args, fetch, source, *, revalidate=None, server_wait=False):
     from msg.client_listener import listen
 
     await listen(
@@ -167,6 +174,8 @@ async def stream(state, args, fetch, source):
         max_events=args.max_events,
         max_pages=getattr(args, 'max_pages', None),
         from_now=args.from_now,
+        revalidate=revalidate,
+        server_wait=server_wait,
     )
     return 0
 
@@ -223,6 +232,18 @@ async def run_remote(client, args):
     require(not args.offline, 'offline_remote_conflict')
     if args.user:
         await client.require_username(args.user)
+    if args.command == 'listen' and getattr(args, 'subscribe', False):
+        from msg.client_subscription import Subscription
+
+        require(not args.agent, 'subscription_requires_account_reader')
+        source = Subscription(
+            client, resource=args.resource, once=args.once, interval=args.interval,
+        )
+        return await stream(
+            client.state, args, source.fetch, 'subscription:' + (args.resource or ''),
+            revalidate=source.revalidate, server_wait=True,
+        )
+    require(not getattr(args, 'resource', None), 'subscription_required')
     if args.command == 'listen' and not args.agent:
 
         async def fetch(cursor, tail=False):
@@ -244,7 +265,21 @@ async def run_remote(client, args):
                         'has_more': more,
                     }
 
-        return await stream(client.state, args, fetch, 'account-events')
+        async def revalidate(item):
+            current = await client.call('communication.event', {'id': item['id']})
+            if current.status != 'ok' and current.error.code == 'not_found':
+                return None
+            event = wire(client.checked(current).data)
+            # Old audit bodies must not survive a current-authorization refresh.
+            return {
+                **event, 'type': event['operation'],
+                'data': {'operation': event['operation']},
+                'resources': [address['ref'] for address in event['resources']],
+            }
+
+        return await stream(
+            client.state, args, fetch, 'account-events', revalidate=revalidate,
+        )
     from msg.client_subagents_remote import RemoteAgents
 
     store = RemoteAgents(client, username=args.username)
@@ -254,7 +289,15 @@ async def run_remote(client, args):
         async def fetch(cursor, tail=False):
             return await store.inbox(name, cursor=cursor, tail=tail)
 
-        return await stream(client.state, args, fetch, 'remote')
+        async def revalidate(item):
+            try:
+                return await store.read(name, item['id'])
+            except Failure as exc:
+                if exc.code != 'not_found':
+                    raise
+                return None
+
+        return await stream(client.state, args, fetch, 'remote', revalidate=revalidate)
     if args.action == 'create':
         result = await store.create(args.name)
     elif args.action == 'show':

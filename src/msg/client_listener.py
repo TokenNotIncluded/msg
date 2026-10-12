@@ -140,6 +140,8 @@ async def listen(
     max_pages: int | None = None,
     from_now: bool = False,
     output=None,
+    revalidate=None,
+    server_wait=False,
 ) -> int:
     """Poll until cancelled, emitting and flushing one JSON object per matching event.
 
@@ -162,6 +164,7 @@ async def listen(
     binding = _binding(context, event_types)
     types = binding['event_types']
     state = _load(cursor_file, binding, cursor)
+    restored = bool(state['pending'])
     if from_now and (cursor is not None or (cursor_file is not None and cursor_file.exists())):
         raise Failure('listener_start_position_conflict')
     stream = sys.stdout if output is None else output
@@ -169,11 +172,11 @@ async def listen(
     pages = 0
     retry_delay = interval
 
-    async def read(tail=False):
+    async def retry(action):
         nonlocal retry_delay
         while True:
             try:
-                value = _page(await fetch(state['cursor'], tail=tail))
+                value = await action()
                 retry_delay = interval
                 return value
             except Failure as exc:
@@ -184,6 +187,9 @@ async def listen(
             print('msg listen: connection interrupted; retrying.', file=sys.stderr, flush=True)
             await asyncio.sleep(min(retry_delay, 30.0))
             retry_delay = min(retry_delay * 2, 30.0)
+
+    async def read(tail=False):
+        return _page(await retry(lambda: fetch(state['cursor'], tail=tail)))
 
     if from_now:
         page = await read(tail=True)
@@ -199,6 +205,14 @@ async def listen(
             state.update(cursor=page['cursor'], pending=page['items'], has_more=page['has_more'])
         while state['pending']:
             item = state['pending'][0]
+            if restored and revalidate is not None:
+                item = await retry(lambda: revalidate(state['pending'][0]))
+                if item is None:
+                    state['pending'] = state['pending'][1:]
+                    _save(cursor_file, state)
+                    continue
+                if not isinstance(item, dict):
+                    raise Failure('invalid_listener_page')
             event_type = item.get('event_type', item.get('type'))
             if not types or event_type in types:
                 stream.write(json.dumps(item, ensure_ascii=False, separators=(',', ':')) + '\n')
@@ -208,6 +222,7 @@ async def listen(
             _save(cursor_file, state)
             if max_events is not None and emitted >= max_events:
                 return emitted
+        restored = False
         _save(cursor_file, state)
         if max_pages is not None and pages >= max_pages:
             if state['has_more']:
@@ -221,4 +236,5 @@ async def listen(
             continue
         if once:
             return emitted
-        await asyncio.sleep(interval)
+        if not server_wait:
+            await asyncio.sleep(interval)
