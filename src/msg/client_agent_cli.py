@@ -95,7 +95,17 @@ def add_commands(commands):
     listener.add_argument(
         '--once', action='store_true', help='Drain currently available events and exit.'
     )
-    listener.add_argument('--max-events', type=int, help='Exit after this many matching events.')
+    listener.add_argument(
+        '--max-events',
+        type=int,
+        help='Exit after this many matching events; without --once, 1 waits for one event.',
+    )
+    listener.add_argument(
+        '--status-json',
+        action='store_true',
+        help='Emit transition-only status JSONL on stderr (no bodies or cursors). '
+        'Status is not an ACK or task completion.',
+    )
     listener.add_argument(
         '--max-pages',
         type=int,
@@ -187,8 +197,11 @@ async def stream(
     server_wait=False,
     wait_fetch=None,
 ):
-    from msg.client_listener import listen
+    from msg.client_listener import ListenerStatus, listen
 
+    status = getattr(args, '_listener_status', None)
+    if status is None and getattr(args, 'status_json', False):
+        status = ListenerStatus()
     remote = not source.startswith('local:')
     idle_limit = args.interval
     if remote and getattr(args, 'wait_mode', 'auto') == 'auto':
@@ -217,6 +230,7 @@ async def stream(
         resolve_legacy=resolve_legacy,
         server_wait=server_wait,
         wait_fetch=wait_fetch,
+        status=status,
     )
     return 0
 
@@ -228,6 +242,10 @@ async def run_local(state, args):
     store = LocalAgents(state, username=args.username or args.user)
     try:
         if args.command == 'listen':
+            if getattr(args, 'status_json', False):
+                from msg.client_listener import ListenerStatus
+
+                args._listener_status = ListenerStatus()
             name = inbox_name(args)
 
             async def fetch(cursor, tail=False):
@@ -242,11 +260,16 @@ async def run_local(state, args):
                 except EventsUnavailable, NotImplementedError:
                     if mode == 'events':
                         raise Failure('listener_events_unavailable') from None
-                    print(
-                        'msg listen: native events unavailable; using polling.',
-                        file=sys.stderr,
-                        flush=True,
-                    )
+                    if getattr(args, '_listener_status', None) is not None:
+                        args._listener_status(
+                            'polling_fallback', reason='native_events_unavailable'
+                        )
+                    else:
+                        print(
+                            'msg listen: native events unavailable; using polling.',
+                            file=sys.stderr,
+                            flush=True,
+                        )
                 else:
                     with events:
                         return await stream(
@@ -318,12 +341,17 @@ async def run_remote(client, args):
     if args.command == 'listen':
         from msg.client_changes_wait import ChangesWait
 
+        if getattr(args, 'status_json', False):
+            from msg.client_listener import ListenerStatus
+
+            args._listener_status = ListenerStatus()
         changes_wait = ChangesWait(
             client,
             mode=getattr(args, 'wait_mode', 'auto'),
             once=args.once,
             interval=args.interval,
             max_idle_interval=getattr(args, 'max_idle_interval', 30),
+            status=getattr(args, '_listener_status', None),
         )
     if args.command == 'listen' and not args.agent:
 

@@ -8,7 +8,9 @@ from msg.core.errors import Failure
 
 
 class ChangesWait:
-    def __init__(self, client, *, mode='auto', once=False, interval=1, max_idle_interval=30):
+    def __init__(
+        self, client, *, mode='auto', once=False, interval=1, max_idle_interval=30, status=None
+    ):
         self.client = client
         self.mode = mode
         self.interval = interval
@@ -16,17 +18,21 @@ class ChangesWait:
         self.idle_limit = max(interval, max_idle_interval)
         self.enabled = mode != 'poll' and (not once or mode == 'events')
         self.warned = False
+        self.status = status
 
     def unavailable(self, reason):
         if self.mode == 'events':
             raise Failure('listener_events_unavailable', details={'reason': reason})
         self.enabled = False
         if not self.warned:
-            print(
-                f'msg listen: signed changes wait unavailable ({reason}); using polling.',
-                file=sys.stderr,
-                flush=True,
-            )
+            if self.status is not None:
+                self.status('polling_fallback', reason=reason)
+            else:
+                print(
+                    f'msg listen: signed changes wait unavailable ({reason}); using polling.',
+                    file=sys.stderr,
+                    flush=True,
+                )
             self.warned = True
 
     async def read(self, arguments, *, wait=False):
@@ -50,10 +56,14 @@ class ChangesWait:
                 if page.get('wait_supported') is not True:
                     self.unavailable('server_wait_unsupported')
                     if wait and not page['items'] and not page['has_more']:
+                        if self.status is not None:
+                            self.status('backoff', delay_seconds=self.idle_delay)
                         await asyncio.sleep(self.idle_delay)
                         self.idle_delay = min(self.idle_delay * 2, self.idle_limit)
                 return page
         if wait:
+            if self.status is not None:
+                self.status('backoff', delay_seconds=self.idle_delay)
             await asyncio.sleep(self.idle_delay)
         page = wire(
             self.client.checked(await self.client.call('communication.changes', arguments)).data
