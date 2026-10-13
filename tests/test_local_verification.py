@@ -1,6 +1,7 @@
 """Local evidence belongs to actual uncommitted files, not an old commit."""
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -100,6 +101,71 @@ def test_preflight_detects_wrong_interpreter_and_does_not_echo_dsn(monkeypatch):
     assert any('Python 3.15 is required' in reason for reason in report['blockers'])
     assert any('disposable local test service' in reason for reason in report['blockers'])
     assert 'secret' not in str(report)
+
+
+@pytest.fixture
+def gitlink_checkout(tmp_path):
+    def git(directory, *args):
+        return (
+            subprocess
+            .check_output(
+                [
+                    'git',
+                    '-C',
+                    str(directory),
+                    '-c',
+                    'user.name=Fixture',
+                    '-c',
+                    'user.email=fixture@example.org',
+                    '-c',
+                    'commit.gpgsign=false',
+                    *args,
+                ],
+                stderr=subprocess.PIPE,
+            )
+            .decode()
+            .strip()
+        )
+
+    git(tmp_path, 'init')
+    child = tmp_path / 'module'
+    child.mkdir()
+    git(child, 'init')
+    (child / 'source.py').write_text('value = 1\n')
+    git(child, 'add', 'source.py')
+    git(child, 'commit', '-m', 'fixture')
+    revision = git(child, 'rev-parse', 'HEAD')
+    git(tmp_path, 'update-index', '--add', '--cacheinfo', f'160000,{revision},module')
+    git(tmp_path, 'commit', '-m', 'pin module')
+    return tmp_path, child, git
+
+
+def test_source_snapshot_records_clean_gitlink(gitlink_checkout):
+    root, _, _ = gitlink_checkout
+    snapshot = verification.source_snapshot(root)
+    assert snapshot['dirty'] is False
+    assert snapshot['files'][0]['kind'] == 'gitlink'
+    assert snapshot['files'][0]['path'] == 'module'
+    assert snapshot == verification.source_snapshot(root)
+
+
+@pytest.mark.parametrize('change', ['tracked', 'untracked', 'revision', 'missing', 'symlink'])
+def test_source_snapshot_refuses_unverified_gitlink(gitlink_checkout, change):
+    root, child, git = gitlink_checkout
+    if change == 'tracked':
+        (child / 'source.py').write_text('changed\n')
+    elif change == 'untracked':
+        (child / 'new.py').write_text('new source\n')
+    elif change == 'revision':
+        (child / 'source.py').write_text('changed\n')
+        git(child, 'add', 'source.py')
+        git(child, 'commit', '-m', 'unpinned revision')
+    else:
+        child.rename(root / 'moved')
+        if change == 'symlink':
+            child.symlink_to(root / 'moved', target_is_directory=True)
+    with pytest.raises(ValueError, match='submodule'):
+        verification.source_snapshot(root)
 
 
 def test_source_executable_mode_changes_fingerprint(tmp_path):

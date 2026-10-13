@@ -82,7 +82,7 @@ async def test_offline_signer_completes_link_through_pinned_mcp_connector(instal
             assert '--transport tool_bridge' in result['data']['commands']['send']
             assert {
                 'identity.link_claim',
-                'identity.link_collect',
+                'identity.link_collect@2',
                 'file.read',
                 'file.create',
             } <= set(calls)

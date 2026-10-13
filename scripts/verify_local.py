@@ -54,15 +54,37 @@ REQUIRED_COMMANDS = (
 )
 
 
-def content_fingerprint(root, names):
-    """Hash the actual files, not the last commit; never follow source symlinks."""
+def content_fingerprint(root, names, *, gitlinks=None):
+    """Hash files and verified clean gitlinks; never follow source symlinks."""
+    gitlinks = gitlinks or {}
     digest = hashlib.sha256()
     records = []
     for name in sorted(set(names)):
         path = root / name
         if Path(name).is_absolute() or '..' in Path(name).parts:
             raise ValueError('invalid source path')
-        if path.is_symlink():
+        if name in gitlinks:
+            if path.is_symlink() or not path.is_dir():
+                raise ValueError(f'submodule is missing or unsafe: {name}')
+
+            def submodule_git(*args, directory=path):
+                return subprocess.check_output(['git', '-C', str(directory), *args]).strip()
+
+            try:
+                top = Path(os.fsdecode(submodule_git('rev-parse', '--show-toplevel')))
+                revision = submodule_git('rev-parse', 'HEAD')
+                dirty = submodule_git(
+                    'status', '--porcelain', '--untracked-files=all', '--ignore-submodules=none'
+                )
+            except subprocess.CalledProcessError as exc:
+                raise ValueError(f'submodule is not initialized: {name}') from exc
+            if top.resolve() != path.resolve() or revision.decode() != gitlinks[name]:
+                raise ValueError(f'submodule checkout does not match gitlink: {name}')
+            if dirty:
+                raise ValueError(f'submodule has uncommitted source: {name}')
+            kind = 'gitlink'
+            data = revision
+        elif path.is_symlink():
             kind = 'symlink'
             data = os.fsencode(os.readlink(path))
         elif not path.exists():
@@ -86,7 +108,17 @@ def source_snapshot(root):
 
     tracked = git('ls-files', '-z', '--cached', '--others', '--exclude-standard')
     names = [os.fsdecode(name) for name in tracked.split(b'\0') if name]
-    result = content_fingerprint(root, names)
+    gitlinks = {}
+    for entry in git('ls-files', '--stage', '-z').split(b'\0'):
+        if not entry:
+            continue
+        metadata, name = entry.split(b'\t', 1)
+        mode, revision, stage = metadata.split()
+        if mode == b'160000':
+            if stage != b'0':
+                raise ValueError('unmerged submodule gitlink')
+            gitlinks[os.fsdecode(name)] = revision.decode()
+    result = content_fingerprint(root, names, gitlinks=gitlinks)
     result['base_commit'] = git('rev-parse', 'HEAD').decode().strip()
     result['dirty'] = bool(git('status', '--porcelain', '--untracked-files=normal').strip())
     return result
@@ -232,12 +264,24 @@ def main(argv=None):
         python = sys.executable
         execute('lock', ['uv', 'lock', '--check', '--python', python])
         execute('dependencies', ['uv', 'pip', 'check', '--python', python])
+        # Gitlinks are independently versioned projects, not parent lint inputs.
+        # Their exact checkout and cleanliness were already verified above.
+        lint_options = [
+            option
+            for entry in report['source_before']['files']
+            if entry['kind'] == 'gitlink'
+            for option in ('--extend-exclude', entry['path'])
+        ]
         execute(
             'ruff',
-            [python, '-m', 'ruff', 'check', '.', '--output-format', 'json'],
+            [python, '-m', 'ruff', 'check', '.', '--output-format', 'json', *lint_options],
             clean_stderr=True,
         )
-        execute('format', [python, '-m', 'ruff', 'format', '--check', '.'], clean_stderr=True)
+        execute(
+            'format',
+            [python, '-m', 'ruff', 'format', '--check', '.', *lint_options],
+            clean_stderr=True,
+        )
         execute(
             'compile',
             [
