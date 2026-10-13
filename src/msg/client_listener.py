@@ -63,11 +63,35 @@ def _checkpoint_lock(path: Path | None):
         os.close(descriptor)
 
 
+class ListenerStatus:
+    """Opt-in, transition-only stderr JSONL; never include source data or cursors."""
+
+    def __init__(self, output=None):
+        self.output = sys.stderr if output is None else output
+        self.previous = None
+
+    def __call__(self, state, **details):
+        record = {'type': 'msg.listen.status', 'version': 1, 'state': state, **details}
+        if record != self.previous:
+            self.output.write(json.dumps(record, separators=(',', ':')) + '\n')
+            self.output.flush()
+            self.previous = record
+
+
 def _exclusive_checkpoint(function):
     @wraps(function)
     async def exclusive(fetch, *, cursor_file=None, **options):
-        with _checkpoint_lock(cursor_file):
-            return await function(fetch, cursor_file=cursor_file, **options)
+        try:
+            with _checkpoint_lock(cursor_file):
+                return await function(fetch, cursor_file=cursor_file, **options)
+        except asyncio.CancelledError:
+            if options.get('status'):
+                options['status']('stopped', reason='cancelled')
+            raise
+        except Exception:
+            if options.get('status'):
+                options['status']('stopped', reason='error')
+            raise
 
     return exclusive
 
@@ -180,6 +204,7 @@ async def listen(
     revalidate=None,
     server_wait: bool = False,
     wait_fetch=None,
+    status=None,
 ) -> int:
     """Drain a source, then wait for a native hint or a bounded polling delay.
 
@@ -230,6 +255,21 @@ async def listen(
     retry_delay = interval
     idle_delay = interval
     saved_snapshot = None
+    recovered = False
+
+    def report(name, **details):
+        if status is not None:
+            status(name, **details)
+
+    def finish(reason):
+        report(
+            'stopped',
+            reason=reason,
+            emitted=emitted,
+            has_more=state['has_more'],
+            pending=bool(state['pending'] or state.get('processed') or state.get('legacy_pending')),
+        )
+        return emitted
 
     def persist():
         nonlocal saved_snapshot
@@ -239,10 +279,14 @@ async def listen(
             saved_snapshot = snapshot
 
     async def retry(call):
-        nonlocal retry_delay
+        nonlocal retry_delay, recovered
+        interrupted = False
         while True:
             try:
                 value = await call()
+                if interrupted:
+                    recovered = True
+                    report('reconnected')
                 retry_delay = interval
                 return value
             except Failure as exc:
@@ -250,7 +294,10 @@ async def listen(
                     raise
             except OSError, TimeoutError, httpx.TransportError:
                 pass
-            print('msg listen: connection interrupted; retrying.', file=sys.stderr, flush=True)
+            if status is None:
+                print('msg listen: connection interrupted; retrying.', file=sys.stderr, flush=True)
+            interrupted = True
+            report('backoff', delay_seconds=min(retry_delay, 30.0))
             await asyncio.sleep(min(retry_delay, 30.0))
             retry_delay = min(retry_delay * 2, 30.0)
 
@@ -285,12 +332,13 @@ async def listen(
             state['legacy_pending'].pop(0)
             persist()
             if max_events is not None and emitted >= max_events:
-                return emitted
+                return finish('event_limit')
 
     if from_now:
         page = await read(tail=True)
         state.update(cursor=page['cursor'], pending=[], has_more=False)
         persist()
+        report('tail_initialized')
 
     idle = False
     while True:
@@ -311,6 +359,8 @@ async def listen(
             if not cursor_only:
                 state['cursor'] = page_end
             activity = bool(page['items'])
+            if page['has_more']:
+                report('backlog', has_more=True)
         processed = set(state.get('processed', ()))
         while state['pending']:
             item = state['pending'][0]
@@ -334,25 +384,30 @@ async def listen(
                 state.update(cursor=page_end, processed=[])
             persist()
             if max_events is not None and emitted >= max_events:
-                return emitted
+                return finish('event_limit')
         restored = False
         if cursor_only:
             state.update(cursor=page_end, processed=[])
         persist()
+        if not state['has_more'] and (activity or pages == 1):
+            report('caught_up', has_more=False)
         if max_pages is not None and pages >= max_pages:
-            if state['has_more']:
+            if state['has_more'] and status is None:
                 print(
                     'msg listen: page limit reached; cursor saved, more pages remain.',
                     file=sys.stderr,
                     flush=True,
                 )
-            return emitted
+            return finish('page_limit')
         if state['has_more']:
             continue
         if once:
-            return emitted
+            return finish('once')
         if activity:
             idle_delay = interval
+        if activity or pages == 1 or recovered:
+            report('waiting')
+        recovered = False
         if wait_fetch is not None:
             idle = True
             continue
