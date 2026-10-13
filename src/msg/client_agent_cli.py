@@ -80,8 +80,8 @@ def add_commands(commands):
         '--wait-mode',
         choices=('auto', 'events', 'poll'),
         default='auto',
-        help='Auto: local native events where supported, remote adaptive polling. '
-        'Events: require local native events. Poll: fixed-interval legacy behavior.',
+        help='Auto: local native events or remote signed bounded waits, with explicit polling fallback. '
+        'Events: require native/signed waits. Poll: fixed-interval legacy behavior.',
     )
     listener.add_argument(
         '--max-idle-interval',
@@ -177,7 +177,15 @@ def cursor_path(state, args, source):
 
 
 async def stream(
-    state, args, fetch, source, *, wait_for_change=None, resolve_legacy=None, server_wait=False
+    state,
+    args,
+    fetch,
+    source,
+    *,
+    wait_for_change=None,
+    resolve_legacy=None,
+    server_wait=False,
+    wait_fetch=None,
 ):
     from msg.client_listener import listen
 
@@ -208,6 +216,7 @@ async def stream(
         cursor_only=remote,
         resolve_legacy=resolve_legacy,
         server_wait=server_wait,
+        wait_fetch=wait_fetch,
     )
     return 0
 
@@ -285,11 +294,6 @@ async def run_local(state, args):
 
 async def run_remote(client, args):
     require(not args.offline, 'offline_remote_conflict')
-    if args.command == 'listen':
-        require(
-            getattr(args, 'wait_mode', 'auto') != 'events' or getattr(args, 'subscribe', False),
-            'listener_events_unavailable',
-        )
     if args.user:
         await client.require_username(args.user)
     if args.command == 'listen' and getattr(args, 'subscribe', False):
@@ -310,20 +314,32 @@ async def run_remote(client, args):
             server_wait=True,
         )
     require(not getattr(args, 'resource', None), 'subscription_required')
+    changes_wait = None
+    if args.command == 'listen':
+        from msg.client_changes_wait import ChangesWait
+
+        changes_wait = ChangesWait(
+            client,
+            mode=getattr(args, 'wait_mode', 'auto'),
+            once=args.once,
+            interval=args.interval,
+            max_idle_interval=getattr(args, 'max_idle_interval', 30),
+        )
     if args.command == 'listen' and not args.agent:
 
-        async def fetch(cursor, tail=False):
+        async def fetch(cursor, tail=False, wait=False):
             current = cursor
             while True:
                 params = {'limit': 50}
                 if current:
                     params['cursor'] = current
-                result = client.checked(await client.call('communication.changes', params))
-                items = wire(result.data['items'])
-                if tail and isinstance(result.data.get('tail_cursor'), str):
-                    return {'items': [], 'cursor': result.data['tail_cursor'], 'has_more': False}
-                current = result.data['sync_cursor']
-                more = result.data.get('has_more', len(items) == 50)
+                page = await changes_wait.read(params, wait=wait and not tail)
+                wait = False
+                items = page['items']
+                if tail and isinstance(page.get('tail_cursor'), str):
+                    return {'items': [], 'cursor': page['tail_cursor'], 'has_more': False}
+                current = page['sync_cursor']
+                more = page.get('has_more', len(items) == 50)
                 if not tail or not more:
                     return {
                         'items': [] if tail else items,
@@ -349,6 +365,9 @@ async def run_remote(client, args):
             fetch,
             'account-events',
             resolve_legacy=resolve_legacy,
+            wait_fetch=(lambda cursor, tail=False: fetch(cursor, tail=tail, wait=True))
+            if changes_wait.enabled
+            else None,
         )
     from msg.client_subagents_remote import RemoteAgents
 
@@ -356,8 +375,14 @@ async def run_remote(client, args):
     if args.command == 'listen':
         name = inbox_name(args)
 
-        async def fetch(cursor, tail=False):
-            return await store.inbox(name, cursor=cursor, tail=tail)
+        async def fetch(cursor, tail=False, wait=False):
+            return await store.inbox(
+                name,
+                cursor=cursor,
+                tail=tail,
+                changes_reader=changes_wait.read,
+                wait=wait,
+            )
 
         return await stream(
             client.state,
@@ -365,6 +390,9 @@ async def run_remote(client, args):
             fetch,
             'remote',
             resolve_legacy=lambda message_id: store.read(name, message_id),
+            wait_fetch=(lambda cursor, tail=False: fetch(cursor, tail=tail, wait=True))
+            if changes_wait.enabled
+            else None,
         )
     if args.action == 'create':
         result = await store.create(args.name)

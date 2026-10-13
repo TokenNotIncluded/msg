@@ -1175,6 +1175,17 @@ def install(app):
 
     @op(
         'communication.changes',
+        obj({
+            'cursor': STRING,
+            'limit': {'type': 'integer', 'minimum': 1, 'maximum': 200},
+            'wait_ms': {'type': 'integer', 'minimum': 0, 'maximum': 20000},
+        }),
+        effect='read',
+        version=2,
+        signature=True,
+    )
+    @op(
+        'communication.changes',
         obj({'cursor': STRING, 'limit': {'type': 'integer', 'minimum': 1, 'maximum': 200}}),
         effect='read',
     )
@@ -1294,6 +1305,11 @@ def install(app):
                 'sync_cursor': resume(position),
                 'tail_cursor': resume(tail_position),
                 'has_more': position < tail_position,
+                **(
+                    {'wait_supported': getattr(app.metadata, 'event_signal', None) is not None}
+                    if request.contract_version == 2
+                    else {}
+                ),
             }
         )
 

@@ -34,13 +34,21 @@ class Signal:
             pass
 
 
+WAIT_OPERATION = 'communication.events'
+
+
+@pytest.fixture(autouse=True, params=['communication.events', 'communication.changes'])
+def wait_operation(request, monkeypatch):
+    monkeypatch.setattr(__import__(__name__), 'WAIT_OPERATION', request.param)
+
+
 def executor(monkeypatch, read):
     monkeypatch.setattr(OperationExecutor, 'execute', read)
     service = EventWaitingExecutor.__new__(EventWaitingExecutor)
     signal = Signal()
     service.metadata = SimpleNamespace(event_signal=signal)
     packet = SimpleNamespace(
-        operation='communication.events',
+        operation=WAIT_OPERATION,
         contract_version=2,
         arguments={'wait_ms': 200},
     )
@@ -113,6 +121,25 @@ async def test_idle_wait_has_bounded_reads_and_no_write(monkeypatch):
     assert (await service.execute(packet)).status == 'ok'
     assert len(calls) == 3
     assert signal.waiters == 0
+
+
+async def test_has_more_never_waits(monkeypatch):
+    async def read(self, packet, *, entry):
+        return Result(data={'items': [], 'has_more': True})
+
+    service, signal, packet = executor(monkeypatch, read)
+    assert (await service.execute(packet)).data['has_more']
+    assert signal.starts == 0
+
+
+async def test_missing_signal_advertises_unavailable(monkeypatch):
+    async def read(self, packet, *, entry):
+        return Result()
+
+    service, signal, packet = executor(monkeypatch, read)
+    service.metadata.event_signal = None
+    assert (await service.execute(packet)).data['wait_supported'] is False
+    assert signal.starts == 0
 
 
 async def test_saturation_does_not_allocate_more_waiters(monkeypatch):

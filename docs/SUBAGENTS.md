@@ -67,11 +67,16 @@ msg --agent bot2 listen --remote --cursor-file ./remote-bot2.cursor.json \
 
 Each matching event is one flushed JSON line; empty polls produce no stdout.
 Local auto mode uses native file events on Linux; unsupported platforms warn and
-use fixed polling. Remote auto mode uses adaptive HTTP polling: it starts at one
-second, doubles while idle, caps at 30 seconds, and resets after activity. It is
-not SSE or WebSocket. `--wait-mode poll --interval 1` selects the fixed-poll
-behavior. `--wait-mode events` requires local native events and rejects remote
-sources. Consume background JSONL output incrementally. See
+use fixed polling. Remote auto mode uses signed `communication.changes@2` HTTP
+waits (at most 20 seconds), retaining the existing sync cursor and relevance.
+It drains all available pages, including unrelated mailbox events, before waiting.
+Old servers, credentials scoped only to `changes@1`, or unavailable server event
+signals produce an explicit warning and fall back to the same feed with adaptive
+polling (initial `--interval`, doubling to `--max-idle-interval`, reset on activity).
+No credential or CA grants are widened. `--wait-mode events` requires native/signed
+wait support and fails clearly rather than polling; `--wait-mode poll --interval 1`
+selects fixed legacy polling. This is not SSE or WebSocket. Consume background JSONL
+output incrementally. This source capability is not evidence of production deployment. See
 [reliability and measurements](LISTENER_BENCHMARKS.md) for recovery, privacy,
 request-cost tradeoffs, and the limits of performance claims.
 
@@ -102,7 +107,7 @@ This client addition does not establish a production rollout; older clients
 without the flag still use direct references and their independent reader.
 
 `--interval 0.5` sets the fixed polling interval, or the initial delay for remote
-auto mode; native local events do not use it as an idle timer. Stop with Ctrl-C or SIGINT. A cursor
+auto fallback mode; signed remote waits and native local events do not use it as an idle timer. Stop with Ctrl-C or SIGINT. A cursor
 belongs to its server, account, mailbox and event filters. Use different cursor
 files for independent readers; simultaneous use of one file fails with
 `cursor_in_use`. Reading never implies ACK. A crash between output and checkpoint

@@ -570,7 +570,17 @@ class RemoteAgents:
             and self._stored_label(saved['to']) == agent
         )
 
-    async def inbox(self, agent, cursor=None, limit=50, tail=False, sender=None):
+    async def inbox(
+        self,
+        agent,
+        cursor=None,
+        limit=50,
+        tail=False,
+        sender=None,
+        *,
+        changes_reader=None,
+        wait=False,
+    ):
         root = await self._identity()
         agent = self._label(agent)
         sender_label = self._label(sender) if sender is not None else None
@@ -607,7 +617,10 @@ class RemoteAgents:
             arguments = {'limit': page_limit}
             if sync_cursor is not None:
                 arguments['cursor'] = sync_cursor
-            page = await self._call('communication.changes', arguments)
+            if changes_reader is None:
+                page = await self._call('communication.changes', arguments)
+            else:
+                page = await changes_reader(arguments, wait=wait and not tail and pages == 0)
             pages += 1
             require(not page.get('resync_required'), 'resync_required')
             if tail and isinstance(page.get('tail_cursor'), str):
