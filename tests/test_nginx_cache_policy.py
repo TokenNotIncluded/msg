@@ -117,11 +117,18 @@ def test_actual_application_explicit_credentials_remain_no_store(tmp_path):
     with _application() as backend, _proxy(tmp_path, backend) as proxy:
         for name in ('Authorization', 'X-Msg-Request'):
             headers = {name: 'nonlive'}
+            # Revoked ambient Authorization is rejected by the key-only
+            # session middleware before static/read routing, never downgraded
+            # into an anonymous successful response.
             for target in ('/', '/install', '/favicon.png'):
-                _assert_policy(_request(proxy, target, headers=headers), 'no-store')
+                _assert_policy(
+                    _request(proxy, target, headers=headers),
+                    'no-store',
+                    status=401 if name == 'Authorization' else 200,
+                )
             for target in ('/now', '/_post/state'):
                 rejected = _request(proxy, target, headers=headers)
-                _assert_policy(rejected, 'no-store', status=400)
+                _assert_policy(rejected, 'no-store', status=401 if name == 'Authorization' else 400)
                 assert b'nonlive' not in rejected[2]
 
 

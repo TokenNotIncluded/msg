@@ -60,6 +60,8 @@ jobs:
             tests/test_event_wait.py tests/test_event_subscription.py \
             tests/test_client_subscription.py tests/test_listener_revalidation.py \
             tests/test_client_listener.py tests/test_collaboration_resources.py \
+            tests/test_client_listener_cli.py tests/test_client_listener_remote.py \
+            tests/test_client_listener_reliability.py \
             tests/test_resource_event_unification.py \
             --junitxml=artifacts/event-coordination.xml
       - name: Require clean formatting
