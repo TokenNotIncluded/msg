@@ -15,7 +15,8 @@ from msg import cli
 from msg.atomic_file import durable_write
 from msg.client import ClientState, MsgClient
 from msg.client_account_backup import backup_account, restore_account
-from msg.core.codec import b64, canonical, digest, loads
+from msg.client_api_keys import create as create_api_key
+from msg.core.codec import b64, canonical, digest, loads, wire
 from msg.core.errors import Failure
 from msg.paths import ClientPaths
 from msg.security.age_keys import _encode, generate_age_key
@@ -143,8 +144,9 @@ async def test_real_cli_fresh_environment_preserves_identity_and_no_default_swit
     assert current.signer.private_bytes() == original.signer.private_bytes()
 
 
+@pytest.mark.parametrize('credential_field', ['token', 'api_key'])
 async def test_restored_account_retains_real_signed_server_authority(
-    installed, tmp_path, monkeypatch
+    installed, tmp_path, monkeypatch, credential_field
 ):
     if shutil.which('age') is None:
         pytest.skip('real age CLI is required')
@@ -161,6 +163,11 @@ async def test_restored_account_retains_real_signed_server_authority(
         client = MsgClient(state, HTTPTransport(server, http=http), clock=lambda: NOW)
         registered = await client.register('backup-roundtrip-fixture')
         assert registered.status == 'ok'
+        issued = await create_api_key(client)
+        assert issued.status == 'ok'
+        if credential_field == 'token':
+            state.data['token'] = state.data.pop('api_key')
+            state._save()
         ciphertext = tmp_path / 'fixture.age'
         backup_account(server, state.account, [recipient], ciphertext)
         environment(monkeypatch, tmp_path / 'new')
@@ -169,9 +176,31 @@ async def test_restored_account_retains_real_signed_server_authority(
         )
         restored = ClientState(server=server, account='restored-fixture')
         restored_client = MsgClient(restored, HTTPTransport(server, http=http), clock=lambda: NOW)
-        result = await restored_client.call('discovery.get', {'id': state.subject, 'view': 'meta'})
+        arguments = {'id': state.subject, 'view': 'meta'}
+        bearer = restored_client.prepare('discovery.get', arguments)
+        assert 'token' in wire(bearer)['proof']
+        assert 'signature' not in wire(bearer)['proof']
+        bearer_result = await restored_client.send(bearer)
+        assert bearer_result.status == 'ok' and bearer_result.actor == state.subject
+
+        # A successful bearer read is not proof that the recovered key can sign.
+        signed = restored_client.prepare('discovery.get', arguments, signer=restored.signer)
+        proof = wire(signed)['proof']
+        assert set(proof) == {'signature', 'certificates'}
+        assert proof['signature']['key_id'] == registered.data['key_id']
+        result = await restored_client.send(signed)
         assert result.status == 'ok' and result.actor == state.subject
         assert restored.signer.key_id == registered.data['key_id']
+
+        invalid = restored_client.prepare(
+            'discovery.get', arguments, signer=Ed25519Signer.generate()
+        )
+        assert 'token' not in wire(invalid)['proof']
+        rejected = await restored_client.send(invalid)
+        assert rejected.status == 'error'
+        # Valid saved credentials cannot rescue an explicitly invalid signing key.
+        still_authorized = await restored_client.call('discovery.get', arguments)
+        assert still_authorized.status == 'ok' and still_authorized.actor == state.subject
 
 
 @pytest.mark.parametrize(
