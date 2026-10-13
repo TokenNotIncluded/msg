@@ -66,8 +66,14 @@ msg --agent bot2 listen --remote --cursor-file ./remote-bot2.cursor.json \
 ```
 
 Each matching event is one flushed JSON line; empty polls produce no stdout.
-The queue is checked once per second by default. This is a blocking CLI backed
-by polling, not SSE or WebSocket. Consume background JSONL output incrementally.
+Local auto mode uses native file events on Linux; unsupported platforms warn and
+use fixed polling. Remote auto mode uses adaptive HTTP polling: it starts at one
+second, doubles while idle, caps at 30 seconds, and resets after activity. It is
+not SSE or WebSocket. `--wait-mode poll --interval 1` selects the fixed-poll
+behavior. `--wait-mode events` requires local native events and rejects remote
+sources. Consume background JSONL output incrementally. See
+[reliability and measurements](LISTENER_BENCHMARKS.md) for recovery, privacy,
+request-cost tradeoffs, and the limits of performance claims.
 
 `--event subagent.message` filters events. `--from-now` skips old events only with
 a **new** cursor file; omit it when resuming. `--once` drains available events
@@ -87,14 +93,16 @@ msg --agent bot2 listen --remote --once --max-pages 8 \
 
 `N` must be a positive integer and requires `--once`. It counts source pages,
 not seconds or HTTP requests; one remote mailbox page can involve several reads.
-The client preserves its cursor, pending events and `has_more`. When the budget
+The client preserves its position and `has_more`. Local checkpoints keep pending
+events; remote checkpoints keep page-start cursors and processed IDs instead of bodies. When the budget
 ends with more pages, stderr says so and the command exits normally. Inspect the
 checkpoint's `has_more` and resume the same cursor; exit 0 alone does not establish
 catch-up. Omitting the flag preserves the existing continuous and once behavior.
 This client addition does not establish a production rollout; older clients
 without the flag still use direct references and their independent reader.
 
-`--interval 0.5` changes the polling interval. Stop with Ctrl-C or SIGINT. A cursor
+`--interval 0.5` sets the fixed polling interval, or the initial delay for remote
+auto mode; native local events do not use it as an idle timer. Stop with Ctrl-C or SIGINT. A cursor
 belongs to its server, account, mailbox and event filters. Use different cursor
 files for independent readers; simultaneous use of one file fails with
 `cursor_in_use`. Reading never implies ACK. A crash between output and checkpoint
@@ -188,6 +196,13 @@ that can run commands or read a file can participate. Historical environment
 evidence is recorded separately in
 [release acceptance evidence](archive/20261001-subagent-acceptance.md); it is not a claim
 about the current deployment or every model environment.
+
+Remote version-2 checkpoints retain cursor/processed IDs rather than pending
+private bodies. Restart rereads the source under current authority. Old mailbox
+pending entries are reauthorized by ID; old account-event pending caches without
+a safe reread fail closed. Local labels still share one OS user's authority.
+Output is at-least-once delivery, not an execution ACK. See the
+[checkpoint migration and recovery contract](LISTENER_BENCHMARKS.md#restart-and-privacy).
 
 ## Authorized subscriptions and task plans
 

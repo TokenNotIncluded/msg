@@ -126,7 +126,7 @@ async def test_short_views_cannot_gain_credentials_queries_or_write_authority(in
                 for header in ('Authorization', 'X-Msg-Request'):
                     assert (
                         await http.get(path, headers={'Accept': accept, header: 'untrusted'})
-                    ).status_code == 400
+                    ).status_code == (401 if header == 'Authorization' else 400)
                 assert (await http.post(path, headers={'Accept': accept})).status_code == 405
     assert packets
     assert all(packet.subject is None and packet.proof is None for packet in packets)

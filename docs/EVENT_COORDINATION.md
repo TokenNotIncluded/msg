@@ -52,13 +52,16 @@ access can include history **before** its event position. Continuing a cursor is
 not a complete state synchronization. If log retention has removed the position,
 `resync_required` remains a hard error; no automatic reset or silent skip occurs.
 
-On restart, cached pending subscription events are reread from their protected
-before-cursor before output. Revoked events are discarded, not emitted from disk.
-Existing remote mailbox readers also reread their pending messages; existing
-account-event readers use the authorized event projection rather than cached audit
-bodies. A permanent authorization failure leaves the checkpoint unchanged. Reading
-is not ACK. Output and checkpoint persistence remain at-least-once: deduplicate by
-event/message ID. Local readers keep their existing offline behavior.
+Remote version-2 listener checkpoints save cursors and processed event IDs,
+never private event bodies. After restart the source is read again under current
+authority; revoked events cannot be emitted from a saved body. Old version-1
+mailbox and account-event caches are reduced to IDs before remote reads. The
+reader re-fetches those IDs under current access, omitting items that are now
+invisible. Old subscription checkpoints with bodies and no safe ID-based recovery
+fail closed. A permanent authorization failure does not advance the checkpoint.
+Reading is not ACK. Output and checkpoint persistence remain at-least-once:
+deduplicate by event/message ID. Local readers keep their existing offline
+behavior.
 
 ## Task IDs, dependency release and concurrency
 

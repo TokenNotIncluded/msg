@@ -332,8 +332,11 @@ async def revise_resource(
     if preserve_existing_relations:
         require(
             resource.type == 'collab_request'
-            and request.operation in {
-                'communication.task_claim', 'communication.task_complete', 'communication.task_renew',
+            and request.operation
+            in {
+                'communication.task_claim',
+                'communication.task_complete',
+                'communication.task_renew',
             },
             'controlled_resource',
         )
