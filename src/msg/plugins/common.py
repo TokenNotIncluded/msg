@@ -270,6 +270,7 @@ async def revise_resource(
     source_digest=None,
     content_created_at=None,
     summary=SUMMARY_UNSET,
+    preserve_existing_relations=False,
 ):
     from msg.plugins.board_presentation import protect_edit
 
@@ -327,10 +328,27 @@ async def revise_resource(
                 blob.media_type in {'text/plain', 'text/markdown'} and blob.size <= 4096,
                 'invalid_board_description',
             )
+    preserved = ()
+    if preserve_existing_relations:
+        require(
+            resource.type == 'collab_request'
+            and request.operation
+            in {
+                'communication.task_claim',
+                'communication.task_complete',
+                'communication.task_renew',
+            },
+            'controlled_resource',
+        )
+        # Server-managed task results remain pinned even when an independent
+        # worker cannot read another task's result. Only an exact current link
+        # can survive; every new link still needs ordinary read permission.
+        preserved = (await tx.revision(ResourceRef(id=resource.id))).relations
     for relation in relations:
         spec = app.registry.resource_type(resource.type, resource.type_version)
         require(relation.type in spec.relations, 'invalid_relation_type')
-        await check_access(app, ctx, request, tx, relation.target.id, 'read')
+        if relation not in preserved:
+            await check_access(app, ctx, request, tx, relation.target.id, 'read')
         if relation.target.revision is not None:
             await tx.revision(relation.target)
     rid = revision_id or new_id('v')

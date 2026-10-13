@@ -27,9 +27,14 @@ TEXT = {'type': 'string', 'minLength': 1, 'maxLength': 4096}
 
 
 def resource_types(app):
+    from msg.plugins.task_plans import GRAPH, WORKERS
+
     types = []
     fields = {
         'request': {
+            'scheduler_version': {'const': 1},
+            'workers': WORKERS,
+            'graph': GRAPH,
             'title': TEXT,
             'description': TEXT,
             'requirements': TEXT,
@@ -123,7 +128,8 @@ async def _project(app, ctx, request, tx, resource, revision, record):
         'generation': resource.generation,
         'resource_refs': [],
     }
-    for relation in revision.relations:
+    result_refs = {}
+    for slot, relation in enumerate(revision.relations):
         try:
             await _safe_ref(app, ctx, request, tx, relation.target.id)
         except Failure as exc:
@@ -138,12 +144,23 @@ async def _project(app, ctx, request, tx, resource, revision, record):
             }:
                 continue
             raise
+        result_refs[slot] = wire(relation.target)
         if relation.type in {'target', 'content'}:
             result[relation.type + '_ref'] = wire(relation.target)
         elif relation.type == 'state':
             result['state_ref'] = relation.target.id
         else:
             result['resource_refs'].append(relation.target.id)
+    if record.get('scheduler_version') == 1:
+        from msg.core import task_graph
+
+        graph = task_graph.settled(record['graph'], ctx.now.timestamp())
+        result['summary'] = task_graph.summary(graph)
+        for task in graph['tasks']:
+            slot = task.pop('result_slot', None)
+            if slot in result_refs:
+                task['result'] = result_refs[slot]
+        result['graph'] = graph
     if (
         record.get('expires_at')
         and parse_time(record['expires_at']) <= ctx.now
@@ -335,6 +352,9 @@ def install(app, op):
     from msg.plugins.proposals import install as install_proposals
 
     install_proposals(app, op)
+    from msg.plugins.task_plans import install as install_task_plans
+
+    install_task_plans(app, op)
 
     def install_transition(kind, action):
         @op(
@@ -343,6 +363,7 @@ def install(app, op):
         async def transition(ctx, request, tx):
             subject = await _self(app, ctx, request, tx)
             resource, revision, record = await _load(app, ctx, request, tx, kind)
+            require('scheduler_version' not in record, 'task_plan_required')
             await assert_generation(request, resource)
             require(
                 not record.get('expires_at') or parse_time(record['expires_at']) > ctx.now,

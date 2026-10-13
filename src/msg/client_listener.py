@@ -177,6 +177,8 @@ async def listen(
     max_idle_interval: float | None = None,
     cursor_only: bool = False,
     resolve_legacy=None,
+    revalidate=None,
+    server_wait: bool = False,
 ) -> int:
     """Drain a source, then wait for a native hint or a bounded polling delay.
 
@@ -204,6 +206,7 @@ async def listen(
     binding = _binding(context, event_types)
     types = binding['event_types']
     state = _load(cursor_file, binding, cursor)
+    restored = bool(state['pending'])
     if from_now and (cursor is not None or (cursor_file is not None and cursor_file.exists())):
         raise Failure('listener_start_position_conflict')
     if state['version'] == 2 and not cursor_only:
@@ -268,6 +271,12 @@ async def listen(
         while state['legacy_pending']:
             reference = state['legacy_pending'][0]
             item = await retry(lambda message_id=reference['id']: resolve_legacy(message_id))
+            if item is None:
+                # A formerly authorized item is no longer visible. Do not emit a
+                # persisted body or discard unrelated pending references.
+                state['legacy_pending'].pop(0)
+                persist()
+                continue
             if not isinstance(item, dict) or _event_id(item) != reference['id']:
                 raise Failure('invalid_listener_page')
             emit(item)
@@ -301,6 +310,16 @@ async def listen(
         processed = set(state.get('processed', ()))
         while state['pending']:
             item = state['pending'][0]
+            if restored and revalidate is not None:
+                # A legacy local checkpoint can contain a cached private body.
+                # Re-fetch with today's authority before sending it to stdout.
+                item = await retry(lambda: revalidate(state['pending'][0]))
+                if item is None:
+                    state['pending'] = state['pending'][1:]
+                    persist()
+                    continue
+                if not isinstance(item, dict):
+                    raise Failure('invalid_listener_page')
             if not cursor_only or _event_id(item) not in processed:
                 emit(item)
                 if cursor_only:
@@ -312,6 +331,7 @@ async def listen(
             persist()
             if max_events is not None and emitted >= max_events:
                 return emitted
+        restored = False
         if cursor_only:
             state.update(cursor=page_end, processed=[])
         persist()
@@ -331,7 +351,7 @@ async def listen(
             idle_delay = interval
         if wait_for_change is not None:
             await wait_for_change()
-        else:
+        elif not server_wait:
             await asyncio.sleep(idle_delay)
             if not activity:
                 idle_delay = min(idle_delay * 2, idle_limit)
