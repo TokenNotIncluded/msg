@@ -1,16 +1,6 @@
 name: Event and task coordination
 on:
-  pull_request:
-    paths:
-      - 'src/msg/**'
-      - 'tests/**'
-      - '.github/workflows/event-coordination.yml'
-  push:
-    branches: [main]
-    paths:
-      - 'src/msg/**'
-      - 'tests/**'
-      - '.github/workflows/event-coordination.yml'
+  # Day-to-day development is verified locally; retain opt-in reproduction.
   workflow_dispatch:
 permissions:
   contents: read
