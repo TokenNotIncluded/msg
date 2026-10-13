@@ -176,7 +176,9 @@ def cursor_path(state, args, source):
     return private_directory(state.paths.state / 'agent-listeners') / (key + '.json')
 
 
-async def stream(state, args, fetch, source, *, wait_for_change=None, resolve_legacy=None, server_wait=False):
+async def stream(
+    state, args, fetch, source, *, wait_for_change=None, resolve_legacy=None, server_wait=False
+):
     from msg.client_listener import listen
 
     remote = not source.startswith('local:')
@@ -285,8 +287,7 @@ async def run_remote(client, args):
     require(not args.offline, 'offline_remote_conflict')
     if args.command == 'listen':
         require(
-            getattr(args, 'wait_mode', 'auto') != 'events'
-            or getattr(args, 'subscribe', False),
+            getattr(args, 'wait_mode', 'auto') != 'events' or getattr(args, 'subscribe', False),
             'listener_events_unavailable',
         )
     if args.user:
