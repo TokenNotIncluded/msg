@@ -203,3 +203,9 @@ pending entries are reauthorized by ID; old account-event pending caches without
 a safe reread fail closed. Local labels still share one OS user's authority.
 Output is at-least-once delivery, not an execution ACK. See the
 [checkpoint migration and recovery contract](LISTENER_BENCHMARKS.md#restart-and-privacy).
+
+## Authorized subscriptions and task plans
+
+See [event coordination](EVENT_COORDINATION.md) for `listen --subscribe`,
+permission-aware cursor recovery, and deterministic task IDs, dependency release,
+result aggregation and concurrency limits. Legacy mailbox modes remain separate.
