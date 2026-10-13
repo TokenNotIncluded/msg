@@ -1,0 +1,31 @@
+[package]
+name = "msg-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+msg-core = { path = "../msg-core" }
+msg-identity = { path = "../msg-identity" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+msg-crypto = { path = "../msg-crypto" }
+
+postgres.workspace = true
+postgres-native-tls.workspace = true
+native-tls.workspace = true
+bytes.workspace = true
+sha2.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+fs2.workspace = true
+libc.workspace = true
+
+[dev-dependencies]
+msg-protocol = { path = "../msg-protocol" }
+
+[lints]
+workspace = true
