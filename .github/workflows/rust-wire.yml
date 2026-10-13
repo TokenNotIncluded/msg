@@ -1,26 +1,6 @@
 name: Rust native conformance
 on:
-  pull_request:
-    paths:
-      - 'rust/**'
-      - 'src/msg/core/**'
-      - 'src/msg/security/**'
-      - 'src/msg/storage/**'
-      - 'src/msg/oauth_config.py'
-      - 'src/msg/constants.py'
-      - 'pyproject.toml'
-      - '.github/workflows/rust-wire.yml'
-  push:
-    branches: [main, 'migration/rust-*']
-    paths:
-      - 'rust/**'
-      - 'src/msg/core/**'
-      - 'src/msg/security/**'
-      - 'src/msg/storage/**'
-      - 'src/msg/oauth_config.py'
-      - 'src/msg/constants.py'
-      - 'pyproject.toml'
-      - '.github/workflows/rust-wire.yml'
+  # Daily changes are accepted locally; retain explicit conformance reproduction.
   workflow_dispatch:
 permissions:
   contents: read

@@ -84,7 +84,7 @@ pub struct AuthenticationService {
     runtime: RuntimeGeneration,
     primary_ceiling: Vec<Grant>,
     temporary_ceiling: Vec<Grant>,
-    oauth_policy: Option<crate::oauth::OAuthPolicy>,
+    browser_policy: Option<crate::sessions::BrowserPolicy>,
 }
 impl AuthenticationService {
     pub fn new(
@@ -98,11 +98,11 @@ impl AuthenticationService {
             runtime: RuntimeGeneration::capture(store)?,
             primary_ceiling,
             temporary_ceiling,
-            oauth_policy: None,
+            browser_policy: None,
         })
     }
-    pub fn with_oauth_policy(mut self, policy: crate::oauth::OAuthPolicy) -> Self {
-        self.oauth_policy = Some(policy);
+    pub fn with_browser_policy(mut self, policy: crate::sessions::BrowserPolicy) -> Self {
+        self.browser_policy = Some(policy);
         self
     }
     pub fn authenticate(
@@ -112,19 +112,6 @@ impl AuthenticationService {
         store: &dyn AuthorityStore,
         entry: Entry,
         now: Timestamp,
-    ) -> Result<Admission> {
-        self.authenticate_for_resource(request, spec, store, entry, now, None)
-    }
-    /// `resource` must be supplied by the adapter from its validated request URL,
-    /// never copied from a field in the operation envelope.
-    pub fn authenticate_for_resource(
-        &mut self,
-        request: &Request,
-        spec: &OperationPolicy,
-        store: &dyn AuthorityStore,
-        entry: Entry,
-        now: Timestamp,
-        resource: Option<&str>,
     ) -> Result<Admission> {
         let requested_subject = optional_string(request.field("subject")?)?;
         check_archived(store, requested_subject)?;
@@ -233,13 +220,12 @@ impl AuthenticationService {
                     "invalid_recovery_proof",
                 )?;
                 let old = store.credential(argument(request, "credential_id")?.as_str()?)?;
-                crate::oauth::require_binding(
+                crate::sessions::require_binding(
                     store,
                     &old,
                     now,
-                    self.oauth_policy.as_ref(),
+                    self.browser_policy.as_ref(),
                     &self.temporary_ceiling,
-                    resource,
                 )?;
                 require(
                     old.kind == CredentialKind::Token && requested_subject == Some(&old.subject_id),
@@ -378,13 +364,12 @@ impl AuthenticationService {
                             bool::from(credential.verifier.0.as_slice().ct_eq(hash.as_slice())),
                             "invalid_token",
                         )?;
-                        crate::oauth::require_binding(
+                        crate::sessions::require_binding(
                             store,
                             &credential,
                             now,
-                            self.oauth_policy.as_ref(),
+                            self.browser_policy.as_ref(),
                             &self.temporary_ceiling,
-                            resource,
                         )?;
                         ("token", vec![])
                     }
@@ -573,7 +558,6 @@ fn custodial_write(name: &str) -> bool {
     matches!(
         name,
         "identity.rename"
-            | "identity.oauth_approve"
             | "content.post_create"
             | "content.post_edit"
             | "content.file_put"

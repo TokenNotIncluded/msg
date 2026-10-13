@@ -6,8 +6,8 @@ pub mod authentication;
 pub mod authorization;
 pub mod certificates;
 pub mod models;
-pub mod oauth;
 pub mod policy;
+pub mod sessions;
 pub mod store;
 
 use msg_core::{Error, Result};

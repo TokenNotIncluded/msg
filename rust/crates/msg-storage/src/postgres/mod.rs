@@ -399,7 +399,7 @@ impl PgSession {
             ),
             ("settings", vec!["key", "value"]),
             ("results", vec!["subject", "request_id", "digest", "body"]),
-            ("oauth_states", vec!["id", "kind", "expires", "body"]),
+            ("credential_states", vec!["id", "kind", "expires", "body"]),
             ("revisions", vec!["id", "resource_id", "created_at", "body"]),
             (
                 "relations",

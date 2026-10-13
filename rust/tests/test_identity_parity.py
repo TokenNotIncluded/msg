@@ -18,6 +18,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from msg.browser_config import BrowserConfig
 from msg.core.codec import b64, canonical, digest, wire
 from msg.core.errors import Failure
 from msg.core.models import (
@@ -40,7 +41,6 @@ from msg.core.packet import decode_packet
 from msg.core.registry import Registry
 from msg.core.requests import payload_fields, signing_bytes
 from msg.core.schemas import NETWORK_CONSTRAINTS
-from msg.oauth_config import SCOPES, OAuthClient, OAuthConfig
 from msg.security.authentication import AuthenticationService
 from msg.security.certificates import (
     CertificateValidator,
@@ -49,7 +49,6 @@ from msg.security.certificates import (
     sign_certificate,
 )
 from msg.security.crypto import Ed25519Signer, key_id, subject_id
-from msg.security.oauth import resource_execution
 from msg.security.policy import allows, constraints_subset, scope_contains, scope_subset
 from msg.security.token_delivery import recovery_verifier
 from msg.storage.sqlite import SqliteMetadataStore
@@ -310,10 +309,8 @@ class Fixture:
             lambda: self.primary,
             lambda: self.primary,
         )
-        self.oauth = OAuthConfig(
-            enabled=True, clients=(OAuthClient('fixture-client', 'Fixture', scopes=SCOPES),)
-        )
-        self.auth.oauth_config = self.oauth
+        self.browser = BrowserConfig(enabled=True)
+        self.auth.browser_config = self.browser
 
     def grant(self, name, operations, *, scope='r_root', descendants=True, constraints=None):
         return CapabilityGrant(
@@ -371,7 +368,7 @@ class Fixture:
             'capabilities': wire(self.registry.capabilities()),
             'primary_ceiling': wire(self.primary),
             'temporary_ceiling': wire(self.primary),
-            'oauth': wire(self.oauth),
+            'browser': wire(self.browser),
         }
 
     def setting(self, key, value):
@@ -445,6 +442,7 @@ class Fixture:
         actor='alice',
         subject='default',
         token=False,
+        token_id='t_fixture',
         anonymous=False,
         expires=60,
         certificates=(),
@@ -474,7 +472,7 @@ class Fixture:
         request = replace(request, payload_digest=digest(payload_fields(request)))
         if not anonymous:
             proof = (
-                TokenProof(credential_id='t_fixture', token=self.token)
+                TokenProof(credential_id=token_id, token=self.token)
                 if token
                 else SignatureProof(
                     signature=self.signers[actor].sign(signing_bytes(request), purpose='request'),
@@ -542,7 +540,6 @@ class Check:
         *,
         entry='network',
         replay=False,
-        resource=None,
     ):
         command = {
             'action': 'authenticate',
@@ -550,12 +547,10 @@ class Check:
             'policy': policy,
             'entry': entry,
             'now': wire(self.fixture.now),
-            'resource': resource,
         }
         async with self.fixture.metadata.transaction(write=False) as tx:
             try:
-                with resource_execution(resource):
-                    principal = await self.fixture.auth.authenticate(request, tx, entry=entry)
+                principal = await self.fixture.auth.authenticate(request, tx, entry=entry)
                 if replay:
                     previous = await tx.request_result(
                         principal.subject, request.request_id, request.payload_digest
@@ -616,7 +611,7 @@ async def run(binary, report):
             'failure_count': len(check.failures),
             'fixture': 'real Python SqliteMetadataStore schema; deterministic public test keys',
             'limitations': [
-                'OAuth issuance, refresh writes and token delivery are not part of this read-only slice',
+                'Key-approved issuance and token delivery are not part of this read-only slice; retired OAuth authority is rejected',
                 'Replay admission returns only the stored result, not a fresh principal',
                 'Mode corpus counts each mode/class/permission decision separately',
             ],
@@ -825,111 +820,133 @@ async def cases(f, check):
         'ceiling': wire(f.primary),
     }
     with f.body_change('credentials', derived.id, derived):
-        for binding in ('browser:', 'api:'):
+        f.conn.execute(
+            'INSERT INTO credential_states VALUES (?,?,?,?)',
+            (
+                'api:' + derived.id,
+                'binding',
+                wire(NOW + timedelta(days=1)),
+                canonical(source).decode(),
+            ),
+        )
+        await check.auth_case('key_approved_api_binding', f.request(token=True), policy)
+        for field, value in [('revoked_at', NOW), ('expires_at', NOW), ('ceiling', ())]:
+            parent = f.credentials['alice']
+            with f.body_change('credentials', parent.id, replace(parent, **{field: value})):
+                await check.auth_case('binding_live_parent', f.request(token=True), policy)
+        with f.body_change(
+            'identities', f.users['alice'], replace(f.subjects['alice'], auth_version=2)
+        ):
+            await check.auth_case('binding_auth_version', f.request(token=True), policy)
+        nested = {**source, 'session': 'session:fixture'}
+        f.conn.execute(
+            'UPDATE credential_states SET body=? WHERE id=?',
+            (canonical(nested).decode(), 'api:' + derived.id),
+        )
+        f.conn.execute(
+            'INSERT INTO credential_states VALUES (?,?,?,?)',
+            (
+                'session:fixture',
+                'session',
+                wire(NOW + timedelta(seconds=60)),
+                canonical(source).decode(),
+            ),
+        )
+        await check.auth_case('binding_nested_session', f.request(token=True), policy)
+        f.conn.execute(
+            'UPDATE credential_states SET body=? WHERE id=?',
+            (canonical({**source, 'revoked': True}).decode(), 'session:fixture'),
+        )
+        await check.auth_case('binding_session_revoked', f.request(token=True), policy)
+        f.conn.execute(
+            'UPDATE credential_states SET body=?,expires=? WHERE id=?',
+            (canonical(source).decode(), wire(NOW), 'session:fixture'),
+        )
+        await check.auth_case('binding_session_expired', f.request(token=True), policy)
+        for field, value in [
+            ('login_binding', True),
+            ('custodial', True),
+            ('ceiling', []),
+            ('subject', f.users['bob']),
+        ]:
+            f.conn.execute(
+                'UPDATE credential_states SET body=? WHERE id=?',
+                (canonical({**source, field: value}).decode(), 'api:' + derived.id),
+            )
+            await check.auth_case('binding_unapproved_source', f.request(token=True), policy)
+        f.conn.execute('DELETE FROM credential_states')
+
+    # Positive browser case must have a genuine current session ID, never a
+    # restored OAuth access credential with a new-looking binding attached.
+    browser = replace(derived, id='t_session_fixture')
+    f.conn.execute(
+        'INSERT INTO credentials VALUES (?,?,?)',
+        (browser.id, browser.subject_id, canonical(browser).decode()),
+    )
+    try:
+        f.conn.execute(
+            'INSERT INTO credential_states VALUES (?,?,?,?)',
+            (
+                'browser:' + browser.id,
+                'binding',
+                wire(NOW + timedelta(days=1)),
+                canonical(source).decode(),
+            ),
+        )
+        await check.auth_case(
+            'key_approved_browser_binding', f.request(token=True, token_id=browser.id), policy
+        )
+        for body in [
+            {**source, 'login_binding': True},
+            {**source, 'custodial': True},
+            {**source, 'parent': f.keys['bob']},
+            {**source, 'ceiling': []},
+        ]:
+            f.conn.execute(
+                'UPDATE credential_states SET body=? WHERE id=?',
+                (canonical(body).decode(), 'browser:' + browser.id),
+            )
+            await check.auth_case(
+                'browser_binding_mismatch', f.request(token=True, token_id=browser.id), policy
+            )
+        f.conn.execute('DELETE FROM credential_states')
+        await check.auth_case(
+            'browser_binding_missing', f.request(token=True, token_id=browser.id), policy
+        )
+    finally:
+        f.conn.execute('DELETE FROM credentials WHERE id=?', (browser.id,))
+
+    # Even old authority rows restored beside a valid live parent are rejected.
+    f.conn.execute(
+        'CREATE TABLE oauth_states(id TEXT PRIMARY KEY,kind TEXT,expires TEXT,body TEXT)'
+    )
+    try:
+        for id in ('t_oauth_fixture', 't_browser_fixture'):
+            legacy = replace(derived, id=id)
+            f.conn.execute(
+                'INSERT INTO credentials VALUES (?,?,?)',
+                (id, legacy.subject_id, canonical(legacy).decode()),
+            )
             f.conn.execute(
                 'INSERT INTO oauth_states VALUES (?,?,?,?)',
                 (
-                    binding + derived.id,
-                    'binding',
+                    'access:' + id,
+                    'access',
                     wire(NOW + timedelta(days=1)),
                     canonical(source).decode(),
                 ),
             )
-            await check.auth_case('oauth_bound_token', f.request(token=True), policy)
-            for field, value in [('revoked_at', NOW), ('expires_at', NOW), ('ceiling', ())]:
-                parent = f.credentials['alice']
-                with f.body_change('credentials', parent.id, replace(parent, **{field: value})):
-                    await check.auth_case('oauth_live_parent', f.request(token=True), policy)
-            with f.body_change(
-                'identities', f.users['alice'], replace(f.subjects['alice'], auth_version=2)
-            ):
-                await check.auth_case('oauth_auth_version', f.request(token=True), policy)
-            nested = {**source, 'session': 'session:fixture'}
             f.conn.execute(
-                'UPDATE oauth_states SET body=? WHERE id=?',
-                (canonical(nested).decode(), binding + derived.id),
+                'INSERT INTO credential_states VALUES (?,?,?,?)',
+                ('api:' + id, 'binding', wire(NOW + timedelta(days=1)), canonical(source).decode()),
             )
-            f.conn.execute(
-                'INSERT INTO oauth_states VALUES (?,?,?,?)',
-                (
-                    'session:fixture',
-                    'session',
-                    wire(NOW + timedelta(seconds=60)),
-                    canonical(source).decode(),
-                ),
+            await check.auth_case(
+                'restored_legacy_authority_denied', f.request(token=True, token_id=id), policy
             )
-            await check.auth_case('oauth_session_source', f.request(token=True), policy)
-            f.conn.execute(
-                'UPDATE oauth_states SET body=? WHERE id=?',
-                (canonical({**source, 'revoked': True}).decode(), 'session:fixture'),
-            )
-            await check.auth_case('oauth_session_revoked', f.request(token=True), policy)
-            f.conn.execute('DELETE FROM oauth_states')
-        family = {**source, 'client_id': 'fixture-client', 'scopes': ['msg.read', 'msg.write']}
-        access = {'family': 'family:fixture'}
-        f.conn.execute(
-            'INSERT INTO oauth_states VALUES (?,?,?,?)',
-            (
-                'access:' + derived.id,
-                'access',
-                wire(NOW + timedelta(days=1)),
-                canonical(access).decode(),
-            ),
-        )
-        for field, value in [
-            (None, None),
-            ('revoked', True),
-            ('client_id', 'missing-client'),
-            ('scopes', ['unknown.scope']),
-            ('ceiling', []),
-            ('auth_version', 9),
-        ]:
-            body = family if field is None else {**family, field: value}
-            f.conn.execute(
-                'INSERT OR REPLACE INTO oauth_states VALUES (?,?,?,?)',
-                (
-                    'family:fixture',
-                    'family',
-                    wire(NOW + timedelta(seconds=60)),
-                    canonical(body).decode(),
-                ),
-            )
-            await check.auth_case('oauth_family', f.request(token=True), policy)
-        f.conn.execute(
-            'UPDATE oauth_states SET expires=? WHERE id=?', (wire(NOW), 'family:fixture')
-        )
-        await check.auth_case('oauth_family_expired', f.request(token=True), policy)
-        mcp_grants = (f.grant('resource.basic', {READ + '@1'}),)
-        mcp_token = replace(derived, ceiling=mcp_grants)
-        audience = SERVICE + '/-/mcp'
-        mcp_family = {
-            **source,
-            'client_id': 'fixture-client',
-            'resource': audience,
-            'scopes': ['msg.mcp.read'],
-            'ceiling': wire(mcp_grants),
-        }
-        f.conn.execute(
-            'UPDATE oauth_states SET expires=?,body=? WHERE id=?',
-            (wire(NOW + timedelta(seconds=60)), canonical(mcp_family).decode(), 'family:fixture'),
-        )
-        with f.body_change('credentials', derived.id, mcp_token):
-            for resource in (None, audience, SERVICE + '/other'):
-                await check.auth_case(
-                    'mcp_audience', f.request(token=True), policy, resource=resource
-                )
-            for scopes in (['msg.read', 'msg.mcp.read'], ['msg.mcp.post'], ['msg.mcp.read']):
-                f.conn.execute(
-                    'UPDATE oauth_states SET body=? WHERE id=?',
-                    (canonical({**mcp_family, 'scopes': scopes}).decode(), 'family:fixture'),
-                )
-                await check.auth_case(
-                    'mcp_scope_ceiling', f.request(token=True), policy, resource=audience
-                )
-        await check.auth_case(
-            'mcp_operation_denied', f.request(token=True), policy, resource=audience
-        )
-        f.conn.execute('DELETE FROM oauth_states')
+            f.conn.execute('DELETE FROM credentials WHERE id=?', (id,))
+            f.conn.execute('DELETE FROM credential_states')
+    finally:
+        f.conn.execute('DROP TABLE oauth_states')
 
     for actor, kind in [('alice', 'custodial'), ('alice', 'registered')]:
         subject = f.subjects[actor]
