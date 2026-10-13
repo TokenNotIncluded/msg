@@ -11,7 +11,7 @@ class EventWaitingExecutor(OperationExecutor):
     async def execute(self, request, *, entry='network'):
         result = await super().execute(request, entry=entry)
         if (
-            request.operation != 'communication.events'
+            request.operation not in {'communication.events', 'communication.changes'}
             or request.contract_version != 2
             or result.status != 'ok'
         ):
@@ -19,7 +19,9 @@ class EventWaitingExecutor(OperationExecutor):
         timeout = request.arguments.get('wait_ms', 0) / 1000
         signal = getattr(self.metadata, 'event_signal', None)
         current = getattr(self.metadata, '_current', None)
-        if not timeout or request.arguments.get('tail') or signal is None:
+        if signal is None:
+            return replace(result, data={**result.data, 'wait_supported': False})
+        if not timeout or request.arguments.get('tail'):
             return result
         # A nested batch must not keep an outer transaction or writer lock open.
         if (current is not None and current.get() is not None) or signal.waiters >= 128:

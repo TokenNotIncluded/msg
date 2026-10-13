@@ -179,6 +179,7 @@ async def listen(
     resolve_legacy=None,
     revalidate=None,
     server_wait: bool = False,
+    wait_fetch=None,
 ) -> int:
     """Drain a source, then wait for a native hint or a bounded polling delay.
 
@@ -253,8 +254,9 @@ async def listen(
             await asyncio.sleep(min(retry_delay, 30.0))
             retry_delay = min(retry_delay * 2, 30.0)
 
-    async def read(tail=False):
-        return _page(await retry(lambda: fetch(state['cursor'], tail=tail)))
+    async def read(tail=False, wait=False):
+        source = wait_fetch if wait and wait_fetch is not None else fetch
+        return _page(await retry(lambda: source(state['cursor'], tail=tail)))
 
     def emit(item):
         nonlocal emitted
@@ -290,11 +292,13 @@ async def listen(
         state.update(cursor=page['cursor'], pending=[], has_more=False)
         persist()
 
+    idle = False
     while True:
         page_end = state['cursor']
         activity = bool(state['pending'])
         if not state['pending']:
-            page = await read()
+            page = await read(wait=idle)
+            idle = False
             pages += 1
             if page['has_more'] and page['cursor'] == state['cursor']:
                 raise Failure('invalid_listener_page')
@@ -349,6 +353,9 @@ async def listen(
             return emitted
         if activity:
             idle_delay = interval
+        if wait_fetch is not None:
+            idle = True
+            continue
         if wait_for_change is not None:
             await wait_for_change()
         elif not server_wait:
