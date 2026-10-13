@@ -520,6 +520,49 @@ def link_progress(message):
     print('MSG link: ' + message, file=sys.stderr, flush=True)
 
 
+class LinkWait:
+    """Only fall back to the same rendezvous operation, never an account feed."""
+
+    def __init__(self, client, operation):
+        self.client = client
+        self.operation = operation
+        self.enabled = True
+
+    async def read(self, arguments, *, wait_ms=0, anonymous=False):
+        if self.enabled and len(arguments.get('invite_ids', ())) > 100:
+            self.disable('invite_scope_limit')
+        if self.enabled:
+            try:
+                result = self.client.checked(
+                    await self.client.call(
+                        self.operation,
+                        {**arguments, 'wait_ms': wait_ms},
+                        contract_version=2,
+                        anonymous=anonymous,
+                    )
+                )
+            except Failure as exc:
+                if exc.code not in {'unknown_operation', 'credential_ceiling'}:
+                    raise
+                self.disable(exc.code)
+            else:
+                if result.data.get('wait_supported') is not True:
+                    self.disable('server_wait_unsupported')
+                return result
+        legacy = {key: value for key, value in arguments.items() if key != 'invite_ids'}
+        return self.client.checked(
+            await self.client.call(
+                self.operation,
+                legacy,
+                anonymous=anonymous,
+            )
+        )
+
+    def disable(self, reason):
+        self.enabled = False
+        link_progress(f'{self.operation} wait unavailable ({reason}); using same-scope polling.')
+
+
 async def wait_for_access(client, claim, minutes, *, timeout=300):
     from msg.security.age_keys import private_from_identity
     from msg.security.sealed_box import decrypt
@@ -529,13 +572,16 @@ async def wait_for_access(client, claim, minutes, *, timeout=300):
     private = private_from_identity(
         client.state.age_key_path.read_text().strip()
     ).private_bytes_raw()
+    waiter = LinkWait(client, 'identity.link_collect')
     while True:
         try:
-            result = client.checked(
-                await asyncio.wait_for(
-                    client.call('identity.link_collect', claim, anonymous=True),
-                    timeout=max(0.01, deadline - time.monotonic()),
-                )
+            result = await asyncio.wait_for(
+                waiter.read(
+                    claim,
+                    anonymous=True,
+                    wait_ms=min(20000, max(0, int((deadline - time.monotonic()) * 1000))),
+                ),
+                timeout=max(0.01, deadline - time.monotonic()),
             )
         except TimeoutError as exc:
             raise Failure('link_wait_timeout', retryable=True) from exc
@@ -552,7 +598,8 @@ async def wait_for_access(client, claim, minutes, *, timeout=300):
             return await accept(client, SimpleNamespace(code=encode_code('access', bundle)))
         require(result.data.get('state') != 'expired', 'link_invite_expired')
         require(time.monotonic() < deadline, 'link_wait_timeout', retryable=True)
-        await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
+        if not waiter.enabled:
+            await asyncio.sleep(min(1, max(0, deadline - time.monotonic())))
 
 
 async def watch(client, args):
@@ -562,8 +609,19 @@ async def watch(client, args):
         'invalid_listener_interval',
     )
     approved = []
+    waiter = LinkWait(client, 'identity.link_pending')
+    wait = False
+    retry_delay = interval
     while True:
-        pending = client.checked(await client.call('identity.link_pending'))
+        once = getattr(args, 'once', False)
+        if once:
+            pending = client.checked(await client.call('identity.link_pending'))
+        else:
+            pending = await waiter.read(
+                {'invite_ids': _pending_invites(client)},
+                wait_ms=20000 if wait else 0,
+            )
+        progressed = False
         for item in pending.data['items']:
             try:
                 record = load_record(client.state, item['name'])
@@ -581,11 +639,36 @@ async def watch(client, args):
                 if exc.code != 'link_approval_in_progress':
                     raise
                 continue
+            progressed = True
             if item['name'] not in approved:
                 approved.append(item['name'])
         if getattr(args, 'once', False) or not _pending_local(client):
             return {'status': 'ok', 'data': {'approved': approved}}
-        await asyncio.sleep(interval)
+        if pending.data['items'] and not progressed:
+            # The durable claim is already readable, so a server wait returns
+            # immediately. Back off blocked approvals, not idle source reads.
+            await asyncio.sleep(retry_delay)
+            retry_delay = min(retry_delay * 2, max(interval, 30))
+        else:
+            retry_delay = interval
+            if not waiter.enabled:
+                await asyncio.sleep(interval)
+        wait = True
+
+
+def _pending_invites(client):
+    directory = records_directory(client.state)
+    if not directory.exists():
+        return []
+    return list(
+        dict.fromkeys(
+            record['invite_id']
+            for path in directory.glob('*.json')
+            if not path.name.endswith('.grant.json')
+            for record in [read_json(path)]
+            if record.get('state') in {'invited', 'issued'} and record.get('invite_id')
+        )
+    )
 
 
 def _pending_local(client):

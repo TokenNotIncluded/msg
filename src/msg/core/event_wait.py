@@ -11,12 +11,24 @@ class EventWaitingExecutor(OperationExecutor):
     async def execute(self, request, *, entry='network'):
         result = await super().execute(request, entry=entry)
         if (
-            request.operation not in {'communication.events', 'communication.changes'}
+            request.operation
+            not in {
+                'communication.events',
+                'communication.changes',
+                'identity.link_collect',
+                'identity.link_pending',
+            }
             or request.contract_version != 2
             or result.status != 'ok'
         ):
             return result
-        timeout = request.arguments.get('wait_ms', 0) / 1000
+        timeout = (
+            min(
+                request.arguments.get('wait_ms', 0),
+                result.data.get('wait_limit_ms', 20000),
+            )
+            / 1000
+        )
         signal = getattr(self.metadata, 'event_signal', None)
         current = getattr(self.metadata, '_current', None)
         if signal is None:
@@ -28,6 +40,8 @@ class EventWaitingExecutor(OperationExecutor):
             return replace(result, data={**result.data, 'wait_supported': False})
 
         def available(value):
+            if request.operation == 'identity.link_collect':
+                return value.status != 'ok' or value.data.get('state') != 'claimed'
             return (
                 value.status != 'ok'
                 or value.data.get('items')
@@ -57,8 +71,10 @@ class EventWaitingExecutor(OperationExecutor):
                     await signal.wait(generation, max(0, remaining))
                     await asyncio.sleep(min(0.05, max(0, deadline - time.monotonic())))
                 generation = signal.generation
-                # The original signed packet is unchanged. Authentication,
-                # revocation, credential expiry and per-resource ACL run again.
+                # The original packet is unchanged. The canonical executor
+                # reauthenticates signed owners or enforces anonymous_only and
+                # re-verifies the helper's exact possession claim in the handler.
+                # Revocation, expiry and current resource ACL run again.
                 result = await super().execute(request, entry=entry)
                 checks += 1
             return result
