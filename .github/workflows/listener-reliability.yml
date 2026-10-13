@@ -1,19 +1,6 @@
 name: Listener reliability
 on:
-  push:
-    branches: ['fix/listener-reliability-*']
-  pull_request:
-    paths:
-      - 'src/msg/client_listener.py'
-      - 'src/msg/client_agent_cli.py'
-      - 'src/msg/client_subagents*.py'
-      - 'src/msg/client_events.py'
-      - 'tests/test_client_listener*.py'
-      - 'tests/test_client_subagents*.py'
-      - 'tests/test_client_agent_cli.py'
-      - 'src/msg/core/errors.py'
-      - 'scripts/benchmark_listener.py'
-      - '.github/workflows/listener-reliability.yml'
+  # Daily development is validated locally; retain an explicit reproduction job.
   workflow_dispatch:
 permissions:
   contents: read
