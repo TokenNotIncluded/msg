@@ -154,7 +154,9 @@ async def test_real_cli_publish_anonymous_fetch_restore_and_signed_original_subj
         assert not (ClientPaths.discover(server=server).config / 'current-account.json').exists()
         current = ClientState(server=server, account='recovered')
         signed = MsgClient(current, HTTPTransport(server, http=http), clock=lambda: NOW)
-        result = await signed.call('discovery.get', {'id': subject, 'view': 'meta'})
+        result = await signed.call(
+            'discovery.get', {'id': subject, 'view': 'meta'}, signer=current.signer
+        )
         assert result.status == 'ok' and result.actor == subject
         assert current.signer.key_id == key
         assert home + '/BACKUP.json/raw' in anonymous_calls
