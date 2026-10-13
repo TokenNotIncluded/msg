@@ -238,7 +238,7 @@ async def test_publish_uses_signature_despite_saved_token_api_key_and_oauth(
     )
     encrypt, _, _ = age_cipher
     try:
-        for auth in ('token', 'api_key', 'oauth'):
+        for auth in ('token', 'api_key', 'signed_browser'):
             client.state.data.pop('token', None)
             client.state.data.pop('api_key', None)
             client.state.file('oauth-session.json').unlink(missing_ok=True)

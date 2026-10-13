@@ -14,11 +14,8 @@ from msg.service_origin import service_origin
 
 def identity_status(state, *, signer_override=None):
     """Report configured request credentials without opening sessions or contacting hardware."""
-    session = state.file('oauth-session.json')
     if signer_override is not None:
         auth = 'signature'
-    elif session.exists() or session.is_symlink():
-        auth = 'oauth'
     elif state.data.get('token'):
         auth = 'token'
     elif state.data.get('api_key'):

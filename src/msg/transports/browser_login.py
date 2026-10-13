@@ -20,7 +20,7 @@ LOGIN_POLL_SCRIPT = r"""(() => {
     requestController = controller;
     const timeout = setTimeout(() => controller.abort(), 10000);
     try {
-      const response = await fetch('/oauth/login/poll', {
+      const response = await fetch('/session/poll', {
         method: 'POST', credentials: 'same-origin', redirect: 'error',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({csrf: status.dataset.csrf}), signal: controller.signal

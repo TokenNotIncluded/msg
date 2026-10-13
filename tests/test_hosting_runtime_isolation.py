@@ -335,7 +335,12 @@ async def test_real_other_uid_reads_new_text_and_binary_without_keys(installed, 
         # chmod/default ACL can hide a mode bug in newly published objects.
         for root in (app.contents.path, app.contents.binary):
             for parent in root.parents:
-                if parent in (Path('/tmp'), Path('/')):
+                if parent in (
+                    Path(tempfile.gettempdir()),
+                    Path('/tmp'),
+                    Path('/var/tmp'),
+                    Path('/'),
+                ):
                     break
                 if parent not in changed_ancestors:
                     changed_ancestors[parent] = parent.stat().st_mode & 0o7777

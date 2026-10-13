@@ -64,6 +64,8 @@ def load_application(directory, *, layout=None):
 
 
 SHUTDOWN_GRACE_SECONDS = 60
+WORKER_RETRY_INITIAL_SECONDS = 1
+WORKER_RETRY_MAX_SECONDS = 30
 
 
 async def worker_loop(app, *, once=False):
@@ -94,6 +96,7 @@ async def worker_loop(app, *, once=False):
             else None
         )
         next_cleanup = 0.0
+        retry_delay = WORKER_RETRY_INITIAL_SECONDS
         while not stop.is_set():
             executor = getattr(app, 'executor', None)
             if executor is not None and executor.recovery_drill_active():
@@ -104,16 +107,35 @@ async def worker_loop(app, *, once=False):
                 except TimeoutError:
                     pass
                 continue
-            if loop.time() >= next_cleanup:
-                for action in ('cleanup_expired', 'collect_garbage', 'deliver_due_todos'):
-                    if stop.is_set():
-                        return None
-                    await run_maintenance(app, action, scheduled=True)
-                next_cleanup = loop.time() + 60
-            # A signal during maintenance must not lead to claiming another job.
-            if stop.is_set():
-                return None
-            processed = await worker.run_once()
+            try:
+                if loop.time() >= next_cleanup:
+                    for action in ('cleanup_expired', 'collect_garbage', 'deliver_due_todos'):
+                        if stop.is_set():
+                            return None
+                        await run_maintenance(app, action, scheduled=True)
+                    next_cleanup = loop.time() + 60
+                # A signal during maintenance must not lead to claiming another job.
+                if stop.is_set():
+                    return None
+                processed = await worker.run_once()
+            except Failure as exc:
+                if once or exc.code != 'server_busy' or not exc.retryable:
+                    raise
+                # Retry the polling loop without changing durable job state or
+                # leases. Ambiguous external work still expires as uncertain.
+                emit({
+                    'event': 'worker_retry',
+                    'code': exc.code,
+                    'retry_after_seconds': retry_delay,
+                })
+                sys.stdout.flush()
+                try:
+                    await asyncio.wait_for(stop.wait(), retry_delay)
+                except TimeoutError:
+                    pass
+                retry_delay = min(retry_delay * 2, WORKER_RETRY_MAX_SECONDS)
+                continue
+            retry_delay = WORKER_RETRY_INITIAL_SECONDS
             if once:
                 return {'processed': processed}
             if not processed and not stop.is_set():

@@ -113,7 +113,9 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     parsed = urlsplit(base_url)
     assert parsed.hostname in {'127.0.0.1', 'localhost', '::1'}, 'Loopback fixture required'
-    assert accounts_file, 'Full app checks require two generated loopback OAuth accounts'
+    assert accounts_file, (
+        'Full app checks require two generated loopback key-approved browser accounts'
+    )
     path = Path(accounts_file)
     assert path.stat().st_mode & 0o077 == 0, 'Fixture account file must be private'
     fixture_accounts = json.loads(path.read_text())
@@ -177,7 +179,7 @@ def check_multiplayer_app(browser, base_url: str, accounts_file: str | None = No
                 viewport=viewport, has_touch=index == 1, is_mobile=index == 1
             )
             contexts.append(context)
-            # Generated local OAuth cookies only; do not print or trace them.
+            # Generated local key-approved browser cookies only; do not print or trace them.
             context.add_cookies(accounts[index]['cookies'])
             context.add_init_script(probe)
             page = context.new_page()

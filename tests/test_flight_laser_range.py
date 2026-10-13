@@ -6,11 +6,11 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from test_flight_websocket import controls, flight_server, oauth, player, snapshot
+from test_flight_websocket import controls, flight_server, player, signed_browser, snapshot
 
 from msg.transports.flight_simulation import LASER_RANGE
 
-__all__ = ['flight_server', 'oauth']
+__all__ = ['flight_server', 'signed_browser']
 
 
 def freeze_positions(flight, source_id, target_id, source, target):

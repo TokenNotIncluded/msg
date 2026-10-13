@@ -6,22 +6,22 @@ from datetime import timedelta
 import httpx
 import pytest
 from read_only_evidence import readonly_evidence
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call, register
 
 from msg.bootstrap import ROOT_WEB_SAMPLE
 from msg.core.codec import digest
 from msg.extensions.hosting import HOSTED_HEADERS, hosted_headers
-from msg.security.oauth import get, state_id
+from msg.security.sessions import get, state_id
 from msg.transports.http import create_app
-from msg.transports.oauth_http import csrf
+from msg.transports.session_http import csrf
 
 
 @pytest.mark.asyncio
 async def test_universe_account_hint_is_minimal_current_identity_without_private_reads(
-    oauth, monkeypatch
+    signed_browser, monkeypatch
 ):
-    app, key, subject, http = oauth
+    app, key, subject, http = signed_browser
     _, other, _ = await register(app, 'hint-private-contact')
     private = await call(
         app,
@@ -33,7 +33,7 @@ async def test_universe_account_hint_is_minimal_current_identity_without_private
     )
     assert private.status == 'ok', private.error
     assert (await http.get('/_universe/account')).json() == {'version': 1, 'account': None}
-    await browser_login(oauth)
+    await browser_login(signed_browser)
     async with app.metadata.transaction(write=True) as tx:
         own = await tx.resource(subject)
         await tx.replace(replace(own, mode=0o600, generation=own.generation + 1), own.generation)
@@ -50,7 +50,7 @@ async def test_universe_account_hint_is_minimal_current_identity_without_private
         assert response.status_code == 200, response.text
         assert response.json() == {
             'version': 1,
-            'account': {'id': subject, 'name': '@oauth-owner'},
+            'account': {'id': subject, 'name': '@key-owner'},
         }
         assert response.headers['cache-control'] == 'private, no-store'
         assert {value.strip() for value in response.headers['vary'].split(',')} == {'Cookie'}
@@ -63,7 +63,7 @@ async def test_universe_account_hint_is_minimal_current_identity_without_private
         assert (await http.post('/_universe/account')).status_code == 405
         assert (
             await http.get('/_universe/account', headers={'Authorization': 'Bearer inert'})
-        ).status_code == 400
+        ).status_code == 401
         assert (
             await http.get('/_universe/account', headers={'x-msg-request': 'inert'})
         ).status_code == 400
@@ -71,17 +71,19 @@ async def test_universe_account_hint_is_minimal_current_identity_without_private
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('boundary', ['expired', 'logout', 'source_revoked'])
-async def test_universe_account_hint_clears_expired_or_revoked_browser_identity(oauth, boundary):
-    app, key, subject, http = oauth
-    cookie = await browser_login(oauth)
+async def test_universe_account_hint_clears_expired_or_revoked_browser_identity(
+    signed_browser, boundary
+):
+    app, key, subject, http = signed_browser
+    cookie = await browser_login(signed_browser)
     assert (await http.get('/_universe/account')).json()['account']['id'] == subject
     if boundary == 'expired':
         async with app.metadata.transaction(write=False) as tx:
             expires, _ = get(tx, state_id('session', cookie), app.clock())
-        app._oauth_clock[0] = expires + timedelta(seconds=1)
+        app._session_clock[0] = expires + timedelta(seconds=1)
     elif boundary == 'logout':
         result = await http.post(
-            '/oauth/logout',
+            '/session/logout',
             json={'csrf': csrf(cookie)},
             headers={'Origin': app.settings.service_url},
         )
@@ -101,10 +103,10 @@ async def test_universe_account_hint_clears_expired_or_revoked_browser_identity(
 
 
 @pytest.mark.asyncio
-async def test_universe_avatar_reference_uses_current_anonymous_access(oauth, monkeypatch):
+async def test_universe_avatar_reference_uses_current_anonymous_access(signed_browser, monkeypatch):
     from msg.core.codec import b64
 
-    app, key, subject, signed = oauth
+    app, key, subject, signed = signed_browser
     _, hidden_subject, _ = await register(app, 'hidden-avatar-star')
     svg = (
         '<svg xmlns="http://www.w3.org/2000/svg"><text>PUBLIC AVATAR</text>'
@@ -115,7 +117,7 @@ async def test_universe_avatar_reference_uses_current_anonymous_access(oauth, mo
         app,
         'content.file_put',
         {
-            'parent': '/@oauth-owner',
+            'parent': '/@key-owner',
             'name': 'AVATAR.svg',
             'data': b64(svg.encode()),
             'media_type': 'image/svg+xml',
@@ -129,13 +131,13 @@ async def test_universe_avatar_reference_uses_current_anonymous_access(oauth, mo
         await tx.replace(
             replace(resource, mode=0o600, generation=resource.generation + 1), resource.generation
         )
-    await browser_login(oauth)
+    await browser_login(signed_browser)
 
     async def no_full_profile(*args, **kwargs):
         pytest.fail('a universe avatar reference must not scan full profile activity')
 
     monkeypatch.setattr('msg.plugins.profile.account_activity', no_full_profile)
-    expected = {'avatar': {'url': '/@oauth-owner/art/avatar.svg'}}
+    expected = {'avatar': {'url': '/@key-owner/art/avatar.svg'}}
     for query in ('kind=users', 'kind=users&shuffle=1'):
         response = await signed.get('/_universe?' + query)
         assert response.status_code == 200, response.text
@@ -193,7 +195,7 @@ async def test_universe_avatar_reference_uses_current_anonymous_access(oauth, mo
             )
         hidden = await signed.get('/_universe', params={'kind': 'users', 'ids': subject})
         assert hidden.status_code == 200 and not hidden.json()['items']
-        assert '/@oauth-owner' not in hidden.text
+        assert '/@key-owner' not in hidden.text
         assert (await anonymous.get(expected['avatar']['url'])).status_code == 403
 
 
@@ -253,8 +255,8 @@ async def test_public_universe_excludes_private_posts_and_private_ancestors(inst
 
 
 @pytest.mark.asyncio
-async def test_universe_private_view_uses_only_current_browser_identity(oauth):
-    app, key, subject, http = oauth
+async def test_universe_private_view_uses_only_current_browser_identity(signed_browser):
+    app, key, subject, http = signed_browser
     other_key, other, _ = await register(app, 'other-star')
     request = await call(
         app,
@@ -269,7 +271,7 @@ async def test_universe_private_view_uses_only_current_browser_identity(oauth):
     anonymous = await http.get('/_universe/me')
     assert anonymous.json()['account'] is None
     assert rid not in anonymous.text
-    await browser_login(oauth)
+    await browser_login(signed_browser)
     private = await http.get('/_universe/me')
     assert private.status_code == 200, private.text
     assert private.json()['account']['id'] == subject

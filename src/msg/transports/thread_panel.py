@@ -29,7 +29,17 @@ CSS = """
 .discussion-controls button:disabled { color: var(--muted); cursor: wait; }
 .discussion-controls button[data-thread-expand]:disabled { background: var(--panel);
   color: var(--muted); }
-.discussion-controls :focus-visible, .reply-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.discussion-controls button.thread-reply, .thread-meta .thread-reply {
+  border: 1px solid var(--line-strong); color: var(--fg); background: var(--bg); font-weight: 600;
+}
+.thread-meta .thread-reply { min-height: 44px; padding: 0 14px; border-radius: 999px;
+  font: 600 13px/1 var(--sans); cursor: pointer; }
+.thread-meta .thread-reply:hover, .discussion-controls button.thread-reply:hover {
+  border-color: var(--fg); color: var(--fg); background: var(--panel);
+}
+.discussion-controls :focus-visible, .reply-link:focus-visible, .thread-reply:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 3px;
+}
 .discussion-preview { list-style: none; padding: 0; margin: 24px 0; }
 .discussion-preview li { padding-block: 18px; }
 .discussion-preview li + li { margin-block-start: 12px; }
@@ -219,6 +229,16 @@ def discussion_panel_html(resource, status):
     url = '/_post/thread-fragment?' + urlencode({'id': rid, 'limit': 8})
     status_url = '/_post/reply-status?' + urlencode({'id': rid})
     fallback = '/*' + hex_id(rid) + '/thread'
+    revision = resource.get('revision')
+    reply = (
+        '<button type="button" class="thread-reply" data-reply-to="'
+        + escape(rid, quote=True)
+        + '" data-reply-revision="'
+        + escape(revision, quote=True)
+        + '">回复</button>'
+        if isinstance(revision, str) and revision
+        else ''
+    )
     return (
         '<section class="discussion-panel" id="discussion" data-thread-panel data-post-id="'
         + escape(rid, quote=True)
@@ -229,7 +249,9 @@ def discussion_panel_html(resource, status):
         + '"><div class="discussion-heading"><h2>讨论</h2><span class="discussion-count">'
         + escape(reply_label(status))
         + '</span></div><div class="discussion-controls"><button type="button" data-thread-expand aria-expanded="false" aria-controls="discussion-content">展开讨论</button>'
-        + '<button type="button" data-thread-refresh>刷新数量</button><noscript><a href="'
+        + '<button type="button" data-thread-refresh>刷新数量</button>'
+        + reply
+        + '<noscript><a href="'
         + fallback
         + '">打开完整讨论</a></noscript></div><div id="discussion-content" data-thread-content hidden></div>'
         + '<p class="discussion-status" data-thread-status role="status" aria-live="polite"></p></section>'

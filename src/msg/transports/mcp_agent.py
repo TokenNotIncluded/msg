@@ -20,11 +20,11 @@ from msg.transports.mcp_tools import SCHEMAS, run_tool, tool_catalog
 _ERRORS = {
     'authentication_required': (
         'MSG identity is not connected.',
-        'Connect an MSG identity with msg_connect, then retry.',
+        'Use the locally signed CLI or native signed MCP packet endpoint.',
     ),
     'credential_ceiling': (
         'This connection does not have permission for this action.',
-        'Reconnect and approve the required MSG scope. Existing credentials are not expanded.',
+        'Use a local key with permission for this action. Existing grants are not expanded.',
     ),
     'mcp_session_required': (
         'An initialized MCP session is required for this action.',
@@ -102,25 +102,13 @@ class AgentMCPServer:
             position = {'nonce': uuid4().hex, 'expires_at': wire(now + timedelta(hours=24))}
         else:
             return None, None
-        # Anonymous discovery may precede OAuth. Upgrade that session once the
-        # host sends a bearer, while isolating retries by the OAuth family.
+        # A trusted key-backed adapter may attach identity after discovery.
+        # Its binding keeps retries isolated from anonymous and other sessions.
         position['binding'] = binding
         value = self.service.cursors.encode(
             'mcp-session', {'service': self.service.settings.service_url}, position
         )
         return position['nonce'], value
-
-    @staticmethod
-    def _scopes(name):
-        if name == 'msg_connect':
-            return ('msg.mcp.read', 'msg.mcp.message', 'msg.mcp.post')
-        if name in {'msg_send', 'msg_dm_decide', 'msg_ack'}:
-            return ('msg.mcp.read', 'msg.mcp.message')
-        if name == 'msg_reply':
-            return ('msg.mcp.read', 'msg.mcp.message', 'msg.mcp.post')
-        if name == 'msg_post':
-            return ('msg.mcp.read', 'msg.mcp.post')
-        return ('msg.mcp.read',)
 
     def _error_result(self, code, name=None):
         value = tool_error(code)
@@ -129,18 +117,6 @@ class AgentMCPServer:
             'structuredContent': value,
             'isError': True,
         }
-        if code in {'authentication_required', 'credential_ceiling'}:
-            from msg.transports.mcp_auth import challenge
-
-            result['_meta'] = {
-                'mcp/www_authenticate': [
-                    challenge(
-                        self.service,
-                        'insufficient_scope' if code == 'credential_ceiling' else None,
-                        self._scopes(name),
-                    )
-                ]
-            }
         return result
 
     async def _call(self, params, rpc_id, identity, nonce):
@@ -154,8 +130,6 @@ class AgentMCPServer:
             require(identity is not None, 'authentication_required')
             raise Failure('credential_ceiling')
         require(local_validator(tool['inputSchema']).is_valid(arguments), 'invalid_jsonrpc_params')
-        if name == 'msg_connect':
-            require(identity is not None, 'authentication_required')
         mutating = not tool.get('annotations', {}).get('readOnlyHint', False)
         require(not mutating or nonce is not None, 'mcp_session_required')
         # Never use a model-supplied ID as a global account replay key.
@@ -199,7 +173,7 @@ class AgentMCPServer:
                 return await self.service.executor.execute(packet, entry='network')
 
             value = await run_tool(
-                'msg_me' if name == 'msg_connect' else name,
+                name,
                 arguments,
                 call=call,
                 identity=identity,

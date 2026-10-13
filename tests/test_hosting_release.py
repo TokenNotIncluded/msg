@@ -199,7 +199,7 @@ async def test_pg_public_bundle_preview_and_unapproved_routes(
             path,
             headers={
                 'Origin': 'null',
-                'Cookie': 'session=must-not-leak',
+                'Cookie': 'msg_session=must-not-leak',
                 'Authorization': 'Bearer must-not-leak',
             },
         )

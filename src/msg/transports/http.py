@@ -122,13 +122,9 @@ class PassiveGetBoundary:
 
 def create_app(service):
     app = create_router(service)
-    from msg.transports.oauth_http import OAuthBoundary
+    from msg.transports.session_http import BrowserSessionBoundary
 
-    app.add_middleware(OAuthBoundary, service=service)
-    if getattr(getattr(service.settings, 'login', None), 'enabled', False):
-        from msg.transports.account_login import AccountLoginBoundary
-
-        app.add_middleware(AccountLoginBoundary, service=service)
+    app.add_middleware(BrowserSessionBoundary, service=service)
     app.add_middleware(PassiveGetBoundary, service=service)
     from msg.transports.safe_diagnostics import SafeDiagnostics
 

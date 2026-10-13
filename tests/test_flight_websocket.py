@@ -11,14 +11,14 @@ from datetime import timedelta
 import aiohttp
 import pytest
 import uvicorn
-from test_oauth import browser_login, oauth as real_oauth
+from test_browser_sessions import browser_login, signed_browser as real_browser
 from test_service import NOW, call
 
 from msg.core.codec import wire
 from msg.transports.http import create_app
-from msg.transports.oauth_http import csrf
+from msg.transports.session_http import csrf
 
-oauth = real_oauth
+signed_browser = real_browser
 
 
 @dataclass
@@ -53,8 +53,8 @@ class NetworkFlight:
 
 
 @pytest.fixture
-async def flight_server(oauth, request):
-    service, _, _, _ = oauth
+async def flight_server(signed_browser, request):
+    service, _, _, _ = signed_browser
     service.settings = replace(service.settings, service_url='http://testserver')
     router = create_app(service)
     listener = socket.socket()
@@ -252,14 +252,16 @@ async def test_two_network_guests_share_movement_across_regions_and_disconnect(f
 
 
 @pytest.mark.asyncio
-async def test_network_browser_identity_and_spawn_reject_forged_subject(flight_server, oauth):
+async def test_network_browser_identity_and_spawn_reject_forged_subject(
+    flight_server, signed_browser
+):
     flight = flight_server
-    app, _, subject, _ = oauth
-    cookie = await browser_login(oauth)
+    app, _, subject, _ = signed_browser
+    cookie = await browser_login(signed_browser)
     signed, hello = await flight.join(cookie=cookie)
     assert not hello['self']['guest']
     assert hello['self']['subject_id'] == subject
-    assert hello['self']['handle'].removeprefix('@') == 'oauth-owner'
+    assert hello['self']['handle'].removeprefix('@') == 'key-owner'
     from msg.transports.universe import subject_position
 
     home_position = await subject_position(app, subject)
@@ -280,11 +282,13 @@ async def test_network_browser_identity_and_spawn_reject_forged_subject(flight_s
 
 
 @pytest.mark.asyncio
-async def test_network_private_identity_and_home_are_never_disclosed_to_peers(flight_server, oauth):
+async def test_network_private_identity_and_home_are_never_disclosed_to_peers(
+    flight_server, signed_browser
+):
     flight = flight_server
-    app, key, subject, _ = oauth
+    app, key, subject, _ = signed_browser
     await make_private(app, key, subject)
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     with pytest.raises(aiohttp.WSServerHandshakeError) as rejected:
         await flight.connect(headers={'Cookie': f'msg_session={cookie}; msg_session={cookie}'})
     assert rejected.value.status == 403
@@ -292,7 +296,7 @@ async def test_network_private_identity_and_home_are_never_disclosed_to_peers(fl
     signed, secret = await flight.join(cookie=cookie)
     assert not secret['self']['guest']
     assert secret['self']['subject_id'] is None
-    assert 'oauth-owner' not in json.dumps(secret)
+    assert 'key-owner' not in json.dumps(secret)
     assert subject not in json.dumps(secret)
     home = secret['self']['home_body']
     assert home['private'] is True and home['radius'] == 3
@@ -310,7 +314,7 @@ async def test_network_private_identity_and_home_are_never_disclosed_to_peers(fl
     )
     peer_view = await snapshot(guest, lambda body: player(body, secret['self']['id']) is not None)
     encoded = json.dumps(peer_view)
-    assert subject not in encoded and 'oauth-owner' not in encoded
+    assert subject not in encoded and 'key-owner' not in encoded
     assert 'home_position' not in encoded and 'home_body' not in encoded
     await signed.close()
     await active_count(flight, 1)
@@ -366,22 +370,22 @@ async def test_network_rejects_unsafe_handshakes_and_untrusted_frames(flight_ser
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mutation', ['logout', 'parent', 'expiry', 'runtime', 'quarantine'])
 async def test_network_current_authority_loss_closes_existing_socket(
-    flight_server, oauth, mutation
+    flight_server, signed_browser, mutation
 ):
     flight = flight_server
-    app, key, subject, http = oauth
+    app, key, subject, http = signed_browser
     await make_private(app, key, subject)
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     peer, hello = await flight.join(cookie=cookie)
     guest, guest_hello = await flight.join()
     await snapshot(peer)
     if mutation == 'logout':
         logout = await http.post(
-            '/oauth/logout', json={'csrf': csrf(cookie)}, headers={'Origin': 'http://testserver'}
+            '/session/logout', json={'csrf': csrf(cookie)}, headers={'Origin': 'http://testserver'}
         )
         assert logout.status_code == 200, logout.text
     elif mutation == 'expiry':
-        app._oauth_clock[0] = NOW + timedelta(seconds=app.settings.oauth.session_ttl + 1)
+        app._session_clock[0] = NOW + timedelta(seconds=app.settings.browser.session_ttl + 1)
     else:
         async with app.metadata.transaction(write=True) as tx:
             if mutation == 'parent':
@@ -447,9 +451,11 @@ async def fly_near(peer, state, source_id, target_id):
 
 
 @pytest.mark.asyncio
-async def test_network_laser_skills_cooldowns_regeneration_and_resume(flight_server, oauth):
+async def test_network_laser_skills_cooldowns_regeneration_and_resume(
+    flight_server, signed_browser
+):
     flight = flight_server
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     attacker, hello1 = await flight.join(cookie=cookie)
     target, hello2 = await flight.join()
     source_id, target_id = hello1['self']['id'], hello2['self']['id']
@@ -580,13 +586,13 @@ async def test_network_laser_skills_cooldowns_regeneration_and_resume(flight_ser
 
 @pytest.mark.asyncio
 async def test_network_profile_visibility_changes_rekey_home_and_preserve_battle_state(
-    flight_server, oauth
+    flight_server, signed_browser
 ):
     flight = flight_server
-    app, key, subject, _ = oauth
+    app, key, subject, _ = signed_browser
     async with app.metadata.transaction(write=False) as tx:
         original_mode = (await tx.resource(subject)).mode
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     signed, public = await flight.join(cookie=cookie)
     guest, anonymous = await flight.join()
     signed_id, guest_id = public['self']['id'], anonymous['self']['id']
@@ -638,7 +644,7 @@ async def test_network_profile_visibility_changes_rekey_home_and_preserve_battle
     }
     private_id = private['self']['id']
     hidden = await snapshot(guest, lambda body: player(body, private_id) is not None)
-    assert subject not in json.dumps(hidden) and 'oauth-owner' not in json.dumps(hidden)
+    assert subject not in json.dumps(hidden) and 'key-owner' not in json.dumps(hidden)
     assert player(hidden, signed_id) is None
     assert subject not in {well['id'] for well in hidden['gravity']['wells']}
     assert subject not in {anchor['id'] for anchor in hidden['collectibles'].get('anchors', [])}
@@ -670,13 +676,13 @@ async def test_network_profile_visibility_changes_rekey_home_and_preserve_battle
 
 @pytest.mark.asyncio
 async def test_normal_twenty_hz_controls_survive_slow_revalidation_and_keep_actions(
-    flight_server, oauth, monkeypatch
+    flight_server, signed_browser, monkeypatch
 ):
-    """A slow legitimate OAuth check must not turn normal movement into a flood."""
+    """A slow legitimate key-session check must not turn normal movement into a flood."""
     from msg.transports import flight_space
 
     flight = flight_server
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     signed, hello = await flight.join(cookie=cookie)
     guest, anonymous = await flight.join()
     await snapshot(signed, lambda body: body['total_players'] == 2)
@@ -685,7 +691,7 @@ async def test_normal_twenty_hz_controls_survive_slow_revalidation_and_keep_acti
     entered = asyncio.Event()
     release = asyncio.Event()
     delayed = False
-    original_credentials = flight.hub.oauth.browser_credentials
+    original_credentials = flight.hub.sessions.browser_credentials
     original_require = flight_space.require
     rejection_codes = []
     close_codes = []
@@ -735,7 +741,7 @@ async def test_normal_twenty_hz_controls_survive_slow_revalidation_and_keep_acti
                         length = math.hypot(*delta)
                         laser_directions[ship_id] = [value / length for value in delta]
 
-    monkeypatch.setattr(flight.hub.oauth, 'browser_credentials', delayed_credentials)
+    monkeypatch.setattr(flight.hub.sessions, 'browser_credentials', delayed_credentials)
     monkeypatch.setattr(flight_space, 'require', recorded_require)
     collectors = [
         asyncio.create_task(collect(peer, ship_id))

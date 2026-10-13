@@ -329,7 +329,7 @@ WEBMCP_SCRIPT = (
     }
     const url = new URL(path, location.origin);
     if (url.origin !== location.origin || url.username || url.password ||
-        /^\/(?:oauth(?:\/|$)|login(?:\/|$)|-(?:\/|$)|install(?:\/|$))/.test(url.pathname)) {
+        /^\/(?:session(?:\/|$)|login(?:\/|$)|-(?:\/|$)|install(?:\/|$))/.test(url.pathname)) {
       throw new Error('This tool only reads MSG resources.');
     }
     const response = await fetch(url, {method: 'GET', credentials: 'same-origin',

@@ -30,7 +30,7 @@ WIKI_SCRIPT = r"""(() => {
     const button = form.querySelector('[type=submit]'); button.disabled = true;
     status.textContent = text('Saving…','正在保存…');
     try {
-      const response = await fetch('/oauth/post-action', {method:'POST',credentials:'same-origin',redirect:'error',
+      const response = await fetch('/session/post-action', {method:'POST',credentials:'same-origin',redirect:'error',
         headers:{'Content-Type':'application/json'},body:JSON.stringify({...payload,request_id:pending.id}),
         signal:AbortSignal.timeout(15000)});
       const result = await response.json();

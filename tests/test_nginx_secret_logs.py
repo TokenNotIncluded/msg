@@ -349,12 +349,13 @@ def test_actual_tls_proxy_application_and_early_error_matrix(tmp_path, caplog):
     with _application() as port, _proxy(tmp_path, port) as proxy:
         _assert_safe(_request(proxy, '/healthz'), 200, markers)
         _assert_safe(_request(proxy, '/?q=token'), 200, markers)
-        # Authorization remains a header-only channel; Referer is stripped.
+        # Ambient Bearer authority is revoked by key-only identity middleware;
+        # the invalid credential and stripped Referer must remain absent from logs.
         headers = {
             'Authorization': 'Bearer ' + secret,
             'Referer': 'https://example.org/?token=' + secret,
         }
-        _assert_safe(_request(proxy, '/healthz', headers=headers), 200, markers)
+        _assert_safe(_request(proxy, '/healthz', headers=headers), 401, markers)
         for target in (
             '/?token=' + secret,
             '/?%2572ecovery_secret=' + secret,
@@ -362,11 +363,27 @@ def test_actual_tls_proxy_application_and_early_error_matrix(tmp_path, caplog):
             '/-/g/content.post_create/%2574oken/' + secret,
         ):
             for method in ('GET', 'HEAD', 'POST'):
-                _assert_safe(_request(proxy, target, method=method, headers=headers), 400, markers)
+                for request_headers, status in (
+                    (headers, 401),
+                    ({'Referer': headers['Referer']}, 400),
+                ):
+                    _assert_safe(
+                        _request(proxy, target, method=method, headers=request_headers),
+                        status,
+                        markers,
+                    )
         for encoding, value in zip(('j', 'gz'), encoded, strict=True):
             target = '/-/g/content.post_create/' + encoding + '/' + value
             for method in ('GET', 'HEAD'):
-                _assert_safe(_request(proxy, target, method=method, headers=headers), 400, markers)
+                for request_headers, status in (
+                    (headers, 401),
+                    ({'Referer': headers['Referer']}, 400),
+                ):
+                    _assert_safe(
+                        _request(proxy, target, method=method, headers=request_headers),
+                        status,
+                        markers,
+                    )
         for plain in (False, True):
             # An unknown Host never falls into an unrelated default server.
             _assert_safe(

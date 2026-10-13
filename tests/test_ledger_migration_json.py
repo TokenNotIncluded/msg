@@ -71,15 +71,18 @@ async def test_migration_refuses_oauth_identity_references(installed, reference)
     encoded = json.dumps(body)
     async with app.metadata.transaction(write=True) as tx:
         tx.execute(
-            'INSERT INTO oauth_states VALUES (?,?,?,?)',
-            ('migration-oauth', 'session', '2999-01-01T00:00:00Z', encoded),
+            'INSERT INTO credential_states VALUES (?,?,?,?)',
+            ('migration-signed_browser', 'session', '2999-01-01T00:00:00Z', encoded),
             write=True,
         )
     with pytest.raises(RuntimeError, match='active reference'):
         PostgresMetadataStore(app.settings.server.postgres_dsn)
     async with app.metadata.transaction(write=False) as tx:
         assert (
-            tx.one('SELECT body FROM oauth_states WHERE id=?', ('migration-oauth',))[0] == encoded
+            tx.one('SELECT body FROM credential_states WHERE id=?', ('migration-signed_browser',))[
+                0
+            ]
+            == encoded
         )
         assert tx.one('SELECT COUNT(*) FROM identities WHERE id IN (?,?)', escrows)[0] == 2
         assert tx.one('SELECT COUNT(*) FROM ledger_accounts WHERE id IN (?,?)', escrows)[0] == 0

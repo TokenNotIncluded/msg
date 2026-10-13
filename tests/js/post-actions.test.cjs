@@ -28,7 +28,8 @@ function page(options={}) {
   panel.querySelector = selector => ({form,textarea:field,'[role=status]':status,label,'[type=submit]':submit,'[data-copy=collection]':collection,'[data-copy=proofs]':element(),'[data-copy=forks]':element(),'[data-copy=claims]':element(),'[data-copy=claim-note]':element(),'[data-compose-close]':close})[selector];
   const calls = [], notifications = [];
   vm.runInNewContext(script, {
-    document:{documentElement:{lang:'en'},getElementById:()=>panel,createElement:element},
+    document:{documentElement:{lang:'en'},getElementById:()=>panel,createElement:element,
+      addEventListener(name, callback) {this.events ??= {};this.events[name] = callback;}},
     window:{dispatchEvent:event=>notifications.push(event)},
     CustomEvent:class {constructor(type,options){this.type=type;this.detail=options.detail;}},
     MutationObserver:class {observe() {}},
@@ -55,6 +56,7 @@ test('reading never writes; a claim needs explicit submit and pins displayed rev
   assert.equal(ui.calls.length,1); assert.equal(ui.field.required,false);
   ui.field.value = 'Used successfully';
   await ui.form.events.submit({preventDefault(){}});
+  assert.equal(ui.calls[1].url, '/session/post-action');
   const packet = JSON.parse(ui.calls[1].args.body);
   assert.equal(packet.operation,'discussion.prove'); assert.equal(packet.kind,'USED');
   assert.equal(packet.revision,'displayed-revision'); assert.equal(packet.note,'Used successfully');

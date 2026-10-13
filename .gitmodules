@@ -1,0 +1,3 @@
+[submodule "integrations/pi-msg"]
+	path = integrations/pi-msg
+	url = https://github.com/TokenNotIncluded/pi-msg.git

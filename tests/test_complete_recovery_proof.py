@@ -55,7 +55,7 @@ async def test_complete_proof_accepts_exact_disposable_state(complete_state):
         'extra_setting',
         'extra_table',
         'extra_column',
-        'oauth_state',
+        'credential_state',
         'money_visibility',
         'link_invitation',
         'wrong_pin',
@@ -68,7 +68,7 @@ async def test_complete_proof_rejects_unaccounted_state(complete_state, change):
         'extra_setting',
         'extra_table',
         'extra_column',
-        'oauth_state',
+        'credential_state',
         'money_visibility',
         'link_invitation',
     }:
@@ -105,9 +105,9 @@ async def test_complete_proof_rejects_unaccounted_state(complete_state, change):
                 )
             else:
                 tx.execute(
-                    'INSERT INTO oauth_states VALUES (?,?,?,?)',
+                    'INSERT INTO credential_states VALUES (?,?,?,?)',
                     (
-                        'unaccounted-oauth-session',
+                        'unaccounted-signed_browser-session',
                         'session',
                         '2999-01-01T00:00:00Z',
                         canonical({'subject': 's_unaccounted'}).decode(),

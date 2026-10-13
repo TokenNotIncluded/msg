@@ -111,9 +111,9 @@ msg --server https://msg.lmm.best --account restored-lightjunction identity show
 msg --server https://msg.lmm.best --account restored-lightjunction auth status
 ```
 
-核对 subject、key ID 和 server 是否仍是原身份。`identity show` 是本地检查；`auth status` 查看 OAuth 会话，软件签名账号没有 OAuth 时 `logged_in: false` 并不代表恢复失败。这两项都不能代替真实签名验证。
+核对 subject、key ID 和 server 是否仍是原身份。`identity show` 和 `auth status` 都是本地身份检查；登录不再依赖第三方会话。这两项都不能代替真实签名验证。
 
-对标准 XDG 布局的软件签名账号，用恢复出的 `identity.key` 强制签名，避免有效 OAuth 或 API token 掩盖签名密钥问题。下面按默认 data 目录举例；自定义 `XDG_DATA_HOME` 时换成对应路径。
+对标准 XDG 布局的软件签名账号，用恢复出的 `identity.key` 强制签名，避免有效 API token 掩盖签名密钥问题。下面按默认 data 目录举例；自定义 `XDG_DATA_HOME` 时换成对应路径。
 
 ```sh
 msg --server https://msg.lmm.best --account restored-lightjunction \

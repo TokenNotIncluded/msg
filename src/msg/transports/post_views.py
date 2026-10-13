@@ -13,8 +13,8 @@ from zoneinfo import ZoneInfo
 from msg.core.codec import b64, canonical, loads, unb64
 from msg.core.errors import Failure, require
 from msg.core.requests import request_for
-from msg.security.oauth import OAuthService
 from msg.security.quarantine import require_live_authority
+from msg.security.sessions import BrowserSessionService
 from msg.storage.post_view_migration import record_view
 from msg.transports.http_common import body_bytes, error_status, json_response
 from msg.transports.url_safety import require_matching_host, require_safe_request_target
@@ -222,8 +222,14 @@ class PostViews:
                 browser = None
                 session_name = '__Host-msg_session' if self.secure else 'msg_session'
                 session = request.cookies.get(session_name, '')
-                if session and self.service.settings.oauth and self.service.settings.oauth.enabled:
-                    browser = await OAuthService(self.service).browser_credentials(tx, session)
+                if (
+                    session
+                    and self.service.settings.browser
+                    and self.service.settings.browser.enabled
+                ):
+                    browser = await BrowserSessionService(self.service).browser_credentials(
+                        tx, session
+                    )
                 require(
                     hmac.compare_digest(
                         data['visitor'],
