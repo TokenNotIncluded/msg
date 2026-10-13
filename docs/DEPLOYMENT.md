@@ -32,7 +32,7 @@ service_keys = "/var/lib/msgd/service"
 
 ## 安装代码
 
-服务端必须安装 `server` extra；裸 wheel 只含客户端依赖，不能用于 `msgd`。固定通过验收的源码提交、wheel SHA-256、Python 精确版本及服务依赖锁，不能在目标机重新解析一套未测依赖。用应用独立的 Python 3.15 和 venv，保留系统 Python、旧服务 venv 和数据用于回滚。若采用预发行 Python，记录完整版本并在同一版本验收。
+服务端必须安装 `server` extra；裸 wheel 只含客户端依赖，不能用于 `msgd`。固定通过验收的源码提交、wheel SHA-256、Python 精确版本及服务依赖锁，不能在目标机重新解析一套未测依赖。构建与隔离验收使用应用独立的 Python 3.15 和 venv，不替换系统 Python；生产安装使用下述原生软件包，不创建或长期保留旧服务 venv。恢复所需的旧包、数据及配置先归档到本机并验证，具体边界见[部署保留与清理](DEPLOYMENT_RETENTION.md)。若采用预发行 Python，记录完整版本并在同一版本验收。
 
 优先使用已通过最终 CI 的 `deployment-rehearsal` 产物：`dist/` 下的 wheel/sdist、
 `artifacts/server-dependencies.lock`、`client-dependencies.lock`、
@@ -100,6 +100,14 @@ SSH 使用专用端口和单独 sshd 配置 deploy/sshd_config，不能覆盖现
 
 ## 备份、恢复与根轮换
 
+新增保护备份统一归档到本机 `/home/lightjunction/Backups/servers/<主机>/<日期>/msg/`，
+不在小盘服务器长期保存历史完整副本。下例 `/secure-backup/` 仅是备份与恢复命令的
+占位路径，不是另建备份目录的建议；按实际独立存储或经批准的临时路径替换。
+`msgd backup` 当前输出归档文件，以下命令不表示它支持向 stdout 流式输出。
+临时服务器归档需安全传回本机、加密并校验；验证内容、权限、链接及隔离恢复后，
+才可移除对应服务器副本。业务数据库禁止用复制表或 schema 充当保护备份。
+回滚需要从本机传回已核验材料，不能假定服务器还有历史副本。
+
 ```bash
 # 备份归档中包含 PostgreSQL dump 与内容文件。
 msgd backup /secure-backup/service.zip
@@ -119,9 +127,13 @@ msgd --config-dir /new/etc/msgd restore /secure-backup/service.zip --data-dir /n
 
 ## 切流与回滚
 
-旧服务、解释器、数据和配置先保留。旧写入冻结后完成最终保护快照和增量核对；新 Root 的身份映射及旧内容归属按[导入流程](NEW_ROOT_LEGACY_IMPORT_RUNBOOK.md)核验，不能把旧权限字段当成新授权。只有本机 Root/基础 CA、依赖、隔离、日志链和实际功能验收通过才切代理 upstream；`nginx -t` 成功后 reload，并记录真实外部回读、服务版本和配置摘要，再启用已验收的后台服务。
+切换前保护旧服务恢复所需的软件包、解释器输入、数据和配置，优先归档到本机统一备份目录并完成恢复验证；“保留”不等于在服务器长期留下旧部署或完整回滚副本。当前运行文件、活跃任务引用与唯一有效备份在验证前不得删除。旧写入冻结后完成最终保护快照和增量核对；新 Root 的身份映射及旧内容归属按[导入流程](NEW_ROOT_LEGACY_IMPORT_RUNBOOK.md)核验，不能把旧权限字段当成新授权。只有本机 Root/基础 CA、依赖、隔离、日志链和实际功能验收通过才切代理 upstream；`nginx -t` 成功后 reload，并记录真实外部回读、服务版本和配置摘要，再启用已验收的后台服务。
 
 切流后尚无新业务写入时，可停止新服务并恢复旧 upstream/服务。已有新写入时，先冻结新 writer/worker并保护新 PostgreSQL/Git/CAS，核对数据差异后执行已验证的数据回迁或维持维护状态，不能直接退回旧 SQLite 丢弃新写入。新旧 Root 不同，回滚不会让新凭据自动被旧版接受。
+
+切流验收与备份校验通过后，按[部署保留与清理](DEPLOYMENT_RETENTION.md)完成空间收尾：
+服务器保留实际运行文件及少量必要状态，历史恢复材料归档到本机后移除服务器副本。
+复查健康、剩余占用与恢复方法再报告完成；未校验材料和仍被进程引用的文件不属于清理候选。
 
 ### Graceful service stop
 
