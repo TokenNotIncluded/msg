@@ -26,7 +26,7 @@ pub trait AuthorityStore {
     fn certificate_revoked(&self, id: &str) -> Result<bool>;
     fn request_result(&self, subject: Option<&str>, id: &str, digest: &str)
         -> Result<Option<Json>>;
-    fn oauth_state(&self, id: &str) -> Result<Option<crate::oauth::OAuthState>>;
+    fn credential_state(&self, id: &str) -> Result<Option<crate::sessions::CredentialState>>;
     fn custodial_binding(&self, subject: &str) -> Result<Option<(String, String)>>;
     fn recovery_delivery(
         &self,

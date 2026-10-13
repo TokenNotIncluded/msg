@@ -12,7 +12,7 @@ pub mod writer;
 use msg_core::{Error, Json, Result, MAX_BYTES};
 use msg_identity::{
     models::Timestamp,
-    oauth::OAuthState,
+    sessions::CredentialState,
     store::{AuthorityStore, Record, RecoveryDelivery},
 };
 use rusqlite::{Connection, ErrorCode, OpenFlags, OptionalExtension, Transaction};
@@ -89,7 +89,7 @@ impl<Access> Session<'_, Access> {
             ("identities", "id,kind,body"), ("credentials", "id,subject,body"),
             ("certificates", "id,subject,parent,revoked,body"),
             ("resources", "id,parent,body"), ("results", "subject,request_id,digest,body"),
-            ("oauth_states", "id,expires,body"),
+            ("credential_states", "id,expires,body"),
             ("custodial_vault", "subject,signing_key_id,status"),
             ("token_deliveries", "credential_id,subject,recovery_verifier,recovery_expires_at,consumed_at,request_id"),
         ];
@@ -217,16 +217,16 @@ impl<Access> AuthorityStore for Session<'_, Access> {
         }
         Ok(Some(result))
     }
-    fn oauth_state(&self, id: &str) -> Result<Option<OAuthState>> {
+    fn credential_state(&self, id: &str) -> Result<Option<CredentialState>> {
         self.active()?;
         let row: Option<(String, String)> = self.transaction.query_row(
-            "SELECT expires,CAST(substr(CAST(body AS BLOB),1,1048577) AS TEXT) FROM oauth_states WHERE id=?1",
+            "SELECT expires,CAST(substr(CAST(body AS BLOB),1,1048577) AS TEXT) FROM credential_states WHERE id=?1",
             [id], |r| Ok((r.get(0)?, r.get(1)?))).optional().map_err(database_error)?;
         row.map(|(expires, body)| {
             if body.len() > MAX_BYTES {
                 return Err(Error("storage_record_too_large"));
             }
-            Ok(OAuthState {
+            Ok(CredentialState {
                 expires_at: Timestamp::parse(&expires)?,
                 body: Json::parse(&body)?,
             })

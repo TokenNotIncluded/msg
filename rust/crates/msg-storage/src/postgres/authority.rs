@@ -5,7 +5,7 @@ use msg_core::{Error, Json, Result};
 use msg_identity::{
     authorization::{AuthorizationStore, DirectConversation, LegacyShare, ShareSource},
     models::{decode, SubjectKind, Timestamp},
-    oauth::OAuthState,
+    sessions::CredentialState,
     store::{AuthorityStore, Record, RecoveryDelivery},
 };
 use std::collections::BTreeSet;
@@ -84,13 +84,13 @@ impl AuthorityStore for PgSession {
         }
         Ok(Some(result))
     }
-    fn oauth_state(&self, id: &str) -> Result<Option<OAuthState>> {
+    fn credential_state(&self, id: &str) -> Result<Option<CredentialState>> {
         self.one(
-            "SELECT expires,substring(body,1,1048577) FROM oauth_states WHERE id=$1",
+            "SELECT expires,substring(body,1,1048577) FROM credential_states WHERE id=$1",
             &[id.into()],
         )?
         .map(|r| {
-            Ok(OAuthState {
+            Ok(CredentialState {
                 expires_at: Timestamp::parse(r.text(0)?)?,
                 body: r.json(1)?,
             })

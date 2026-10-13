@@ -119,7 +119,7 @@ The original inspected main baseline is
 | `msg-core` | Bounded strict JSON, duplicate rejection, canonical numbers/Unicode, lossless typed JSON, SHA-256/base64url | `core/codec.py` |
 | `msg-crypto` | Existing key/subject IDs, purpose-framed Ed25519 signing/verification | `security/crypto.py` |
 | `msg-protocol` | Request shape/defaults, UTC time, business digest/signature bytes, immutable field access | `core/packet.py`, `core/requests.py`, `core/models.py` |
-| `msg-identity` | Typed identity/credential/certificate/CSR records, credential and current-state admission, pinned CA chains, live delegation, scope/ceiling/mode primitives, browser/API/OAuth and token-recovery validation, transaction-bound resource authorization | `security/authentication.py`, `certificates.py`, `policy.py`, `oauth.py` |
+| `msg-identity` | Typed identity/credential/certificate/CSR records, credential and current-state admission, pinned CA chains, live delegation, scope/ceiling/mode primitives, key-approved browser/API binding and token-recovery validation, transaction-bound resource authorization | `security/authentication.py`, `certificates.py`, `policy.py`, `sessions.py` |
 | `msg-storage` | Transaction-bound authority reads; SQLite/PostgreSQL writers and typed records, savepoints/rollback effects; native Git/blob content, ranges, pins and revision trees | `storage/sqlite.py`, `storage/postgres.py`, `storage/git.py` and their record/session modules |
 
 Authentication validates service/digest/expiry, current credentials, SHA-256
@@ -137,10 +137,12 @@ registry projection is injected locally; requests cannot supply authority rules.
 Only the existing network-constraint schema is implemented, not a generic schema
 engine or plugin loader.
 
-OAuth validation follows current signing parents, captured/current ceilings,
-auth versions, browser sessions, refresh-family authority and custodial vault
-status. MCP audience is passed from a trusted adapter, not from an envelope
-field. This is **binding validation**, not an OAuth or MCP server. The helper's
+Key-approved session validation follows current signing parents, captured/current
+ceilings, auth versions, nested session revocation and custodial vault status.
+The current `credential_states` schema is used by both native stores. Historical
+`t_oauth_`/`t_browser_` credentials and login bindings remain rejected even if
+old rows are restored. This is **binding validation**, not credential issuance
+or an OAuth/MCP server; no removed module, OAuth scope or Bearer authority is revived. The helper's
 operation/capability declarations are synthetic test configuration, not a
 production registry adapter.
 
@@ -198,7 +200,7 @@ are not implemented by this slice.
 The earlier process-kill tests cover **SQL metadata**, not a complete operation.
 The content tests above additionally cover standalone blob publication. Neither
 rollback callbacks nor private staging implement a durable cross-store recovery
-journal: callbacks do not run after SIGKILL. Identity/OAuth workflows, outbox/lease
+journal: callbacks do not run after SIGKILL. Identity/session issuance workflows, outbox/lease
 execution and complete operation recovery still need to be ported. PostgreSQL
 metadata primitives are already implemented above. Do not introduce dual writes.
 
@@ -226,17 +228,16 @@ PYTHONPATH=src python rust/tests/test_content_parity.py \
 ```
 
 Repeat the build with `--release` and the same suites against
-`rust/target/release/examples/`. CI performs both profiles, records exact source
-SHA/toolchains, and preserves reports plus `Cargo.lock`. Source changes to Python
-identity/storage/OAuth also trigger differential checks. The local offline editor
-now has the same pinned compiler and Python reference dependencies; independent
-cloud results must still be inspected before claiming CI acceptance.
+`rust/target/release/examples/`. The opt-in conformance workflow performs both profiles and records exact source
+SHA/toolchains plus `Cargo.lock`. Daily identity/storage/session changes are
+validated locally; no automatic CI acceptance is claimed. Use the pinned compiler
+and current Python reference, never a compatibility shim for a removed auth API.
 
 The wire suite covers canonical floating-point boundaries, Unicode, large
 integers, malformed packets and bidirectional signatures. The authority suite
 creates disposable databases using the actual Python `SqliteMetadataStore`, then
 compares native and Python decisions over the same records. It covers live
-revocation, CA constraints, OAuth source changes, recovery, exact retries and a
+revocation, CA constraints, key-approved session/source changes, rejected legacy authority, recovery, exact retries and a
 real concurrent WAL snapshot test. It also checks all 4096 modes across three
 classes and five permissions: **61,440 simple mode decisions**, not 61,440
 independent identity scenarios. Report groups separate these from other cases.
@@ -267,7 +268,7 @@ cryptographic and database primitives are delegated to pinned libraries.
   use a unified `invalid_identity_record` code instead of Python's field-specific
   decoder errors. Corrupt result body/namespace mismatches are explicitly rejected.
 - Ancestor traversal is capped at 1024, certificate traversal at 32 with a shared
-  4096-work budget, and OAuth source chains at 32. Cycles/oversized restored
+  4096-work budget, and session source chains at 32. Cycles/oversized restored
   authority fail closed. These defensive limits are not silently described as
   accepting every Python input.
 - Dalek strict verification rejects weak-key forgeries. Historical key/signature
@@ -278,8 +279,8 @@ cryptographic and database primitives are delegated to pinned libraries.
   canonical IDs/validated domain records; its DTOs are not public request schemas.
   The stricter poisoned-write and malformed-result checks are explicit safety
   differences, not assertions of identical behavior for every Python input.
-- Operation handlers, mutation-side identity/OAuth
-  issuance/refresh/recovery, encrypted-key wrapping and remaining content stores,
+- Operation handlers, mutation-side key-approved identity/session
+  issuance/recovery, encrypted-key wrapping and remaining content stores,
   native `serve`/HTTP/MCP, `worker`, packaging and deployment remain pending.
 - No RSS, memory-reduction or throughput result is claimed. Benchmark equivalent
   functionality, data, concurrency and complete process trees before comparison.

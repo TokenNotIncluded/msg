@@ -29,7 +29,7 @@ struct Context {
     capabilities: Vec<CapabilityPolicy>,
     primary_ceiling: Vec<Grant>,
     temporary_ceiling: Vec<Grant>,
-    oauth: msg_identity::oauth::OAuthPolicy,
+    browser: msg_identity::sessions::BrowserPolicy,
     #[serde(default)]
     resource_types: Vec<ResourceTypePolicy>,
     #[serde(default)]
@@ -81,14 +81,7 @@ fn run(
                 "worker" => Entry::Worker,
                 _ => return Err(Error("invalid_test_input")),
             };
-            match auth.authenticate_for_resource(
-                &request,
-                &policy,
-                store,
-                entry,
-                now()?,
-                input.get("resource").and_then(Value::as_str),
-            )? {
+            match auth.authenticate(&request, &policy, store, entry, now()?)? {
                 Admission::Fresh(p) => Ok(json!({"kind":"fresh", "principal":p})),
                 Admission::Replay(result) => Ok(json!({"kind":"replay", "result":result})),
             }
@@ -308,7 +301,7 @@ fn main() -> io::Result<()> {
                 context.primary_ceiling.clone(),
                 context.temporary_ceiling.clone(),
             )?
-            .with_oauth_policy(context.oauth.clone());
+            .with_browser_policy(context.browser.clone());
             let authorization = AuthorizationService::new(
                 context.validator()?,
                 snapshot.authority(),

@@ -31,7 +31,7 @@ impl Fixture {
             CREATE TABLE resources(id TEXT PRIMARY KEY,type TEXT,name TEXT,parent TEXT REFERENCES resources(id) DEFERRABLE INITIALLY DEFERRED,owner TEXT,grp TEXT,mode INTEGER,generation INTEGER,revision TEXT,state TEXT,created_at TEXT,modified_at TEXT,body TEXT,UNIQUE(parent,name));
             CREATE UNIQUE INDEX one_root ON resources((1)) WHERE parent IS NULL;
             CREATE TABLE results(subject TEXT,request_id TEXT,digest TEXT,body TEXT,PRIMARY KEY(subject,request_id));
-            CREATE TABLE oauth_states(id TEXT PRIMARY KEY,expires TEXT,body TEXT);
+            CREATE TABLE credential_states(id TEXT PRIMARY KEY,kind TEXT,expires TEXT,body TEXT);
             CREATE TABLE custodial_vault(subject TEXT PRIMARY KEY,signing_key_id TEXT,status TEXT);
             CREATE TABLE token_deliveries(credential_id TEXT,subject TEXT,recovery_verifier TEXT,recovery_expires_at TEXT,consumed_at TEXT,request_id TEXT);
             CREATE TABLE resource_tags(resource_id TEXT REFERENCES resources(id) ON DELETE CASCADE,tag TEXT,PRIMARY KEY(tag,resource_id));
