@@ -189,6 +189,24 @@ def install(app, op):
         )
         return HandlerOutput(data={'invite_id': ident, 'name': row[2], 'state': 'claimed'})
 
+    @op(
+        'identity.link_pending',
+        obj(
+            {
+                'wait_ms': {'type': 'integer', 'minimum': 0, 'maximum': 20000},
+                'invite_ids': {
+                    'type': 'array',
+                    'items': STRING,
+                    'maxItems': 100,
+                    'uniqueItems': True,
+                },
+            },
+            ('invite_ids',),
+        ),
+        effect='read',
+        signature=True,
+        version=2,
+    )
     @op('identity.link_pending', obj(), effect='read', signature=True)
     async def pending(ctx, request, tx):
         owner = await owner_subject(ctx, request, tx)
@@ -198,7 +216,10 @@ def install(app, op):
             (owner.id,),
         ):
             state = row_state(row, ctx.now)
-            if state not in {'claimed', 'released'}:
+            if request.contract_version == 2:
+                if row[0] not in request.arguments['invite_ids'] or state != 'claimed':
+                    continue
+            elif state not in {'claimed', 'released'}:
                 continue
             items.append({
                 'invite_id': row[0],
@@ -207,7 +228,16 @@ def install(app, op):
                 'state': state,
                 'request': claim_body(row),
             })
-        return HandlerOutput(data={'items': items})
+        return HandlerOutput(
+            data={
+                'items': items,
+                **(
+                    {'wait_supported': getattr(app.metadata, 'event_signal', None) is not None}
+                    if request.contract_version == 2
+                    else {}
+                ),
+            }
+        )
 
     @op(
         'identity.link_release',
@@ -239,6 +269,19 @@ def install(app, op):
         )
         return HandlerOutput(data={'invite_id': ident, 'name': row[2], 'state': 'released'})
 
+    @op(
+        'identity.link_collect',
+        obj(
+            {
+                **claim_schema['properties'],
+                'wait_ms': {'type': 'integer', 'minimum': 0, 'maximum': 20000},
+            },
+            claim_schema['required'],
+        ),
+        effect='read',
+        anonymous_only=True,
+        version=2,
+    )
     @op('identity.link_collect', claim_schema, effect='read', anonymous_only=True)
     async def collect(ctx, request, tx):
         ident = invite_id(request.arguments['invite_id'])
@@ -247,6 +290,11 @@ def install(app, op):
         require(row is not None and row[6] == canonical(body).decode(), 'not_found')
         require(row[10] is None, 'link_revoked')
         data = {'invite_id': ident, 'name': row[2], 'state': row_state(row, ctx.now)}
+        if request.contract_version == 2:
+            data.update({
+                'wait_supported': getattr(app.metadata, 'event_signal', None) is not None,
+                'wait_limit_ms': max(0, int((parse_time(row[5]) - ctx.now).total_seconds() * 1000)),
+            })
         if row[8] is not None:
             data['grant_box'] = row[8]
             data['state'] = 'released'
