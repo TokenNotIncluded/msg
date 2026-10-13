@@ -67,6 +67,12 @@ def add_commands(commands):
         default=[],
         help='Exact event type; repeat to include more types.',
     )
+    listener.add_argument(
+        '--subscribe',
+        action='store_true',
+        help='Use authorized server event waits (events@2); no mailbox or offline fallback.',
+    )
+    listener.add_argument('--resource', help='With --subscribe, limit events to this resource.')
     listener.add_argument('--cursor')
     listener.add_argument('--cursor-file', type=Path, help='Independent durable listener position.')
     listener.add_argument('--interval', type=float, default=1.0)
@@ -98,6 +104,13 @@ def add_commands(commands):
 
 
 def local_command(args):
+    if args.command == 'listen':
+        require(
+            not getattr(args, 'resource', None) or getattr(args, 'subscribe', False),
+            'subscription_required',
+        )
+    if getattr(args, 'subscribe', False):
+        return False
     return (args.command == 'agent' or args.command == 'listen' and args.agent) and not args.remote
 
 
@@ -163,7 +176,9 @@ def cursor_path(state, args, source):
     return private_directory(state.paths.state / 'agent-listeners') / (key + '.json')
 
 
-async def stream(state, args, fetch, source, *, wait_for_change=None, resolve_legacy=None):
+async def stream(
+    state, args, fetch, source, *, wait_for_change=None, resolve_legacy=None, server_wait=False
+):
     from msg.client_listener import listen
 
     remote = not source.startswith('local:')
@@ -192,6 +207,7 @@ async def stream(state, args, fetch, source, *, wait_for_change=None, resolve_le
         max_idle_interval=idle_limit,
         cursor_only=remote,
         resolve_legacy=resolve_legacy,
+        server_wait=server_wait,
     )
     return 0
 
@@ -270,9 +286,30 @@ async def run_local(state, args):
 async def run_remote(client, args):
     require(not args.offline, 'offline_remote_conflict')
     if args.command == 'listen':
-        require(getattr(args, 'wait_mode', 'auto') != 'events', 'listener_events_unavailable')
+        require(
+            getattr(args, 'wait_mode', 'auto') != 'events' or getattr(args, 'subscribe', False),
+            'listener_events_unavailable',
+        )
     if args.user:
         await client.require_username(args.user)
+    if args.command == 'listen' and getattr(args, 'subscribe', False):
+        from msg.client_subscription import Subscription
+
+        require(not args.agent, 'subscription_requires_account_reader')
+        source = Subscription(
+            client,
+            resource=args.resource,
+            once=args.once,
+            interval=args.interval,
+        )
+        return await stream(
+            client.state,
+            args,
+            source.fetch,
+            'subscription:' + (args.resource or ''),
+            server_wait=True,
+        )
+    require(not getattr(args, 'resource', None), 'subscription_required')
     if args.command == 'listen' and not args.agent:
 
         async def fetch(cursor, tail=False):
@@ -294,7 +331,25 @@ async def run_remote(client, args):
                         'has_more': more,
                     }
 
-        return await stream(client.state, args, fetch, 'account-events')
+        async def resolve_legacy(message_id):
+            current = await client.call('communication.event', {'id': str(message_id)})
+            if current.status != 'ok' and current.error.code == 'not_found':
+                return None
+            event = wire(client.checked(current).data)
+            return {
+                **event,
+                'type': event['operation'],
+                'data': {'operation': event['operation']},
+                'resources': [address['ref'] for address in event['resources']],
+            }
+
+        return await stream(
+            client.state,
+            args,
+            fetch,
+            'account-events',
+            resolve_legacy=resolve_legacy,
+        )
     from msg.client_subagents_remote import RemoteAgents
 
     store = RemoteAgents(client, username=args.username)

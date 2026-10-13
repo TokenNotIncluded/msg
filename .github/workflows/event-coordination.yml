@@ -1,0 +1,76 @@
+name: Event and task coordination
+on:
+  pull_request:
+    paths:
+      - 'src/msg/**'
+      - 'tests/**'
+      - '.github/workflows/event-coordination.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/msg/**'
+      - 'tests/**'
+      - '.github/workflows/event-coordination.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: event-coordination-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: msgtest
+          POSTGRES_PASSWORD: msgtest
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U msgtest"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install focused verification dependencies
+        run: |
+          python -m pip install uv==0.12.20
+          uv sync --locked --extra server
+          uv pip install pytest pytest-asyncio ruff==0.16.9
+          echo "$GITHUB_WORKSPACE/.venv/bin" >> "$GITHUB_PATH"
+      - name: Check formatting and syntax
+        run: |
+          mkdir -p artifacts
+          # Save a repair diff even when the check fails; never rewrite or push source from CI.
+          ruff format --diff src tests > artifacts/format.diff || true
+          ruff check src tests --output-format concise > artifacts/lint.txt || true
+          python -W error -m compileall -q src
+      - name: Run focused real-database and client regressions
+        run: |
+          python -m pytest \
+            tests/test_task_graph.py tests/test_task_plans.py \
+            tests/test_event_wait.py tests/test_event_subscription.py \
+            tests/test_client_subscription.py tests/test_listener_revalidation.py \
+            tests/test_client_listener.py tests/test_collaboration_resources.py \
+            tests/test_client_listener_cli.py tests/test_client_listener_remote.py \
+            tests/test_client_listener_reliability.py \
+            tests/test_resource_event_unification.py \
+            --junitxml=artifacts/event-coordination.xml
+      - name: Require clean formatting
+        if: always()
+        run: |
+          ruff check src tests
+          ruff format --check src tests
+      - uses: actions/upload-artifact@v7.0.1
+        if: always()
+        with:
+          name: event-coordination
+          path: artifacts/
