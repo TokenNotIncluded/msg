@@ -45,7 +45,7 @@ def test_compact_account_preserves_routes_and_escapes_full_name():
     assert len(navigation.links) == 8
     assert navigation.links[0]['href'] == '/@long%22%3Caccount%3E'
     assert navigation.links[-2] == {'href': '/bookmarks', 'data-i18n': 'saved'}
-    assert navigation.links[-1]['href'] == '/oauth/logout'
+    assert navigation.links[-1]['href'] == '/session/logout'
     home = home_html(account={'name': name}).decode().split('</header>', 1)[0]
     assert home.count('<details class="account-menu">') == 1
     assert '<account>' not in home

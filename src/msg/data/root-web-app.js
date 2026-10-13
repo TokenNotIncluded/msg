@@ -172,7 +172,7 @@
     if (
       u.origin !== location.origin ||
       u.pathname.startsWith("/-/") ||
-      u.pathname.startsWith("/oauth/")
+      u.pathname.startsWith("/oauth/") || u.pathname.startsWith("/session/")
     )
       throw new Error("Invalid resource path.");
     return u.pathname;

@@ -4,19 +4,19 @@ from dataclasses import replace
 from datetime import timedelta
 
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_post_actions import action, post
 from test_service import call
 
 from msg.core.codec import wire
 from msg.core.requests import request_for
-from msg.security.oauth import OAuthService
+from msg.security.sessions import BrowserSessionService
 
 
-async def restrict(oauth, cookie, operations):
-    app, _, subject, _ = oauth
+async def restrict(signed_browser, cookie, operations):
+    app, _, subject, _ = signed_browser
     async with app.metadata.transaction(write=True) as tx:
-        _, credential_id, secret = await OAuthService(app).browser_credentials(tx, cookie)
+        _, credential_id, secret = await BrowserSessionService(app).browser_credentials(tx, cookie)
         credential = await tx.credential(credential_id)
         restricted = replace(
             credential,
@@ -43,9 +43,9 @@ async def private(app, rid, mode=0o700):
 
 
 @pytest.mark.asyncio
-async def test_old_browser_reads_only_public_forks_and_keeps_signed_ceiling(oauth):
-    app, key, subject, http = oauth
-    source, _ = await post(oauth)
+async def test_old_browser_reads_only_public_forks_and_keeps_signed_ceiling(signed_browser):
+    app, key, subject, http = signed_browser
+    source, _ = await post(signed_browser)
     branches = []
     for name in ('public-branch.md', 'private-branch.md'):
         result = await call(
@@ -76,7 +76,7 @@ async def test_old_browser_reads_only_public_forks_and_keeps_signed_ceiling(oaut
     )
     assert hidden.status == 'ok', wire(hidden)
     await private(app, directory.resources[0].id)
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     for path in ('/_post/state', '/_post/proofs', '/_post/forks', '/bookmarks'):
         for header in ('Authorization', 'X-Msg-Request'):
             for value in ('invalid', ''):
@@ -85,13 +85,15 @@ async def test_old_browser_reads_only_public_forks_and_keeps_signed_ceiling(oaut
                     params={'id': source.id} if path != '/bookmarks' else {},
                     headers={header: value, 'Accept': 'text/html'},
                 )
-                assert (
-                    denied.status_code == 400
-                    and denied.json()['error']['code'] == 'invalid_request'
-                )
+                if header == 'Authorization':
+                    assert denied.status_code == 401
+                    assert denied.json()['error'] == 'signature_required'
+                else:
+                    assert denied.status_code == 400
+                    assert denied.json()['error']['code'] == 'invalid_request'
                 assert not denied.json().get('data')
     token_id, secret, restricted = await restrict(
-        oauth, cookie, {'discussion.forks', 'discussion.fork'}
+        signed_browser, cookie, {'discussion.forks', 'discussion.fork'}
     )
     result = await http.get('/_post/forks', params={'id': source.id})
     assert result.status_code == 200, result.text
@@ -131,7 +133,7 @@ async def test_old_browser_reads_only_public_forks_and_keeps_signed_ceiling(oaut
         signed_api.status_code == 403 and signed_api.json()['error']['code'] == 'credential_ceiling'
     )
     denied = await action(
-        oauth, 'discussion.fork', source.id, revision=source.revision, body='Denied branch'
+        signed_browser, 'discussion.fork', source.id, revision=source.revision, body='Denied branch'
     )
     assert denied.status_code == 403 and denied.json()['error']['code'] == 'credential_ceiling'
     async with app.metadata.transaction(write=False) as tx:
@@ -148,18 +150,23 @@ async def test_old_browser_reads_only_public_forks_and_keeps_signed_ceiling(oaut
 
 
 @pytest.mark.asyncio
-async def test_public_state_is_explicitly_unknown_and_proof_views_are_safe(oauth):
-    app, _, _, http = oauth
-    source, _ = await post(oauth)
-    cookie = await browser_login(oauth)
-    assert (await action(oauth, 'discussion.bookmark', source.id)).status_code == 200
+async def test_public_state_is_explicitly_unknown_and_proof_views_are_safe(signed_browser):
+    app, _, _, http = signed_browser
+    source, _ = await post(signed_browser)
+    cookie = await browser_login(signed_browser)
+    assert (await action(signed_browser, 'discussion.bookmark', source.id)).status_code == 200
     note = '<script>alert(1)</script> [unsafe](javascript:alert(2))'
     proved = await action(
-        oauth, 'discussion.prove', source.id, revision=source.revision, kind='USED', note=note
+        signed_browser,
+        'discussion.prove',
+        source.id,
+        revision=source.revision,
+        kind='USED',
+        note=note,
     )
     assert proved.status_code == 200, proved.text
     credential_id, _, restricted = await restrict(
-        oauth, cookie, {'discussion.state', 'discussion.proofs'}
+        signed_browser, cookie, {'discussion.state', 'discussion.proofs'}
     )
     state = await http.get('/_post/state', params={'id': source.id, 'revision': source.revision})
     assert state.status_code == 200, state.text
@@ -195,12 +202,12 @@ async def test_public_state_is_explicitly_unknown_and_proof_views_are_safe(oauth
 
 
 @pytest.mark.asyncio
-async def test_private_bookmarks_never_fall_back_to_public_or_empty(oauth):
-    _, _, _, http = oauth
-    source, _ = await post(oauth)
-    cookie = await browser_login(oauth)
-    assert (await action(oauth, 'discussion.bookmark', source.id)).status_code == 200
-    await restrict(oauth, cookie, {'discussion.bookmarks'})
+async def test_private_bookmarks_never_fall_back_to_public_or_empty(signed_browser):
+    _, _, _, http = signed_browser
+    source, _ = await post(signed_browser)
+    cookie = await browser_login(signed_browser)
+    assert (await action(signed_browser, 'discussion.bookmark', source.id)).status_code == 200
+    await restrict(signed_browser, cookie, {'discussion.bookmarks'})
     json = await http.get('/bookmarks', headers={'Accept': 'application/json'})
     assert json.status_code == 403 and json.json()['error']['code'] == 'credential_ceiling'
     html = await http.get('/bookmarks', headers={'Accept': 'text/html'})

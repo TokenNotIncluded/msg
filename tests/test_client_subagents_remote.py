@@ -311,3 +311,37 @@ async def test_remote_labels_legacy_messages_and_cursor_survive_account_rename(i
             await all_messages(agents, 'bot2')
     finally:
         await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_remote_agents_list_call_reads_batch_and_fallback(installed, tmp_path):
+    app, _ = installed
+    client, http = await client_for(app, tmp_path / 'owner', 'batch-bots')
+    agents = RemoteAgents(client)
+    original_call_reads = client.transport.call_reads
+    try:
+        for i in range(10):
+            await agents.create(f'worker-{i}')
+
+        # 1. Normal list with call_reads batching
+        items = await agents.list()
+        assert len(items) == 10
+        assert [x['name'] for x in items] == [f'worker-{i}' for i in range(10)]
+
+        # 2. Test fallback when call_reads raises an exception
+        async def failing_call_reads(reqs):
+            raise httpx.NetworkError('simulated network fault')
+
+        client.transport.call_reads = failing_call_reads
+        fallback_items = await agents.list()
+        assert len(fallback_items) == 10
+        assert [x['name'] for x in fallback_items] == [f'worker-{i}' for i in range(10)]
+
+        # 3. Test fallback when call_reads is None (transport doesn't support it)
+        client.transport.call_reads = None
+        unsupported_items = await agents.list()
+        assert len(unsupported_items) == 10
+        assert [x['name'] for x in unsupported_items] == [f'worker-{i}' for i in range(10)]
+    finally:
+        client.transport.call_reads = original_call_reads
+        await http.aclose()

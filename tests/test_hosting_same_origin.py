@@ -119,7 +119,7 @@ async def test_same_domain_hosted_html_head_304_range_raw_and_no_write_route(ins
             '/_read/t_private/json',
             headers={
                 'Origin': 'null',
-                'Cookie': 'session=should-not-appear',
+                'Cookie': 'msg_session=should-not-appear',
                 'Authorization': 'Bearer should-not-appear',
             },
         )
@@ -318,7 +318,7 @@ async def test_root_sample_is_public_sandboxed_and_never_uses_root_credentials(i
             headers={
                 'Origin': 'null',
                 'Authorization': 'Bearer should-not-appear',
-                'Cookie': 'session=should-not-appear',
+                'Cookie': 'msg_session=should-not-appear',
             },
         )
         assert sample.status_code == 200

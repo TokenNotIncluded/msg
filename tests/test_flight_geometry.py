@@ -61,11 +61,22 @@ async def test_geometry_budget_includes_executor_and_lock_wait_and_clears_old_fi
     hub, started, cancelled, _ = slow_room(monkeypatch)
     if wait_for_lock:
         await hub.geometry_lock.acquire()
+    budgets = []
+    timeout = asyncio.timeout
+
+    def record_timeout(seconds):
+        budgets.append(seconds)
+        return timeout(seconds)
+
+    monkeypatch.setattr(asyncio, 'timeout', record_timeout)
     began = time.monotonic()
     with pytest.raises(Failure) as failure:
         await hub._refresh_geometry()
     assert failure.value.code == 'server_busy'
-    assert time.monotonic() - began < 0.2
+    assert budgets == [0.02], 'One deadline must include the lock and executor'
+    # A saturated CI runner can resume the expired timer more than 200ms late.
+    # The exact 20ms budget above remains enforced; this only bounds a hang.
+    assert time.monotonic() - began < 1.0
     assert started.is_set() is not wait_for_lock
     assert cancelled.is_set() is not wait_for_lock
     assert hub.world.gravity_descriptor() == {'version': 1, 'wells': []}

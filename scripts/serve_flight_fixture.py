@@ -8,7 +8,7 @@ Example (use the candidate's src on PYTHONPATH):
 The JSON readiness file contains origin and the ordinary /@root/web/ URL.
 SIGTERM or the finite lifetime closes the app, stops PG, and removes test data
 and files. No production settings, keys, database, recipients, or WS mocks.
-Optional --browser-accounts-file writes two ordinary OAuth session cookies to
+Optional --browser-accounts-file writes two ordinary key-approved session cookies to
 a new mode-0600 file for local browser contexts; it is never printed.
 """
 
@@ -35,15 +35,15 @@ from msg.admin.diagnostics import temporary_postgres
 from msg.admin.root import _approve_csr, _provision
 from msg.application import Application
 from msg.bootstrap import ROOT_WEB_SAMPLE
+from msg.browser_config import BrowserConfig
 from msg.config import write_example
 from msg.constants import ROOT_SUBJECT
 from msg.core.codec import b64
 from msg.core.requests import request_for
-from msg.oauth_config import OAuthConfig
 from msg.security.age_keys import generate_age_key
 from msg.security.crypto import Ed25519Signer, subject_id
 from msg.transports.http import create_app
-from msg.transports.oauth_http import csrf
+from msg.transports.session_http import csrf
 
 
 class FixtureServer(uvicorn.Server):
@@ -145,27 +145,27 @@ async def browser_accounts(app, router, accounts):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=router), base_url=app.settings.service_url
         ) as http:
-            login = await http.get('/oauth/login')
+            login = await http.get('/login')
             if login.status_code != 200:
-                raise RuntimeError('Fixture OAuth login unavailable')
+                raise RuntimeError('Fixture key-approved browser login unavailable')
             code = login.text.split('msg auth approve ', 1)[1].split('</code>', 1)[0]
             await call(
                 app,
-                'identity.oauth_approve',
+                'identity.session_approve',
                 {'user_code': code, 'decision': 'approve'},
                 key=account['key'],
                 subject=account['subject_id'],
             )
             response = await http.post(
-                '/oauth/login/poll',
+                '/session/poll',
                 json={'csrf': csrf(http.cookies.get('msg_login'))},
                 headers={'Origin': app.settings.service_url},
             )
             if response.status_code != 200 or response.json() != {'logged_in': True}:
-                raise RuntimeError('Fixture OAuth approval failed')
+                raise RuntimeError('Fixture key-approved browser approval failed')
             cookie = http.cookies.get('msg_session')
             if not cookie:
-                raise RuntimeError('Fixture OAuth session missing')
+                raise RuntimeError('Fixture key-approved browser session missing')
             result.append({
                 'handle': account['handle'],
                 'subject_id': account['subject_id'],
@@ -228,7 +228,7 @@ async def serve(options):
                 if settings.server.mail is not None or settings.server.valkey_url:
                     raise RuntimeError('Fixture must have no mail or Valkey')
                 if options.browser_accounts_file:
-                    settings = replace(settings, oauth=OAuthConfig(enabled=True))
+                    settings = replace(settings, browser=BrowserConfig(enabled=True))
                 app = Application(settings)
                 try:
                     csr, root = await _provision(app, 'disposable-flight-' + os.urandom(24).hex())

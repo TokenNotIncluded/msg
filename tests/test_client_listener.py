@@ -336,6 +336,9 @@ async def main():
     checkpoint = Path(sys.argv[1])
     task = asyncio.create_task(listen(fetch, context={'agent': 'bot'}, cursor_file=checkpoint, interval=30))
     while not checkpoint.exists():
+        if task.done():
+            task.result()
+            raise RuntimeError('Listener exited before saving its checkpoint')
         await asyncio.sleep(0.01)
     # Signal readiness only after the first durable checkpoint and idle wait.
     print('READY', flush=True)
@@ -355,7 +358,8 @@ except KeyboardInterrupt:
         stderr=asyncio.subprocess.PIPE,
     )
     try:
-        assert await asyncio.wait_for(process.stdout.readline(), 5) == b'READY\n'
+        ready = await asyncio.wait_for(process.stdout.readline(), 5)
+        assert ready == b'READY\n', (await process.stderr.read()).decode()
         process.send_signal(signal.SIGINT)
         assert await asyncio.wait_for(process.wait(), 5) == 130
     finally:

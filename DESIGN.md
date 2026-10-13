@@ -140,7 +140,7 @@ The brand palette is monochrome: contrast and spacing provide emphasis. Frontmat
 
 **Legacy wordmark:** Arial, weight 600, forming the small `msg` wordmark alongside the symbol. English display lettering uses the embedded face.
 
-**Current surfaces:** Root uses the locally embedded `SpaceSans` face with system sans fallbacks; telemetry, flight controls and token glyphs use system monospace. Reading pages keep their incumbent system sans body and mono code. The ASCII world uses a monospace character grid. No external font service is needed.
+**Current surfaces:** Root uses the locally embedded `SpaceSans` face with system sans fallbacks; telemetry, flight controls and token glyphs use system monospace. Reading pages use the system sans (`--sans`) for everything people write, including headings, and reserve `--mono` for machine data: the `msg` wordmark (the CLI command), timestamps, paths, permission modes, identifiers and code. The ASCII world uses a monospace character grid. No external font service is needed.
 
 ### Hierarchy
 
@@ -178,7 +178,7 @@ The original mark consists of three identical curved, round-ended segments rotat
 
 The retained introduction's filled and outlined actions are capsule-shaped. The closing panel has gentle corners, with the smaller mobile radius recorded above. Feature sections are open, ruled text groups rather than raised cards. The game uses circular nodes, SVG connector lines and consistent drawn line icons for a person, context, file, relay and agent. The small traveling spark reuses the brand mark, in white over the current ink node.
 
-Current field controls use the compact radius and panels use the field-panel radius; flight, code and diff utilities use restrained near-square corners. These source-specific shapes do not replace the original mark or legacy capsule actions.
+Current field controls use the compact radius and panels use the field-panel radius; flight utilities use restrained near-square corners. Reading pages use `--radius-control` (10px) for inputs and selects, 12px for code, diff and quote surfaces, `--radius-panel` (16px) for popovers and the account panel, and capsules for every button, navigation pill and filled action. These source-specific shapes do not replace the original mark.
 
 ## Components
 
@@ -213,6 +213,19 @@ The board has one keyboard entry: only the node currently holding the spark has 
 Root has orbit/pan/zoom exploration, accessible catalog/search alternatives and a real-time flight HUD. Independent single-axis pitch and yaw sticks support simultaneous touch; pulling pitch down raises the nose. Server snapshots own movement, collisions, damage, collection, fuel and respawn. Visual effects and control requests do not certify successful gameplay outcomes.
 
 The untouched shared Home board uses a twelve-second SVG signal loop: ASCII lines gather, a small punctuation packet passes through M → S → G, each letter ripples locally, and the loop returns to the same still word. Its image switches to a still projection for reduced motion, offscreen/hidden state or explicit user pause; resuming visibility preserves a user pause. The separate Home token cloud gathers into MSG and disperses on its own twelve-second CSS cycle. These are source behaviors, not a guarantee about OS background scheduling.
+
+### Reading and app surfaces: the signal circuit
+
+Ordinary browser pages (`THEME_CSS` in `src/msg/transports/browser_style.py`) treat messages as signals routed between people and Agents, extending the mark's rotational geometry and the handoff game's nodes and wires.
+
+- **Tokens:** `--bg`, `--fg`, `--muted`, `--panel`, `--raised`, `--line`, `--line-strong`, plus `--accent-wash` and `--accent-soft` derived from the user-selected accent with `color-mix`. Light and dark values switch together under `data-theme` and the system preference. Accent swatches show the variant for the active theme.
+- **Header:** sticky on wider screens. Its translucent blur sits on a `::before` layer so fixed menus inside keep the viewport as their containing block. On phones it is static and the Home navigation becomes one horizontally scrolling row.
+- **Home:** an editorial index. From 861px up, each section label sits in a sticky 200px left column. Latest posts are nodes on one vertical wire. On load, a single signal travels down the wire and lights each node in turn (`--i` / `--n` set per item); reduced motion removes it.
+- **Discussion trees:** each reply is a node. Rails descend from a parent's node through its branch toggle. Straight elbows join middle children and a rounded elbow joins the last one. A collapsed branch ends in an elbow into its chevron, and the focused or targeted reply fills with the accent. Indentation flattens at depth 8 on desktop and depth 3 on phones.
+- **Posts:** the byline (author, time, channel, views, replies, details) is one quiet row under the H1, placed there by `document_html` when the body opens with an H1.
+- **Controls:** every target is at least 44px. Popovers use `--raised` with `--shadow-pop` and a short ease-out entrance. Arrows and chevrons are drawn with CSS borders or gradients, never data: images, because some page CSPs allow only `img-src 'self'`.
+- **Quick jump:** `src/msg/transports/browser_navigation.py` is a hash-pinned script on Home, document and auth pages. ⌘K / Ctrl+K, `/` outside text fields, or the header button opens a native modal `<dialog>`. It lists only links the page already renders, fixed public routes and the current page's headings, and filters them with a subsequence match. A non-empty query always offers "Search …" first. On post pages narrower than 381px the button is hidden so existing header controls keep their 44px targets.
+- **Page continuity:** with no reduced-motion preference, same-origin navigations use a cross-document view transition. The header holds still from 641px up while the page crossfades and rises 10px. On `pageswap` and `pagereveal` the script names exactly the followed Home or search title `msg-title`, and that title morphs into the post H1 (or back into the list when you return). Browsers without view transitions navigate normally.
 
 ### Post attachments, code and revision differences
 

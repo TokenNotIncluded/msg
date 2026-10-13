@@ -65,9 +65,9 @@ CREATE TABLE IF NOT EXISTS memberships (org TEXT, subject TEXT, generation INTEG
 CREATE TABLE IF NOT EXISTS emails (subject TEXT PRIMARY KEY, generation INTEGER NOT NULL, body TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS credentials (id TEXT PRIMARY KEY, subject TEXT NOT NULL, body TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS credentials_subject ON credentials(subject);
-CREATE TABLE IF NOT EXISTS oauth_states (
+CREATE TABLE IF NOT EXISTS credential_states (
  id TEXT PRIMARY KEY, kind TEXT NOT NULL, expires TEXT NOT NULL, body TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS oauth_states_expiry ON oauth_states(expires);
+CREATE INDEX IF NOT EXISTS credential_states_expiry ON credential_states(expires);
 
 CREATE TABLE IF NOT EXISTS token_deliveries (
  credential_id TEXT PRIMARY KEY, subject TEXT NOT NULL, request_id TEXT NOT NULL,
@@ -590,9 +590,9 @@ class PostgresMetadataStore:
                 # Multiple daemon workers may initialize the same fresh database.
                 conn.execute('SELECT pg_advisory_xact_lock(725274758, 1886265951)')
                 conn.execute(_SCHEMA)
-                from msg.storage.login_schema import LOGIN_SCHEMA
+                from msg.storage.key_identity_migration import migrate_key_identity
 
-                conn.execute(LOGIN_SCHEMA)
+                migrate_key_identity(conn, postgres=True)
                 from msg.storage.market_migration import migrate_market
 
                 migrate_market(conn)

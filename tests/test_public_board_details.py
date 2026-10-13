@@ -16,6 +16,7 @@ class Element {
  setAttribute(name,value){this.attrs[name]=value;}
  getAttribute(name){return name==='src'?this.src:this.attrs[name];}
  addEventListener(name,listener){(this.events[name]??=[]).push(listener);}
+ dispatchEvent(event){this.emit(event.type,event);return true;}
  focus(){this.focused=true;}
  async emit(name,event={}){for(const listener of this.events[name]??[])await listener(event);}
 }
@@ -39,7 +40,7 @@ const windowEvents=new Element(),requests=[],snapshots=[];
 let nextResponse,resolveFetch,running,id=0;
 const timers=new Map();let timerId=0;
 const document=new Element();document.hidden=false;document.getElementById=()=>panel;let intersect;
-const context={document,matchMedia:()=>motion,TextEncoder,
+const context={document,matchMedia:()=>motion,TextEncoder,CustomEvent:class {constructor(type,options){this.type=type;this.detail=options.detail;}},
  setTimeout:callback=>{timers.set(++timerId,callback);return timerId;},clearTimeout:id=>timers.delete(id),
  crypto:{randomUUID:()=>`request-${++id}`},AbortSignal:{timeout:()=>undefined},
  addEventListener:(...args)=>windowEvents.addEventListener(...args),location:{assign:()=>{}},

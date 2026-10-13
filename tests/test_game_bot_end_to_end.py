@@ -13,7 +13,14 @@ from datetime import timedelta
 import aiohttp
 import pytest
 from aiohttp import web
-from test_flight_websocket import controls, flight_server, oauth, player, receive_until, snapshot
+from test_flight_websocket import (
+    controls,
+    flight_server,
+    player,
+    receive_until,
+    signed_browser,
+    snapshot,
+)
 from test_game_webhook_delivery import tls_contexts
 
 from msg.core.codec import b64, loads, wire
@@ -22,14 +29,14 @@ from msg.core.requests import request_for
 from msg.workers.effects import EffectWorker
 from msg.workers.webhook import PublicResolver, WebhookSender, validate_endpoint, verify_delivery
 
-__all__ = ['flight_server', 'oauth']
+__all__ = ['flight_server', 'signed_browser']
 
 
 @pytest.mark.asyncio
 async def test_signed_bot_ws_events_reach_hmac_verified_tls_receiver(
-    flight_server, oauth, tmp_path, monkeypatch
+    flight_server, signed_browser, tmp_path, monkeypatch
 ):
-    app, key, subject, _ = oauth
+    app, key, subject, _ = signed_browser
     flight = flight_server
     secret = secrets.token_bytes(32)
     server_tls, client_tls = tls_contexts(tmp_path)

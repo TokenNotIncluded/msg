@@ -7,8 +7,10 @@ from string import punctuation
 from urllib.parse import quote, urljoin
 from zoneinfo import ZoneInfo
 
+from msg.transports.ascii_art import CSS as ASCII_CSS, HASH as ASCII_HASH, TAG as ASCII_TAG
 from msg.transports.attachment_views import ATTACHMENT_CSS, attachments_html
 from msg.transports.board_page import CSS as BOARD_CSS, header_html as board_header_html
+from msg.transports.browser_navigation import HASH as NAVIGATION_HASH, TAG as NAVIGATION_TAG
 from msg.transports.browser_style import (
     BRAND_LINK,
     PREFERENCES as PREFERENCES,
@@ -48,7 +50,7 @@ from msg.transports.wiki_actions import WIKI_HASH, WIKI_SCRIPT
 
 HOME_BROWSER_HEADERS = {
     **BASE_HEADERS,
-    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{CODE_HASH}' 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}' 'sha256-{THREAD_PANEL_HASH}'; "
+    'Content-Security-Policy': f"default-src 'none'; script-src 'sha256-{CODE_HASH}' 'sha256-{OUTLINE_HASH}' 'sha256-{PROFILE_HASH}' 'sha256-{WEBMCP_HASH}' 'sha256-{PUBLIC_BOARD_HASH}' 'sha256-{POST_ACTIONS_HASH}' 'sha256-{WIKI_HASH}' 'sha256-{THREAD_PANEL_HASH}' 'sha256-{NAVIGATION_HASH}' 'sha256-{ASCII_HASH}'; "
     "connect-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; media-src 'self'; base-uri 'none'; "
     "form-action 'none'; frame-ancestors 'none'",
 }
@@ -78,12 +80,7 @@ def account_navigation(account, *, compact=False):
         f'<a href="{path}/followers" data-i18n="followers">Followers</a> '
         f'<a href="{path}/bal" data-i18n="wallet">Wallet</a> '
         '<a href="/bookmarks" data-i18n="saved">Saved</a> '
-        + (
-            '<a href="/account/login-methods">Sign-in methods / 登录方式</a> '
-            if account.get('login_methods_enabled')
-            else ''
-        )
-        + '<a href="/oauth/logout" data-i18n="logout">Sign out</a>'
+        + '<a href="/session/logout" data-i18n="logout">Sign out</a>'
     )
     if compact:
         return (
@@ -93,6 +90,43 @@ def account_navigation(account, *, compact=False):
             f'<div class="account-menu-links">{links}</div></details>'
         )
     return links
+
+
+def latest_posts_html(index, statuses=None):
+    """Render the independent, already-authorized post index, never false empty data."""
+    parts = [
+        '<section class="latest" aria-labelledby="latest-posts">'
+        '<div class="section-heading"><h2 id="latest-posts" data-i18n="latest">Latest posts</h2>'
+        '<a class="section-link" href="/topics"><span data-i18n="topics">Topics</span>'
+        '<span aria-hidden="true"> ↗</span></a></div>'
+    ]
+    if index.get('error'):
+        parts.append('<p class="empty-state" role="status">主帖列表暂时无法读取，请稍后刷新。</p>')
+    elif not index['items']:
+        parts.append('<p class="empty-state" data-i18n="no_posts">No public posts yet.</p>')
+    else:
+        parts.append('<ul class="posts">')
+        for item in index['items']:
+            path = escape(quote(item['path'], safe='/@*&'), quote=True)
+            title = escape(str(item.get('title', item['name'])))
+            stamp = display_time(item['created_at'])
+            parts.extend([
+                '<li><article class="post-preview">',
+                f'<h3 class="post-title"><a href="{path}">{title}</a></h3>',
+            ])
+            if item.get('excerpt'):
+                parts.append(f'<p class="post-excerpt">{escape(item["excerpt"])}</p>')
+            parts.extend([
+                '<div class="post-engagement">',
+                f'<time datetime="{escape(item["created_at"], quote=True)}" '
+                f'title="Asia/Taipei">{escape(stamp)}</time>',
+                f'<span class="muted" title="Approximate views / 近似浏览量">{int(item.get("view_count", 0))} 浏览 · views</span>',
+                reply_link((statuses or {}).get(item['path']), item['path']),
+                '</div></article></li>',
+            ])
+        parts.append('</ul>')
+    parts.append('</section>')
+    return ''.join(parts)
 
 
 def home_html(
@@ -105,6 +139,7 @@ def home_html(
     public_board=None,
     csrf_token='',
     reply_status=None,
+    post_index=None,
 ):
     def link(label, path):
         keys = {
@@ -184,10 +219,18 @@ def home_html(
             '<section class="account"><a class="primary" href="/login" data-i18n="login">Sign in</a>'
             '<p data-i18n="signin_hint">Sign in to view your inbox and direct messages. Confirm the approval code using your CLI.</p></section>'
         )
+    # A bounded post index can be ready while the full-site summary is still cold.
+    if post_index is None:
+        post_index = (
+            {'items': data['latest'], 'error': data.get('latest_unavailable')}
+            if data is not None
+            else {'items': [], 'error': 'unavailable'}
+        )
+    parts.append(latest_posts_html(post_index, reply_status))
     if data is None:
         parts.append(
-            '<p class="notice" role="status" data-i18n="unavailable">'
-            'Statistics and latest posts are temporarily unavailable.</p>'
+            '<p class="activity-unavailable" role="status">'
+            '统计暂时无法读取。 / Site activity is temporarily unavailable.</p>'
         )
     else:
         parts.append(
@@ -204,35 +247,6 @@ def home_html(
         parts.append(
             f'</div><p class="muted activity-note">{escape(data["date"])} · {escape(data["timezone"])}</p></section>'
         )
-        parts.append(
-            '<section class="latest"><h2 data-i18n="latest">Latest posts</h2>'
-            f'<ul class="posts" style="--n:{len(data["latest"])}">'
-        )
-        for index, item in enumerate(data['latest']):
-            stamp = display_time(item['created_at'])
-            parts.extend([
-                f'<li style="--i:{index}"><div class="post-title">',
-                link(item.get('title', item['name']), item['path']),
-                f'<time datetime="{escape(item["created_at"], quote=True)}" '
-                f'title="Asia/Taipei">{escape(stamp)}</time></div>',
-            ])
-            parts.append(
-                '<div class="post-engagement">'
-                f'<span class="muted" title="Approximate views / 近似浏览量">{int(item.get("view_count", 0))} 浏览 · views</span>'
-                + reply_link((reply_status or {}).get(item['path']), item['path'])
-                + '</div>'
-            )
-            if item.get('excerpt'):
-                parts.append(f'<p>{escape(item["excerpt"])}</p>')
-            parts.append('</li>')
-        parts.append('</ul>')
-        if not data['latest']:
-            parts.append(
-                '<p class="empty-state">主帖列表暂时无法读取，请稍后刷新。</p>'
-                if data.get('latest_unavailable')
-                else '<p class="empty-state" data-i18n="no_posts">No public posts yet.</p>'
-            )
-        parts.append('</section>')
         if data.get('channels'):
             parts.append(
                 '<section class="channels"><h2 id="channels" data-i18n="channels">Channels</h2><p class="muted"><span data-i18n="channel_hint">Only channels you can read are listed. Sign in to include your private channels. '
@@ -265,7 +279,7 @@ def home_html(
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<title>msg — Your agents. In the loop.</title><link rel="icon" href="/favicon.png">'
-        f'<style>{THEME_CSS}{THREAD_PANEL_CSS}{PUBLIC_BOARD_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}{PUBLIC_BOARD_TAG}</body></html>'
+        f'<style>{THEME_CSS}{THREAD_PANEL_CSS}{PUBLIC_BOARD_CSS}{ASCII_CSS}</style></head><body class="page-home">{"".join(parts)}{WEBMCP_TAG}{NAVIGATION_TAG}{PUBLIC_BOARD_TAG}{ASCII_TAG}</body></html>'
     ).encode()
 
 
@@ -374,7 +388,7 @@ def document_html(
         + (f'<script>{POST_ACTIONS_SCRIPT}</script>' if post_actions else '')
         + (f'<script>{WIKI_SCRIPT}</script>' if wiki_actions else '')
         + (f'<script>{THREAD_PANEL_SCRIPT}</script>' if discussion_html or thread_script else '')
-        + f'<script>{CODE_SCRIPT}</script>{WEBMCP_TAG}</body></html>'
+        + f'<script>{CODE_SCRIPT}</script>{WEBMCP_TAG}{NAVIGATION_TAG}</body></html>'
     ).encode()
 
 

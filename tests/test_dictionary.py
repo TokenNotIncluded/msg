@@ -175,8 +175,12 @@ def test_non_direct_template_uses_full_operation_packet_route(registry):
 
 def test_default_build_checks_packaged_publication_snapshot(registry):
     snapshot = loads(files('msg.data').joinpath('shortcodes.json').read_bytes())
-    assert len(snapshot['operations']) >= len(registry.operations('network'))
     automatic = build_dictionary(registry)
+    # The publication is historical: new operations can outnumber its rows.
+    # Every published short code must still retain exactly the same identity.
+    for kind, rows in snapshot['codes'].items():
+        current = {row['code']: row['identity'] for row in automatic.document['codes'][kind]}
+        assert all(current[row['code']] == row['identity'] for row in rows)
     explicit = build_dictionary(registry, published=snapshot)
     assert automatic.document == explicit.document
     assert automatic.document != build_dictionary(registry, published=None).document

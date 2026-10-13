@@ -10,7 +10,7 @@ Host filesystem paths follow the [XDG Base Directory specification](https://spec
 | --- | --- | --- |
 | Configuration | `~/.config/msg` | SSH-style `config`, default server in `service.json` (set with `msg server use`), service-selection aliases and per-service configuration; per-account configuration and `services/<domain>/current-account.json`; never new private keys or tokens |
 | Durable identity data | `~/.local/share/msg/services/<domain>/accounts/<account>` | Signing keys, encryption keys including rotated keys, CA keys, exported certificates, Bank approval records, retained custodial recovery history |
-| Persistent state | `~/.local/state/msg/services/<domain>/accounts/<account>` | `client.json` (server binding, tokens and certificate IDs), registration and operation journals, OAuth sessions, upgrade locks |
+| Persistent state | `~/.local/state/msg/services/<domain>/accounts/<account>` | `client.json` (server binding, tokens and certificate IDs), registration and operation journals, retired login state retained only to protect old identity material, upgrade locks |
 | Disposable cache | `~/.cache/msg/services/<domain>/accounts/<account>` | Verified operation catalogs |
 | Temporary work | `$XDG_RUNTIME_DIR/msg`, or Python's temporary directory | Unique private working directories, removed when the operation exits; Python honors `TMPDIR`, `TEMP`, and `TMP` |
 

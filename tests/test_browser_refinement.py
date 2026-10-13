@@ -92,14 +92,12 @@ def test_home_counters_are_translated_without_invented_activity():
     parsed = Elements(html)
     markers = {a.get('data-i18n') for _, a in parsed.tags}
     assert {'public_posts', 'today', 'users', 'no_posts'} <= markers
-    assert (
-        'Statistics and latest posts are temporarily unavailable.' not in html.split('<script>')[0]
-    )
+    assert 'Site activity is temporarily unavailable.' not in html.split('<script>')[0]
 
 
 def test_unavailable_activity_is_not_displayed_as_zero():
     html = home_html().decode().split('<script>')[0]
-    assert 'Statistics and latest posts are temporarily unavailable.' in html
+    assert 'Site activity is temporarily unavailable.' in html
     assert '<strong>0</strong>' not in html
 
 

@@ -5,7 +5,7 @@ from datetime import timedelta
 
 import pytest
 from read_only_evidence import readonly_evidence
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call, register
 
 from msg.core.codec import wire
@@ -13,8 +13,10 @@ from msg.workers.maintenance import run_maintenance
 
 
 @pytest.mark.asyncio
-async def test_browser_system_notice_has_no_fake_user_and_reads_have_no_effects(oauth, monkeypatch):
-    app, key, subject, http = oauth
+async def test_browser_system_notice_has_no_fake_user_and_reads_have_no_effects(
+    signed_browser, monkeypatch
+):
+    app, key, subject, http = signed_browser
     todo = await call(
         app,
         'identity.todo_put',
@@ -30,11 +32,11 @@ async def test_browser_system_notice_has_no_fake_user_and_reads_have_no_effects(
     assert await run_maintenance(app, 'deliver_due_todos', scheduled=True) == {
         'delivered_todo_reminders': 1
     }
-    assert (await http.get('/@oauth-owner/in')).status_code == 401
-    await browser_login(oauth)
+    assert (await http.get('/@key-owner/in')).status_code == 401
+    await browser_login(signed_browser)
     async with readonly_evidence(app, monkeypatch):
         for accept in ('text/html', 'text/markdown'):
-            response = await http.get('/@oauth-owner/in', headers={'Accept': accept})
+            response = await http.get('/@key-owner/in', headers={'Accept': accept})
             assert response.status_code == 200, response.text
             assert 'System notification' in response.text
             assert '/@None' not in response.text

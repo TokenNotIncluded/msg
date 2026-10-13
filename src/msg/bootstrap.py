@@ -56,6 +56,7 @@ ROOT_WEB_SAMPLE = (
         '\n'.join(
             files('msg.data').joinpath(name).read_text()
             for name in (
+                'ascii-runtime.js',
                 'root-web-model.js',
                 'root-web-map.js',
                 'root-web-flight-client.js',

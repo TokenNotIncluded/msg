@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import httpx
 import pytest
-from test_oauth import browser_login, oauth as oauth
+from test_browser_sessions import browser_login, signed_browser as signed_browser
 from test_service import call, register
 
 from msg.core.codec import canonical
@@ -194,16 +194,18 @@ async def test_profile_bio_social_links_counts_and_lists_respect_visibility(inst
 
 
 @pytest.mark.asyncio
-async def test_old_browser_social_authorization_uses_public_read_without_expanding_ceiling(oauth):
-    from msg.security.oauth import OAuthService
+async def test_old_browser_social_authorization_uses_public_read_without_expanding_ceiling(
+    signed_browser,
+):
+    from msg.security.sessions import BrowserSessionService
 
-    app, key, subject, http = oauth
+    app, key, subject, http = signed_browser
     bk, bob, _ = await register(app, 'old-browser-followed')
     made = await call(app, 'communication.follow', {'id': bob}, key=key, subject=subject)
     assert made.status == 'ok'
-    cookie = await browser_login(oauth)
+    cookie = await browser_login(signed_browser)
     async with app.metadata.transaction(write=True) as tx:
-        _, cid, _ = await OAuthService(app).browser_credentials(tx, cookie)
+        _, cid, _ = await BrowserSessionService(app).browser_credentials(tx, cookie)
         original = await tx.credential(cid)
         narrowed = replace(
             original,
@@ -217,12 +219,12 @@ async def test_old_browser_social_authorization_uses_public_read_without_expandi
             ),
         )
         await tx.save_credential(narrowed, (await tx.subject(subject)).auth_version)
-    html = await http.get('/@oauth-owner/follows', headers={'Accept': 'text/html'})
+    html = await http.get('/@key-owner/follows', headers={'Accept': 'text/html'})
     assert html.status_code == 200 and 'old-browser-followed' in html.text
     assert 'Showing public relationships' in html.text
-    raw = await http.get('/@oauth-owner/follows?format=raw', headers={'Accept': 'text/html'})
+    raw = await http.get('/@key-owner/follows?format=raw', headers={'Accept': 'text/html'})
     assert raw.status_code == 200 and raw.headers['content-type'].startswith('text/plain')
-    api = await http.get('/@oauth-owner/follows', headers={'Accept': 'application/json'})
+    api = await http.get('/@key-owner/follows', headers={'Accept': 'application/json'})
     assert api.status_code == 403 and api.json()['error']['code'] == 'credential_ceiling'
     async with app.metadata.transaction(write=False) as tx:
         assert (await tx.credential(cid)).ceiling == narrowed.ceiling
@@ -231,5 +233,5 @@ async def test_old_browser_social_authorization_uses_public_read_without_expandi
         await tx.replace(
             replace(resource, mode=0o700, generation=resource.generation + 1), resource.generation
         )
-    hidden = await http.get('/@oauth-owner/follows', headers={'Accept': 'text/html'})
+    hidden = await http.get('/@key-owner/follows', headers={'Accept': 'text/html'})
     assert hidden.status_code == 200 and 'old-browser-followed' not in hidden.text
