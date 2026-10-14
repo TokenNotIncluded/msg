@@ -202,3 +202,15 @@ def test_incorrect_statistics_types_are_unknown_not_coerced_into_counts(count, c
     )
     assert '>回复数未知</span>' in page and '>浏览量未知</span>' in page
     assert '>-1 条回复</span>' not in page and '>1 浏览</span>' not in page
+
+
+def test_latest_visible_parent_navigation_is_not_a_child_parent_link():
+    # Fixed page order: the branch is visible and latest; its child is off-page.
+    sibling, branch = post(3, 1), post(2, 1)
+    sibling['created_at'] = '2026-10-04T10:00:00Z'
+    branch['created_at'] = '2026-10-04T10:20:00Z'
+    fragment = thread_fragment_html([sibling, branch], {'root': key(1)})
+    assert f'id="reply-{key(2)}"' in fragment
+    assert f'id="reply-{key(4)}"' not in fragment
+    assert f'<a class="thread-control" href="#reply-{key(2)}">最新回复</a>' in fragment
+    assert f'<a class="thread-parent" href="#reply-{key(2)}"' not in fragment
