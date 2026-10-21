@@ -1196,6 +1196,7 @@ dependencies = [
  "aes-gcm",
  "ed25519-dalek",
  "hkdf",
+ "hmac 0.12.1",
  "libc",
  "msg-core",
  "rand_core 0.6.4",

@@ -40,6 +40,8 @@ jobs:
       - name: Install native and reference dependencies
         run: |
           rustup toolchain install 1.85.0 --profile minimal
+          sudo apt-get update -qq -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
+          sudo apt-get install -y age
           python -m pip install 'cryptography==46.0.3' 'jsonschema>=4.25,<5' 'referencing>=0.36,<1' 'psycopg[binary]>=3.2,<4'
       - name: Build native identity fixture
         working-directory: rust
@@ -62,7 +64,10 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust
-        run: rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+          sudo apt-get update -qq -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
+          sudo apt-get install -y age
       - name: Native tests
         working-directory: rust
         run: cargo +1.85.0 test --workspace --all-targets
@@ -97,5 +102,5 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: daemon-reference-${{ github.sha }}
-          path: rust/artifacts/catalog.json
+          path: rust/artifacts/*.json
           if-no-files-found: error

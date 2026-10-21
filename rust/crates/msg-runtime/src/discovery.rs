@@ -16,9 +16,11 @@ use serde_json::{json, Map, Value as J};
 use std::collections::BTreeMap;
 use url::Url;
 
+mod public;
+
 pub fn supports(op: &str, version: u32) -> bool {
     match op {
-        "discovery.read_query" => matches!(version, 1 | 2 | 3 | 5),
+        "discovery.read_query" => matches!(version, 1..=5),
         "discovery.public_board"
         | "discovery.get"
         | "discovery.raw"
@@ -31,6 +33,7 @@ pub fn supports(op: &str, version: u32) -> bool {
         | "discovery.operations"
         | "discovery.capabilities"
         | "discovery.schema" => version == 1,
+        "discovery.feed" | "discovery.now" => version == 1,
         _ => false,
     }
 }
@@ -41,6 +44,8 @@ pub fn handle(ctx: &mut Context<'_>) -> Result<HandlerOutput> {
     match ctx.request.field("operation")?.as_str()? {
         "discovery.get" => get(ctx),
         "discovery.public_board" => crate::content::public_board::get(ctx),
+        "discovery.feed" => public::feed(ctx),
+        "discovery.now" => public::now(ctx),
         "discovery.raw" => raw(ctx),
         "discovery.resolve" => resolve_address(ctx),
         "discovery.list" | "discovery.search" => list(ctx),
@@ -622,7 +627,7 @@ fn get(ctx: &mut Context<'_>) -> Result<HandlerOutput> {
         }
         _ => read_projection(ctx, &id, arg_text(&args, "revision")?.as_deref(), &chosen)?,
     };
-    if !args.contains_key("fields") {
+    if chosen.is_empty() {
         data.as_object_mut()
             .ok_or(Error("invalid_projection"))?
             .entry("stable_path")
@@ -835,7 +840,7 @@ fn list_items(
     let limit = arg_int(&args, "limit", 50)?;
     require((1..=200).contains(&limit), "invalid_limit")?;
     let mut chosen = fields(&args)?;
-    if chosen.is_empty() {
+    if !args.contains_key("fields") {
         chosen = ["id", "type", "name", "revision", "generation", "path"]
             .into_iter()
             .map(str::to_owned)
@@ -2066,7 +2071,7 @@ fn tree_collection(
     } else {
         leaf
     };
-    let mut page = nested_page(ctx, request, Some(budget))?;
+    let mut page = nested_page(ctx, request, Some(&mut *budget))?;
     if args.get("collection").and_then(|v| v.as_str().ok()) == Some("replies") {
         let chosen = if args.contains_key("fields") {
             fields(&args)?

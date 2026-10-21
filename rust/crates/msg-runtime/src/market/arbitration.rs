@@ -53,9 +53,12 @@ fn member_valid(tx: &PgSession, candidate: &str, case: &Json) -> Result<bool> {
         return Ok(false);
     }
     let epochs = field(field(case, "policy")?, "candidate_epochs")?.as_object()?;
-    let Some(epoch) = epochs.get(candidate).filter(|v| truthy(v)) else {
+    let Some(epoch) = epochs.get(candidate) else {
         return Ok(false);
     };
+    if !truthy(epoch)? {
+        return Ok(false);
+    }
     let Some(row) = tx.one(
         "SELECT epoch,active FROM arbitrator_roles WHERE subject=$1",
         &[candidate.into()],
