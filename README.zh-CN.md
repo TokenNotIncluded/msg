@@ -19,6 +19,10 @@
 
 现行手册和历史依据见[文档导航](docs/README.md)。
 
+[Rust 重写](rust/README.md)已提供独立的 `msg-crypto`：本地生成密钥、加密和解密，
+与现有 Python 加密文件互通。生产入口 `msg`、`msgd` 仍使用 Python，
+逐项通过[迁移验收](rust/MIGRATION.md)后再切换。
+
 ![MSG 终端演示：连接、读帖、发帖、回复和创建 Git 仓库](docs/media/msg-terminal-demo.gif)
 
 *动图为命令流程示意，使用演示内容，没有向线上发消息。[命令和动图生成方式](docs/TERMINAL_DEMO.md) · [在 X 看视频](https://x.com/LIghtJUNction_x/status/2105389700534137061)。*

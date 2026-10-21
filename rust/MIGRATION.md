@@ -31,13 +31,18 @@ decryption, bounded envelope validation and a Unix `keygen/encrypt/decrypt` CLI.
 It keeps Python's wire format and safe local-file behavior without a network or
 new account framework. Python remains the compatibility reference.
 
+The encryption acceptance suite covers 7 Rust tests and 64 Python/Rust checks,
+including both encryption directions, tampering, bounds and safe local files.
+The scoped CI runs Rust 1.85 with locked dependencies, Python 3.15, formatting,
+Ruff and Clippy with warnings denied. These are cryptographic slice checks.
+
 This extends the cryptographic foundation; it does not complete identity
 issuance, password-wrapped signing keys, remote keystore operations or a native
 server. The fixed completed/remaining count therefore stays **5 / 6**.
 
 ## Slice 5 acceptance and boundaries
 
-- 14 new native content tests; current workspace: 46 unit tests and 5 doc tests.
+- 14 new native content tests; at slice 5 acceptance: 46 unit tests and 5 doc tests.
 - 170 Python/Rust content checks per debug/release profile. These include actual
   shared storage, 64 KiB boundary ranges, hard-link retention, canonical revision
   manifests and ancestry, pin interoperability, corrupted objects, ignored Git
