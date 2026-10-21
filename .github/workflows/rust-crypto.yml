@@ -1,0 +1,49 @@
+name: Rust encryption
+on:
+  push:
+    paths: ['rust/Cargo.*', 'rust/crates/msg-core/**', 'rust/crates/msg-crypto/**', 'rust/tests/test_crypto_parity.py', '.github/workflows/rust-crypto.yml']
+  pull_request:
+    paths: ['rust/Cargo.*', 'rust/crates/msg-core/**', 'rust/crates/msg-crypto/**', 'rust/tests/test_crypto_parity.py', '.github/workflows/rust-crypto.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  crypto:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+          allow-prereleases: true
+      - name: Install test dependencies
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+          python -m pip install cryptography==46.0.3 ruff==0.16.9
+      - name: Format and reference harness style
+        run: |
+          cargo +1.85.0 fmt --manifest-path rust/Cargo.toml --all -- --check
+          python -m ruff check rust/tests/test_crypto_parity.py
+          python -m ruff format --check rust/tests/test_crypto_parity.py
+      - name: Native tests and lint
+        if: ${{ !cancelled() }}
+        working-directory: rust
+        run: |
+          cargo +1.85.0 test -p msg-crypto
+          cargo +1.85.0 clippy -p msg-crypto --all-targets -- -D warnings
+          cargo +1.85.0 build -p msg-crypto
+      - name: Python and Rust interoperability
+        env:
+          PYTHONPATH: src
+        run: python rust/tests/test_crypto_parity.py --binary rust/target/debug/msg-crypto --report rust/artifacts/crypto.json
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: crypto-${{ github.sha }}
+          path: |
+            rust/Cargo.lock
+            rust/artifacts/crypto.json
+          if-no-files-found: error

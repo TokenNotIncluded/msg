@@ -14,14 +14,26 @@ Keep the IDs stable in later progress reports; split/redefine one only explicitl
 | M05 | Native Git/blob content, ranges, pins and revision graphs; valid-data interoperability | Implemented in slice 5 |
 | M06 | LFS shared-object lifecycle and durable metadata/content recovery; no ambiguous-commit data loss | Remaining |
 | M07 | Real operation/capability registry, authorized executor, business handlers, receipts and secret delivery | Remaining |
-| M08 | Native identity/OAuth/browser-session issuance, rotation, refresh, revocation and encrypted-key wrapping | Remaining |
+| M08 | Native key identity/browser-session issuance, rotation, refresh, revocation and encrypted-key wrapping | Remaining |
 | M09 | Native `msgd serve`, HTTP/MCP/GET and other supported transports with current contracts | Remaining |
 | M10 | Native `msgd worker`, leases/outbox, retries, recovery fences and actual side effects | Remaining |
 | M11 | Installable native daemon, isolated cutover/rollback rehearsal, full end-to-end acceptance and equivalent benchmarks | Remaining |
 
-Python retains `msg` CLI, administrator/migration scripts and developer tooling.
+Python remains the production `msg` CLI, administrator/migration scripts and
+developer tooling while individual client features move to Rust.
 There is still no native production daemon in this PR. Root signing remains local
 only. Do not merge/deploy solely because these primitive suites pass.
+
+## Local encryption slice
+
+The existing `msg-crypto` crate now includes native `msg-x25519-v1` encryption,
+decryption, bounded envelope validation and a Unix `keygen/encrypt/decrypt` CLI.
+It keeps Python's wire format and safe local-file behavior without a network or
+new account framework. Python remains the compatibility reference.
+
+This extends the cryptographic foundation; it does not complete identity
+issuance, password-wrapped signing keys, remote keystore operations or a native
+server. The fixed completed/remaining count therefore stays **5 / 6**.
 
 ## Slice 5 acceptance and boundaries
 
