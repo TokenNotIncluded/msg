@@ -5,6 +5,7 @@
 mod authorization;
 #[cfg(unix)]
 pub mod content;
+pub mod jobs;
 pub mod postgres;
 pub mod records;
 #[cfg(unix)]

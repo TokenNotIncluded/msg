@@ -4,8 +4,11 @@
 //! session advisory lock as Python and retain it through all compensations.
 //! Transaction pooling is unsupported. No schema is created or upgraded here.
 mod authority;
+mod identity;
+mod jobs;
 mod query;
 mod records;
+pub use identity::IdentitySession;
 use msg_core::{Error, Result};
 use postgres::{fallible_iterator::FallibleIterator, types::ToSql, Client, Config};
 use postgres_native_tls::MakeTlsConnector;

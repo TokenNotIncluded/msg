@@ -147,7 +147,7 @@ pub(super) fn bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn unchanged(a: &Metadata, b: &Metadata) -> bool {
+pub(super) fn unchanged(a: &Metadata, b: &Metadata) -> bool {
     (
         a.dev(),
         a.ino(),

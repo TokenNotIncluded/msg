@@ -8,6 +8,32 @@ on:
 permissions:
   contents: read
 jobs:
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+      - name: Native tests
+        working-directory: rust
+        run: cargo +1.85.0 test --workspace --all-targets
+      - name: Native lint
+        if: ${{ !cancelled() }}
+        working-directory: rust
+        run: |
+          cargo +1.85.0 fmt --all -- --check
+          cargo +1.85.0 clippy --workspace --all-targets -- -D warnings
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: daemon-lock-${{ github.sha }}
+          path: rust/Cargo.lock
+          if-no-files-found: error
   reference:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -19,7 +45,7 @@ jobs:
         with:
           python-version: '3.15'
       - name: Install reference dependencies
-        run: python -m pip install 'cryptography==46.0.3' 'httpx>=0.28,<1' 'jsonschema>=4.25,<5' 'referencing>=0.36,<1'
+        run: python -m pip install 'cryptography==46.0.3' 'httpx>=0.28,<1' 'jsonschema>=4.25,<5' 'referencing>=0.36,<1' 'starlette>=0.50,<2' 'aiohttp>=3.13,<4' 'graphql-core>=3.2.7,<3.3' 'dnspython>=2.8,<3' 'markdown-it-py>=4,<5' 'pygments>=2.19,<3'
       - name: Export service contracts
         env:
           PYTHONPATH: src

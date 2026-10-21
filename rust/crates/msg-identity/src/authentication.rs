@@ -51,6 +51,24 @@ pub struct Principal {
     ceiling: Vec<Grant>,
 }
 impl Principal {
+    pub(crate) fn from_worker(
+        actor: String,
+        subject: String,
+        credential_id: String,
+        method: &'static str,
+        certificates: Vec<String>,
+        ceiling: Vec<Grant>,
+    ) -> Self {
+        Self {
+            actor: Some(actor),
+            subject: Some(subject),
+            credential_id: Some(credential_id),
+            method,
+            certificates,
+            ceiling,
+        }
+    }
+
     pub fn actor(&self) -> Option<&str> {
         self.actor.as_deref()
     }
