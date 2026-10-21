@@ -1,6 +1,10 @@
 //! Typed ports for identity mutations inside one existing metadata transaction.
 //! There is no arbitrary SQL escape hatch and no commit operation on this port.
-use crate::{browser::BrowserStore, models::*};
+use crate::{
+    browser::BrowserStore,
+    models::*,
+    vault::{VaultRecord, VaultStore},
+};
 use msg_core::{Json, Result};
 
 #[derive(Clone)]
@@ -36,7 +40,7 @@ pub struct TokenDelivery {
     pub consumed_at: Option<Timestamp>,
 }
 
-pub trait IdentityStore: BrowserStore {
+pub trait IdentityStore: BrowserStore + VaultStore {
     /// Resolve the caller's reference without changing the signed request.
     fn resolve_identity(&self, reference: &str) -> Result<String>;
     /// Compare the persisted auth version; -1 permits only a new identity.
@@ -62,6 +66,7 @@ pub trait IdentityStore: BrowserStore {
     /// Decode and append through the store's hash-chained audit API.
     fn append_identity_audit(&mut self, audit: &Json) -> Result<()>;
     fn insert_token_delivery(&mut self, delivery: &TokenDelivery) -> Result<()>;
+    fn insert_custodial_vault(&mut self, vault: &VaultRecord) -> Result<()>;
     fn token_delivery(&self, credential: &str) -> Result<Option<TokenDelivery>>;
     /// Atomically require claimed_at AND consumed_at NULL, then set claimed_at.
     fn claim_token_delivery(&mut self, credential: &str, now: Timestamp) -> Result<bool>;

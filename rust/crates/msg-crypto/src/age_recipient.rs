@@ -2,6 +2,7 @@
 use msg_core::{Error, Result};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
 
 const ALPHABET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
@@ -22,34 +23,36 @@ fn polymod(values: impl IntoIterator<Item = u8>) -> u32 {
     check
 }
 
-fn prefix() -> Vec<u8> {
-    b"age"
+fn prefix(hrp: &str) -> Vec<u8> {
+    hrp.as_bytes()
         .iter()
         .map(|c| c >> 5)
         .chain([0])
-        .chain(b"age".iter().map(|c| c & 31))
+        .chain(hrp.as_bytes().iter().map(|c| c & 31))
         .collect()
 }
 
-pub fn public_from_recipient(recipient: &str) -> Result<[u8; 32]> {
+fn decode(value: &str, hrp: &str) -> Result<Zeroizing<[u8; 32]>> {
     let invalid = Error("invalid_age_recipient");
-    if recipient.len() != 62 || !recipient.starts_with("age1") {
+    if value.len() != hrp.len() + 59 || !value.starts_with(&format!("{hrp}1")) {
         return Err(invalid);
     }
-    let values: Vec<u8> = recipient.as_bytes()[4..]
-        .iter()
-        .map(|c| {
-            ALPHABET
-                .iter()
-                .position(|v| v == c)
-                .map(|i| i as u8)
-                .ok_or(invalid)
-        })
-        .collect::<Result<_>>()?;
-    if polymod(prefix().into_iter().chain(values.iter().copied())) != 1 {
+    let values = Zeroizing::new(
+        value.as_bytes()[hrp.len() + 1..]
+            .iter()
+            .map(|c| {
+                ALPHABET
+                    .iter()
+                    .position(|v| v == c)
+                    .map(|i| i as u8)
+                    .ok_or(invalid)
+            })
+            .collect::<Result<Vec<_>>>()?,
+    );
+    if polymod(prefix(hrp).into_iter().chain(values.iter().copied())) != 1 {
         return Err(invalid);
     }
-    let mut public = [0u8; 32];
+    let mut public = Zeroizing::new([0u8; 32]);
     let mut accumulator = 0u32;
     let mut bits = 0;
     let mut index = 0;
@@ -65,19 +68,24 @@ pub fn public_from_recipient(recipient: &str) -> Result<[u8; 32]> {
     if index != 32 || bits != 4 || accumulator & 15 != 0 {
         return Err(invalid);
     }
+    Ok(public)
+}
+
+pub fn public_from_recipient(recipient: &str) -> Result<[u8; 32]> {
+    let public = *decode(recipient, "age")?;
     // A fixed nonsecret scalar is sufficient to reject every low-order point;
     // it is never used for message encryption or as an account identity.
     if !StaticSecret::from([42u8; 32])
         .diffie_hellman(&PublicKey::from(public))
         .was_contributory()
     {
-        return Err(invalid);
+        return Err(Error("invalid_age_recipient"));
     }
     Ok(public)
 }
 
-pub fn recipient_from_public(public: &[u8; 32]) -> String {
-    let mut values = Vec::with_capacity(58);
+fn encode(public: &[u8; 32], hrp: &str) -> String {
+    let mut values = Zeroizing::new(Vec::with_capacity(58));
     let mut accumulator = 0u32;
     let mut bits = 0;
     for byte in public {
@@ -92,7 +100,7 @@ pub fn recipient_from_public(public: &[u8; 32]) -> String {
         values.push(((accumulator << (5 - bits)) & 31) as u8);
     }
     let checksum = polymod(
-        prefix()
+        prefix(hrp)
             .into_iter()
             .chain(values.iter().copied())
             .chain([0; 6]),
@@ -100,9 +108,32 @@ pub fn recipient_from_public(public: &[u8; 32]) -> String {
     for index in (0..6).rev() {
         values.push(((checksum >> (5 * index)) & 31) as u8);
     }
-    let mut recipient = String::from("age1");
-    recipient.extend(values.into_iter().map(|v| ALPHABET[usize::from(v)] as char));
+    let mut recipient = format!("{hrp}1");
+    recipient.extend(values.iter().map(|v| ALPHABET[usize::from(*v)] as char));
     recipient
+}
+
+pub fn recipient_from_public(public: &[u8; 32]) -> String {
+    encode(public, "age")
+}
+
+pub fn identity_from_private(private: &[u8; 32]) -> Zeroizing<String> {
+    let mut text = Zeroizing::new(encode(private, "age-secret-key-"));
+    text.make_ascii_uppercase();
+    text
+}
+
+pub fn private_from_identity(identity: &str) -> Result<Zeroizing<[u8; 32]>> {
+    if !identity.is_ascii() || identity.bytes().any(|byte| byte.is_ascii_lowercase()) {
+        return Err(Error("invalid_age_identity"));
+    }
+    let text = Zeroizing::new(identity.to_ascii_lowercase());
+    decode(&text, "age-secret-key-").map_err(|_| Error("invalid_age_identity"))
+}
+
+pub fn recipient_from_identity(identity: &str) -> Result<String> {
+    let private = StaticSecret::from(*private_from_identity(identity)?);
+    Ok(recipient_from_public(&PublicKey::from(&private).to_bytes()))
 }
 
 pub fn encryption_key_id(public: &[u8; 32]) -> String {
@@ -130,6 +161,14 @@ mod tests {
             "ek_69d193dcc1c5da912145b4309f9a14f39fdb88678b3f337166b128187b4a7402"
         );
         assert_eq!(public_from_recipient(&recipient).unwrap(), public);
+        let identity = identity_from_private(&[1; 32]);
+        assert_eq!(
+            identity.as_str(),
+            "AGE-SECRET-KEY-1QYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZ9K4CN"
+        );
+        assert_eq!(*private_from_identity(&identity).unwrap(), [1; 32]);
+        assert_eq!(recipient_from_identity(&identity).unwrap(), recipient);
+        assert!(private_from_identity(&identity.to_ascii_lowercase()).is_err());
         assert!(public_from_recipient(&recipient.to_uppercase()).is_err());
         assert!(public_from_recipient(&recipient_from_public(&[0; 32])).is_err());
         let mut changed = recipient.into_bytes();

@@ -7,10 +7,12 @@ use crate::records::{self, IdentityRecord};
 use msg_core::{b64, unb64, Error, Json, Result};
 use msg_identity::{
     browser::BrowserStore,
-    models::{decode, Certificate, Credential, Subject, Timestamp, Verifier},
+    certificate_lifecycle::CertificateStore,
+    models::{decode, Certificate, CertificateRequest, Credential, Subject, Timestamp, Verifier},
     mutations::{EncryptionKey, IdentityKey, IdentityStore, TokenDelivery},
     sessions::CredentialState,
     store::{AuthorityStore, Record, RecoveryDelivery, RuntimeGeneration},
+    vault::{VaultRecord, VaultStore},
 };
 
 pub struct IdentitySession<'a> {
@@ -133,6 +135,38 @@ impl AuthorityStore for IdentitySession<'_> {
         subject: &str,
     ) -> Result<Option<RecoveryDelivery>> {
         self.session.recovery_delivery(credential, subject)
+    }
+}
+
+impl VaultStore for PgSession {
+    fn vault_record(&self, subject: &str) -> Result<Option<VaultRecord>> {
+        self.one("SELECT subject,signing_key_id,encryption_key_id,signing_nonce,signing_ciphertext,age_nonce,age_ciphertext,status,created_at,destroyed_at FROM custodial_vault WHERE subject=$1", &[subject.into()])?
+            .map(|row| {
+                let sealed = |nonce, ciphertext| -> Result<Option<msg_crypto::vault_box::SealedSecret>> {
+                    match (row.optional_text(nonce)?, row.optional_text(ciphertext)?) {
+                        (Some(nonce), Some(ciphertext)) => Ok(Some(msg_crypto::vault_box::SealedSecret { nonce: nonce.into(), ciphertext: ciphertext.into() })),
+                        (None, None) => Ok(None),
+                        _ => Err(Error("custodial_vault_corrupt")),
+                    }
+                };
+                Ok(VaultRecord {
+                    subject: row.text(0)?.into(), signing_key_id: row.text(1)?.into(), encryption_key_id: row.text(2)?.into(),
+                    signing: sealed(3, 4)?, encryption: sealed(5, 6)?, status: row.text(7)?.into(),
+                    created_at: Timestamp::parse(row.text(8)?)?, destroyed_at: optional_time(&row, 9)?,
+                })
+            }).transpose()
+    }
+    fn primary_identity_key(&self, subject: &str) -> Result<Option<IdentityKey>> {
+        self.one("SELECT key_id,subject,public_key,created_at,retired_at,is_primary FROM identity_keys WHERE subject=$1 AND is_primary=1", &[subject.into()])?
+            .as_ref().map(identity_key).transpose()
+    }
+}
+impl VaultStore for IdentitySession<'_> {
+    fn vault_record(&self, subject: &str) -> Result<Option<VaultRecord>> {
+        self.session.vault_record(subject)
+    }
+    fn primary_identity_key(&self, subject: &str) -> Result<Option<IdentityKey>> {
+        self.session.primary_identity_key(subject)
     }
 }
 
@@ -346,6 +380,20 @@ impl IdentityStore for IdentitySession<'_> {
             Ok(())
         })
     }
+    fn insert_custodial_vault(&mut self, value: &VaultRecord) -> Result<()> {
+        self.mutate(|tx| {
+            require(value.status == "active" && value.destroyed_at.is_none(), "invalid_custodial_vault")?;
+            let signing = value.signing.as_ref().ok_or(Error("invalid_custodial_vault"))?;
+            let encryption = value.encryption.as_ref().ok_or(Error("invalid_custodial_vault"))?;
+            require(tx.subject(&value.subject)?.kind == msg_identity::models::SubjectKind::Custodial, "not_custodial")?;
+            require(tx.credential(&value.signing_key_id)?.subject_id == value.subject, "credential_owner_required")?;
+            tx.execute("INSERT INTO custodial_vault(subject,signing_key_id,encryption_key_id,signing_nonce,signing_ciphertext,age_nonce,age_ciphertext,status,created_at,destroyed_at) VALUES($1,$2,$3,$4,$5,$6,$7,'active',$8,NULL)", &[
+                value.subject.as_str().into(), value.signing_key_id.as_str().into(), value.encryption_key_id.as_str().into(),
+                signing.nonce.as_str().into(), signing.ciphertext.as_str().into(), encryption.nonce.as_str().into(), encryption.ciphertext.as_str().into(), time(value.created_at).into(),
+            ])?;
+            Ok(())
+        })
+    }
     fn token_delivery(&self, credential: &str) -> Result<Option<TokenDelivery>> {
         self.session.one("SELECT credential_id,subject,request_id,request_digest,recovery_verifier,recovery_expires_at,claimed_at,consumed_at FROM token_deliveries WHERE credential_id=$1", &[credential.into()])?
             .as_ref().map(delivery).transpose()
@@ -355,5 +403,38 @@ impl IdentityStore for IdentitySession<'_> {
     }
     fn consume_token_delivery(&mut self, credential: &str, now: Timestamp) -> Result<bool> {
         self.mutate(|tx| Ok(tx.execute("UPDATE token_deliveries SET consumed_at=$1 WHERE credential_id=$2 AND consumed_at IS NULL", &[time(now).into(), credential.into()])? == 1))
+    }
+}
+
+impl CertificateStore for IdentitySession<'_> {
+    fn authorization_store(&self) -> &dyn msg_identity::authorization::AuthorizationStore {
+        self.session
+    }
+    fn certificate_request(&self, id: &str) -> Result<CertificateRequest> {
+        self.session.csr(id)
+    }
+    fn certificate_request_state(&self, id: &str) -> Result<Json> {
+        records::encode(&self.session.csr_state(id)?)
+    }
+    fn save_certificate_request(&mut self, request: &CertificateRequest) -> Result<()> {
+        self.mutate(|tx| {
+            let row = tx.one("SELECT (SELECT count(*) FROM csrs WHERE state='pending'),(SELECT count(*) FROM csrs)", &[])?.ok_or(Error("storage_error"))?;
+            require(row.integer(0)? < 1024 && row.integer(1)? < 8192, "storage_capacity_exceeded")?;
+            tx.save_csr(request)
+        })
+    }
+    fn transition_certificate_request(&mut self, state: &Json, expected: i64) -> Result<()> {
+        self.mutate(|tx| tx.transition_csr(&records::decode(state)?, expected))
+    }
+    fn publish_certificate(
+        &mut self,
+        certificate: &Certificate,
+        csr: &str,
+        expected: i64,
+    ) -> Result<()> {
+        self.mutate(|tx| tx.register_certificate(certificate, Some((csr, expected))))
+    }
+    fn revoke_identity_certificate(&mut self, id: &str, audit: &Json) -> Result<()> {
+        self.mutate(|tx| tx.revoke_certificate(id, &records::decode(audit)?))
     }
 }

@@ -24,7 +24,7 @@ use std::{fs, io::Read, os::unix::fs::MetadataExt, path::Path};
 
 const GENERATION: &str = "content_recovery_generation";
 const RUNTIME_GENERATION: &str = "recovery_runtime_generation";
-const JOURNAL: &str = "content-recovery.json";
+pub(super) const JOURNAL: &str = "content-recovery.json";
 const MAX_ACTIONS: usize = 4096;
 const MAX_LEASE_BYTES: usize = 1024;
 const RECOVERY_LEASE_PREFIX: &str = "msg:content-recovery:";

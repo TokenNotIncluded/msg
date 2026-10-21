@@ -1,8 +1,13 @@
 //! Native durable worker. Database leases do not make an external side effect
 //! exactly once; expired non-idempotent work is deliberately left uncertain.
 pub mod delivery;
+pub mod git;
 pub mod mail;
+pub mod network;
 pub mod outbound;
+mod process;
+pub mod sandbox;
+pub mod tool;
 
 use chrono::{DateTime, Duration as TimeDelta};
 use msg_core::{Error, Json, Result};
@@ -11,6 +16,7 @@ use msg_identity::{
     store::{AuthorityStore, RuntimeGeneration},
 };
 use msg_storage::{
+    content::{recovery::ContentTransaction, GitContentStore},
     jobs::{self, JobCursor, JobScan, JobStore, PAGE_SIZE},
     postgres::{PgFailure, PgSession, PgStore},
     records::{decode, EffectJob},
@@ -263,6 +269,27 @@ impl RuntimeContext<'_> {
             body(tx)
         })
     }
+
+    pub fn content_transaction<T>(
+        &mut self,
+        content: &GitContentStore,
+        body: impl FnOnce(&mut ContentTransaction<'_, &PgSession>) -> Result<T>,
+    ) -> WorkerResult<T> {
+        if marker(self.config.recovery_drill_marker.as_deref())? {
+            return Err(Error("recovery_drill_active").into());
+        }
+        if marker(self.config.recovery_quarantine_marker.as_deref())? {
+            return Err(Error("recovery_quarantined").into());
+        }
+        self.store.content_transaction(content, |unit| {
+            let tx = *unit.metadata();
+            self.runtime.require_current(tx)?;
+            if tx.has_setting("recovery_quarantine")? {
+                return Err(Error("recovery_quarantined"));
+            }
+            body(unit)
+        })
+    }
 }
 
 pub struct AttemptContext<'a, 'b> {
@@ -270,7 +297,10 @@ pub struct AttemptContext<'a, 'b> {
     job: &'a EffectJob,
     published: bool,
 }
-impl AttemptContext<'_, '_> {
+impl<'a, 'b> AttemptContext<'a, 'b> {
+    pub fn stop_flag(&self) -> &'b AtomicBool {
+        self.runtime.stopping
+    }
     pub fn job(&self) -> &EffectJob {
         self.job
     }
@@ -285,8 +315,9 @@ impl AttemptContext<'_, '_> {
         &mut self,
         body: impl FnOnce(&PgSession, &EffectJob, Timestamp) -> Result<T>,
     ) -> WorkerResult<T> {
-        let now = self.now()?;
+        let clock = Arc::clone(self.runtime.clock);
         self.runtime.transaction(false, |tx| {
+            let now = clock()?;
             let current = tx.job(&self.job.id)?;
             if current.state != "running"
                 || current.attempts != self.job.attempts
@@ -298,18 +329,27 @@ impl AttemptContext<'_, '_> {
         })
     }
     /// Reauthorize and publish a domain result in the same fenced transaction
-    /// as the final job state. External I/O must precede, never run inside, this.
+    /// as the final job state. Network I/O must precede this transaction. A local
+    /// Git ref CAS may run inside it, with failures conservatively uncertain.
     pub fn publish<T>(
         &mut self,
         details: &Json,
         body: impl FnOnce(&PgSession, &mut EffectJob, Timestamp) -> Result<T>,
     ) -> WorkerResult<Option<T>> {
-        let now = self.now()?;
+        let clock = Arc::clone(self.runtime.clock);
         let value = self.runtime.transaction(true, |tx| {
+            let now = clock()?;
             let Some(mut current) = jobs::current_attempt(tx, self.job, now)? else {
                 return Ok(None);
             };
             let output = body(tx, &mut current, now)?;
+            if current.attempts != self.job.attempts
+                || current
+                    .lease_until
+                    .is_none_or(|until| clock().map_or(true, |now| until <= now))
+            {
+                return Err(Error("job_lease_lost"));
+            }
             current.state = "done".into();
             current.lease_until = None;
             if !tx.save_job_if_attempt(&current, "running", self.job.attempts)? {
@@ -320,6 +360,42 @@ impl AttemptContext<'_, '_> {
         })?;
         self.published = true;
         Ok(value)
+    }
+
+    pub fn publish_content(
+        &mut self,
+        content: &GitContentStore,
+        body: impl FnOnce(
+            &mut ContentTransaction<'_, &PgSession>,
+            &mut EffectJob,
+            Timestamp,
+        ) -> Result<Json>,
+    ) -> WorkerResult<bool> {
+        let clock = Arc::clone(self.runtime.clock);
+        let published = self.runtime.content_transaction(content, |unit| {
+            let tx = *unit.metadata();
+            let now = clock()?;
+            let Some(mut current) = jobs::current_attempt(tx, self.job, now)? else {
+                return Ok(false);
+            };
+            let details = body(unit, &mut current, now)?;
+            if current.attempts != self.job.attempts
+                || current
+                    .lease_until
+                    .is_none_or(|until| clock().map_or(true, |now| until <= now))
+            {
+                return Err(Error("job_lease_lost"));
+            }
+            current.state = "done".into();
+            current.lease_until = None;
+            if !tx.save_job_if_attempt(&current, "running", self.job.attempts)? {
+                return Err(Error("job_lease_lost"));
+            }
+            tx.job_status(&current.id, &details)?;
+            Ok(true)
+        })?;
+        self.published = true;
+        Ok(published)
     }
 }
 
@@ -399,9 +475,9 @@ impl<E: EffectExecutor> Worker<E> {
         if context.stopping() {
             return Ok(Tick::Stopped);
         }
-        let now = context.now()?;
+        let clock = Arc::clone(&self.clock);
         let claimed = context.transaction(true, |tx| {
-            claim(tx, now, self.config.lease_seconds, stopping, |tool| {
+            claim(tx, clock()?, self.config.lease_seconds, stopping, |tool| {
                 self.executor.tool_concurrency(tx, tool)
             })
         })?;
@@ -434,6 +510,10 @@ impl<E: EffectExecutor> Worker<E> {
         })();
         let published = attempt.published;
         let result = match result {
+            Err(EffectFailure {
+                error: Error("worker_stopping"),
+                ..
+            }) => return Ok(Tick::Stopped),
             Ok(EffectOutcome::Published) if published => return Ok(Tick::Processed),
             Ok(EffectOutcome::Published) => EffectOutcome::Uncertain("external_uncertain"),
             Ok(outcome) => outcome,
@@ -454,8 +534,7 @@ impl<E: EffectExecutor> Worker<E> {
             }
             Err(failure) => EffectOutcome::Failed(failure.error.0),
         };
-        let now = context.now()?;
-        context.transaction(true, |tx| complete(tx, &job, now, result))?;
+        context.transaction(true, |tx| complete(tx, &job, clock()?, result))?;
         Ok(Tick::Processed)
     }
 }

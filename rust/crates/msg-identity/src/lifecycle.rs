@@ -18,6 +18,7 @@ use chrono::Duration;
 use hmac::{Hmac, Mac};
 use msg_core::{b64, digest, unb64, Error, Json, Result};
 use msg_crypto::{age_recipient, key_id, verify, Ed25519Signer, Signature};
+use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use subtle::ConstantTimeEq;
@@ -45,15 +46,15 @@ struct Issuance<'a> {
     authority_source: Option<&'a Certificate>,
 }
 
-fn field<'a>(value: &'a Json, name: &str) -> Result<&'a Json> {
+pub(crate) fn field<'a>(value: &'a Json, name: &str) -> Result<&'a Json> {
     value.as_object()?.get(name).ok_or(Error("invalid_request"))
 }
-fn text<'a>(value: &'a Json, name: &str) -> Result<&'a str> {
+pub(crate) fn text<'a>(value: &'a Json, name: &str) -> Result<&'a str> {
     field(value, name)?
         .as_str()
         .map_err(|_| Error("invalid_request"))
 }
-fn optional<'a>(value: &'a Json, name: &str) -> Result<Option<&'a Json>> {
+pub(crate) fn optional<'a>(value: &'a Json, name: &str) -> Result<Option<&'a Json>> {
     Ok(value.as_object()?.get(name))
 }
 fn after(now: Timestamp, ttl: u64) -> Result<Timestamp> {
@@ -63,10 +64,10 @@ fn after(now: Timestamp, ttl: u64) -> Result<Timestamp> {
         .map(Timestamp)
         .ok_or(Error("invalid_ttl"))
 }
-fn new_id(prefix: &str) -> Result<String> {
+pub(crate) fn new_id(prefix: &str) -> Result<String> {
     Ok(format!("{prefix}_{}", random_identifier()?))
 }
-fn output(data: serde_json::Value, resources: Vec<ResourceRef>) -> Result<Json> {
+pub(crate) fn output(data: serde_json::Value, resources: Vec<ResourceRef>) -> Result<Json> {
     wire(&serde_json::json!({"data":data,"resources":resources}))
 }
 fn owner(store: &dyn AuthorityStore, principal: &Principal) -> Result<Subject> {
@@ -78,7 +79,7 @@ fn owner(store: &dyn AuthorityStore, principal: &Principal) -> Result<Subject> {
     require(!subject.local_only && id != "u_root", "local_only")?;
     Ok(subject)
 }
-fn signature(principal: &Principal) -> Result<()> {
+pub(crate) fn signature(principal: &Principal) -> Result<()> {
     require(principal.method() == "signature", "signature_required")
 }
 fn handle(handle: &str) -> Result<()> {
@@ -113,7 +114,7 @@ fn token_id(request: &Json, subject: &str) -> Result<String> {
         )[7..39]
     ))
 }
-fn resource(
+pub(crate) fn resource(
     id: &str,
     kind: &str,
     name: &str,
@@ -134,9 +135,10 @@ fn resource(
 impl Service<'_> {
     pub fn supports(operation: &str, version: u32) -> bool {
         match operation {
-            "identity.register" | "identity.upgrade" | "identity.token_rotate" => {
-                (1..=2).contains(&version)
-            }
+            "identity.register"
+            | "identity.upgrade"
+            | "identity.token_rotate"
+            | "identity.custodial_create" => (1..=2).contains(&version),
             "identity.temporary" | "identity.token_create" => (1..=3).contains(&version),
             "identity.key_add"
             | "identity.key_revoke"
@@ -147,6 +149,7 @@ impl Service<'_> {
             | "identity.encryption_key_get"
             | "identity.encryption_key_rotate"
             | "identity.certificate_renew"
+            | "identity.custodial_status"
             | "identity.upgrade_result" => version == 1,
             _ => false,
         }
@@ -173,6 +176,11 @@ impl Service<'_> {
                 require(version == 3, "temporary_dual_keys_required")?;
                 self.temporary(store, principal, request, arguments, now)
             }
+            "identity.custodial_create" => {
+                require(version == 2, "credential_delivery_upgrade_required")?;
+                self.custodial_create(store, principal, request, arguments, now)
+            }
+            "identity.custodial_status" => self.custodial_status(store, principal, now),
             "identity.key_add" => self.key_add(store, principal, request, arguments, now),
             "identity.key_revoke" => self.key_revoke(store, principal, arguments, now),
             "identity.encryption_key_rotate" => {
@@ -547,6 +555,91 @@ impl Service<'_> {
         )
     }
 
+    fn custodial_create<S: IdentityStore>(
+        &self,
+        store: &mut S,
+        principal: &Principal,
+        request: &Json,
+        args: &Json,
+        now: Timestamp,
+    ) -> Result<Json> {
+        let id = principal.subject().ok_or(Error("invalid_bootstrap"))?;
+        require(
+            principal.actor() == Some(id)
+                && principal.method() == "token"
+                && id.starts_with("u_cust_"),
+            "invalid_bootstrap",
+        )?;
+        let mut signing_seed = Zeroizing::new([0u8; 32]);
+        OsRng
+            .try_fill_bytes(signing_seed.as_mut())
+            .map_err(|_| Error("randomness_unavailable"))?;
+        let signer = Ed25519Signer::from_seed(&signing_seed);
+        let (age_private, public) = msg_crypto::sealed_box::generate_key()?;
+        let recipient = age_recipient::recipient_from_public(&public);
+        let subject = self.make_user(
+            store,
+            id,
+            text(args, "handle")?,
+            SubjectKind::Custodial,
+            now,
+        )?;
+        // Vault signing keys deliberately have no network authority of their own.
+        let (signing, encryption) =
+            self.add_keys(store, &subject, &signer.public_key(), &recipient, &[], now)?;
+        let credential = Credential {
+            id: principal
+                .credential_id()
+                .ok_or(Error("invalid_bootstrap"))?
+                .into(),
+            subject_id: id.into(),
+            kind: CredentialKind::Token,
+            verifier: Verifier(Sha256::digest(self.issued_token(request, id)?.as_ref()).to_vec()),
+            ceiling: self.temporary_ceiling.to_vec(),
+            not_before: now,
+            expires_at: Some(after(now, self.temporary_ttl)?),
+            revoked_at: None,
+            source_credential_id: None,
+        };
+        store.save_credential(&credential, 0)?;
+        self.record_delivery(store, request, &credential, None, now)?;
+        store.insert_custodial_vault(&crate::vault::seal_keys(
+            self.token_secret,
+            id,
+            &signing_seed,
+            &age_private,
+            now,
+        )?)?;
+        output(
+            serde_json::json!({"subject_id":id,"credential_id":credential.id,"identity_key_id":signing,"encryption_key_id":encryption,
+            "encryption_recipient":recipient,"expires_at":credential.expires_at,"signature_source":"custodial","server_signable":true,"server_decryptable":true}),
+            vec![ResourceRef {
+                id: id.into(),
+                revision: None,
+            }],
+        )
+    }
+
+    fn custodial_status<S: IdentityStore>(
+        &self,
+        store: &S,
+        principal: &Principal,
+        now: Timestamp,
+    ) -> Result<Json> {
+        let subject = owner(store, principal)?;
+        require(subject.kind == SubjectKind::Custodial, "not_custodial")?;
+        let row = store
+            .vault_record(&subject.resource_id)?
+            .ok_or(Error("custodial_vault_unavailable"))?;
+        crate::vault::open_signer(store, self.token_secret, &subject.resource_id, now)?;
+        crate::vault::open_age_identity(store, self.token_secret, &subject.resource_id)?;
+        output(
+            serde_json::json!({"subject_id":subject.resource_id,"identity_key_id":row.signing_key_id,"encryption_key_id":row.encryption_key_id,
+            "signature_source":"custodial","server_signable":true,"server_decryptable":true}),
+            vec![],
+        )
+    }
+
     fn validate_ceiling<S: IdentityStore>(
         &self,
         store: &S,
@@ -805,7 +898,7 @@ impl Service<'_> {
         let version: u32 = decode(field(request, "contract_version")?)?;
         let minimum = match operation {
             "identity.temporary" => 3,
-            "identity.token_create" | "identity.token_rotate" => 2,
+            "identity.token_create" | "identity.token_rotate" | "identity.custodial_create" => 2,
             "identity.token_recover" => 1,
             _ => return Err(Error("credential_delivery_upgrade_required")),
         };
@@ -863,7 +956,7 @@ impl Service<'_> {
         signature(principal)?;
         require(version >= 2, "credential_delivery_upgrade_required")?;
         let subject = owner(store, principal)?;
-        let ceiling = if version == 3 && optional(args, "ceiling")?.is_none() {
+        let ceiling: Vec<Grant> = if version == 3 && optional(args, "ceiling")?.is_none() {
             let reads: BTreeSet<String> = self
                 .operations
                 .iter()

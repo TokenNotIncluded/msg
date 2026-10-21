@@ -43,8 +43,7 @@ def catalog():
         'casefold': {
             char: char.casefold()
             for number in range(0x110000)
-            if not 0xD800 <= number <= 0xDFFF
-            and (char := chr(number)).casefold() != char
+            if not 0xD800 <= number <= 0xDFFF and (char := chr(number)).casefold() != char
         },
         'operations': operations,
         'schemas': schemas,

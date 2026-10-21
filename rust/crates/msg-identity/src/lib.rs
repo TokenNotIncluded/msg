@@ -5,10 +5,12 @@
 pub mod authentication;
 pub mod authorization;
 pub mod browser;
+pub mod certificate_lifecycle;
 pub mod certificates;
 pub mod lifecycle;
 pub mod models;
 pub mod mutations;
+pub mod vault;
 pub mod policy;
 pub mod sessions;
 pub mod store;

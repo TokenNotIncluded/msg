@@ -718,13 +718,16 @@ name = "msg-identity"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "hmac 0.12.1",
  "msg-core",
  "msg-crypto",
  "msg-protocol",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]
@@ -755,6 +758,25 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+]
+
+[[package]]
+name = "msg-worker"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "base64",
+ "chrono",
+ "hmac 0.12.1",
+ "libc",
+ "msg-core",
+ "msg-identity",
+ "msg-storage",
+ "native-tls",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "zeroize",
 ]
 
 [[package]]
