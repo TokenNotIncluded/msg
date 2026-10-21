@@ -83,7 +83,7 @@ pub fn open_signer(
         .as_ref()
         .ok_or(Error("custodial_vault_unavailable"))?;
     let bytes = vault_box::open(
-        &key(token_secret)?,
+        &*key(token_secret)?,
         aad(subject, &record.signing_key_id, "identity")?.as_bytes(),
         sealed,
     )
@@ -113,7 +113,7 @@ pub fn open_age_identity(
         .as_ref()
         .ok_or(Error("custodial_vault_unavailable"))?;
     let bytes = vault_box::open(
-        &key(token_secret)?,
+        &*key(token_secret)?,
         aad(subject, &record.encryption_key_id, "encryption")?.as_bytes(),
         sealed,
     )
@@ -177,7 +177,7 @@ pub fn seal_upgrade_private(
     private: &[u8; 32],
 ) -> Result<vault_box::SealedSecret> {
     vault_box::seal(
-        &key(token_secret)?,
+        &*key(token_secret)?,
         upgrade_aad(subject, challenge)?.as_bytes(),
         private,
     )
@@ -189,7 +189,7 @@ pub fn open_upgrade_private(
     sealed: &vault_box::SealedSecret,
 ) -> Result<Zeroizing<[u8; 32]>> {
     let bytes = vault_box::open(
-        &key(token_secret)?,
+        &*key(token_secret)?,
         upgrade_aad(subject, challenge)?.as_bytes(),
         sealed,
     )

@@ -700,6 +700,101 @@ pub fn child_main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::TcpListener;
+
+    fn serve(listener: TcpListener, response: String) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            listener.set_nonblocking(true).unwrap();
+            let until = Instant::now() + Duration::from_secs(5);
+            let (mut stream, _) = loop {
+                match listener.accept() {
+                    Ok(connection) => break connection,
+                    Err(e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock && Instant::now() < until =>
+                    {
+                        std::thread::sleep(Duration::from_millis(5))
+                    }
+                    Err(error) => panic!("fixture connection failed: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                let mut byte = [0];
+                stream.read_exact(&mut byte).unwrap();
+                request.push(byte[0]);
+                assert!(request.len() < 32768);
+            }
+            stream.write_all(response.as_bytes()).unwrap();
+            String::from_utf8(request).unwrap()
+        })
+    }
+    fn local_policy(ports: &[u16]) -> NetworkPolicy {
+        NetworkPolicy {
+            schemes: ["http".into()].into(),
+            hosts: ["127.0.0.1".into()].into(),
+            ports: ports.iter().copied().collect(),
+            methods: ["GET".into()].into(),
+            allow_private: true,
+            timeout_ms: 3000,
+            max_response_bytes: 16,
+            max_redirects: 2,
+        }
+    }
+
+    #[test]
+    fn real_redirect_strips_cross_origin_credentials_and_keeps_binary_bytes() {
+        let first = TcpListener::bind("127.0.0.1:0").unwrap();
+        let second = TcpListener::bind("127.0.0.1:0").unwrap();
+        let ports = [
+            first.local_addr().unwrap().port(),
+            second.local_addr().unwrap().port(),
+        ];
+        let one = serve(first,format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/output\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",ports[1]));
+        let two = serve(second,"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length: 5\r\nConnection: close\r\n\r\na\0b\r\n".into());
+        let path = std::env::temp_dir().join(process::id("msg-http-test").unwrap());
+        let input = encode(&serde_json::json!({"url":format!("http://127.0.0.1:{}/",ports[0]),"headers":{"Authorization":"Bearer fixture","Cookie":"fixture=1"}})).unwrap();
+        let result = http_request(&input, vec![local_policy(&ports)], &path).unwrap();
+        assert_eq!(result.media_type, "application/octet-stream");
+        assert_eq!(fs::read(&path).unwrap(), b"a\0b\r\n");
+        fs::remove_file(path).unwrap();
+        assert!(one
+            .join()
+            .unwrap()
+            .to_lowercase()
+            .contains("authorization: bearer fixture"));
+        let request = two.join().unwrap().to_lowercase();
+        assert!(!request.contains("authorization:"));
+        assert!(!request.contains("cookie:"));
+    }
+
+    #[test]
+    fn a_redirect_cannot_switch_between_disjoint_grants() {
+        let first = TcpListener::bind("127.0.0.1:0").unwrap();
+        let second = TcpListener::bind("127.0.0.1:0").unwrap();
+        let ports = [
+            first.local_addr().unwrap().port(),
+            second.local_addr().unwrap().port(),
+        ];
+        second.set_nonblocking(true).unwrap();
+        let one = serve(first,format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{}/output\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",ports[1]));
+        let input =
+            encode(&serde_json::json!({"url":format!("http://127.0.0.1:{}/",ports[0])})).unwrap();
+        let result = http_request(
+            &input,
+            vec![local_policy(&ports[..1]), local_policy(&ports[1..])],
+            Path::new("/this-must-not-exist"),
+        );
+        assert_eq!(result.err(), Some(Error("network_policy_denied")));
+        one.join().unwrap();
+        assert_eq!(
+            second.accept().unwrap_err().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+    }
+
     #[test]
     fn schemas_do_not_admit_shells_paths_or_ambiguous_bodies() {
         for raw in [

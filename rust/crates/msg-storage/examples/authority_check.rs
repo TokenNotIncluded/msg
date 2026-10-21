@@ -83,7 +83,10 @@ fn run(
             };
             match auth.authenticate(&request, &policy, store, entry, now()?)? {
                 Admission::Fresh(p) => Ok(json!({"kind":"fresh", "principal":p})),
-                Admission::Replay(result) => Ok(json!({"kind":"replay", "result":result})),
+                Admission::Replay(mut replay) => {
+                    replay.authorize_resources(authorization, session, now()?)?;
+                    Ok(json!({"kind":"replay", "result":replay.result()?}))
+                }
             }
         }
         "authorize" | "base" | "has" => {

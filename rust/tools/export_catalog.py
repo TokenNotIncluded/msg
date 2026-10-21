@@ -14,6 +14,17 @@ from msg.plugins import BUILTINS
 from msg.security.capabilities import BASE_FAMILIES
 
 
+def alphanumeric_ranges():
+    result = []
+    for number in range(0x110000):
+        if chr(number).isalnum():
+            if result and result[-1][1] == number - 1:
+                result[-1][1] = number
+            else:
+                result.append([number, number])
+    return result
+
+
 def catalog():
     app = Application(SimpleNamespace(server=SimpleNamespace(plugins=BUILTINS)))
     registry = app.registry
@@ -40,6 +51,7 @@ def catalog():
             for name, manifest in registry._plugins.items()
         },
         'unicode_version': unicodedata.unidata_version,
+        'alphanumeric_ranges': alphanumeric_ranges(),
         'casefold': {
             char: char.casefold()
             for number in range(0x110000)

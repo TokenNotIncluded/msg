@@ -20,6 +20,36 @@ pub trait WorkerAuthorityStore: AuthorityStore {
     fn worker_snapshot(&self, id: &str, attempt: i64, now: Timestamp) -> Result<Json>;
 }
 
+/// An arbitration vote is read from its immutable persisted case/round/member
+/// key. This port does not accept a principal supplied by a request.
+pub trait ArbitrationAuthorityStore: AuthorityStore {
+    fn authority(&self) -> &dyn AuthorityStore;
+    fn vote_snapshot(&self, case: &str, round: u32, arbitrator: &str) -> Result<Json>;
+}
+
+pub enum SubscriptionKey {
+    Webhook {
+        owner: String,
+        scope: String,
+        generation: i64,
+    },
+    Watch {
+        resource: String,
+        revision: String,
+    },
+    SavedQuery {
+        resource: String,
+        revision: String,
+    },
+}
+pub trait SubscriptionAuthorityStore: AuthorityStore {
+    fn authority(&self) -> &dyn AuthorityStore;
+    /// Read the current persisted subscription, matching every key component.
+    /// Watch/query adapters must verify the pinned source and owner binding;
+    /// webhook adapters must verify owner/scope/generation and enabled state.
+    fn subscription_snapshot(&self, key: &SubscriptionKey) -> Result<Json>;
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Snapshot {
@@ -54,6 +84,50 @@ impl WorkerAuthority {
     ) -> Result<Principal> {
         let original: Snapshot = decode(&store.worker_snapshot(id, attempt, now)?)
             .map_err(|_| Error("worker_identity_required"))?;
+        self.revalidate(original, authorizer, store.authority(), now)
+    }
+
+    pub fn current_vote(
+        &self,
+        key: (&str, u32, &str),
+        authorizer: &mut AuthorizationService,
+        store: &dyn ArbitrationAuthorityStore,
+        now: Timestamp,
+    ) -> Result<Principal> {
+        let (case, round, arbitrator) = key;
+        let original: Snapshot = decode(&store.vote_snapshot(case, round, arbitrator)?)
+            .map_err(|_| Error("decision_member_invalid"))?;
+        require(
+            original.actor == arbitrator
+                && original.subject == arbitrator
+                && original.method == "signature",
+            "decision_member_invalid",
+        )?;
+        self.revalidate(original, authorizer, store.authority(), now)
+    }
+
+    pub fn current_subscription(
+        &self,
+        key: &SubscriptionKey,
+        authorizer: &mut AuthorizationService,
+        store: &dyn SubscriptionAuthorityStore,
+        now: Timestamp,
+    ) -> Result<Principal> {
+        let original: Snapshot = decode(&store.subscription_snapshot(key)?)
+            .map_err(|_| Error("subscription_identity_required"))?;
+        if let SubscriptionKey::Webhook { owner, .. } = key {
+            require(original.subject == *owner, "subscription_identity_required")?;
+        }
+        self.revalidate(original, authorizer, store.authority(), now)
+    }
+
+    fn revalidate(
+        &self,
+        original: Snapshot,
+        authorizer: &mut AuthorizationService,
+        store: &dyn AuthorityStore,
+        now: Timestamp,
+    ) -> Result<Principal> {
         let (method, kind) = match original.method.as_str() {
             "signature" => ("signature", CredentialKind::SigningKey),
             "token" => ("token", CredentialKind::Token),
@@ -75,12 +149,12 @@ impl WorkerAuthority {
         for subject in [&original.actor, &original.subject] {
             require(!store.subject(subject)?.local_only, "local_only")?;
             require(
-                !setting_truthy(store.authority(), &format!("identity_archived:{subject}"))?,
+                !setting_truthy(store, &format!("identity_archived:{subject}"))?,
                 "account_archived",
             )?;
         }
         require_binding(
-            store.authority(),
+            store,
             &credential,
             now,
             self.browser_policy.as_ref(),
@@ -100,9 +174,9 @@ impl WorkerAuthority {
                 if operations.is_empty() {
                     continue;
                 }
-                let scope = if scope_subset(&captured.scope, &live.scope, store.authority())? {
+                let scope = if scope_subset(&captured.scope, &live.scope, store)? {
                     captured.scope.clone()
-                } else if scope_subset(&live.scope, &captured.scope, store.authority())? {
+                } else if scope_subset(&live.scope, &captured.scope, store)? {
                     live.scope.clone()
                 } else {
                     continue;
@@ -131,7 +205,7 @@ impl WorkerAuthority {
         );
         // Live certificate revocation, issuer authority and source revisions are
         // checked after narrowing, in the very same database snapshot.
-        authorizer.grants(&principal, store.authority(), now)?;
+        authorizer.grants(&principal, store, now)?;
         Ok(principal)
     }
 }

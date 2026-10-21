@@ -1,12 +1,16 @@
 name: Rust daemon
 on:
   push:
+    branches: [main]
     paths: ['rust/**', '.github/workflows/rust-server.yml']
   pull_request:
     paths: ['rust/**', '.github/workflows/rust-server.yml']
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: rust-daemon-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   identity:
     runs-on: ubuntu-latest

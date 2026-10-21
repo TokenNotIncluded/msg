@@ -780,8 +780,8 @@ impl Settings {
                 .ok_or(Error("invalid_root_trust"))?,
         )?;
         let token_secret = key(&service_keys_dir, "tokens.key")?;
-        let online_signer = Ed25519Signer::from_seed(&key(&service_keys_dir, "online.key")?);
-        let receipt_signer = Ed25519Signer::from_seed(&key(&service_keys_dir, "receipt.key")?);
+        let online_signer = Ed25519Signer::from_seed(&*key(&service_keys_dir, "online.key")?);
+        let receipt_signer = Ed25519Signer::from_seed(&*key(&service_keys_dir, "receipt.key")?);
         Ok(Self {
             config_dir: directory,
             service_url,

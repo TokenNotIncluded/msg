@@ -1,4 +1,5 @@
 //! Authentication admission only. Full resource checks must follow a fresh admission.
+pub use crate::replay::ReplayAdmission;
 use crate::{certificates::CertificateValidator, models::*, require, store::*};
 use chrono::Duration;
 use msg_core::{unb64, Error, Json, Result, MAX_BYTES};
@@ -93,8 +94,9 @@ pub enum Admission {
     /// Authenticated identity only, not permission to execute.
     Fresh(Principal),
     /// Revoked/exhausted credentials receive no fresh principal.
-    /// Return the already committed result; never invoke a handler with this branch.
-    Replay(Json),
+    /// Authorize the stored resources, then return the sanitized result. Never
+    /// invoke a handler or secret-delivery claim with this branch.
+    Replay(ReplayAdmission),
 }
 
 pub struct AuthenticationService {
@@ -173,6 +175,7 @@ impl AuthenticationService {
             )?;
         }
         let mut replay = None;
+        let mut metadata_replay = false;
         let principal = match spec.name.as_str() {
             "identity.register" => {
                 let signed = proof.as_object().map_err(|_| Error("proof_required"))?;
@@ -271,6 +274,7 @@ impl AuthenticationService {
                     "recovery_unavailable",
                 )?;
                 if delivery.consumed {
+                    metadata_replay = true;
                     replay = store.request_result(
                         Some(&actor.resource_id),
                         request.field("request_id")?.as_str()?,
@@ -393,6 +397,7 @@ impl AuthenticationService {
                     }
                 };
                 if credential.revoked_at.is_some() {
+                    metadata_replay = true;
                     if method == "token"
                         && matches!(
                             spec.name.as_str(),
@@ -544,7 +549,14 @@ impl AuthenticationService {
         check_archived(store, principal.actor())?;
         check_archived(store, principal.subject())?;
         Ok(match replay {
-            Some(result) => Admission::Replay(result),
+            Some(result) => Admission::Replay(ReplayAdmission::new(
+                principal,
+                result,
+                &spec.name,
+                spec.version,
+                entry,
+                metadata_replay,
+            )?),
             None => Admission::Fresh(principal),
         })
     }

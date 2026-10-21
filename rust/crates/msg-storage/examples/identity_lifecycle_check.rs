@@ -3,14 +3,14 @@ use msg_core::{b64, unb64, Error, Json, Result, MAX_BYTES};
 use msg_crypto::Ed25519Signer;
 use msg_identity::{
     authentication::{Admission, AuthenticationService, Entry, OperationPolicy},
-    authorization::{AuthorizationService, ResourceTypePolicy},
+    authorization::{AccessRequirement, AuthorizationService, Check, ResourceTypePolicy},
     browser,
     certificates::CertificateValidator,
     lifecycle,
     models::*,
     policy::{CapabilityPolicy, Registry},
     sessions::BrowserPolicy,
-    store::RuntimeGeneration,
+    store::{AuthorityStore, RuntimeGeneration},
 };
 use msg_protocol::Request;
 use msg_storage::{
@@ -157,9 +157,22 @@ fn main() -> io::Result<()> {
                             && request.field("contract_version").and_then(Json::as_integer).ok() == Some(spec.version.to_string().as_str())).ok_or(Error("operation_not_found"))?;
                         let principal = match auth.authenticate(&request, spec, tx, Entry::Network, now)? {
                             Admission::Fresh(principal) => principal,
-                            Admission::Replay(result) => return Ok(json!({"replay":result})),
+                            Admission::Replay(mut replay) => {
+                                replay.authorize_resources(&mut authorizer, tx, now)?;
+                                return Ok(json!({"replay":replay.result()?}));
+                            }
                         };
-                        if !spec.name.starts_with("cert.") && !matches!(spec.name.as_str(), "identity.register"|"identity.temporary"|"identity.custodial_create") {
+                        if action == "handle" && spec.effect != "read" {
+                            if let Some(previous) = tx.request_result(principal.subject(), request.field("request_id")?.as_str()?, request.field("payload_digest")?.as_str()?)? {
+                                let references: Vec<ResourceRef> = decode(previous.as_object()?.get("resources").ok_or(Error("invalid_storage_record"))?)?;
+                                let checks: Vec<_> = references.into_iter().map(|reference| AccessRequirement {
+                                    resource_id: reference.id, operation: format!("{}@{}", spec.name, spec.version), check: Check::Read,
+                                }).collect();
+                                authorizer.require(&principal, Entry::Network, now, &checks, None, tx)?;
+                                return Ok(json!({"replay":previous}));
+                            }
+                        }
+                        if matches!(action, "approve" | "vault_sign") {
                             authorizer.require_base(&principal, &format!("{}@{}",spec.name,spec.version), principal.subject().ok_or(Error("identity_owner_required"))?, tx, now)?;
                         }
                         let mut identity = IdentitySession::new(tx, &mut generation, false)?;
@@ -176,7 +189,7 @@ fn main() -> io::Result<()> {
                                 &mut identity, &mut authorizer, &principal, &request_json, now,
                             )?
                         } else {
-                            lifecycle.handle(&mut identity, &principal, &request_json, now)?
+                            lifecycle.handle(&mut identity, &mut authorizer, &principal, &request_json, now)?
                         };
                         if command.get("fail_after").and_then(Value::as_bool) == Some(true) { return Err(Error("fixture_failure")) }
                         if action == "handle" {

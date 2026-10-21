@@ -43,6 +43,7 @@ pub struct TokenDelivery {
 pub trait IdentityStore: BrowserStore + VaultStore {
     /// Resolve the caller's reference without changing the signed request.
     fn resolve_identity(&self, reference: &str) -> Result<String>;
+    fn identity_revision(&self, reference: &ResourceRef) -> Result<Json>;
     /// Compare the persisted auth version; -1 permits only a new identity.
     fn update_subject(&mut self, subject: &Subject, expected: i64) -> Result<()>;
     /// Check live names AND retained aliases under the namespace root.

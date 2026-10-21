@@ -260,9 +260,9 @@ impl Catalog {
             .filter(|s| s.entries.contains("network"))
             .map(|s| serde_json::to_value(s).map_err(|_| Error("invalid_registry")))
             .collect::<Result<Vec<_>>>()?;
-        let digest = msg_core::digest(&Json::parse(
+        let digest = msg_core::digest(Json::parse(
             &serde_json::to_string(&operations).map_err(|_| Error("invalid_registry"))?,
-        )?)?;
+        )?.canonical()?.as_bytes());
         Ok(serde_json::json!({"version":1,"digest":digest,"operations":operations}))
     }
     pub fn schema(&self, id: &str) -> Result<&Value> {

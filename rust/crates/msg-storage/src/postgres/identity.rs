@@ -8,7 +8,11 @@ use msg_core::{b64, unb64, Error, Json, Result};
 use msg_identity::{
     browser::BrowserStore,
     certificate_lifecycle::CertificateStore,
-    models::{decode, Certificate, CertificateRequest, Credential, Subject, Timestamp, Verifier},
+    custodial_store::{CustodialStore, HistoryItem, Upgrade},
+    models::{
+        decode, wire, Certificate, CertificateRequest, Credential, ResourceRef, Subject, Timestamp,
+        Verifier,
+    },
     mutations::{EncryptionKey, IdentityKey, IdentityStore, TokenDelivery},
     sessions::CredentialState,
     store::{AuthorityStore, Record, RecoveryDelivery, RuntimeGeneration},
@@ -223,6 +227,9 @@ impl BrowserStore for IdentitySession<'_> {
 }
 
 impl IdentityStore for IdentitySession<'_> {
+    fn identity_revision(&self, reference: &ResourceRef) -> Result<Json> {
+        records::encode(&self.session.revision(reference)?)
+    }
     fn resolve_identity(&self, reference: &str) -> Result<String> {
         if reference.starts_with('/') {
             return self.session.resolve(reference, false);
@@ -436,5 +443,112 @@ impl CertificateStore for IdentitySession<'_> {
     }
     fn revoke_identity_certificate(&mut self, id: &str, audit: &Json) -> Result<()> {
         self.mutate(|tx| tx.revoke_certificate(id, &records::decode(audit)?))
+    }
+}
+
+impl CustodialStore for IdentitySession<'_> {
+    fn custodial_upgrade(&self, id: &str) -> Result<Option<Upgrade>> {
+        self.session.one("SELECT id,subject,credential_id,status,expires_at,substring(challenge,1,1048577),ephemeral_nonce,ephemeral_ciphertext,substring(body,1,1048577) FROM custodial_upgrades WHERE id=$1", &[id.into()])?
+            .map(|row| {
+                let ephemeral = match (row.optional_text(6)?,row.optional_text(7)?) {
+                    (None,None) => None,
+                    (Some(nonce),Some(ciphertext)) => Some(msg_crypto::vault_box::SealedSecret { nonce:nonce.into(),ciphertext:ciphertext.into() }),
+                    _ => return Err(Error("custodial_upgrade_challenge_corrupt")),
+                };
+                let record = Upgrade { id:row.text(0)?.into(),subject:row.text(1)?.into(),credential_id:row.text(2)?.into(),status:row.text(3)?.into(),
+                    expires_at:Timestamp::parse(row.text(4)?)?,challenge:row.json(5)?,ephemeral,details:row.json(8)? };
+                let challenge = record.challenge.as_object()?;
+                require(record.id == id && challenge.get("challenge_id").and_then(|v|v.as_str().ok()) == Some(id)
+                    && challenge.get("subject_id").and_then(|v|v.as_str().ok()) == Some(record.subject.as_str()), "storage_record_mismatch")?;
+                Ok(record)
+            }).transpose()
+    }
+    fn pending_custodial_upgrade(&self, subject: &str, now: Timestamp) -> Result<bool> {
+        self.session.one("SELECT EXISTS(SELECT 1 FROM custodial_upgrades WHERE subject=$1 AND (status='pending_rewrap' OR (status='pending' AND expires_at>$2)))", &[subject.into(),time(now).into()])?
+            .ok_or(Error("storage_error"))?.boolean(0)
+    }
+    fn expire_custodial_upgrades(&mut self, subject: &str, now: Timestamp) -> Result<()> {
+        self.mutate(|tx| {
+            tx.execute("DELETE FROM custodial_upgrades WHERE subject=$1 AND (status='failed' OR (status='pending' AND expires_at<=$2))", &[subject.into(),time(now).into()])?;
+            Ok(())
+        })
+    }
+    fn insert_custodial_upgrade(&mut self, record: &Upgrade) -> Result<()> {
+        self.mutate(|tx| {
+            let ephemeral=record.ephemeral.as_ref().ok_or(Error("custodial_upgrade_challenge_corrupt"))?;
+            require(record.status == "pending" && tx.subject(&record.subject)?.kind == msg_identity::models::SubjectKind::Custodial
+                && tx.credential(&record.credential_id)?.subject_id == record.subject, "storage_record_mismatch")?;
+            tx.execute("INSERT INTO custodial_upgrades(id,subject,credential_id,status,expires_at,challenge,ephemeral_nonce,ephemeral_ciphertext,body) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+                &[record.id.as_str().into(),record.subject.as_str().into(),record.credential_id.as_str().into(),record.status.as_str().into(),time(record.expires_at).into(),
+                record.challenge.canonical()?.into(),ephemeral.nonce.as_str().into(),ephemeral.ciphertext.as_str().into(),record.details.canonical()?.into()])?;
+            Ok(())
+        })
+    }
+    fn replace_custodial_upgrade(&mut self, before: &Upgrade, after: &Upgrade) -> Result<()> {
+        self.mutate(|tx| {
+            require(before.id == after.id && before.subject == after.subject && before.credential_id == after.credential_id
+                && before.expires_at == after.expires_at && before.challenge == after.challenge
+                && matches!((before.status.as_str(),after.status.as_str()),
+                    ("pending","pending"|"pending_rewrap"|"failed"|"completed") | ("pending_rewrap","pending_rewrap"|"completed") | ("completed","completed"))
+                && (after.status == "pending") == after.ephemeral.is_some(), "custodial_upgrade_state_conflict")?;
+            let count=tx.execute("UPDATE custodial_upgrades SET status=$1,ephemeral_nonce=$2,ephemeral_ciphertext=$3,body=$4 WHERE id=$5 AND subject=$6 AND credential_id=$7 AND expires_at=$8 AND challenge=$9 AND status=$10 AND body=$11",
+                &[after.status.as_str().into(),after.ephemeral.as_ref().map(|v|v.nonce.as_str()).into(),after.ephemeral.as_ref().map(|v|v.ciphertext.as_str()).into(),after.details.canonical()?.into(),
+                    before.id.as_str().into(),before.subject.as_str().into(),before.credential_id.as_str().into(),time(before.expires_at).into(),before.challenge.canonical()?.into(),before.status.as_str().into(),before.details.canonical()?.into()])?;
+            require(count==1,"custodial_upgrade_state_conflict")
+        })
+    }
+    fn owned_age_inventory(&self, subject: &str) -> Result<Vec<HistoryItem>> {
+        let Some(folder) = self.session.one(
+            "SELECT id FROM resources WHERE parent=$1 AND name='keystore'",
+            &[subject.into()],
+        )?
+        else {
+            return Ok(vec![]);
+        };
+        let rows=self.session.rows("SELECT r.id,v.id FROM revisions v JOIN resources r ON r.id=v.resource_id WHERE r.parent=$1 AND r.owner=$2 AND r.type='keystore' ORDER BY r.id,v.id LIMIT 10001", &[folder.text(0)?.into(),subject.into()])?;
+        require(rows.len() <= 10000, "custodial_inventory_capacity")?;
+        let mut result = Vec::new();
+        for row in rows {
+            let id = row.text(0)?;
+            let revision = row.text(1)?;
+            if self
+                .session
+                .setting(&format!("keystore_format:{revision}"))?
+                .as_ref()
+                .and_then(|v| v.as_str().ok())
+                == Some("age")
+            {
+                let stored = self.session.revision(&ResourceRef {
+                    id: id.into(),
+                    revision: Some(revision.into()),
+                })?;
+                result.push(HistoryItem {
+                    id: id.into(),
+                    revision: revision.into(),
+                    ciphertext_digest: stored.content.digest,
+                });
+            }
+        }
+        Ok(result)
+    }
+    fn latest_recovery_policy(&self, subject: &str) -> Result<Json> {
+        match self.session.one("SELECT substring(body,1,1048577) FROM recovery_policies WHERE subject=$1 ORDER BY version DESC LIMIT 1", &[subject.into()])? {
+            Some(row)=>row.json(0),None=>wire(&serde_json::json!({"version":0,"opted_in":false})),
+        }
+    }
+    fn retire_custodial_vault(
+        &mut self,
+        subject: &str,
+        retain: bool,
+        now: Timestamp,
+    ) -> Result<()> {
+        self.mutate(|tx| {
+            let count=if retain {
+                tx.execute("UPDATE custodial_vault SET status='decrypt_only',signing_nonce=NULL,signing_ciphertext=NULL WHERE subject=$1 AND status IN ('active','decrypt_only') AND age_nonce IS NOT NULL AND age_ciphertext IS NOT NULL", &[subject.into()])?
+            } else {
+                tx.execute("UPDATE custodial_vault SET status='destroyed',signing_nonce=NULL,signing_ciphertext=NULL,age_nonce=NULL,age_ciphertext=NULL,destroyed_at=$1 WHERE subject=$2", &[time(now).into(),subject.into()])?
+            };
+            require(count==1,"custodial_vault_unavailable")
+        })
     }
 }

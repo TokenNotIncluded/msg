@@ -6,6 +6,7 @@
 //! commits; persisted operation results contain identifiers, never token bytes.
 use crate::{
     authentication::{OperationPolicy, Principal},
+    authorization::AuthorizationService,
     browser::random_identifier,
     certificates::CertificateValidator,
     models::*,
@@ -38,12 +39,14 @@ pub struct Service<'a> {
     pub recovery_window: u64,
 }
 
-struct Issuance<'a> {
-    subject: &'a str,
-    key: &'a str,
-    grants: Option<Vec<Grant>>,
-    ttl: Option<u64>,
-    authority_source: Option<&'a Certificate>,
+pub(crate) struct Issuance<'a> {
+    pub subject: &'a str,
+    pub key: &'a str,
+    pub grants: Option<Vec<Grant>>,
+    pub ttl: Option<u64>,
+    pub authority_source: Option<&'a Certificate>,
+    pub audit_source: Option<Json>,
+    pub delegation: Option<(Vec<ResourceRef>, u32)>,
 }
 
 pub(crate) fn field<'a>(value: &'a Json, name: &str) -> Result<&'a Json> {
@@ -57,7 +60,7 @@ pub(crate) fn text<'a>(value: &'a Json, name: &str) -> Result<&'a str> {
 pub(crate) fn optional<'a>(value: &'a Json, name: &str) -> Result<Option<&'a Json>> {
     Ok(value.as_object()?.get(name))
 }
-fn after(now: Timestamp, ttl: u64) -> Result<Timestamp> {
+pub(crate) fn after(now: Timestamp, ttl: u64) -> Result<Timestamp> {
     let seconds = i64::try_from(ttl).map_err(|_| Error("invalid_ttl"))?;
     now.0
         .checked_add_signed(Duration::try_seconds(seconds).ok_or(Error("invalid_ttl"))?)
@@ -70,7 +73,7 @@ pub(crate) fn new_id(prefix: &str) -> Result<String> {
 pub(crate) fn output(data: serde_json::Value, resources: Vec<ResourceRef>) -> Result<Json> {
     wire(&serde_json::json!({"data":data,"resources":resources}))
 }
-fn owner(store: &dyn AuthorityStore, principal: &Principal) -> Result<Subject> {
+pub(crate) fn owner(store: &dyn AuthorityStore, principal: &Principal) -> Result<Subject> {
     let id = principal
         .subject()
         .ok_or(Error("identity_owner_required"))?;
@@ -82,7 +85,7 @@ fn owner(store: &dyn AuthorityStore, principal: &Principal) -> Result<Subject> {
 pub(crate) fn signature(principal: &Principal) -> Result<()> {
     require(principal.method() == "signature", "signature_required")
 }
-fn handle(handle: &str) -> Result<()> {
+pub(crate) fn handle(handle: &str) -> Result<()> {
     require(
         (2..=41).contains(&handle.len())
             && handle.as_bytes()[0].is_ascii_lowercase()
@@ -93,7 +96,7 @@ fn handle(handle: &str) -> Result<()> {
         "invalid_handle",
     )
 }
-fn bump(subject: &Subject) -> Result<Subject> {
+pub(crate) fn bump(subject: &Subject) -> Result<Subject> {
     let mut updated = subject.clone();
     updated.auth_version = subject
         .auth_version
@@ -101,7 +104,7 @@ fn bump(subject: &Subject) -> Result<Subject> {
         .ok_or(Error("invalid_generation"))?;
     Ok(updated)
 }
-fn expected(subject: &Subject) -> Result<i64> {
+pub(crate) fn expected(subject: &Subject) -> Result<i64> {
     i64::try_from(subject.auth_version).map_err(|_| Error("invalid_generation"))
 }
 fn token_id(request: &Json, subject: &str) -> Result<String> {
@@ -158,6 +161,7 @@ impl Service<'_> {
     pub fn handle<S: IdentityStore>(
         &self,
         store: &mut S,
+        authorizer: &mut AuthorizationService,
         principal: &Principal,
         request: &Json,
         now: Timestamp,
@@ -166,6 +170,27 @@ impl Service<'_> {
         let operation = text(request, "operation")?;
         let version: u32 = decode(field(request, "contract_version")?)?;
         require(Self::supports(operation, version), "operation_not_found")?;
+        // All owner operations require the current credential's base ceiling.
+        // A valid signature proves possession, not permission to mint authority.
+        if !matches!(
+            operation,
+            "identity.register"
+                | "identity.temporary"
+                | "identity.custodial_create"
+                | "identity.identity_key_list"
+                | "identity.identity_key_get"
+                | "identity.encryption_key_list"
+                | "identity.encryption_key_get"
+        ) {
+            let subject = owner(store, principal)?;
+            authorizer.require_base(
+                principal,
+                &format!("{operation}@{version}"),
+                &subject.resource_id,
+                store,
+                now,
+            )?;
+        }
         let arguments = field(request, "arguments")?;
         match operation {
             "identity.register" => {
@@ -212,7 +237,11 @@ impl Service<'_> {
         }
     }
 
-    fn issuer<S: IdentityStore>(&self, store: &S, now: Timestamp) -> Result<Certificate> {
+    pub(crate) fn issuer<S: IdentityStore>(
+        &self,
+        store: &S,
+        now: Timestamp,
+    ) -> Result<Certificate> {
         let id = store
             .setting("online_ca_certificate")?
             .ok_or(Error("issuer_not_ready"))?;
@@ -226,7 +255,7 @@ impl Service<'_> {
         Ok(certificate)
     }
 
-    fn issue<S: IdentityStore>(
+    pub(crate) fn issue<S: IdentityStore>(
         &self,
         store: &mut S,
         principal: &Principal,
@@ -240,6 +269,8 @@ impl Service<'_> {
             grants,
             ttl,
             authority_source,
+            audit_source,
+            delegation,
         } = issuance;
         let issuer = self.issuer(store, now)?;
         let policy = issuer.issuance.as_ref().ok_or(Error("issuer_not_ready"))?;
@@ -287,6 +318,10 @@ impl Service<'_> {
             )?;
             expiry = expiry.min(source.expires_at);
         }
+        let (kind, authority_sources, delegation_depth) = match delegation {
+            Some((sources, depth)) => (CertificateKind::Delegation, sources, depth),
+            None => (CertificateKind::Identity, vec![], 0),
+        };
         let mut certificate = Certificate {
             resource_id: new_id("cert")?,
             serial: new_id("serial")?,
@@ -294,13 +329,13 @@ impl Service<'_> {
             key_id: key.into(),
             issuer_id: "u_online_ca".into(),
             parent_certificate_id: Some(issuer.resource_id.clone()),
-            authority_sources: vec![],
-            kind: CertificateKind::Identity,
+            authority_sources,
+            kind,
             grants,
             not_before: now,
             expires_at: expiry,
             target_service: self.validator.service().into(),
-            delegation_depth: 0,
+            delegation_depth,
             issuance: None,
             signature: Signature {
                 key_id: key_id(&self.online_signer.public_key()),
@@ -323,11 +358,13 @@ impl Service<'_> {
         self.validator
             .validate_candidate(&certificate, store, now)?;
         store.register_certificate(&certificate)?;
-        let source = match authority_source {
-            Some(source) => {
+        let source = match (audit_source, authority_source) {
+            (Some(source), _) => serde_json::from_str(&source.canonical()?)
+                .map_err(|_| Error("invalid_identity_record"))?,
+            (None, Some(source)) => {
                 serde_json::json!({"kind":"certificate","certificate_id":source.resource_id})
             }
-            None => {
+            (None, None) => {
                 serde_json::json!({"kind":"possession_proof","key_id":key,"request_id":text(request,"request_id")?})
             }
         };
@@ -481,6 +518,8 @@ impl Service<'_> {
                 grants: None,
                 ttl: None,
                 authority_source: None,
+                audit_source: None,
+                delegation: None,
             },
             now,
         )?;
@@ -728,6 +767,8 @@ impl Service<'_> {
                 grants: Some(grants),
                 ttl: None,
                 authority_source: None,
+                audit_source: None,
+                delegation: None,
             },
             now,
         )?;
@@ -1271,6 +1312,8 @@ impl Service<'_> {
                 grants: Some(grants),
                 ttl: Some(ttl),
                 authority_source: Some(source),
+                audit_source: None,
+                delegation: None,
             },
             now,
         )?;
@@ -1380,6 +1423,8 @@ impl Service<'_> {
                 grants: None,
                 ttl: None,
                 authority_source: None,
+                audit_source: None,
+                delegation: None,
             },
             now,
         )?;
