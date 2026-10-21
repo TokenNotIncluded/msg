@@ -378,6 +378,12 @@ pub struct JobDraft {
     pub arguments: BTreeMap<String, Json>,
 }
 impl EffectJob {
+    /// Durable evidence only. It must be revalidated through worker_authority
+    /// before use; this accessor never creates an authenticated principal.
+    pub fn principal_snapshot(&self) -> &Json {
+        &self.principal
+    }
+
     pub fn new(
         principal: &msg_identity::authentication::Principal,
         draft: JobDraft,

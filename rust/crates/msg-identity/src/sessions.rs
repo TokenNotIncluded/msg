@@ -52,7 +52,11 @@ fn get(store: &dyn AuthorityStore, id: &str, now: Timestamp) -> Result<Json> {
     require(state.expires_at > now, "invalid_grant")?;
     Ok(state.body)
 }
-fn require_ceiling(store: &dyn AuthorityStore, ceiling: &[Grant], parent: &[Grant]) -> Result<()> {
+pub(crate) fn require_ceiling(
+    store: &dyn AuthorityStore,
+    ceiling: &[Grant],
+    parent: &[Grant],
+) -> Result<()> {
     for grant in ceiling {
         let mut allowed = false;
         for source in parent {
@@ -62,7 +66,7 @@ fn require_ceiling(store: &dyn AuthorityStore, ceiling: &[Grant], parent: &[Gran
     }
     Ok(())
 }
-fn require_source(
+pub(crate) fn require_source(
     store: &dyn AuthorityStore,
     body: &Json,
     now: Timestamp,

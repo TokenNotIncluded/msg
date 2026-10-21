@@ -75,6 +75,30 @@ impl CertificateValidator {
         }
         .walk(id, &BTreeSet::new(), None, None)
     }
+    /// Validate a proposed native issuance before persistence. The caller must
+    /// separately authorize issuance and insert its resource in this transaction.
+    pub fn validate_candidate(
+        &self,
+        certificate: &Certificate,
+        store: &dyn AuthorityStore,
+        now: Timestamp,
+    ) -> Result<Certificate> {
+        Validation {
+            validator: self,
+            store,
+            now,
+            work: 0,
+        }
+        .walk(
+            &certificate.resource_id,
+            &BTreeSet::new(),
+            Some(certificate),
+            None,
+        )
+    }
+    pub fn validate_grant(&self, grant: &Grant, store: &dyn AuthorityStore) -> Result<()> {
+        self.registry.validate_grant(grant, store)
+    }
     pub fn validate_publication(
         &self,
         cert: &Certificate,

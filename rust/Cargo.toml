@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/msg-core", "crates/msg-crypto", "crates/msg-protocol", "crates/msg-identity", "crates/msg-storage"]
+members = ["crates/msg-core", "crates/msg-crypto", "crates/msg-protocol", "crates/msg-identity", "crates/msg-storage", "crates/msg-worker"]
 resolver = "2"
 
 [workspace.package]
@@ -10,13 +10,21 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+axum = "=0.8.9"
+tokio = { version = "=1.54.0", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "time", "io-util"] }
+toml = "=0.8.23"
+url = "=2.5.8"
+reqwest = { version = "=0.12.28", default-features = false, features = ["blocking", "native-tls"] }
+hickory-resolver = { version = "=0.24.4", features = ["system-config", "tokio-runtime"] }
+jsonschema = { version = "=0.33.0", default-features = false }
 aes-gcm = "=0.10.3"
 base64 = "=0.22.1"
 chrono = { version = "=0.4.42", default-features = false, features = ["std"] }
 ed25519-dalek = "=2.2.0"
 hkdf = "=0.12.4"
+hmac = "=0.12.1"
 rand_core = { version = "=0.6.4", features = ["getrandom"] }
-rustix = { version = "=1.1.5", features = ["process"] }
+rustix = { version = "=1.1.5", features = ["process", "resource"] }
 ryu = "=1.0.20"
 serde = { version = "=1.0.228", features = ["derive"] }
 serde_json = { version = "=1.0.145", features = ["raw_value", "arbitrary_precision"] }

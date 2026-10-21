@@ -1,4 +1,5 @@
 //! Native signing and recipient encryption, not authentication or authorization.
+pub mod age_recipient;
 pub mod sealed_box;
 
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
