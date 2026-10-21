@@ -85,6 +85,19 @@ pub(crate) fn owner(store: &dyn AuthorityStore, principal: &Principal) -> Result
 pub(crate) fn signature(principal: &Principal) -> Result<()> {
     require(principal.method() == "signature", "signature_required")
 }
+pub(crate) fn assert_generation(request: &Json, id: &str, generation: i64) -> Result<()> {
+    for value in field(request, "expected_generations")?.as_array()? {
+        let pair = value.as_array()?;
+        require(pair.len() == 2, "invalid_expected_generation")?;
+        if pair[0].as_str()? == id {
+            return require(
+                pair[1].as_integer()? == generation.to_string(),
+                "generation_conflict",
+            );
+        }
+    }
+    Err(Error("expected_generation_required"))
+}
 pub(crate) fn handle(handle: &str) -> Result<()> {
     require(
         (2..=41).contains(&handle.len())
@@ -322,6 +335,12 @@ impl Service<'_> {
             Some((sources, depth)) => (CertificateKind::Delegation, sources, depth),
             None => (CertificateKind::Identity, vec![], 0),
         };
+        for source in &authority_sources {
+            let fact = store
+                .setting(&format!("delegation:{}", source.id))?
+                .ok_or(Error("authority_source_lost"))?;
+            expiry = expiry.min(decode(field(&fact, "expires_at")?)?);
+        }
         let mut certificate = Certificate {
             resource_id: new_id("cert")?,
             serial: new_id("serial")?,
@@ -679,7 +698,7 @@ impl Service<'_> {
         )
     }
 
-    fn validate_ceiling<S: IdentityStore>(
+    pub(crate) fn validate_ceiling<S: IdentityStore>(
         &self,
         store: &S,
         principal: &Principal,

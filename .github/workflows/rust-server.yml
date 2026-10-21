@@ -48,6 +48,10 @@ jobs:
         run: cargo +1.85.0 build -p msg-storage --example identity_lifecycle_check
       - name: PostgreSQL issuance and browser interoperation
         run: python rust/tests/test_identity_lifecycle.py --binary rust/target/debug/examples/identity_lifecycle_check --report rust/artifacts/identity-lifecycle.json
+      - name: Storage lifecycle and recovery tests
+        if: ${{ !cancelled() }}
+        working-directory: rust
+        run: cargo +1.85.0 test -p msg-storage --all-targets
       - uses: actions/upload-artifact@v7
         if: ${{ always() }}
         with:

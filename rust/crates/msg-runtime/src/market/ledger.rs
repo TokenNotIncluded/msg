@@ -110,29 +110,16 @@ pub(super) fn release(
         kind,
         now,
     } = release;
-    let account = tx
-        .one(
-            "SELECT kind,subject_id,source_id FROM ledger_accounts WHERE id=$1",
-            &[order.escrow_subject.as_str().into()],
-        )?
-        .ok_or(Error("escrow_account_mismatch"))?;
-    require(
-        account.text(0)? == "order_escrow"
-            && account.optional_text(1)?.is_none()
-            && account.text(2)? == order.id,
-        "escrow_account_mismatch",
-    )?;
-    require(
-        recipient == order.buyer || recipient == order.seller,
-        "escrow_recipient_mismatch",
-    )?;
-    require(
-        matches!(kind, "transfer" | "redeem" | "refund"),
-        "invalid_money_kind",
-    )?;
-    append(
+    release_protected(
         tx,
         signer,
+        &EscrowAccount {
+            id: &order.escrow_subject,
+            source: &order.id,
+            kind: "order_escrow",
+            buyer: &order.buyer,
+            seller: &order.seller,
+        },
         &Posting {
             sender: &order.escrow_subject,
             recipient,
@@ -145,6 +132,44 @@ pub(super) fn release(
             now,
         },
     )
+}
+/// Callers must first verify the immutable purchase/order policy. This is never
+/// selected from a network account-kind argument.
+pub(super) struct EscrowAccount<'a> {
+    pub id: &'a str,
+    pub source: &'a str,
+    pub kind: &'a str,
+    pub buyer: &'a str,
+    pub seller: &'a str,
+}
+pub(super) fn release_protected(
+    tx: &PgSession,
+    signer: &Ed25519Signer,
+    account: &EscrowAccount<'_>,
+    posting: &Posting<'_>,
+) -> Result<Json> {
+    require(
+        matches!(account.kind, "order_escrow" | "purchase_escrow"),
+        "escrow_account_mismatch",
+    )?;
+    let stored = tx
+        .one(
+            "SELECT kind,subject_id,source_id FROM ledger_accounts WHERE id=$1",
+            &[account.id.into()],
+        )?
+        .ok_or(Error("escrow_account_mismatch"))?;
+    require(
+        stored.text(0)? == account.kind
+            && stored.optional_text(1)?.is_none()
+            && stored.text(2)? == account.source
+            && posting.sender == account.id,
+        "escrow_account_mismatch",
+    )?;
+    require(
+        posting.recipient == account.buyer || posting.recipient == account.seller,
+        "escrow_recipient_mismatch",
+    )?;
+    append(tx, signer, posting)
 }
 
 pub(super) struct Posting<'a> {

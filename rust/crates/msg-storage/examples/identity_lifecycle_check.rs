@@ -184,6 +184,12 @@ fn main() -> io::Result<()> {
                         let handled = if action == "approve" {
                             let args = command.get("request").and_then(|v| v.get("arguments")).ok_or(Error("invalid_test_input"))?;
                             browser.approve(&mut identity, &principal, text(args,"user_code")?, text(args,"decision")?, now)?
+                        } else if msg_identity::custodial_lifecycle::supports(&spec.name, spec.version) {
+                            match msg_identity::custodial_lifecycle::handle(&lifecycle, &mut identity, &mut authorizer,
+                                &principal, &request_json, now, &|_,_| Err(Error("fixture_content_required")))? {
+                                msg_identity::custodial_lifecycle::Outcome::Complete(result) => result,
+                                msg_identity::custodial_lifecycle::Outcome::Create(_) => return Err(Error("fixture_content_required")),
+                            }
                         } else if msg_identity::certificate_lifecycle::Service::supports(&spec.name, spec.version) {
                             msg_identity::certificate_lifecycle::Service { validator: &validator }.handle(
                                 &mut identity, &mut authorizer, &principal, &request_json, now,

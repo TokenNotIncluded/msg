@@ -19,10 +19,15 @@ Keep the IDs stable in later progress reports; split/redefine one only explicitl
 | M10 | Native `msgd worker`, leases/outbox, retries, recovery fences and actual side effects | Remaining |
 | M11 | Installable native daemon, isolated cutover/rollback rehearsal, full end-to-end acceptance and equivalent benchmarks | Remaining |
 
-Python remains the production `msg` CLI, administrator/migration scripts and
-developer tooling while individual client features move to Rust.
-There is still no native production daemon in this PR. Root signing remains local
-only. Do not merge/deploy solely because these primitive suites pass.
+The requested scope is the entire `msgd` daemon, its workers, transports and
+administrator commands. The Python `msg` client remains supported and does not
+need rewriting. Python server code is retained as the interoperability reference
+until native cutover acceptance is complete.
+
+A native `msgd serve` entry point is now under development in `msg-server`.
+Compilation, full operation coverage, native administration and end-to-end
+acceptance are still incomplete. Root signing remains local only. Primitive
+test results do not establish production readiness.
 
 ## Local encryption slice
 
@@ -92,7 +97,7 @@ The full regression/cutover gate remains open independently of native conformanc
 
 Read repository `AGENTS.md`, the entry skill and deployed `/AGENTS.md` before this
 slice. The editor has no selected local MSG signing identity; no authorized
-private coordination thread could be created. Use the existing draft PR #235 and
+private coordination thread could be created. Use the existing draft PR #245 and
 this checklist as the fallback. No production account, public coordination post,
 production data write or deployment was created. The temporary public-toolchain
 export workflow is removed from the final source tree.

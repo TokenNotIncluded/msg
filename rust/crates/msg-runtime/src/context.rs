@@ -105,6 +105,27 @@ pub trait ContentWrite {
     fn unpin(&mut self, blob: &BlobRef, lease: &str) -> Result<()>;
     fn commit_revision(&mut self, topic: &str, revision: &Revision) -> Result<String>;
 }
+// The adapter reborrows a transaction writer for one admitted request. Its
+// concrete lifetime keeps the handler context independent of the outer unit.
+impl<T: ContentWrite + ?Sized> ContentWrite for &mut T {
+    fn put_bytes(
+        &mut self,
+        bytes: &[u8],
+        media_type: &str,
+        expected: Option<&str>,
+    ) -> Result<BlobRef> {
+        (**self).put_bytes(bytes, media_type, expected)
+    }
+    fn pin(&mut self, blob: &BlobRef, lease: &str) -> Result<()> {
+        (**self).pin(blob, lease)
+    }
+    fn unpin(&mut self, blob: &BlobRef, lease: &str) -> Result<()> {
+        (**self).unpin(blob, lease)
+    }
+    fn commit_revision(&mut self, topic: &str, revision: &Revision) -> Result<String> {
+        (**self).commit_revision(topic, revision)
+    }
+}
 impl<M: ContentMetadata> ContentWrite for ContentTransaction<'_, M> {
     fn put_bytes(
         &mut self,
@@ -132,6 +153,7 @@ pub struct Context<'a> {
     pub principal: &'a Principal,
     pub request: &'a Request,
     pub now: Timestamp,
+    pub deadline: std::time::Instant,
     pub settings: &'a Settings,
     pub authorizer: &'a mut AuthorizationService,
     pub content_write: Option<&'a mut dyn ContentWrite>,
@@ -183,6 +205,13 @@ pub(crate) fn anonymous_principal(ctx: &Context<'_>) -> Result<Principal> {
     }
 }
 impl Context<'_> {
+    pub fn check_deadline(&self) -> Result<()> {
+        if std::time::Instant::now() >= self.deadline {
+            Err(Error("query_cost_exceeded"))
+        } else {
+            Ok(())
+        }
+    }
     pub fn args(&self) -> Result<&BTreeMap<String, Json>> {
         self.request.field("arguments")?.as_object()
     }
