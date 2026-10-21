@@ -3,6 +3,7 @@
 import argparse
 import inspect
 import json
+import unicodedata
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -17,15 +18,13 @@ def catalog():
     app = Application(SimpleNamespace(server=SimpleNamespace(plugins=BUILTINS)))
     registry = app.registry
     operations = []
-    schemas = {}
+    schemas = dict(registry._schemas)
     for spec in registry.operations():
         row = registry.describe(spec)
         for ref in (spec.input_schema, spec.output_schema):
             schemas[ref.id] = registry.schema(ref)
         row['handler'] = spec.handler.__module__ + ':' + spec.handler.__qualname__
-        row['requirements'] = (
-            spec.requirements.__module__ + ':' + spec.requirements.__qualname__
-        )
+        row['requirements'] = spec.requirements.__module__ + ':' + spec.requirements.__qualname__
         if spec.requirements.__qualname__ == 'requirement.<locals>.requirements':
             closure = inspect.getclosurevars(spec.requirements).nonlocals
             row['access'] = {key: closure[key] for key in ('argument', 'check', 'default')}
@@ -33,6 +32,20 @@ def catalog():
     return {
         'version': 1,
         'plugins': list(BUILTINS),
+        'plugin_manifests': {
+            name: {
+                'dependencies': list(manifest.dependencies),
+                'operations': [f'{spec.name}@{spec.version}' for spec in manifest.operations],
+            }
+            for name, manifest in registry._plugins.items()
+        },
+        'unicode_version': unicodedata.unidata_version,
+        'casefold': {
+            char: char.casefold()
+            for number in range(0x110000)
+            if not 0xD800 <= number <= 0xDFFF
+            and (char := chr(number)).casefold() != char
+        },
         'operations': operations,
         'schemas': schemas,
         'capabilities': wire(registry.capabilities()),
