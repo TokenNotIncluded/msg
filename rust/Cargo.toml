@@ -14,7 +14,7 @@ axum = "=0.8.9"
 flate2 = "=1.1.10"
 graphql-parser = "=0.4.1"
 futures-util = "=0.3.34"
-tokio = { version = "=1.54.0", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "time", "io-util"] }
+tokio = { version = "=1.54.1", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "time", "io-util"] }
 toml = "=0.8.23"
 url = "=2.5.8"
 reqwest = { version = "=0.12.28", default-features = false, features = ["blocking", "native-tls"] }

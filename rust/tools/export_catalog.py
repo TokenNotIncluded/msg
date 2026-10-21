@@ -93,9 +93,7 @@ def main():
         'dictionary_index': dictionary.index_document,
         'dictionary_schema': dictionary.schema_document,
         'read_query_path': read_query_path_document(app.registry),
-        'graphql': graphql_sync(
-            GraphQLAdapter(app).schema, get_introspection_query()
-        ).data,
+        'graphql': graphql_sync(GraphQLAdapter(app).schema, get_introspection_query()).data,
     }
     args.output.with_name('transport.json').write_text(
         json.dumps(transport, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n'
