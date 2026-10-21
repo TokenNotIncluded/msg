@@ -1,0 +1,31 @@
+name: Rust daemon
+on:
+  push:
+    paths: ['rust/**', '.github/workflows/rust-server.yml']
+  pull_request:
+    paths: ['rust/**', '.github/workflows/rust-server.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+      - name: Install reference dependencies
+        run: python -m pip install 'cryptography==46.0.3' 'httpx>=0.28,<1' 'jsonschema>=4.25,<5' 'referencing>=0.36,<1'
+      - name: Export service contracts
+        env:
+          PYTHONPATH: src
+        run: python rust/tools/export_catalog.py --output rust/artifacts/catalog.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: daemon-reference-${{ github.sha }}
+          path: rust/artifacts/catalog.json
+          if-no-files-found: error
