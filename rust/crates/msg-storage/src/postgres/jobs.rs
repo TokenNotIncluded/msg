@@ -5,7 +5,9 @@ use crate::{
 };
 use msg_core::{Error, Json, Result};
 use msg_identity::{
-    models::Timestamp, store::AuthorityStore, worker_authority::WorkerAuthorityStore,
+    models::Timestamp,
+    store::AuthorityStore,
+    worker_authority::{ArbitrationAuthorityStore, WorkerAuthorityStore},
 };
 
 fn time(value: Timestamp) -> String {
@@ -74,5 +76,36 @@ impl WorkerAuthorityStore for PgSession {
             return Err(Error("job_lease_lost"));
         }
         Ok(job.principal_snapshot().clone())
+    }
+}
+
+impl ArbitrationAuthorityStore for PgSession {
+    fn authority(&self) -> &dyn AuthorityStore {
+        self
+    }
+    fn vote_snapshot(&self, case: &str, round: u32, arbitrator: &str) -> Result<Json> {
+        let row = self.one("SELECT body FROM arbitration_votes WHERE case_id=$1 AND round=$2 AND arbitrator=$3",&[case.into(),round.into(),arbitrator.into()])?.ok_or(Error("decision_quorum_invalid"))?;
+        let value = row.json(0)?;
+        let fields = value.as_object()?;
+        if fields.get("arbitrator").and_then(|v| v.as_str().ok()) != Some(arbitrator) {
+            return Err(Error("decision_member_invalid"));
+        }
+        let proposal = fields
+            .get("proposal")
+            .ok_or(Error("decision_context_mismatch"))?
+            .as_object()?;
+        if proposal.get("case_id").and_then(|v| v.as_str().ok()) != Some(case)
+            || proposal
+                .get("round")
+                .and_then(|v| v.as_integer().ok())
+                .and_then(|v| v.parse::<u32>().ok())
+                != Some(round)
+        {
+            return Err(Error("decision_context_mismatch"));
+        }
+        fields
+            .get("principal")
+            .cloned()
+            .ok_or(Error("decision_member_invalid"))
     }
 }

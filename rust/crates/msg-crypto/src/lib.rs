@@ -1,5 +1,6 @@
 //! Native signing and recipient encryption, not authentication or authorization.
 pub mod age_recipient;
+pub mod custodial_proof;
 pub mod sealed_box;
 pub mod vault_box;
 

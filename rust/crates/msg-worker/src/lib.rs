@@ -3,6 +3,7 @@
 pub mod delivery;
 pub mod git;
 pub mod mail;
+pub mod maintenance;
 pub mod network;
 pub mod outbound;
 mod process;
@@ -34,7 +35,7 @@ use std::{
 
 pub type WorkerResult<T> = std::result::Result<T, PgFailure>;
 pub type EffectResult<T> = std::result::Result<T, EffectFailure>;
-type Clock = Arc<dyn Fn() -> Result<Timestamp> + Send + Sync>;
+pub type Clock = Arc<dyn Fn() -> Result<Timestamp> + Send + Sync>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EffectKind {
@@ -244,6 +245,9 @@ pub struct RuntimeContext<'a> {
     stopping: &'a AtomicBool,
 }
 impl RuntimeContext<'_> {
+    pub fn clock(&self) -> Clock {
+        Arc::clone(self.clock)
+    }
     pub fn now(&self) -> Result<Timestamp> {
         (self.clock)()
     }

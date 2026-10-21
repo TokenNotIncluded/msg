@@ -3,4 +3,6 @@ pub mod catalog;
 pub mod config;
 pub mod content;
 pub mod context;
+pub mod discovery;
+pub mod market;
 pub mod unicode;
