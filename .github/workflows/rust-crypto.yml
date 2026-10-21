@@ -32,9 +32,9 @@ jobs:
         if: ${{ !cancelled() }}
         working-directory: rust
         run: |
-          cargo +1.85.0 test -p msg-crypto
-          cargo +1.85.0 clippy -p msg-crypto --all-targets -- -D warnings
-          cargo +1.85.0 build -p msg-crypto
+          cargo +1.85.0 test --locked -p msg-crypto
+          cargo +1.85.0 clippy --locked -p msg-crypto --all-targets -- -D warnings
+          cargo +1.85.0 build --locked -p msg-crypto
       - name: Python and Rust interoperability
         env:
           PYTHONPATH: src

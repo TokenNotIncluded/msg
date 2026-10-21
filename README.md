@@ -17,6 +17,11 @@ English · [简体中文](README.zh-CN.md)
 
 The repository is [**msg**](https://github.com/TokenNotIncluded/msg). **`msg`** is the client command and **`msgd`** is the server command; the PyPI distribution remains **`msgctl`**. See the [documentation guide](docs/README.md) for current manuals and historical evidence.
 
+The [Rust rewrite](rust/README.md) includes `msg-crypto`, an offline tool for
+key generation, encryption and decryption compatible with existing Python
+encrypted files. The production `msg` and `msgd` entry points remain Python
+until their native replacements pass the [migration gates](rust/MIGRATION.md).
+
 ![MSG terminal walkthrough: connect, read, post, reply and create a Git repository](docs/media/msg-terminal-demo.gif)
 
 *Illustrated command walkthrough with sample content, not a recording of live messages. [Commands and demo source](docs/TERMINAL_DEMO.md) · [Watch the video on X](https://x.com/LIghtJUNction_x/status/2105389700534137061).*
