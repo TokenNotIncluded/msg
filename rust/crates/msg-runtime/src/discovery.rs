@@ -16,11 +16,16 @@ use serde_json::{json, Map, Value as J};
 use std::collections::BTreeMap;
 use url::Url;
 
+mod diff;
+pub(crate) mod follows;
 mod public;
+mod search;
+mod text;
 
 pub fn supports(op: &str, version: u32) -> bool {
     match op {
         "discovery.read_query" => matches!(version, 1..=5),
+        "discovery.lexical_search" => matches!(version, 1..=5),
         "discovery.public_board"
         | "discovery.get"
         | "discovery.raw"
@@ -33,7 +38,12 @@ pub fn supports(op: &str, version: u32) -> bool {
         | "discovery.operations"
         | "discovery.capabilities"
         | "discovery.schema" => version == 1,
-        "discovery.feed" | "discovery.now" => version == 1,
+        "discovery.feed"
+        | "discovery.now"
+        | "discovery.recommendations"
+        | "discovery.grep"
+        | "discovery.diff"
+        | "discovery.diff_view" => version == 1,
         _ => false,
     }
 }
@@ -41,11 +51,17 @@ pub fn requirements(_: &Context<'_>) -> Result<Vec<AccessRequirement>> {
     Ok(vec![])
 }
 pub fn handle(ctx: &mut Context<'_>) -> Result<HandlerOutput> {
+    ctx.check_deadline()?;
     match ctx.request.field("operation")?.as_str()? {
         "discovery.get" => get(ctx),
         "discovery.public_board" => crate::content::public_board::get(ctx),
         "discovery.feed" => public::feed(ctx),
         "discovery.now" => public::now(ctx),
+        "discovery.recommendations" => public::recommendations(ctx),
+        "discovery.grep" => text::grep(ctx),
+        "discovery.lexical_search" => search::handle(ctx),
+        "discovery.diff" => diff::legacy(ctx),
+        "discovery.diff_view" => diff::view(ctx),
         "discovery.raw" => raw(ctx),
         "discovery.resolve" => resolve_address(ctx),
         "discovery.list" | "discovery.search" => list(ctx),
@@ -117,6 +133,7 @@ fn resolve_read(ctx: &Context<'_>, reference: &str) -> Result<String> {
     }
 }
 pub(crate) fn visible(ctx: &mut Context<'_>, id: &str) -> Result<bool> {
+    ctx.check_deadline()?;
     match ctx.check(id, Check::Read) {
         Ok(()) => Ok(true),
         Err(Error(
@@ -623,6 +640,21 @@ fn get(ctx: &mut Context<'_>) -> Result<HandlerOutput> {
                 )?);
                 data["next_requires_auth"] = json!(ctx.principal.subject().is_some());
             }
+            data
+        }
+        _ if id == "r_root" && chosen.iter().any(|s| s == "channels") => {
+            ctx.check(&id, Check::Read)?;
+            let projection: Vec<_> = chosen
+                .iter()
+                .filter(|s| s.as_str() != "channels")
+                .cloned()
+                .collect();
+            let mut data = if projection.is_empty() {
+                json!({})
+            } else {
+                read_projection(ctx, &id, None, &projection)?
+            };
+            data["channels"] = public::home_summary(ctx, true)?["channels"].clone();
             data
         }
         _ => read_projection(ctx, &id, arg_text(&args, "revision")?.as_deref(), &chosen)?,
@@ -1402,7 +1434,7 @@ fn shorten(text: &str, limit: usize) -> String {
             text.chars()
                 .take(limit.saturating_sub(1))
                 .collect::<String>()
-                .trim_end()
+                .trim_end_matches(py_whitespace)
         )
     }
 }
@@ -1416,7 +1448,40 @@ fn plain_text(text: &str) -> Result<String> {
         .chars()
         .filter(|c| !matches!(c, '`' | '*' | '_' | '~'))
         .collect();
-    Ok(text.split_whitespace().collect::<Vec<_>>().join(" "))
+    Ok(text
+        .split(py_whitespace)
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+fn py_whitespace(character: char) -> bool {
+    character.is_whitespace() || matches!(character, '\u{1c}'..='\u{1f}')
+}
+/// Python str.splitlines boundaries, including CRLF and Unicode separators.
+fn split_lines(text: &str, keep_ends: bool) -> Vec<&str> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut chars = text.char_indices().peekable();
+    while let Some((offset, character)) = chars.next() {
+        if !matches!(
+            character,
+            '\n' | '\r' | '\u{b}' | '\u{c}' | '\u{1c}'
+                ..='\u{1e}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+        ) {
+            continue;
+        }
+        let mut end = offset + character.len_utf8();
+        if character == '\r' && chars.peek().is_some_and(|(_, c)| *c == '\n') {
+            chars.next();
+            end += 1;
+        }
+        lines.push(&text[start..if keep_ends { end } else { offset }]);
+        start = end;
+    }
+    if start < text.len() {
+        lines.push(&text[start..]);
+    }
+    lines
 }
 fn attachment_kind(media: &str) -> &'static str {
     match media
@@ -1932,6 +1997,13 @@ fn read_query(ctx: &mut Context<'_>) -> Result<HandlerOutput> {
     match ctx.request.field("contract_version")?.as_integer()? {
         "2" => read_query_nested(ctx),
         "3" => read_query_tree(ctx),
+        "4" => {
+            require(
+                ctx.principal.subject().is_none(),
+                "public_home_summary_only",
+            )?;
+            output(public::home_summary(ctx, false)?, vec![])
+        }
         _ => list(ctx),
     }
 }

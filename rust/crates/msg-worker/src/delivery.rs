@@ -71,7 +71,7 @@ impl DeliveryService {
     /// Ordinary account-email jobs. Order notifications use projected_mail and
     /// the market's current order/delivery verifier instead of queued text.
     pub fn mail(&mut self, context: &mut AttemptContext<'_, '_>) -> EffectResult<EffectOutcome> {
-        self.projected_mail(context, |tx, _, job, now| {
+        self.projected_mail(context, |tx, _, _, job, now| {
             require(
                 !flag(&job.arguments, "order_notification")?,
                 "order_projection_required",
@@ -119,14 +119,20 @@ impl DeliveryService {
     pub fn projected_mail(
         &mut self,
         context: &mut AttemptContext<'_, '_>,
-        projection: impl FnOnce(&PgSession, &Principal, &EffectJob, Timestamp) -> Result<MailMessage>,
+        projection: impl FnOnce(
+            &PgSession,
+            &mut AuthorizationService,
+            &Principal,
+            &EffectJob,
+            Timestamp,
+        ) -> Result<MailMessage>,
     ) -> EffectResult<EffectOutcome> {
         require(self.smtp.enabled(), "mail_disabled")?;
         let message = context.read(|tx, job, now| {
             let principal =
                 self.authority
                     .current(&job.id, job.attempts, &mut self.authorizer, tx, now)?;
-            let message = projection(tx, &principal, job, now)?;
+            let message = projection(tx, &mut self.authorizer, &principal, job, now)?;
             require(message.delivery_id == job.id, "invalid_delivery_result")?;
             Ok(message)
         })?;

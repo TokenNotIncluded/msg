@@ -27,6 +27,7 @@ from msg.core.requests import payload_fields
 from msg.security.age_keys import _encode, recipient_from_identity
 from msg.security.certificates import CertificateValidator, csr_body, sign_certificate, verify_csr
 from msg.security.crypto import Ed25519Signer, key_id, subject_id, verify
+from msg.security.custodial_protocol import client_upgrade_proof, stage_statement
 
 
 class Native:
@@ -85,6 +86,11 @@ def configure(fixture):
         ('identity.encryption_key_get', 1, False, 'read'),
         ('identity.custodial_create', 2, False, 'write'),
         ('identity.custodial_status', 1, False, 'read'),
+        ('identity.custodial_upgrade_start', 1, False, 'write'),
+        ('identity.custodial_upgrade_finish', 1, False, 'write'),
+        ('identity.custodial_upgrade_finish', 2, False, 'write'),
+        ('identity.custodial_upgrade_inventory', 1, False, 'read'),
+        ('identity.custodial_upgrade_result', 1, True, 'read'),
         ('identity.session_approve', 1, True, 'write'),
         ('cert.request', 1, True, 'write'),
         ('cert.get', 1, False, 'read'),
@@ -565,11 +571,164 @@ async def exercise(binary):
                 decode(Signature, signed['signature']),
                 purpose='revision',
             )
+            saved_signing = fixture.conn.execute(
+                'SELECT signing_nonce,signing_ciphertext FROM custodial_vault WHERE subject=?',
+                (custody['subject_id'],),
+            ).fetchone()
             fixture.conn.execute(
-                "UPDATE custodial_vault SET status='decrypt_only' WHERE subject=?",
+                "UPDATE custodial_vault SET status='decrypt_only',signing_nonce=NULL,"
+                'signing_ciphertext=NULL WHERE subject=?',
                 (custody['subject_id'],),
             )
             native.call('vault_sign', request=wire(status), error='custodial_vault_unavailable')
+            fixture.conn.execute(
+                "UPDATE custodial_vault SET status='active',signing_nonce=?,signing_ciphertext=? "
+                'WHERE subject=?',
+                (*saved_signing, custody['subject_id']),
+            )
+
+            # Both new keys are client-held; Python produces the age proof and
+            # signatures that the native transaction consumes and verifies.
+            next_signer = Ed25519Signer.from_bytes(bytes([50]) * 32)
+            next_age = _encode('age-secret-key-', bytes([51]) * 32).upper()
+            next_recipient = recipient_from_identity(next_age)
+            start_id = 'native-custody-start'
+            possession = next_signer.sign(
+                canonical({
+                    'subject_id': custody['subject_id'],
+                    'handle': 'custody-user',
+                    'public_key': b64(next_signer.public_key),
+                    'encryption_recipient': next_recipient,
+                    'request_id': start_id,
+                }),
+                purpose='custodial-upgrade-start',
+            )
+            start = fixture.request(
+                name='identity.custodial_upgrade_start',
+                actor='cust',
+                token=True,
+                token_id=custody['credential_id'],
+                request_id=start_id,
+                arguments={
+                    'handle': 'custody-user',
+                    'public_key': b64(next_signer.public_key),
+                    'encryption_recipient': next_recipient,
+                    'possession_proof': wire(possession),
+                },
+            )
+            challenge = native.handle(start)['data']
+            context_fields = {
+                name: challenge[name]
+                for name in (
+                    'subject_id', 'challenge_id', 'request_id', 'handle', 'public_key',
+                    'encryption_recipient', 'server_public', 'nonce', 'expires_at',
+                )
+            }
+            verify(
+                unb64(json.loads(stored)['verifier']),
+                canonical(context_fields),
+                decode(Signature, challenge['server_signature']),
+                purpose='custodial-upgrade-challenge',
+            )
+            age_proof = client_upgrade_proof(next_age, challenge)
+            finish_id = 'native-custody-finish'
+            finish_body = {
+                'subject_id': custody['subject_id'],
+                'challenge_id': challenge['challenge_id'],
+                'age_proof': age_proof,
+                'external_ciphertexts_migrated': False,
+                'request_id': finish_id,
+            }
+            finish_args = {
+                key: value for key, value in finish_body.items()
+                if key not in {'subject_id', 'request_id'}
+            }
+            finish_args['migration_ack'] = wire(
+                next_signer.sign(canonical(finish_body), purpose='custodial-upgrade-finish')
+            )
+            finish = fixture.request(
+                name='identity.custodial_upgrade_finish',
+                version=2,
+                actor='cust',
+                token=True,
+                token_id=custody['credential_id'],
+                request_id=finish_id,
+                arguments=finish_args,
+            )
+            assert native.handle(finish)['data']['status'] == 'pending_rewrap'
+            upgrade_row = fixture.conn.execute(
+                'SELECT ephemeral_nonce,ephemeral_ciphertext,body FROM custodial_upgrades WHERE id=?',
+                (challenge['challenge_id'],),
+            ).fetchone()
+            assert upgrade_row[:2] == (None, None)
+            forged = json.loads(upgrade_row[2])
+            forged['backup_retirement'] = {'verified': True, 'server_key_retired': True}
+            fixture.conn.execute(
+                'UPDATE custodial_upgrades SET body=? WHERE id=?',
+                (canonical(forged).decode(), challenge['challenge_id']),
+            )
+            inventory = native.handle(fixture.request(
+                name='identity.custodial_upgrade_inventory',
+                actor='cust',
+                token=True,
+                token_id=custody['credential_id'],
+                request_id='native-custody-inventory',
+                arguments={'challenge_id': challenge['challenge_id']},
+            ))['data']
+            assert inventory['history_recoverable']
+            assert not inventory['retirement']['backup_retired']
+            finalize_id = 'native-custody-finalize'
+            finalize_args = {
+                'challenge_id': challenge['challenge_id'],
+                'age_proof': age_proof,
+                'external_ciphertexts_migrated': True,
+                'action': 'finalize',
+                'inventory_digest': inventory['inventory_digest'],
+                'observed_digest': inventory['observed_digest'],
+                'results_digest': inventory['results_digest'],
+                'resolution': 'verified',
+                'loss_revisions': [],
+                'reviewed_policy_version': inventory['recovery_policy_version'],
+            }
+            finalize_args['migration_ack'] = wire(next_signer.sign(
+                canonical(stage_statement(custody['subject_id'], finalize_args, finalize_id)),
+                purpose='custodial-decision-v1',
+            ))
+            finalize = fixture.request(
+                name='identity.custodial_upgrade_finish',
+                version=2,
+                actor='cust',
+                token=True,
+                token_id=custody['credential_id'],
+                request_id=finalize_id,
+                arguments=finalize_args,
+            )
+            completed = native.handle(finalize)['data']
+            assert completed['status'] == 'completed'
+            assert completed['phase'] == 'online_key_retired'
+            assert not completed['retirement']['server_key_retired']
+            assert not completed['retirement']['backup_retired']
+            assert native.handle(finalize)['replay']['data'] == completed
+            vault = fixture.conn.execute(
+                'SELECT status,signing_nonce,signing_ciphertext,age_nonce,age_ciphertext '
+                'FROM custodial_vault WHERE subject=?',
+                (custody['subject_id'],),
+            ).fetchone()
+            assert vault == ('destroyed', None, None, None, None)
+            fixture.signers['selfcust'] = next_signer
+            fixture.users['selfcust'] = custody['subject_id']
+            fixture.keys['selfcust'] = next_signer.key_id
+            recovered = native.handle(fixture.request(
+                name='identity.custodial_upgrade_result',
+                actor='selfcust',
+                request_id='native-custody-result',
+                arguments={'challenge_id': challenge['challenge_id']},
+            ))['data']
+            assert recovered == completed
+            async with fixture.metadata.transaction(write=False) as tx:
+                await fixture.validator.validate(completed['certificate_id'], tx)
+                assert (await tx.credential(custody['credential_id'])).revoked_at == NOW
+                assert (await tx.credential(custody['identity_key_id'])).revoked_at == NOW
 
             fixture.setting('recovery_quarantine', False)
             native.call('pending', error='recovery_quarantined')
@@ -594,6 +753,8 @@ async def exercise(binary):
                     'token_source_survives_rotation',
                     'key_approved_browser',
                     'custodial_vault_signing',
+                    'custodial_dual_key_exit',
+                    'backup_retirement_claim_rejected',
                     'recovery_fence',
                 ],
             }

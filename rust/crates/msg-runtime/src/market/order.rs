@@ -1,6 +1,6 @@
 //! Immutable checkout facts, signed Order resources, and guarded escrow changes.
 use super::{field, hash, integer, ledger, require, text, time};
-use crate::context::new_id;
+use crate::context::{new_id, ContentWrite, Context};
 use chrono::Duration;
 use msg_core::{digest, unb64, Error, Json, Result};
 use msg_crypto::{verify, Ed25519Signer};
@@ -443,12 +443,21 @@ pub(super) fn verify_source(
     Ok(Some(resource))
 }
 
+struct Publication<'a> {
+    now: Timestamp,
+    actor: &'a str,
+    request: &'a str,
+    digest: Option<&'a str>,
+    version: i64,
+}
+
 /// Constructed only after checking the old signed source. Its private fields
 /// replace Python's transaction-local mutable set of admitted order IDs.
 pub(super) struct Mutation {
     pub order: Order,
     pub locked: Json,
     resource: Option<Resource>,
+    new: bool,
 }
 impl Mutation {
     pub(super) fn begin(
@@ -465,6 +474,23 @@ impl Mutation {
             order,
             locked,
             resource,
+            new: false,
+        })
+    }
+    pub(super) fn new(tx: &PgSession, id: &str) -> Result<Self> {
+        require(
+            tx.one("SELECT 1 FROM resources WHERE id=$1", &[id.into()])?
+                .is_none(),
+            "order_resource_conflict",
+        )?;
+        let order = read(tx, id)?;
+        let locked = get_contract(tx, id)?;
+        validate_projection(tx, &order, &locked)?;
+        Ok(Self {
+            order,
+            locked,
+            resource: None,
+            new: true,
         })
     }
     pub(super) fn publish(
@@ -475,21 +501,163 @@ impl Mutation {
         actor: &str,
         request: &str,
     ) -> Result<()> {
-        let Some(mut resource) = self.resource else {
-            return Ok(());
-        };
         let tx = *unit.metadata();
+        self.publish_with(
+            tx,
+            unit,
+            signer,
+            Publication {
+                now,
+                actor,
+                request,
+                digest: None,
+                version: 1,
+            },
+        )
+        .map(|_| ())
+    }
+    pub(super) fn publish_context(self, ctx: &mut Context<'_>) -> Result<Option<ResourceRef>> {
+        ctx.catalog.resource_type("order", 1)?;
+        ctx.catalog.resource_type("order_collection", 1)?;
+        let actor = ctx
+            .principal
+            .actor()
+            .ok_or(Error("authentication_required"))?;
+        let publication = Publication {
+            now: ctx.now,
+            actor,
+            request: ctx.request.field("request_id")?.as_str()?,
+            digest: Some(ctx.request.field("payload_digest")?.as_str()?),
+            version: ctx
+                .request
+                .field("contract_version")?
+                .as_integer()?
+                .parse()
+                .map_err(|_| Error("invalid_version"))?,
+        };
+        self.publish_with(
+            ctx.tx,
+            ctx.content_write
+                .as_deref_mut()
+                .ok_or(Error("read_only_transaction"))?,
+            &ctx.settings.receipt_signer,
+            publication,
+        )
+    }
+    fn publish_with(
+        self,
+        tx: &PgSession,
+        writer: &mut dyn ContentWrite,
+        signer: &Ed25519Signer,
+        publication: Publication<'_>,
+    ) -> Result<Option<ResourceRef>> {
+        let Publication {
+            now,
+            actor,
+            request,
+            digest: request_digest,
+            version,
+        } = publication;
+        if self
+            .locked
+            .as_object()?
+            .get("resource_model")
+            .and_then(|v| v.as_integer().ok())
+            != Some("1")
+        {
+            return Ok(None);
+        }
+        let mut resource = match self.resource {
+            Some(resource) => resource,
+            None => {
+                require(self.new, "order_resource_write_forbidden")?;
+                let buyer = &self.order.buyer;
+                let parent_id = format!("orders_{buyer}");
+                let parent = if tx
+                    .one(
+                        "SELECT 1 FROM resources WHERE id=$1",
+                        &[parent_id.as_str().into()],
+                    )?
+                    .is_some()
+                {
+                    let parent = tx.resource_record(&parent_id)?;
+                    require(
+                        parent.resource_type == "order_collection"
+                            && parent.parent.as_deref() == Some(buyer)
+                            && parent.owner == *buyer
+                            && parent.mode == 0o500
+                            && parent.state == ResourceState::Active,
+                        "order_collection_invalid",
+                    )?;
+                    parent
+                } else {
+                    require(
+                        tx.one(
+                            "SELECT 1 FROM resources WHERE parent=$1 AND name='orders'",
+                            &[buyer.as_str().into()],
+                        )?
+                        .is_none(),
+                        "order_collection_conflict",
+                    )?;
+                    let parent = Resource {
+                        id: parent_id.clone(),
+                        resource_type: "order_collection".into(),
+                        type_version: 1,
+                        name: "orders".into(),
+                        parent: Some(buyer.clone()),
+                        owner: buyer.clone(),
+                        group: tx.subject(buyer)?.primary_group,
+                        mode: 0o500,
+                        generation: 0,
+                        revision: None,
+                        state: ResourceState::Active,
+                        created_at: now,
+                        created_by: actor.into(),
+                        modified_at: now,
+                        modified_by: actor.into(),
+                        tags: vec![],
+                    };
+                    tx.insert_resource(&parent)?;
+                    parent
+                };
+                let resource = Resource {
+                    id: self.order.id.clone(),
+                    resource_type: "order".into(),
+                    type_version: 1,
+                    name: self.order.id.clone(),
+                    parent: Some(parent_id),
+                    owner: buyer.clone(),
+                    group: parent.group,
+                    mode: 0o400,
+                    generation: 0,
+                    revision: None,
+                    state: ResourceState::Active,
+                    created_at: Timestamp::parse(text(&self.locked, "created_at")?)?,
+                    created_by: buyer.clone(),
+                    modified_at: now,
+                    modified_by: actor.into(),
+                    tags: vec![],
+                };
+                tx.insert_resource(&resource)?;
+                resource
+            }
+        };
         let order = read(tx, &self.order.id)?;
         validate_projection(tx, &order, &self.locked)?;
         let body = snapshot(tx, &order, &self.locked)?.canonical()?;
-        let current = tx.revision(&ResourceRef {
-            id: order.id.clone(),
-            revision: resource.revision.clone(),
-        })?;
-        if current.content.digest == digest(body.as_bytes()) {
-            return Ok(());
+        if resource.revision.is_some() {
+            let current = tx.revision(&ResourceRef {
+                id: order.id.clone(),
+                revision: resource.revision.clone(),
+            })?;
+            if current.content.digest == digest(body.as_bytes()) {
+                return Ok(Some(ResourceRef {
+                    id: resource.id,
+                    revision: resource.revision,
+                }));
+            }
         }
-        let blob = unit.put_bytes(body.as_bytes(), "application/json", None)?;
+        let blob = writer.put_bytes(body.as_bytes(), "application/json", None)?;
         let mut revision = Revision {
             format_version: 1,
             id: new_id("v")?,
@@ -506,17 +674,18 @@ impl Mutation {
             summary: None,
             change_note: None,
             source_kind: Some(SourceKind::Operation),
-            source_version: Some(1),
-            source_digest: Some(hash(
-                &serde_json::json!({"request_id":request,"order_id":order.id}),
-            )?),
+            source_version: Some(version),
+            source_digest: Some(match request_digest {
+                Some(value) => value.into(),
+                None => hash(&serde_json::json!({"request_id":request,"order_id":order.id}))?,
+            }),
             signature_source: None,
         };
         let manifest = manifest(&revision)?.canonical()?;
         revision.manifest_digest = digest(manifest.as_bytes());
         revision.signature = Some(signer.sign(manifest.as_bytes(), "revision")?);
-        unit.pin(&revision.content, &revision.id)?;
-        unit.commit_revision(
+        writer.pin(&revision.content, &revision.id)?;
+        writer.commit_revision(
             resource
                 .parent
                 .as_deref()
@@ -531,7 +700,11 @@ impl Mutation {
             .ok_or(Error("invalid_generation"))?;
         resource.modified_at = now;
         resource.modified_by = actor.into();
-        tx.replace_resource(&resource, generation)
+        tx.replace_resource(&resource, generation)?;
+        Ok(Some(ResourceRef {
+            id: resource.id,
+            revision: resource.revision,
+        }))
     }
     pub(super) fn transition(
         &mut self,
@@ -588,6 +761,100 @@ impl Mutation {
         })?;
         self.order.state = state.into();
         Ok(())
+    }
+    /// Synchronous redemption is the only caller allowed to settle a v5 Order.
+    /// The grant, protected ledger posting, signed facts and content publish
+    /// belong to the same recovery transaction.
+    pub(super) fn add_entitlement_settlement(
+        &mut self,
+        ctx: &mut Context<'_>,
+        fulfill: impl FnOnce(&PgSession, &str) -> Result<String>,
+    ) -> Result<Json> {
+        let buyer = self.order.buyer.clone();
+        let request = ctx.request.field("request_id")?.as_str()?;
+        require(
+            integer(&self.locked, "version")? == 5
+                && self.order.state == "funded"
+                && ctx.principal.subject() == Some(buyer.as_str())
+                && ctx.principal.actor() == Some(buyer.as_str())
+                && ctx.request.field("operation")?.as_str()? == "money.redeem"
+                && ctx.request.field("contract_version")?.as_integer()? == "3"
+                && text(&self.locked, "redemption_request_id")? == request
+                && entitlement_intent(ctx.tx, &self.locked)?
+                    == ctx.request.field("payload_digest")?.as_str()?,
+            "escrow_release_forbidden",
+        )?;
+        require(
+            ctx.tx
+                .one(
+                    "SELECT 1 FROM order_escrow_decisions WHERE order_id=$1",
+                    &[self.order.id.as_str().into()],
+                )?
+                .is_none()
+                && ctx
+                    .tx
+                    .one(
+                        "SELECT 1 FROM order_settlements WHERE order_id=$1",
+                        &[self.order.id.as_str().into()],
+                    )?
+                    .is_none(),
+            "order_already_settled",
+        )?;
+        require(
+            ledger::balance(ctx.tx, &self.order.escrow_subject)? == self.order.total_price_minor,
+            "escrow_balance_mismatch",
+        )?;
+        let receipt = ledger::release(
+            ctx.tx,
+            &ctx.settings.receipt_signer,
+            ledger::Release {
+                order: &self.order,
+                recipient: &self.order.seller,
+                amount: self.order.total_price_minor,
+                actor: &buyer,
+                request: &format!("{}:release", self.order.id),
+                reference: &format!("order_release:{}", self.order.id),
+                kind: "transfer",
+                now: ctx.now,
+            },
+        )?;
+        let transaction = text(field(&receipt, "body")?, "transaction_id")?;
+        let entitlement = fulfill(ctx.tx, transaction)?;
+        self.transition(
+            ctx.tx,
+            "settled",
+            ctx.now,
+            &buyer,
+            request,
+            "deterministic_entitlement",
+        )?;
+        let mut references = self.order.receipt_refs.clone();
+        references.push(transaction.into());
+        ctx.tx.execute(
+            "UPDATE store_orders SET settled_at=$1,receipt_refs=$2 WHERE id=$3",
+            &[
+                time(ctx.now).into(),
+                encode(&references)?.canonical()?.into(),
+                self.order.id.as_str().into(),
+            ],
+        )?;
+        let statement = encode(&serde_json::json!({
+            "order_id":self.order.id,"refund_minor":0,"release_minor":self.order.total_price_minor,
+            "reason":"deterministic_entitlement","decision_id":null,"policy":self.order.dispute_policy,
+            "receipts":[receipt],"at":ctx.now,"entitlement_id":entitlement,
+            "order_facts":{"payment_transaction_id":self.order.payment_transaction_id,
+                "payment_intent_digest":self.order.payment_intent_digest,"funded_at":self.order.funded_at,
+                "delivered_at":self.order.delivered_at},
+            "delivery_snapshot":delivery_snapshot(ctx.tx, &self.order.id)?,
+        }))?;
+        ctx.tx.execute(
+            "INSERT INTO order_settlements(order_id,decision_id,body) VALUES($1,NULL,$2)",
+            &[self.order.id.as_str().into(), statement.canonical()?.into()],
+        )?;
+        self.order.receipt_refs = references;
+        self.order.settled_at = Some(time(ctx.now));
+        validate_projection(ctx.tx, &self.order, &self.locked)?;
+        Ok(receipt)
     }
     /// A decision must be validated by arbitration before this private call.
     pub(super) fn settle(

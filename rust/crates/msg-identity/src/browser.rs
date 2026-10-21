@@ -563,5 +563,14 @@ pub(crate) fn random_identifier() -> Result<String> {
         .map_err(|_| Error("randomness_unavailable"))?;
     bytes[6] = (bytes[6] & 15) | 64;
     bytes[8] = (bytes[8] & 63) | 128;
-    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    Ok(bytes
+        .iter()
+        .flat_map(|byte| {
+            [
+                HEX[(byte >> 4) as usize] as char,
+                HEX[(byte & 15) as usize] as char,
+            ]
+        })
+        .collect())
 }

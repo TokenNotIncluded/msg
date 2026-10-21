@@ -4,7 +4,7 @@ use crate::{
     config::Settings,
     content,
     context::{new_id, ContentWrite, Context, HandlerOutput},
-    discovery, watches,
+    discovery, market, watches,
 };
 use hmac::{Hmac, Mac};
 use msg_core::{b64, digest, Error, Json, Result};
@@ -13,7 +13,7 @@ use msg_identity::{
     authorization::{AccessRequirement, AuthorizationService, Check},
     browser, certificate_lifecycle,
     certificates::CertificateValidator,
-    lifecycle,
+    custodial_lifecycle, delegation_lifecycle, lifecycle,
     models::{decode, wire, ResourceRef, Timestamp},
     sessions::BrowserPolicy,
     store::{truthy, AuthorityStore, RuntimeGeneration},
@@ -77,9 +77,12 @@ fn identity<'a>(
 pub fn supports(name: &str, version: u32) -> bool {
     lifecycle::Service::supports(name, version)
         || certificate_lifecycle::Service::supports(name, version)
+        || custodial_lifecycle::supports(name, version)
+        || delegation_lifecycle::supports(name, version)
         || watches::supports(name, version)
         || content::supports(name, version)
         || discovery::supports(name, version)
+        || market::supports(name, version)
         || (version == 1
             && matches!(
                 name,
@@ -210,7 +213,7 @@ impl Runtime {
                 state,
                 cursor_key,
             } = self;
-            let mut run = |tx: &PgSession, write: Option<&mut dyn ContentWrite>| {
+            let mut run = |tx: &PgSession, mut write: Option<&mut dyn ContentWrite>| {
                 state.generation.require_current(tx)?;
                 let admitted = state.authenticator.authenticate(
                     request,
@@ -246,9 +249,10 @@ impl Runtime {
                     principal: &principal,
                     request,
                     now: now(),
+                    deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
                     settings,
                     authorizer: &mut state.authorizer,
-                    content_write: write,
+                    content_write: write.as_mut().map(|writer| writer as &mut dyn ContentWrite),
                     cursor_key,
                 };
                 let checks = requirements(&context, &spec)?;
@@ -524,6 +528,9 @@ impl Runtime {
 }
 
 fn requirements(context: &Context<'_>, spec: &OperationSpec) -> Result<Vec<AccessRequirement>> {
+    if market::supports(&spec.name, spec.version) {
+        return market::requirements(context);
+    }
     if watches::supports(&spec.name, spec.version) {
         return watches::requirements(context);
     }
@@ -576,6 +583,9 @@ fn dispatch(
 ) -> Result<HandlerOutput> {
     let name = context.request.field("operation")?.as_str()?;
     let version: u32 = decode(context.request.field("contract_version")?)?;
+    if market::supports(name, version) {
+        return market::handle(context);
+    }
     if watches::supports(name, version) {
         return watches::handle(context);
     }
@@ -587,6 +597,91 @@ fn dispatch(
     }
     let mut store = IdentitySession::new(context.tx, generation, context.settings.quarantined())?;
     let request = Json::parse(&context.request.canonical()?)?;
+    if custodial_lifecycle::supports(name, version) {
+        let contents = context.contents;
+        let outcome = custodial_lifecycle::handle(
+            &identity(context.settings, context.catalog, validator, policies),
+            &mut store,
+            context.authorizer,
+            context.principal,
+            &request,
+            context.now,
+            &|blob, limit| contents.read_bytes(&msg_storage::records::decode(blob)?, limit),
+        )?;
+        return match outcome {
+            custodial_lifecycle::Outcome::Complete(result) => decode(&result),
+            custodial_lifecycle::Outcome::Create(plan) => {
+                let resource = content::create(
+                    context,
+                    content::Create {
+                        parent: plan.parent().into(),
+                        kind: "keystore",
+                        name: Some(plan.name().into()),
+                        id: None,
+                        body: Some(content::Body::Bytes(
+                            plan.ciphertext().to_vec(),
+                            "application/octet-stream".into(),
+                        )),
+                        mode: Some(0o600),
+                        revision: content::RevisionOptions::default(),
+                    },
+                )?;
+                decode(&custodial_lifecycle::finish_content(
+                    &mut store,
+                    context.principal,
+                    &request,
+                    *plan,
+                    &ResourceRef {
+                        id: resource.id,
+                        revision: resource.revision,
+                    },
+                    context.now,
+                )?)
+            }
+        };
+    }
+    if delegation_lifecycle::supports(name, version) {
+        let outcome = delegation_lifecycle::handle(
+            &identity(context.settings, context.catalog, validator, policies),
+            &mut store,
+            context.authorizer,
+            context.principal,
+            &request,
+            context.now,
+        )?;
+        return match outcome {
+            delegation_lifecycle::Outcome::Complete(result) => decode(&result),
+            delegation_lifecycle::Outcome::Create(plan) => {
+                let resource = content::create(
+                    context,
+                    content::Create {
+                        parent: plan.parent().into(),
+                        kind: "delegation",
+                        name: Some(plan.name().into()),
+                        id: None,
+                        body: Some(content::Body::Bytes(
+                            plan.body().to_vec(),
+                            "application/json".into(),
+                        )),
+                        mode: Some(0o600),
+                        revision: content::RevisionOptions::default(),
+                    },
+                )?;
+                decode(&delegation_lifecycle::finish_content(
+                    &identity(context.settings, context.catalog, validator, policies),
+                    &mut store,
+                    context.principal,
+                    &request,
+                    *plan,
+                    &ResourceRef {
+                        id: resource.id,
+                        revision: resource.revision,
+                    },
+                    context.now,
+                )?)
+            }
+        };
+    }
     if lifecycle::Service::supports(name, version) {
         return decode(
             &identity(context.settings, context.catalog, validator, policies).handle(
@@ -622,21 +717,23 @@ fn dispatch(
             policies,
             &context.catalog.temporary_ceiling,
         )?;
-        let code = context.text("user_code")?;
+        let code = context.text("user_code")?.to_owned();
         let data = if name == "identity.session_request" {
-            browser.inspect(&mut store, code, context.now)?
+            browser.inspect(&mut store, &code, context.now)?
         } else {
+            let operation = context.operation()?;
+            let subject = context.subject()?.to_owned();
             context.authorizer.require_base(
                 context.principal,
-                &context.operation()?,
-                context.subject()?,
+                &operation,
+                &subject,
                 context.tx,
                 context.now,
             )?;
             browser.approve(
                 &mut store,
                 context.principal,
-                code,
+                &code,
                 context.text("decision")?,
                 context.now,
             )?
