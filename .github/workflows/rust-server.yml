@@ -8,6 +8,46 @@ on:
 permissions:
   contents: read
 jobs:
+  identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      MSG_PG_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+      - name: Install native and reference dependencies
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          python -m pip install 'cryptography==46.0.3' 'jsonschema>=4.25,<5' 'referencing>=0.36,<1' 'psycopg[binary]>=3.2,<4'
+      - name: Build native identity fixture
+        working-directory: rust
+        run: cargo +1.85.0 build -p msg-storage --example identity_lifecycle_check
+      - name: PostgreSQL issuance and browser interoperation
+        run: python rust/tests/test_identity_lifecycle.py --binary rust/target/debug/examples/identity_lifecycle_check --report rust/artifacts/identity-lifecycle.json
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: daemon-identity-${{ github.sha }}
+          path: rust/artifacts/identity-lifecycle.json
+          if-no-files-found: warn
   native:
     runs-on: ubuntu-latest
     timeout-minutes: 20

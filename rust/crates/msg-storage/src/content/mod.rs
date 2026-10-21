@@ -10,6 +10,8 @@
 //! atomic metadata/content commit. Use `content_transaction` for durable pin
 //! recovery through a metadata commit witness; raw methods remain primitives.
 //! Errors may leave unreferenced content, which must not be blindly deleted.
+mod collection;
+pub use collection::ContentCollection;
 mod files;
 mod git;
 mod lfs;
