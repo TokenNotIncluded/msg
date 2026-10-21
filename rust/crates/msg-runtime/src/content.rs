@@ -222,10 +222,13 @@ pub(crate) fn normalize_tag(value: &Json) -> Result<String> {
     require(
         (1..=48).contains(&tag.chars().count())
             && tag.len() <= 96
-            && tag.chars().next().is_some_and(char::is_alphanumeric)
             && tag
                 .chars()
-                .all(|c| c.is_alphanumeric() || c == '-' || c == '_'),
+                .next()
+                .is_some_and(crate::unicode::is_alphanumeric)
+            && tag
+                .chars()
+                .all(|c| crate::unicode::is_alphanumeric(c) || c == '-' || c == '_'),
         "invalid_tag",
     )?;
     Ok(tag)
@@ -1310,7 +1313,7 @@ fn template_name(name: &str) -> bool {
     name.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
         && name
             .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '_' | '.' | '-'))
+            .all(|c| crate::unicode::is_alphanumeric(c) || matches!(c, '_' | '.' | '-'))
 }
 fn check_field(field: &Field, value: &Json) -> Result<()> {
     if value.is_null() && !field.required {

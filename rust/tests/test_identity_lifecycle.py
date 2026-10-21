@@ -108,10 +108,15 @@ def configure(fixture):
         fixture.grants[family] = replace(fixture.grants[family], operations=operation_ids)
     fixture.primary = tuple(fixture.grants.values())
     registry = Registry()
+    schemas = set()
     for capability in fixture.registry.capabilities():
         if capability.name in {'resource.basic', 'identity.basic'}:
             capability = replace(capability, operations=operation_ids)
         registry.add_capability(capability)
+        if capability.constraints_schema and capability.constraints_schema.id not in schemas:
+            reference = capability.constraints_schema
+            registry.add_schema(reference, fixture.registry.schema(reference))
+            schemas.add(reference.id)
     fixture.registry = registry
     root = fixture.certs['c_root']
     root = replace(root, issuance=replace(root.issuance, issue_grants=fixture.primary))

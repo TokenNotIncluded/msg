@@ -89,7 +89,7 @@ fn row_array(row: &Row) -> Result<Json> {
         .collect::<Result<Vec<_>>>()?;
     encode(&values)
 }
-fn get_contract(tx: &PgSession, id: &str) -> Result<Json> {
+pub(super) fn get_contract(tx: &PgSession, id: &str) -> Result<Json> {
     let row = tx
         .one(
             "SELECT body,digest FROM order_contracts WHERE order_id=$1",
@@ -141,7 +141,10 @@ fn entitlement_intent(tx: &PgSession, locked: &Json) -> Result<String> {
     let signature = field(signed.field("proof")?, "signature")?;
     let credential = tx
         .credential(text(signature, "key_id")?)
-        .map_err(|_| Error("order_entitlement_signer_mismatch"))?;
+        .map_err(|e| match e.0 {
+            "credential_not_found" => Error("order_entitlement_signer_mismatch"),
+            _ => e,
+        })?;
     require(
         credential.subject_id == text(locked, "buyer")?
             && credential.kind == CredentialKind::SigningKey
@@ -277,7 +280,7 @@ pub(super) fn validate_projection(tx: &PgSession, order: &Order, locked: &Json) 
     }
     require(
         refund.checked_add(release) == Some(order.total_price_minor)
-            && order.state == if release == 0 { "refunded" } else { "settled" }
+            && order.state == (if release == 0 { "refunded" } else { "settled" })
             && order.settled_at.as_deref() == Some(text(&fact, "at")?)
             && encode(&order.receipt_refs)? == encode(&references)?
             && delivery_snapshot(tx, &order.id)? == text(&fact, "delivery_snapshot")?,
@@ -370,7 +373,7 @@ fn manifest(revision: &Revision) -> Result<Json> {
     fields.remove("signature");
     Ok(Json::from_object(fields))
 }
-fn verify_source(
+pub(super) fn verify_source(
     tx: &PgSession,
     contents: &GitContentStore,
     signer: &Ed25519Signer,
@@ -393,9 +396,10 @@ fn verify_source(
         )?;
         return Ok(None);
     }
-    let resource = tx
-        .resource_record(&order.id)
-        .map_err(|_| Error("order_resource_missing"))?;
+    let resource = tx.resource_record(&order.id).map_err(|e| match e.0 {
+        "not_found" | "revision_not_found" => Error("order_resource_missing"),
+        _ => e,
+    })?;
     require(
         resource.resource_type == "order"
             && resource.type_version == 1
@@ -411,7 +415,10 @@ fn verify_source(
             id: order.id.clone(),
             revision: resource.revision.clone(),
         })
-        .map_err(|_| Error("order_resource_missing"))?;
+        .map_err(|e| match e.0 {
+            "not_found" | "revision_not_found" => Error("order_resource_missing"),
+            _ => e,
+        })?;
     let manifest = manifest(&revision)?;
     let snapshot = snapshot(tx, order, locked)?.canonical()?;
     require(

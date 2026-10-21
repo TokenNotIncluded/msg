@@ -14,7 +14,7 @@ pub(super) fn balance(tx: &PgSession, account: &str) -> Result<i64> {
     // large historical turnover cannot overflow an otherwise valid balance.
     tx.one("SELECT (COALESCE((SELECT sum(amount_minor) FROM money_ledger WHERE credit_account=$1),0)-COALESCE((SELECT sum(amount_minor) FROM money_ledger WHERE debit_account=$1),0))::text",&[account.into()])?.ok_or(Error("invalid_money_state"))?.text(0)?.parse().map_err(|_|Error("invalid_money_state"))
 }
-fn supply(tx: &PgSession) -> Result<i64> {
+pub(super) fn supply(tx: &PgSession) -> Result<i64> {
     tx.one("SELECT (COALESCE((SELECT sum(amount_minor) FROM money_ledger WHERE kind='mint'),0)-COALESCE((SELECT sum(amount_minor) FROM money_ledger WHERE kind='burn'),0))::text",&[])?.ok_or(Error("invalid_money_state"))?.text(0)?.parse().map_err(|_|Error("invalid_money_state"))
 }
 fn policy_digest() -> Result<String> {
@@ -130,17 +130,78 @@ pub(super) fn release(
         matches!(kind, "transfer" | "redeem" | "refund"),
         "invalid_money_kind",
     )?;
+    append(
+        tx,
+        signer,
+        &Posting {
+            sender: &order.escrow_subject,
+            recipient,
+            amount,
+            actor,
+            request,
+            reference: Some(reference),
+            kind,
+            entry_key: "primary",
+            now,
+        },
+    )
+}
+
+pub(super) struct Posting<'a> {
+    pub sender: &'a str,
+    pub recipient: &'a str,
+    pub amount: i64,
+    pub actor: &'a str,
+    pub request: &'a str,
+    pub reference: Option<&'a str>,
+    pub kind: &'a str,
+    pub entry_key: &'a str,
+    pub now: Timestamp,
+}
+/// Ordinary transfers cannot name a protected account as their source.
+pub(super) fn transfer(
+    tx: &PgSession,
+    signer: &Ed25519Signer,
+    value: &Posting<'_>,
+) -> Result<Json> {
+    if let Some(row) = tx.one(
+        "SELECT kind FROM ledger_accounts WHERE id=$1",
+        &[value.sender.into()],
+    )? {
+        require(
+            !matches!(row.text(0)?, "order_escrow" | "purchase_escrow"),
+            "escrow_release_forbidden",
+        )?;
+    }
+    append(tx, signer, value)
+}
+fn append(tx: &PgSession, signer: &Ed25519Signer, value: &Posting<'_>) -> Result<Json> {
+    let Posting {
+        sender,
+        recipient,
+        amount,
+        actor,
+        request,
+        reference,
+        kind,
+        entry_key,
+        now,
+    } = *value;
+    require(
+        matches!(kind, "transfer" | "redeem" | "refund"),
+        "invalid_money_kind",
+    )?;
     decide(&Clearing {
         kind,
-        sender: Some(&order.escrow_subject),
+        sender: Some(sender),
         recipient: Some(recipient),
         amount,
-        sender_balance: balance(tx, &order.escrow_subject)?,
+        sender_balance: balance(tx, sender)?,
         recipient_balance: balance(tx, recipient)?,
         supply: supply(tx)?,
         local_issuer: false,
     })?;
-    for subject in [&order.escrow_subject, recipient] {
+    for subject in [sender, recipient] {
         tx.execute("INSERT INTO money_accounts(subject_id,currency_id) VALUES($1,$2) ON CONFLICT(subject_id,currency_id) DO NOTHING",&[subject.into(),CURRENCY.into()])?;
     }
     let id = new_id("lt")?;
@@ -153,11 +214,11 @@ pub(super) fn release(
         .integer(0)?;
     let policy = policy_digest()?;
     let body = encode(
-        &serde_json::json!({"transaction_id":id,"kind":kind,"currency_id":CURRENCY,"amount_minor":amount,"from_subject":order.escrow_subject,"to_subject":recipient,"actor":actor,"request_id":request,"entry_key":"primary","reference":reference,"committed_at":now,"policy_version":2,"policy_digest":policy,"ledger_sequence":sequence}),
+        &serde_json::json!({"transaction_id":id,"kind":kind,"currency_id":CURRENCY,"amount_minor":amount,"from_subject":sender,"to_subject":recipient,"actor":actor,"request_id":request,"entry_key":entry_key,"reference":reference,"committed_at":now,"policy_version":2,"policy_digest":policy,"ledger_sequence":sequence}),
     )?;
     let signature = signer.sign(body.canonical()?.as_bytes(), "money-receipt")?;
     let receipt = encode(&serde_json::json!({"body":body,"signature":signature}))?;
-    tx.execute("INSERT INTO money_ledger(seq,id,kind,currency_id,amount_minor,debit_account,credit_account,actor,request_id,reference,committed_at,policy_version,policy_digest,receipt,entry_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,2,$12,$13,'primary')",&[sequence.into(),id.into(),kind.into(),CURRENCY.into(),amount.into(),order.escrow_subject.as_str().into(),recipient.into(),actor.into(),request.into(),reference.into(),time(now).into(),policy.into(),receipt.canonical()?.into()])?;
+    tx.execute("INSERT INTO money_ledger(seq,id,kind,currency_id,amount_minor,debit_account,credit_account,actor,request_id,reference,committed_at,policy_version,policy_digest,receipt,entry_key) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,2,$12,$13,$14)",&[sequence.into(),id.into(),kind.into(),CURRENCY.into(),amount.into(),sender.into(),recipient.into(),actor.into(),request.into(),reference.into(),time(now).into(),policy.into(),receipt.canonical()?.into(),entry_key.into()])?;
     Ok(receipt)
 }
 

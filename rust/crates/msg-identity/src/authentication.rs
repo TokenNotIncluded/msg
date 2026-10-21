@@ -52,6 +52,17 @@ pub struct Principal {
     ceiling: Vec<Grant>,
 }
 impl Principal {
+    /// A public-visibility probe carries no identity or credential authority.
+    pub fn anonymous() -> Self {
+        Self {
+            actor: None,
+            subject: None,
+            credential_id: None,
+            method: "anonymous",
+            certificates: vec![],
+            ceiling: vec![],
+        }
+    }
     pub(crate) fn from_worker(
         actor: String,
         subject: String,
@@ -329,14 +340,7 @@ impl AuthenticationService {
                     requested_subject.is_none() && (spec.effect == "read" || anonymous_write),
                     "authentication_required",
                 )?;
-                Principal {
-                    actor: None,
-                    subject: None,
-                    credential_id: None,
-                    method: "anonymous",
-                    certificates: vec![],
-                    ceiling: vec![],
-                }
+                Principal::anonymous()
             }
             _ => {
                 let proof = proof.as_object()?;

@@ -125,15 +125,17 @@ fn hash(value: &impl Serialize) -> Result<String> {
     Ok(digest(encode(value)?.canonical()?.as_bytes()))
 }
 fn setting_enabled(tx: &PgSession) -> Result<bool> {
-    Ok(tx
-        .setting("runtime_config")?
-        .map(|v| {
-            v.as_object()
-                .map(|m| m.get("cleanup_enabled").map(truthy).unwrap_or(true))
-        })
+    let Some(value) = tx.setting("runtime_config")? else {
+        return Ok(true);
+    };
+    Ok(value
+        .as_object()?
+        .get("cleanup_enabled")
+        .map(truthy)
         .transpose()?
         .unwrap_or(true))
 }
+
 fn run(
     action: Maintenance,
     unit: &mut ContentTransaction<'_, &PgSession>,
@@ -151,11 +153,12 @@ fn run(
                 if !setting_enabled(tx)? {
                     return Json::parse(r#"{"skipped":"cleanup_disabled"}"#);
                 }
-                if let Some(last) = tx.setting("garbage_collection_last")?.filter(truthy) {
-                    if now
-                        .0
-                        .signed_duration_since(Timestamp::parse(last.as_str()?)?.0)
-                        < TimeDelta::hours(1)
+                if let Some(last) = tx.setting("garbage_collection_last")? {
+                    if truthy(&last)?
+                        && now
+                            .0
+                            .signed_duration_since(Timestamp::parse(last.as_str()?)?.0)
+                            < TimeDelta::hours(1)
                     {
                         return Json::parse(r#"{"skipped":"not_due"}"#);
                     }
@@ -307,8 +310,10 @@ fn trim_purge_records(tx: &PgSession) -> Result<()> {
         &[],
         |key| {
             let value = tx.setting(key)?.ok_or(Error("storage_record_mismatch"))?;
-            if let Some(stamp) = value.as_object()?.get("time").filter(|v| truthy(v)) {
-                stamp.as_str()?;
+            if let Some(stamp) = value.as_object()?.get("time") {
+                if truthy(stamp)? {
+                    stamp.as_str()?;
+                }
             }
             Ok(())
         },
@@ -369,12 +374,13 @@ fn cleanup(
                 .transpose()?
                 .unwrap_or(3600);
             if scheduled {
-                if let Some(last) = tx.setting(&format!("cleanup_last:{root}"))?.filter(truthy) {
-                    if now
-                        .0
-                        .signed_duration_since(Timestamp::parse(last.as_str()?)?.0)
-                        .num_seconds()
-                        < interval
+                if let Some(last) = tx.setting(&format!("cleanup_last:{root}"))? {
+                    if truthy(&last)?
+                        && now
+                            .0
+                            .signed_duration_since(Timestamp::parse(last.as_str()?)?.0)
+                            .num_seconds()
+                            < interval
                     {
                         return Ok(());
                     }
@@ -601,9 +607,12 @@ fn deliver_due_todos(tx: &PgSession, contents: &GitContentStore, now: Timestamp)
         let bytes = contents.read_bytes(&revision.content, msg_core::MAX_BYTES as u64)?;
         let details = Json::parse(std::str::from_utf8(&bytes).map_err(|_| Error("invalid_todo"))?)?;
         let details = details.as_object()?;
-        let Some(due_at) = details.get("due_at").filter(|v| truthy(v)) else {
+        let Some(due_at) = details.get("due_at") else {
             continue;
         };
+        if !truthy(due_at)? {
+            continue;
+        }
         let status = details
             .get("status")
             .map(Json::as_str)

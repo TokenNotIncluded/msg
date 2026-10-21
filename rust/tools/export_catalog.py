@@ -78,6 +78,28 @@ def main():
     args.output.write_text(
         json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n'
     )
+    from graphql import get_introspection_query, graphql_sync
+
+    from msg.core.packet import REQUEST_SCHEMA, RESULT_SCHEMA
+    from msg.transports.dictionary import build_dictionary, read_query_path_document
+    from msg.transports.graphql import GraphQLAdapter
+
+    app = Application(SimpleNamespace(server=SimpleNamespace(plugins=BUILTINS)))
+    dictionary = build_dictionary(app.registry)
+    transport = {
+        'request_schema': REQUEST_SCHEMA,
+        'result_schema': RESULT_SCHEMA,
+        'dictionary': dictionary.document,
+        'dictionary_index': dictionary.index_document,
+        'dictionary_schema': dictionary.schema_document,
+        'read_query_path': read_query_path_document(app.registry),
+        'graphql': graphql_sync(
+            GraphQLAdapter(app).schema, get_introspection_query()
+        ).data,
+    }
+    args.output.with_name('transport.json').write_text(
+        json.dumps(transport, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n'
+    )
     print(json.dumps({'operations': len(result['operations']), 'schemas': len(result['schemas'])}))
 
 

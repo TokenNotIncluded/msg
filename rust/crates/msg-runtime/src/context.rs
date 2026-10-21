@@ -54,6 +54,45 @@ pub fn new_id(prefix: &str) -> Result<String> {
     Ok(format!("{prefix}_{hex}"))
 }
 
+/// A probe carries operation parameters; it never creates an authenticated
+/// principal. Callers retain the admitted principal and current transaction.
+pub fn probe(
+    operation: &str,
+    version: u32,
+    arguments: &Json,
+    service: &str,
+    subject: Option<&str>,
+    now: Timestamp,
+) -> Result<Request> {
+    let expires = now
+        .0
+        .checked_add_signed(chrono::Duration::seconds(180))
+        .ok_or(Error("invalid_time"))?;
+    let mut fields = Json::parse(
+        &serde_json::json!({
+            "request_id": new_id("probe")?, "protocol_version": 1,
+            "operation": operation, "contract_version": version,
+            "target_service": service, "subject": subject, "arguments": arguments,
+            "expected_generations": [], "return_fields": [], "source": "msg",
+            "expires_at": Timestamp(expires), "proof": null
+        })
+        .to_string(),
+    )?
+    .into_object()?;
+    let payload = fields
+        .iter()
+        .filter(|(key, _)| !matches!(key.as_str(), "proof" | "source" | "expires_at"))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    fields.insert(
+        "payload_digest".into(),
+        Json::string(msg_core::digest(
+            Json::from_object(payload).canonical()?.as_bytes(),
+        )),
+    );
+    Request::parse(&Json::from_object(fields).canonical()?)
+}
+
 /// All content writes go through the durable metadata/content recovery unit.
 pub trait ContentWrite {
     fn put_bytes(
@@ -97,6 +136,51 @@ pub struct Context<'a> {
     pub authorizer: &'a mut AuthorizationService,
     pub content_write: Option<&'a mut dyn ContentWrite>,
     pub cursor_key: &'a [u8; 32],
+}
+
+/// Public projections use a fresh anonymous admission in the same authority
+/// snapshot. No caller-supplied principal or credential is accepted here.
+pub(crate) fn anonymous_principal(ctx: &Context<'_>) -> Result<Principal> {
+    use msg_identity::{
+        authentication::{Admission, AuthenticationService},
+        certificates::CertificateValidator,
+    };
+    let validator = CertificateValidator::new(
+        ctx.catalog.capability_registry()?,
+        ctx.settings.root_certificate.clone(),
+        ctx.settings.root_public_key,
+        ctx.settings.service_url.clone(),
+    )?;
+    let mut authenticator = AuthenticationService::new(
+        validator,
+        ctx.tx,
+        ctx.catalog.primary_ceiling.clone(),
+        ctx.catalog.temporary_ceiling.clone(),
+    )?;
+    let request = probe(
+        "discovery.get",
+        1,
+        &Json::from_object(BTreeMap::from([("id".into(), Json::string("r_root"))])),
+        &ctx.settings.service_url,
+        None,
+        ctx.now,
+    )?;
+    match authenticator.authenticate(
+        &request,
+        &ctx.catalog.operation("discovery.get", 1)?.policy(),
+        ctx.tx,
+        Entry::Network,
+        ctx.now,
+    )? {
+        Admission::Fresh(principal)
+            if principal.method() == "anonymous"
+                && principal.subject().is_none()
+                && principal.actor().is_none() =>
+        {
+            Ok(principal)
+        }
+        _ => Err(Error("invalid_anonymous_principal")),
+    }
 }
 impl Context<'_> {
     pub fn args(&self) -> Result<&BTreeMap<String, Json>> {

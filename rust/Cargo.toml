@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/msg-core", "crates/msg-crypto", "crates/msg-protocol", "crates/msg-identity", "crates/msg-storage", "crates/msg-worker", "crates/msg-runtime"]
+members = ["crates/msg-core", "crates/msg-crypto", "crates/msg-protocol", "crates/msg-identity", "crates/msg-storage", "crates/msg-worker", "crates/msg-runtime", "crates/msg-server"]
 resolver = "2"
 
 [workspace.package]
@@ -11,6 +11,9 @@ publish = false
 
 [workspace.dependencies]
 axum = "=0.8.9"
+flate2 = "=1.1.10"
+graphql-parser = "=0.4.1"
+futures-util = "=0.3.34"
 tokio = { version = "=1.54.0", features = ["rt-multi-thread", "macros", "net", "sync", "signal", "time", "io-util"] }
 toml = "=0.8.23"
 url = "=2.5.8"

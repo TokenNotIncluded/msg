@@ -1,7 +1,7 @@
 //! CSR creation, publication and revocation under current certificate authority.
 use crate::{
     authentication::{Entry, Principal},
-    authorization::{AccessRequirement, AuthorizationService, AuthorizationStore, Check},
+    authorization::{AccessRequirement, AuthorizationService, Check},
     certificates::CertificateValidator,
     lifecycle::{field, new_id, optional, output, resource, signature, text},
     models::*,
@@ -12,7 +12,6 @@ use msg_core::{digest, unb64, Error, Json, Result};
 use msg_crypto::{key_id, verify};
 
 pub trait CertificateStore: IdentityStore {
-    fn authorization_store(&self) -> &dyn AuthorizationStore;
     fn certificate_request(&self, id: &str) -> Result<CertificateRequest>;
     fn certificate_request_state(&self, id: &str) -> Result<Json>;
     /// Enforce the existing 1024-pending / 8192-total CSR durability caps.

@@ -227,8 +227,20 @@ impl BrowserStore for IdentitySession<'_> {
 }
 
 impl IdentityStore for IdentitySession<'_> {
+    fn authorization_store(&self) -> &dyn msg_identity::authorization::AuthorizationStore {
+        self.session
+    }
     fn identity_revision(&self, reference: &ResourceRef) -> Result<Json> {
         records::encode(&self.session.revision(reference)?)
+    }
+    fn identity_child(&self, parent: &str, name: &str) -> Result<Option<String>> {
+        self.session
+            .one(
+                "SELECT id FROM resources WHERE parent=$1 AND name=$2",
+                &[parent.into(), name.into()],
+            )?
+            .map(|row| Ok(row.text(0)?.to_owned()))
+            .transpose()
     }
     fn resolve_identity(&self, reference: &str) -> Result<String> {
         if reference.starts_with('/') {
@@ -414,9 +426,6 @@ impl IdentityStore for IdentitySession<'_> {
 }
 
 impl CertificateStore for IdentitySession<'_> {
-    fn authorization_store(&self) -> &dyn msg_identity::authorization::AuthorizationStore {
-        self.session
-    }
     fn certificate_request(&self, id: &str) -> Result<CertificateRequest> {
         self.session.csr(id)
     }
