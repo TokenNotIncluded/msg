@@ -7,10 +7,16 @@
 //! that fence; abandoning an async blocking task is not cancellation.
 //!
 //! Files and Git refs are durable before successful return. This is NOT an
-//! atomic metadata/content commit or a durable cross-store recovery journal.
+//! atomic metadata/content commit. Use `content_transaction` for durable pin
+//! recovery through a metadata commit witness; raw methods remain primitives.
 //! Errors may leave unreferenced content, which must not be blindly deleted.
+mod collection;
+pub use collection::ContentCollection;
 mod files;
 mod git;
+mod lfs;
+pub use lfs::{LfsCollection, LfsMigration, LfsObjectStore};
+pub mod recovery;
 #[cfg(test)]
 mod tests;
 use crate::records::{encode, BlobRef, Revision};
@@ -44,6 +50,7 @@ impl Default for ContentOptions {
         }
     }
 }
+#[derive(Clone)]
 pub struct GitContentStore {
     root: PathBuf,
     repo: PathBuf,
