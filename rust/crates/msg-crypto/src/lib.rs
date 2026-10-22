@@ -1,4 +1,10 @@
-//! Native signature primitives, not authentication or certificate authorization.
+//! Native signing and recipient encryption, not authentication or authorization.
+pub mod age_file;
+pub mod age_recipient;
+pub mod custodial_proof;
+pub mod sealed_box;
+pub mod vault_box;
+
 use ed25519_dalek::{Signer as _, SigningKey, VerifyingKey};
 use msg_core::{b64, unb64, Error, Result};
 use serde::{Deserialize, Serialize};

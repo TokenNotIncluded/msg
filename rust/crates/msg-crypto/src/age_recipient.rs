@@ -1,0 +1,178 @@
+//! Standard age X25519 recipient text used by existing identity records.
+use msg_core::{Error, Result};
+use sha2::{Digest, Sha256};
+use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroizing;
+
+const ALPHABET: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+fn polymod(values: impl IntoIterator<Item = u8>) -> u32 {
+    let mut check = 1u32;
+    for value in values {
+        let top = check >> 25;
+        check = ((check & 0x1ff_ffff) << 5) ^ u32::from(value);
+        for (index, generator) in [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+            .into_iter()
+            .enumerate()
+        {
+            if (top >> index) & 1 == 1 {
+                check ^= generator;
+            }
+        }
+    }
+    check
+}
+
+fn prefix(hrp: &str) -> Vec<u8> {
+    hrp.as_bytes()
+        .iter()
+        .map(|c| c >> 5)
+        .chain([0])
+        .chain(hrp.as_bytes().iter().map(|c| c & 31))
+        .collect()
+}
+
+fn decode(value: &str, hrp: &str) -> Result<Zeroizing<[u8; 32]>> {
+    let invalid = Error("invalid_age_recipient");
+    if value.len() != hrp.len() + 59 || !value.starts_with(&format!("{hrp}1")) {
+        return Err(invalid);
+    }
+    let values = Zeroizing::new(
+        value.as_bytes()[hrp.len() + 1..]
+            .iter()
+            .map(|c| {
+                ALPHABET
+                    .iter()
+                    .position(|v| v == c)
+                    .map(|i| i as u8)
+                    .ok_or(invalid)
+            })
+            .collect::<Result<Vec<_>>>()?,
+    );
+    if polymod(prefix(hrp).into_iter().chain(values.iter().copied())) != 1 {
+        return Err(invalid);
+    }
+    let mut public = Zeroizing::new([0u8; 32]);
+    let mut accumulator = 0u32;
+    let mut bits = 0;
+    let mut index = 0;
+    for value in &values[..52] {
+        accumulator = ((accumulator & 0xfff) << 5) | u32::from(*value);
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            public[index] = (accumulator >> bits) as u8;
+            index += 1;
+        }
+    }
+    if index != 32 || bits != 4 || accumulator & 15 != 0 {
+        return Err(invalid);
+    }
+    Ok(public)
+}
+
+pub fn public_from_recipient(recipient: &str) -> Result<[u8; 32]> {
+    let public = *decode(recipient, "age")?;
+    // A fixed nonsecret scalar is sufficient to reject every low-order point;
+    // it is never used for message encryption or as an account identity.
+    if !StaticSecret::from([42u8; 32])
+        .diffie_hellman(&PublicKey::from(public))
+        .was_contributory()
+    {
+        return Err(Error("invalid_age_recipient"));
+    }
+    Ok(public)
+}
+
+fn encode(public: &[u8; 32], hrp: &str) -> String {
+    let mut values = Zeroizing::new(Vec::with_capacity(58));
+    let mut accumulator = 0u32;
+    let mut bits = 0;
+    for byte in public {
+        accumulator = ((accumulator & 31) << 8) | u32::from(*byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            values.push(((accumulator >> bits) & 31) as u8);
+        }
+    }
+    if bits != 0 {
+        values.push(((accumulator << (5 - bits)) & 31) as u8);
+    }
+    let checksum = polymod(
+        prefix(hrp)
+            .into_iter()
+            .chain(values.iter().copied())
+            .chain([0; 6]),
+    ) ^ 1;
+    for index in (0..6).rev() {
+        values.push(((checksum >> (5 * index)) & 31) as u8);
+    }
+    let mut recipient = format!("{hrp}1");
+    recipient.extend(values.iter().map(|v| ALPHABET[usize::from(*v)] as char));
+    recipient
+}
+
+pub fn recipient_from_public(public: &[u8; 32]) -> String {
+    encode(public, "age")
+}
+
+pub fn identity_from_private(private: &[u8; 32]) -> Zeroizing<String> {
+    let mut text = Zeroizing::new(encode(private, "age-secret-key-"));
+    text.make_ascii_uppercase();
+    text
+}
+
+pub fn private_from_identity(identity: &str) -> Result<Zeroizing<[u8; 32]>> {
+    if !identity.is_ascii() || identity.bytes().any(|byte| byte.is_ascii_lowercase()) {
+        return Err(Error("invalid_age_identity"));
+    }
+    let text = Zeroizing::new(identity.to_ascii_lowercase());
+    decode(&text, "age-secret-key-").map_err(|_| Error("invalid_age_identity"))
+}
+
+pub fn recipient_from_identity(identity: &str) -> Result<String> {
+    let private = StaticSecret::from(*private_from_identity(identity)?);
+    Ok(recipient_from_public(&PublicKey::from(&private).to_bytes()))
+}
+
+pub fn encryption_key_id(public: &[u8; 32]) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"msg-encryption-subkey-v1\0");
+    hash.update(public);
+    format!("ek_{:x}", hash.finalize())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonical_recipients_reject_checksum_case_padding_and_low_order_points() {
+        let public = PublicKey::from(&StaticSecret::from([1; 32])).to_bytes();
+        let recipient = recipient_from_public(&public);
+        // Generated by the unchanged Python msg.security.age_keys module.
+        assert_eq!(
+            recipient,
+            "age15nsf9y4k28p83wth93tf7hafhvfajp45d2mge80ems45gz0c5gys3me64l"
+        );
+        assert_eq!(
+            encryption_key_id(&public),
+            "ek_69d193dcc1c5da912145b4309f9a14f39fdb88678b3f337166b128187b4a7402"
+        );
+        assert_eq!(public_from_recipient(&recipient).unwrap(), public);
+        let identity = identity_from_private(&[1; 32]);
+        assert_eq!(
+            identity.as_str(),
+            "AGE-SECRET-KEY-1QYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZ9K4CN"
+        );
+        assert_eq!(*private_from_identity(&identity).unwrap(), [1; 32]);
+        assert_eq!(recipient_from_identity(&identity).unwrap(), recipient);
+        assert!(private_from_identity(&identity.to_ascii_lowercase()).is_err());
+        assert!(public_from_recipient(&recipient.to_uppercase()).is_err());
+        assert!(public_from_recipient(&recipient_from_public(&[0; 32])).is_err());
+        let mut changed = recipient.into_bytes();
+        changed[10] = if changed[10] == b'q' { b'p' } else { b'q' };
+        assert!(public_from_recipient(std::str::from_utf8(&changed).unwrap()).is_err());
+    }
+}

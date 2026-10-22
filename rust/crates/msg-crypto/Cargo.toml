@@ -7,10 +7,21 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+aes-gcm.workspace = true
 ed25519-dalek.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+rand_core.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 sha2.workspace = true
+x25519-dalek.workspace = true
+zeroize.workspace = true
 msg-core = { path = "../msg-core" }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+rustix.workspace = true
 
 [lints]
 workspace = true

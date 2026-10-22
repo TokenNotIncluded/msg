@@ -11,10 +11,13 @@ msg-core = { path = "../msg-core" }
 msg-crypto = { path = "../msg-crypto" }
 msg-protocol = { path = "../msg-protocol" }
 chrono.workspace = true
+hmac.workspace = true
+rand_core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 subtle.workspace = true
+zeroize.workspace = true
 
 [lints]
 workspace = true
