@@ -67,7 +67,8 @@ jobs:
         env:
           PYTHONPATH: src
         run: |
-          cargo +1.85.0 build --locked --manifest-path rust/Cargo.toml --workspace --examples
+          cargo +1.85.0 build --locked --manifest-path rust/Cargo.toml --workspace --examples --bins
+          python rust/tests/test_crypto_parity.py --binary rust/target/debug/msg-crypto --report rust/artifacts/crypto-debug.json
           python rust/tests/test_python_parity.py --binary rust/target/debug/examples/wire_check --report rust/artifacts/parity.json
           python rust/tests/test_identity_parity.py --binary rust/target/debug/examples/authority_check --report rust/artifacts/identity-parity.json
           python rust/tests/test_storage_parity.py --binary rust/target/debug/examples/writer_check --report rust/artifacts/storage-parity.json
@@ -81,7 +82,8 @@ jobs:
         env:
           PYTHONPATH: src
         run: |
-          cargo +1.85.0 build --release --locked --manifest-path rust/Cargo.toml --workspace --examples
+          cargo +1.85.0 build --release --locked --manifest-path rust/Cargo.toml --workspace --examples --bins
+          python rust/tests/test_crypto_parity.py --binary rust/target/release/msg-crypto --report rust/artifacts/crypto-release.json
           python rust/tests/test_python_parity.py --binary rust/target/release/examples/wire_check --report rust/artifacts/parity-release.json
           python rust/tests/test_identity_parity.py --binary rust/target/release/examples/authority_check --report rust/artifacts/identity-parity-release.json
           python rust/tests/test_storage_parity.py --binary rust/target/release/examples/writer_check --report rust/artifacts/storage-parity-release.json
