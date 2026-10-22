@@ -161,7 +161,8 @@ impl Catalog {
             if spec.version == 0
                 || spec.name.is_empty()
                 || spec.name.contains('*')
-                || !matches!(spec.effect.as_str(), "read" | "transaction" | "external")
+                || (!matches!(spec.effect.as_str(), "read" | "transaction" | "external")
+                    && (spec.enabled || spec.effect != "write"))
                 || spec.entries.is_empty()
                 || !spec
                     .entries
@@ -356,6 +357,8 @@ mod tests {
             "transaction"
         );
         assert!(c.operation("caller.install", 1).is_err());
+        let retired = c.operation("identity.login_bind", 1).unwrap();
+        assert!(!retired.enabled && retired.effect == "write");
         assert!(c
             .validate("schema:identity.register:2", &Json::parse("{}").unwrap())
             .is_err());
