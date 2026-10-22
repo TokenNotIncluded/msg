@@ -1,9 +1,35 @@
 # Native Rust server migration
 
-Python keeps the CLI, administrator/migration scripts, and development helpers.
+Python remains the production entry point while native features are migrated.
 Native Rust code is not yet a replacement for the running Python service. Do not
 change production entry points until the remaining executor, transport, content-recovery,
 worker, and deployment gates below pass.
+
+## Local encryption, in Rust
+
+`msg-crypto` is a small Unix CLI in the existing crypto crate. It generates an
+independent X25519 key and encrypts/decrypts the same `msg-x25519-v1` files as Python:
+
+```sh
+cargo build --locked --release --manifest-path rust/Cargo.toml -p msg-crypto
+rust/target/release/msg-crypto keygen private.key
+# Use the recipient public key from the JSON output above.
+rust/target/release/msg-crypto encrypt RECIPIENT_BASE64 message.txt message.sealed
+rust/target/release/msg-crypto decrypt private.key message.sealed restored.txt
+```
+
+No network, registration or third-party identity is involved. New files use mode
+0600 and exclusive creation; existing paths are never overwritten. Private-key
+reads check the opened file's owner, permissions and type, rejecting symlinks.
+Choose a trusted local directory. Encryption accepts up to 512 KiB of plaintext;
+decryption accepts existing envelopes up to 1 MiB, including older larger messages.
+Owned secret buffers clear on drop. Encryption protects the recipient's content;
+sender authentication remains the separate Ed25519 signing protocol.
+
+The library lives in `msg_crypto::sealed_box` and reuses X25519, HKDF-SHA256 and
+AES-256-GCM. `validate_envelope` checks shape only. The differential test imports
+the actual Python implementation and exercises both directions plus file and
+tampering boundaries. This is a usable encryption slice, not a native daemon.
 
 ## Fifth implementation slice: native Git/blob content storage
 
@@ -102,8 +128,9 @@ one-time offline editor export workflows are removed.
 
 ## Ownership boundary
 
-Retain Python `msg` CLI, administration/migration scripts and developer tools.
-Migrate server-side `msgd serve`, `msgd worker`, domain/identity, storage,
+Migrate client and runtime features incrementally, keeping Python as the
+compatibility reference and for administration/migration and developer tools.
+The server scope remains `msgd serve`, `msgd worker`, domain/identity, storage,
 HTTP/MCP and crypto/protocol to Rust. Do not rename endpoints or invent a second
 signature protocol. The tests import the actual Python implementation in the
 same checkout, rather than a translated copy of the expected behavior.
@@ -117,7 +144,7 @@ The original inspected main baseline is
 | Crate | Implemented responsibility | Python reference |
 |---|---|---|
 | `msg-core` | Bounded strict JSON, duplicate rejection, canonical numbers/Unicode, lossless typed JSON, SHA-256/base64url | `core/codec.py` |
-| `msg-crypto` | Existing key/subject IDs, purpose-framed Ed25519 signing/verification | `security/crypto.py` |
+| `msg-crypto` | Existing key/subject IDs, purpose-framed Ed25519 signing/verification, X25519 encrypted envelopes and local encryption CLI | `security/crypto.py`, `security/sealed_box.py`, `client_secrets.py` |
 | `msg-protocol` | Request shape/defaults, UTC time, business digest/signature bytes, immutable field access | `core/packet.py`, `core/requests.py`, `core/models.py` |
 | `msg-identity` | Typed identity/credential/certificate/CSR records, credential and current-state admission, pinned CA chains, live delegation, scope/ceiling/mode primitives, key-approved browser/API binding and token-recovery validation, transaction-bound resource authorization | `security/authentication.py`, `certificates.py`, `policy.py`, `sessions.py` |
 | `msg-storage` | Transaction-bound authority reads; SQLite/PostgreSQL writers and typed records, savepoints/rollback effects; native Git/blob content, ranges, pins and revision trees | `storage/sqlite.py`, `storage/postgres.py`, `storage/git.py` and their record/session modules |
@@ -216,7 +243,9 @@ python -m ruff format --check rust/tests
 cargo +1.85.0 test --locked --manifest-path rust/Cargo.toml --workspace --all-targets
 cargo +1.85.0 test --locked --manifest-path rust/Cargo.toml --workspace --doc
 cargo +1.85.0 clippy --locked --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings
-cargo +1.85.0 build --locked --manifest-path rust/Cargo.toml --workspace --examples
+cargo +1.85.0 build --locked --manifest-path rust/Cargo.toml --workspace --examples --bins
+PYTHONPATH=src python rust/tests/test_crypto_parity.py \
+  --binary rust/target/debug/msg-crypto --report rust/artifacts/crypto-debug.json
 PYTHONPATH=src python rust/tests/test_python_parity.py \
   --binary rust/target/debug/examples/wire_check --report rust/artifacts/parity.json
 PYTHONPATH=src python rust/tests/test_identity_parity.py \

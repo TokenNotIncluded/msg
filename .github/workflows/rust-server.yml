@@ -1,0 +1,110 @@
+name: Rust daemon
+on:
+  push:
+    branches: [main]
+    paths: ['rust/**', '.github/workflows/rust-server.yml']
+  pull_request:
+    paths: ['rust/**', '.github/workflows/rust-server.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rust-daemon-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+      MSG_PG_TEST_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+      PYTHONPATH: src
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+      - name: Install native and reference dependencies
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal
+          sudo apt-get update -qq -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
+          sudo apt-get install -y age
+          python -m pip install 'cryptography==46.0.3' 'jsonschema>=4.25,<5' 'referencing>=0.36,<1' 'psycopg[binary]>=3.2,<4'
+      - name: Build native identity fixture
+        working-directory: rust
+        run: cargo +1.85.0 build -p msg-storage --example identity_lifecycle_check
+      - name: PostgreSQL issuance and browser interoperation
+        run: python rust/tests/test_identity_lifecycle.py --binary rust/target/debug/examples/identity_lifecycle_check --report rust/artifacts/identity-lifecycle.json
+      - name: Storage lifecycle and recovery tests
+        if: ${{ !cancelled() }}
+        working-directory: rust
+        run: cargo +1.85.0 test -p msg-storage --all-targets
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: daemon-identity-${{ github.sha }}
+          path: rust/artifacts/identity-lifecycle.json
+          if-no-files-found: warn
+  native:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS: fallback
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: |
+          rustup toolchain install 1.85.0 --profile minimal --component rustfmt,clippy
+          sudo apt-get update -qq -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources -o Dir::Etc::sourceparts=-
+          sudo apt-get install -y age
+      - name: Native tests
+        working-directory: rust
+        run: cargo +1.85.0 test --workspace --all-targets
+      - name: Native lint
+        if: ${{ !cancelled() }}
+        working-directory: rust
+        run: |
+          cargo +1.85.0 fmt --all -- --check
+          cargo +1.85.0 clippy --workspace --all-targets -- -D warnings
+      - uses: actions/upload-artifact@v7
+        if: ${{ always() }}
+        with:
+          name: daemon-lock-${{ github.sha }}
+          path: rust/Cargo.lock
+          if-no-files-found: error
+  reference:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+      - name: Install reference dependencies
+        run: python -m pip install 'cryptography==46.0.3' 'httpx>=0.28,<1' 'jsonschema>=4.25,<5' 'referencing>=0.36,<1' 'starlette>=0.50,<2' 'aiohttp>=3.13,<4' 'graphql-core>=3.2.7,<3.3' 'dnspython>=2.8,<3' 'markdown-it-py>=4,<5' 'pygments>=2.19,<3'
+      - name: Export service contracts
+        env:
+          PYTHONPATH: src
+        run: python rust/tools/export_catalog.py --output rust/artifacts/catalog.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: daemon-reference-${{ github.sha }}
+          path: rust/artifacts/*.json
+          if-no-files-found: error
