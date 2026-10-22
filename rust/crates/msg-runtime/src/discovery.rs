@@ -1623,6 +1623,17 @@ fn segment_window(
     for line in budget.split_inclusive('\n') {
         let complete = line.ends_with('\n');
         let trimmed = line.trim();
+        if fence
+            && line_start
+            && !complete
+            && !trimmed.is_empty()
+            && trimmed.len() < 3
+            && (trimmed.bytes().all(|byte| byte == b'`')
+                || trimmed.bytes().all(|byte| byte == b'~'))
+        {
+            candidate = Some((scanned, fence, true));
+            break;
+        }
         if line_start && (trimmed.starts_with("```") || trimmed.starts_with("~~~")) {
             fence = !fence;
             if !fence && complete {
