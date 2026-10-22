@@ -6,6 +6,7 @@ use hmac::{Hmac, Mac};
 use msg_core::{Error, Result};
 use msg_storage::jobs::status;
 use sha2::Sha256;
+use std::fmt::Write as _;
 use std::{
     io::{Read, Write},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, ToSocketAddrs},
@@ -385,12 +386,11 @@ pub fn webhook(
     signer.update(timestamp.as_bytes());
     signer.update(b".");
     signer.update(body);
-    let signature = signer
-        .finalize()
-        .into_bytes()
-        .iter()
-        .map(|v| format!("{v:02x}"))
-        .collect::<String>();
+    let bytes = signer.finalize().into_bytes();
+    let mut signature = String::with_capacity(bytes.len() * 2);
+    for value in bytes {
+        write!(signature, "{value:02x}").expect("writing to a string cannot fail");
+    }
     let signature = format!("sha256={signature}");
     match post(
         &endpoint,

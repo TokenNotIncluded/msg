@@ -1387,7 +1387,7 @@ fn board_rules(ctx: &Context<'_>, resource: &Resource) -> Result<J> {
         &[resource.id.as_str().into()],
     )?;
     Ok(
-        json!({"board_id":resource.id,"generation":resource.generation,"text":policy.get("rules").cloned().unwrap_or(Json::string("")),"posting_policy":policy.get("posting_policy").cloned().unwrap_or(Json::string("open")),"membership_policy":membership.as_ref().map(|r|r.text(0)).transpose()?.unwrap_or("open"),"reply_open":policy.get("reply_open").map(|v|value(v)).transpose()?.unwrap_or(json!(true)),"editable":policy.get("editable").map(|v|value(v)).transpose()?.unwrap_or(json!(true)),"platform_rules":"/_rules/topics"}),
+        json!({"board_id":resource.id,"generation":resource.generation,"text":policy.get("rules").cloned().unwrap_or(Json::string("")),"posting_policy":policy.get("posting_policy").cloned().unwrap_or(Json::string("open")),"membership_policy":membership.as_ref().map(|r|r.text(0)).transpose()?.unwrap_or("open"),"reply_open":policy.get("reply_open").map(value).transpose()?.unwrap_or(json!(true)),"editable":policy.get("editable").map(value).transpose()?.unwrap_or(json!(true)),"platform_rules":"/_rules/topics"}),
     )
 }
 fn board_presentation(ctx: &mut Context<'_>, resource: &Resource) -> Result<J> {
@@ -1601,7 +1601,7 @@ fn segment_window(
     max: usize,
     size: u64,
 ) -> Result<(SegmentState, String)> {
-    let decoded = match std::str::from_utf8(&raw) {
+    let decoded = match std::str::from_utf8(raw) {
         Ok(text) => text,
         Err(e) if e.error_len().is_none() && e.valid_up_to() >= raw.len().saturating_sub(4) => {
             std::str::from_utf8(&raw[..e.valid_up_to()])
@@ -2175,7 +2175,7 @@ fn tree_collection(
     }
     let plan = args
         .get("expand")
-        .map(|v| value(v))
+        .map(value)
         .transpose()?
         .unwrap_or(json!({}));
     tree_expand(
@@ -2226,7 +2226,7 @@ fn read_query_tree(ctx: &mut Context<'_>) -> Result<HandlerOutput> {
             json!({"hasNextPage":data.get("next").is_some(),"endCursor":data.get("cursor")});
         let plan = args
             .get("expand")
-            .map(|v| value(v))
+            .map(value)
             .transpose()?
             .unwrap_or(json!({}));
         tree_expand(

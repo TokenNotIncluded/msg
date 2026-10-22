@@ -620,8 +620,15 @@ async def exercise(binary):
             context_fields = {
                 name: challenge[name]
                 for name in (
-                    'subject_id', 'challenge_id', 'request_id', 'handle', 'public_key',
-                    'encryption_recipient', 'server_public', 'nonce', 'expires_at',
+                    'subject_id',
+                    'challenge_id',
+                    'request_id',
+                    'handle',
+                    'public_key',
+                    'encryption_recipient',
+                    'server_public',
+                    'nonce',
+                    'expires_at',
                 )
             }
             verify(
@@ -640,7 +647,8 @@ async def exercise(binary):
                 'request_id': finish_id,
             }
             finish_args = {
-                key: value for key, value in finish_body.items()
+                key: value
+                for key, value in finish_body.items()
                 if key not in {'subject_id', 'request_id'}
             }
             finish_args['migration_ack'] = wire(
@@ -667,14 +675,16 @@ async def exercise(binary):
                 'UPDATE custodial_upgrades SET body=? WHERE id=?',
                 (canonical(forged).decode(), challenge['challenge_id']),
             )
-            inventory = native.handle(fixture.request(
-                name='identity.custodial_upgrade_inventory',
-                actor='cust',
-                token=True,
-                token_id=custody['credential_id'],
-                request_id='native-custody-inventory',
-                arguments={'challenge_id': challenge['challenge_id']},
-            ))['data']
+            inventory = native.handle(
+                fixture.request(
+                    name='identity.custodial_upgrade_inventory',
+                    actor='cust',
+                    token=True,
+                    token_id=custody['credential_id'],
+                    request_id='native-custody-inventory',
+                    arguments={'challenge_id': challenge['challenge_id']},
+                )
+            )['data']
             assert inventory['history_recoverable']
             assert not inventory['retirement']['backup_retired']
             finalize_id = 'native-custody-finalize'
@@ -690,10 +700,12 @@ async def exercise(binary):
                 'loss_revisions': [],
                 'reviewed_policy_version': inventory['recovery_policy_version'],
             }
-            finalize_args['migration_ack'] = wire(next_signer.sign(
-                canonical(stage_statement(custody['subject_id'], finalize_args, finalize_id)),
-                purpose='custodial-decision-v1',
-            ))
+            finalize_args['migration_ack'] = wire(
+                next_signer.sign(
+                    canonical(stage_statement(custody['subject_id'], finalize_args, finalize_id)),
+                    purpose='custodial-decision-v1',
+                )
+            )
             finalize = fixture.request(
                 name='identity.custodial_upgrade_finish',
                 version=2,
@@ -718,12 +730,14 @@ async def exercise(binary):
             fixture.signers['selfcust'] = next_signer
             fixture.users['selfcust'] = custody['subject_id']
             fixture.keys['selfcust'] = next_signer.key_id
-            recovered = native.handle(fixture.request(
-                name='identity.custodial_upgrade_result',
-                actor='selfcust',
-                request_id='native-custody-result',
-                arguments={'challenge_id': challenge['challenge_id']},
-            ))['data']
+            recovered = native.handle(
+                fixture.request(
+                    name='identity.custodial_upgrade_result',
+                    actor='selfcust',
+                    request_id='native-custody-result',
+                    arguments={'challenge_id': challenge['challenge_id']},
+                )
+            )['data']
             assert recovered == completed
             async with fixture.metadata.transaction(write=False) as tx:
                 await fixture.validator.validate(completed['certificate_id'], tx)

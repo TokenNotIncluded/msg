@@ -301,7 +301,7 @@ pub struct AttemptContext<'a, 'b> {
     job: &'a EffectJob,
     published: bool,
 }
-impl<'a, 'b> AttemptContext<'a, 'b> {
+impl<'b> AttemptContext<'_, 'b> {
     pub fn stop_flag(&self) -> &'b AtomicBool {
         self.runtime.stopping
     }

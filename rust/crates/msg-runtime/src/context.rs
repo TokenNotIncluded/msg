@@ -20,6 +20,7 @@ use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -50,7 +51,10 @@ pub fn new_id(prefix: &str) -> Result<String> {
         .map_err(|_| Error("random_unavailable"))?;
     random[6] = random[6] & 0x0f | 0x40;
     random[8] = random[8] & 0x3f | 0x80;
-    let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let mut hex = String::with_capacity(random.len() * 2);
+    for byte in random {
+        write!(hex, "{byte:02x}").expect("writing to a string cannot fail");
+    }
     Ok(format!("{prefix}_{hex}"))
 }
 

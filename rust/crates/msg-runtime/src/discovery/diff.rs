@@ -168,7 +168,7 @@ fn groups(a: &[&str], b: &[&str], expires: Instant) -> Result<Vec<Vec<Code>>> {
         }
         current.push(code);
     }
-    if !current.is_empty() && !(current.len() == 1 && current[0].kind == Kind::Equal) {
+    if !(current.is_empty() || current.len() == 1 && current[0].kind == Kind::Equal) {
         groups.push(current);
     }
     Ok(groups)

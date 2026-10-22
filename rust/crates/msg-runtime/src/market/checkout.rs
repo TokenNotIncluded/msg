@@ -6,7 +6,7 @@ use super::{
 };
 use crate::context::{output, Context, HandlerOutput};
 use msg_core::{digest, Error, Json, Result};
-use msg_identity::{models::Timestamp, store::AuthorityStore};
+use msg_identity::models::Timestamp;
 use msg_storage::{
     postgres::{PgSession, Value},
     records::encode,
@@ -688,26 +688,34 @@ fn list(ctx: &Context<'_>, viewer: &str, version: u32) -> Result<HandlerOutput> 
         50
     };
     require((1..=100).contains(&limit), "invalid_page")?;
-    let role_sql = match role {
-        Some("buy") => "buyer=$1",
-        Some("sell") => "seller=$1",
-        _ => "(buyer=$1 OR seller=$1)",
-    };
-    let status_sql = match status {
-        Some("open") => " AND state IN ('created','funded','delivered','accepted')",
-        Some("completed") => " AND state IN ('settled','cancelled','refunded')",
-        Some("disputed") => " AND state='disputed'",
-        _ => "",
-    };
     let mut result = vec![];
-    for row in ctx.tx.rows(&format!("SELECT id FROM store_orders WHERE {role_sql}{status_sql} ORDER BY created_at DESC,id DESC LIMIT $2"),&[viewer.into(),limit.into()])?{let order=owned(ctx,row.text(0)?,viewer)?;let mut value=legacy_view(&order,viewer)?.into_object()?;if version==2{value.insert("source".into(),Json::string("store_order"));}result.push(Json::from_object(value));}
+    for row in ctx.tx.rows(
+        "SELECT id FROM store_orders WHERE CASE $2::text WHEN 'buy' THEN buyer=$1 WHEN 'sell' THEN seller=$1 ELSE buyer=$1 OR seller=$1 END AND CASE $3::text WHEN 'open' THEN state IN ('created','funded','delivered','accepted') WHEN 'completed' THEN state IN ('settled','cancelled','refunded') WHEN 'disputed' THEN state='disputed' ELSE TRUE END ORDER BY created_at DESC,id DESC LIMIT $4",
+        &[
+            viewer.into(),
+            role.unwrap_or("").into(),
+            status.unwrap_or("").into(),
+            limit.into(),
+        ],
+    )? {
+        let order = owned(ctx, row.text(0)?, viewer)?;
+        let mut value = legacy_view(&order, viewer)?.into_object()?;
+        if version == 2 {
+            value.insert("source".into(), Json::string("store_order"));
+        }
+        result.push(Json::from_object(value));
+    }
     if version == 2 && role != Some("sell") && status != Some("disputed") {
-        let status = match status {
-            Some("open") => " AND state='pending'",
-            Some("completed") => " AND state IN ('settled','refunded')",
-            _ => "",
-        };
-        for row in ctx.tx.rows(&format!("SELECT id FROM money_purchases WHERE subject_id=$1{status} ORDER BY created_at DESC,id DESC LIMIT $2"),&[viewer.into(),limit.into()])?{result.push(super::offers::purchase_view(ctx,row.text(0)?,viewer)?);}
+        for row in ctx.tx.rows(
+            "SELECT id FROM money_purchases WHERE subject_id=$1 AND CASE $2::text WHEN 'open' THEN state='pending' WHEN 'completed' THEN state IN ('settled','refunded') ELSE TRUE END ORDER BY created_at DESC,id DESC LIMIT $3",
+            &[viewer.into(), status.unwrap_or("").into(), limit.into()],
+        )? {
+            result.push(super::offers::purchase_view(
+                ctx,
+                row.text(0)?,
+                viewer,
+            )?);
+        }
         result.sort_by_cached_key(|v| {
             (
                 text(v, "created_at").unwrap_or("").to_owned(),
