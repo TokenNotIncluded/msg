@@ -151,6 +151,8 @@ jobs:
       - name: Compile all new modules
         run: python -W error -m compileall -q src
       - name: Run core, business and security tests
+        env:
+          DB_URL_WITH_PASS: ${{ secrets.DB_URL_WITH_PASS }}
         run: python scripts/ci_shards.py run ${{ matrix.shard }} 8
       - name: Require every transport and actual tokenizer
         if: matrix.shard == 0

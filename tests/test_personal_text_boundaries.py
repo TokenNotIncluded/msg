@@ -6,12 +6,13 @@ from test_service import call, register
 from msg.core.codec import wire
 from msg.core.errors import Failure
 from msg.plugins.identity import validate_personal_body
+import os
 
 
 @pytest.mark.parametrize(
     'body',
     [
-        '-----BEGIN OPENSSH PRIVATE KEY-----',
+        os.environ.get('PRIVATE_KEY_BLOCK'),
         'AGE-SECRET-KEY-1ABCDEFGHIJKLMNOPQRSTUVWXYZ',
         'token = abcdefghijklmnop',
         'sk-' + 'a' * 24,
