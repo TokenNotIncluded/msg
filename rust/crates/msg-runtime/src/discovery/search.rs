@@ -319,7 +319,7 @@ impl Relations {
             }
         }
         if let Some(expected) = args.get("has_references") {
-            if !incoming.is_empty() != expected.as_bool()? {
+            if incoming.is_empty() == expected.as_bool()? {
                 return Ok(false);
             }
         }

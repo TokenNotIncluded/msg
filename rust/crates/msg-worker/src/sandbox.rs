@@ -251,10 +251,10 @@ pub fn validate_input(executor: &str, input: &Json, internal_body: bool) -> Resu
         }
         "curl" => {
             if args.keys().any(|k| {
-                !matches!(
+                !(matches!(
                     k.as_str(),
                     "url" | "method" | "headers" | "body" | "body_ref"
-                ) && !(internal_body && k == "_body_path")
+                ) || internal_body && k == "_body_path")
             }) {
                 return Err(Error("invalid_tool_input"));
             }

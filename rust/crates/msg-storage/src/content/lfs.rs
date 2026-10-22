@@ -222,10 +222,10 @@ impl LfsObjectStore {
         let mut total = 0_u64;
         for entry in fs::read_dir(&self.shared).map_err(conflict)? {
             let path = entry.map_err(conflict)?.path();
-            if !path
+            if path
                 .file_name()
                 .and_then(|s| s.to_str())
-                .is_some_and(|s| oid(s).is_ok())
+                .is_none_or(|s| oid(s).is_err())
             {
                 continue;
             }

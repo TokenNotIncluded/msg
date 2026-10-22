@@ -1,6 +1,7 @@
 //! Bounded local subprocesses, private staging, and a shared shutdown deadline.
 use msg_core::{Error, Result};
 use rand_core::{OsRng, RngCore};
+use std::fmt::Write as _;
 use std::{
     cell::Cell,
     fs::{self, File, OpenOptions},
@@ -17,10 +18,12 @@ pub(crate) fn id(prefix: &str) -> Result<String> {
     OsRng
         .try_fill_bytes(&mut bytes)
         .map_err(|_| Error("random_unavailable"))?;
-    Ok(format!(
-        "{prefix}_{}",
-        bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
-    ))
+    let mut value = String::with_capacity(prefix.len() + 1 + bytes.len() * 2);
+    write!(value, "{prefix}_").expect("writing to a string cannot fail");
+    for byte in bytes {
+        write!(value, "{byte:02x}").expect("writing to a string cannot fail");
+    }
+    Ok(value)
 }
 pub(crate) struct Directory {
     path: PathBuf,

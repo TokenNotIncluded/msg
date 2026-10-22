@@ -231,16 +231,25 @@ impl ValidatedDecision {
         &self.0
     }
 }
-fn validate(
-    tx: &PgSession,
-    contents: &GitContentStore,
-    authority: &WorkerAuthority,
-    authorizer: &mut AuthorizationService,
-    order: &Order,
-    locked: &Json,
-    decision: Json,
+struct Validation<'a> {
+    tx: &'a PgSession,
+    contents: &'a GitContentStore,
+    authority: &'a WorkerAuthority,
+    authorizer: &'a mut AuthorizationService,
+    order: &'a Order,
+    locked: &'a Json,
     now: Timestamp,
-) -> Result<ValidatedDecision> {
+}
+fn validate(input: Validation<'_>, decision: Json) -> Result<ValidatedDecision> {
+    let Validation {
+        tx,
+        contents,
+        authority,
+        authorizer,
+        order,
+        locked,
+        now,
+    } = input;
     let row = tx
         .one(
             "SELECT body,revoked FROM arbitration_decisions WHERE id=$1",
@@ -401,14 +410,16 @@ pub(super) fn resolve_cases(
                     "decision_not_current",
                 )?;
                 let decision = validate(
-                    tx,
-                    contents,
-                    authority,
-                    authorizer,
-                    &mutation.order,
-                    &mutation.locked,
+                    Validation {
+                        tx,
+                        contents,
+                        authority,
+                        authorizer,
+                        order: &mutation.order,
+                        locked: &mutation.locked,
+                        now,
+                    },
                     decision,
-                    now,
                 )?;
                 Ok((mutation, Some(decision)))
             })();

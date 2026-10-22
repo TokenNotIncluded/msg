@@ -273,10 +273,7 @@ fn signed_approval_is_one_use_limited_and_immediately_revocable() {
         .unwrap();
     let logged = service.poll(&mut memory, value, now()).unwrap();
     let cookie = text(&logged, "cookie");
-    assert_eq!(
-        logged.as_object().unwrap()["expires"],
-        wire(&later(1800)).unwrap()
-    );
+    assert!(logged.as_object().unwrap()["expires"] == wire(&later(1800)).unwrap());
     assert!(service.poll(&mut memory, value, later(5)).is_err());
     let bearer = service.credentials(&mut memory, cookie, now()).unwrap();
     let credential = memory.credential(&bearer.credential_id).unwrap();
