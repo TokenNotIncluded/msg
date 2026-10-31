@@ -117,7 +117,11 @@ class Application:
             recovery_window=lambda: self.settings.credential_delivery_recovery_window,
         )
         self.certificates = CertificateValidator(
-            self.registry, root_certificate, root_public, self.settings.service_url, self.clock
+            self.registry,
+            root_certificate,
+            root_public,
+            self.settings.service_url,
+            lambda: self.clock(),
         )
         async with self.metadata.transaction(write=False) as tx:
             self.runtime_generation.require_current(tx)

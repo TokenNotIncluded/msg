@@ -66,6 +66,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = ["db: 需要真实 PostgreSQL，包含 fixture 依赖和测试内自建集群"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = ["error"]
 
 [tool.ruff]
