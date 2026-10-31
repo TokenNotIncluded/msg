@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 
 import psycopg
 import pytest
+import pytest_asyncio
 from psycopg import sql
 
 from msg.admin.root import _approve_csr, _provision
@@ -39,7 +40,7 @@ def _drop_database(cluster, name):
         connection.execute(sql.SQL('DROP DATABASE {} WITH (FORCE)').format(sql.Identifier(name)))
 
 
-@pytest.fixture(scope='session')
+@pytest_asyncio.fixture(scope='session', loop_scope='session')
 async def installation_seed(tmp_path_factory, pg_cluster):
     directory = tmp_path_factory.mktemp('msg-seed')
     database = 'msg_seed_' + uuid.uuid4().hex
