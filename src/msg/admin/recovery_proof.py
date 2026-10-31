@@ -564,7 +564,7 @@ async def open_for_proof(config_dir):
         decode(Certificate, trust['certificate']),
         unb64(trust['public_key'], limit=32),
         settings.service_url,
-        app.clock,
+        lambda: app.clock(),
     )
     from msg.admin.backups import _regular_tree
 
