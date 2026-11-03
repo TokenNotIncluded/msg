@@ -79,7 +79,7 @@ def test_real_age_binary_and_armor_structure(ciphertext):
         b'age-encryption.org/v1\n--- ' + b'A' * 43 + b'\n' + b'X' * 40,
         b'age-encryption.org/v1\n-> X25519 anything\nnot base64\n',
         b'-----BEGIN AGE ENCRYPTED FILE-----\nYWdl\n-----END AGE ENCRYPTED FILE-----\n',
-        b'-----BEGIN PGP PRIVATE KEY BLOCK-----\nplaintext\n',
+        os.environ.get('PRIVATE_KEY_BLOCK', '-----BEGIN PGP PRIVATE KEY BLOCK-----\nplaintext\n').encode(),
         # A literal data packet is not an encrypted container.
         bytes([0xCB, 4]) + b'text',
     ],

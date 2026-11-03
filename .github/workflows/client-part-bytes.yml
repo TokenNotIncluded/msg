@@ -35,7 +35,7 @@ jobs:
           --health-cmd "pg_isready -U msgtest"
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
-      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:msgtest@127.0.0.1:5432/{database}
+      MSG_TEST_POSTGRES_URL_TEMPLATE: postgresql://msgtest:${{ secrets.MSG_TEST_POSTGRES_URL_TEMPLATE_PASSWORD }}@127.0.0.1:5432/{database}
     steps:
       - uses: actions/checkout@v7
         with:
