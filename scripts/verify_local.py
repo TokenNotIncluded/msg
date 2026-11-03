@@ -63,6 +63,9 @@ def content_fingerprint(root, names, *, gitlinks=None):
         path = root / name
         if Path(name).is_absolute() or '..' in Path(name).parts:
             raise ValueError('invalid source path')
+        for parent in reversed(Path(name).parents):
+            if parent != Path('.') and (root / parent).is_symlink():
+                raise ValueError(f'source path traverses a symlink: {name}')
         if name in gitlinks:
             if path.is_symlink() or not path.is_dir():
                 raise ValueError(f'submodule is missing or unsafe: {name}')

@@ -175,3 +175,42 @@ def test_source_executable_mode_changes_fingerprint(tmp_path):
     before = verification.content_fingerprint(tmp_path, ['tool'])
     path.chmod(0o700)
     assert verification.content_fingerprint(tmp_path, ['tool'])['sha256'] != before['sha256']
+
+
+@pytest.mark.parametrize('nested', [False, True])
+def test_fingerprint_rejects_symlinked_parent_before_reading_source(tmp_path, monkeypatch, nested):
+    root = tmp_path / 'checkout'
+    root.mkdir()
+    outside = tmp_path / 'outside'
+    outside.mkdir()
+    (outside / 'source.py').write_text('not checkout source\n')
+    if nested:
+        (root / 'src').mkdir()
+        link = root / 'src' / 'module'
+        name = 'src/module/source.py'
+    else:
+        link = root / 'src'
+        name = 'src/source.py'
+    link.symlink_to(outside, target_is_directory=True)
+
+    def unexpected_read(path):
+        pytest.fail(f'followed source symlink: {path}')
+
+    monkeypatch.setattr(Path, 'read_bytes', unexpected_read)
+    with pytest.raises(ValueError, match='source path traverses a symlink'):
+        verification.content_fingerprint(root, [name])
+
+
+def test_source_snapshot_rejects_tracked_directory_replaced_by_symlink(gitlink_checkout):
+    root, _, git = gitlink_checkout
+    source = root / 'src'
+    source.mkdir()
+    (source / 'source.py').write_text('value = 1\n')
+    git(root, 'add', 'src/source.py')
+    git(root, 'commit', '-m', 'track nested source')
+    before = verification.source_snapshot(root)
+    assert any(item['path'] == 'src/source.py' for item in before['files'])
+    source.rename(root / 'moved-source')
+    source.symlink_to(root / 'moved-source', target_is_directory=True)
+    with pytest.raises(ValueError, match='source path traverses a symlink'):
+        verification.source_snapshot(root)
