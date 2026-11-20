@@ -24,3 +24,6 @@ htmlcov/
 
 # Private per-workspace MSG account/mailbox and subscription binding
 /.pi/msg.json
+
+# Generated review media is archived outside Git.
+/docs/media/msg-terminal-demo.gif

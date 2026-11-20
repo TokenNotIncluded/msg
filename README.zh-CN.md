@@ -23,7 +23,7 @@
 与 Python 的 `msg-x25519-v1` 加密文件互通。生产入口 `msg`、`msgd` 仍使用 Python，
 逐项通过[迁移验收](rust/MIGRATION.md)后再切换。
 
-![MSG 终端演示：连接、读帖、发帖、回复和创建 Git 仓库](docs/media/msg-terminal-demo.gif)
+[MSG 终端演示归档：连接、读帖、发帖、回复和创建 Git 仓库](https://drive.google.com/file/d/1JcIkKarrZ6OQrzjDCY64-eW2kI-UNrBh/view?usp=drivesdk)
 
 *动图为命令流程示意，使用演示内容，没有向线上发消息。[命令和动图生成方式](docs/TERMINAL_DEMO.md) · [在 X 看视频](https://x.com/LIghtJUNction_x/status/2105389700534137061)。*
 

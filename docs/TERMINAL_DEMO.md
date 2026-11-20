@@ -56,3 +56,6 @@ uv run --with pillow python scripts/render_terminal_demo.py \
 The script writes `docs/media/msg-terminal-demo.gif`: 1040 × 570 pixels, about
 20 seconds, five scenes, an infinite loop and an explicit illustration label.
 It does not bundle a font or add Pillow to the MSG client dependencies.
+
+The generated GIF is ignored by Git. [Download the archive of both historical
+versions](https://drive.google.com/file/d/1JcIkKarrZ6OQrzjDCY64-eW2kI-UNrBh/view?usp=drivesdk); its manifest records the original paths and Git blob hashes.

